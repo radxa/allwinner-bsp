@@ -1,0 +1,36 @@
+From dc40c19359c900d367bc0ab32241ee07af443016 Mon Sep 17 00:00:00 2001
+From: Bilal Wasim <bilalwasim676@gmail.com>
+Date: Mon, 1 Feb 2021 17:14:14 +0500
+Subject: [PATCH 4/8] soc: mediatek: pm-domains: Use correct mask for
+ bus_prot_clr
+
+When "bus_prot_reg_update" is true, the driver should use
+INFRA_TOPAXI_PROTECTEN for both setting and clearing the bus
+protection. However, the driver does not use this mask for
+clearing bus protection which causes failure when booting
+the imgtec gpu.
+
+Corrected and tested with mt8173 chromebook.
+
+Signed-off-by: Bilal Wasim <Bilal.Wasim@imgtec.com>
+Reviewed-by: Hsin-Yi Wang <hsinyi@chromium.org>
+---
+ drivers/soc/mediatek/mtk-pm-domains.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/soc/mediatek/mtk-pm-domains.h b/drivers/soc/mediatek/mtk-pm-domains.h
+index 141dc76054e6..7454c0b4f768 100644
+--- a/drivers/soc/mediatek/mtk-pm-domains.h
++++ b/drivers/soc/mediatek/mtk-pm-domains.h
+@@ -60,7 +60,7 @@
+ #define BUS_PROT_UPDATE_TOPAXI(_mask)				\
+ 		BUS_PROT_UPDATE(_mask,				\
+ 				INFRA_TOPAXI_PROTECTEN,		\
+-				INFRA_TOPAXI_PROTECTEN_CLR,	\
++				INFRA_TOPAXI_PROTECTEN,		\
+ 				INFRA_TOPAXI_PROTECTSTA1)
+ 
+ struct scpsys_bus_prot_data {
+-- 
+2.27.0
+

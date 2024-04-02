@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Touchscreen driver configuration
+#
+
+menuconfig AW_INPUT_CTP
+	bool "Touchscreens input device support"
+	help
+	  Say Y here, and a list of supported touchscreens will be displayed.
+	  This option doesn't affect the kernel.
+
+	  If unsure, say Y.
+
+if AW_INPUT_CTP
+
+source "$(BSP_TOP)drivers/input/ctp/gt9xx_secondary//Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/gslx680new/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/wacom_pen/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/gt9xxnew/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/gt9xx/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/hynitron/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/ilitek_tddi/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/focaltech_touch/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/tlsc6x/Kconfig"
+source "$(BSP_TOP)drivers/input/ctp/gt82x/Kconfig"
+endif #touch input device support
+
+source "$(BSP_TOP)drivers/input/ctp/nvt36xxx/Kconfig"
+

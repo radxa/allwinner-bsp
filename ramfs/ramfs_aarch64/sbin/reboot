@@ -1,0 +1,12 @@
+#!/bin/bash
+
+rtc_flag_dir="/sys/devices/platform/soc@*/*.rtc/flag"
+reboot_flags="$1"
+
+if [ -n "$reboot_flags" ]; then
+        echo "$reboot_flags" > $rtc_flag_dir
+fi
+
+echo "Rebooting system with flag: ${reboot_flags}..."
+
+busybox reboot

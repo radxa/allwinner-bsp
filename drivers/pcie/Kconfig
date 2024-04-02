@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+menu "PCIe Drivers"
+	depends on AW_BSP
+
+config AW_PCIE_RC
+	tristate "Allwinner PCIe RC controller - Host mode"
+	select PCI
+	depends on AW_BSP
+	help
+	  Enables support for the PCIe RC controller in the Allwinner SoC.
+
+config AW_PCIE_EP
+	tristate "Allwinner PCIe EP controller - Endpoint mode"
+	select PCI_ENDPOINT
+	depends on AW_BSP
+	help
+	  Enables support for the PCIe EP controller in the Allwinner SoC.
+
+endmenu

@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+menu "Device Drivers"
+
+# Minimal System
+source "$(BSP_TOP)drivers/clk/Kconfig"
+source "$(BSP_TOP)drivers/pinctrl/Kconfig"
+source "$(BSP_TOP)drivers/uart/Kconfig"
+source "$(BSP_TOP)drivers/timer/Kconfig"
+
+# Basic System
+source "$(BSP_TOP)drivers/dma/Kconfig"
+source "$(BSP_TOP)drivers/rtc/Kconfig"
+source "$(BSP_TOP)drivers/bus/Kconfig"
+source "$(BSP_TOP)drivers/dumpreg/Kconfig"
+source "$(BSP_TOP)drivers/watchdog/Kconfig"
+source "$(BSP_TOP)drivers/iommu/Kconfig"
+source "$(BSP_TOP)drivers/mbus/Kconfig"
+
+# Storage
+source "$(BSP_TOP)drivers/mmc/Kconfig"
+source "$(BSP_TOP)modules/nand/Kconfig"
+source "$(BSP_TOP)drivers/mtd/Kconfig"
+source "$(BSP_TOP)drivers/redeposit/Kconfig"
+
+# Graphics
+source "$(BSP_TOP)drivers/video/Kconfig"
+source "$(BSP_TOP)drivers/g2d/Kconfig"
+source "$(BSP_TOP)drivers/di/Kconfig"
+source "$(BSP_TOP)drivers/vin/Kconfig"
+source "$(BSP_TOP)drivers/vfe/Kconfig"
+source "$(BSP_TOP)drivers/tvd/Kconfig"
+source "$(BSP_TOP)drivers/drm/Kconfig"
+source "$(BSP_TOP)drivers/gpu/Kconfig"
+source "$(BSP_TOP)drivers/car_reverse/car_reverse_2_0/Kconfig"
+source "$(BSP_TOP)drivers/car_reverse/car_reverse_amp/Kconfig"
+
+# Multi-Media
+source "$(BSP_TOP)drivers/ve/Kconfig"
+source "$(BSP_TOP)drivers/rt-media/Kconfig"
+
+# Audio
+source "$(BSP_TOP)drivers/sound/Kconfig"
+
+# Security
+source "$(BSP_TOP)drivers/ce/Kconfig"
+source "$(BSP_TOP)drivers/smc/Kconfig"
+source "$(BSP_TOP)drivers/sid/Kconfig"
+source "$(BSP_TOP)drivers/secure_storage/Kconfig"
+source "$(BSP_TOP)drivers/drm_heap/Kconfig"
+
+# I/O Connectivity
+source "$(BSP_TOP)drivers/pcie/Kconfig"
+source "$(BSP_TOP)drivers/phy/Kconfig"
+source "$(BSP_TOP)drivers/emac/Kconfig"
+source "$(BSP_TOP)drivers/gmac/Kconfig"
+source "$(BSP_TOP)drivers/stmmac/Kconfig"
+source "$(BSP_TOP)drivers/usb/Kconfig"
+source "$(BSP_TOP)drivers/twi/Kconfig"
+source "$(BSP_TOP)drivers/spi/Kconfig"
+source "$(BSP_TOP)drivers/spi-ng/Kconfig"
+source "$(BSP_TOP)drivers/ledc/Kconfig"
+source "$(BSP_TOP)drivers/pwm/Kconfig"
+source "$(BSP_TOP)drivers/ir-tx/Kconfig"
+source "$(BSP_TOP)drivers/ir-rx/Kconfig"
+source "$(BSP_TOP)drivers/gpadc/Kconfig"
+source "$(BSP_TOP)drivers/lradc/Kconfig"
+source "$(BSP_TOP)drivers/rtp/Kconfig"
+source "$(BSP_TOP)drivers/input/Kconfig"
+source "$(BSP_TOP)drivers/ata/Kconfig"
+source "$(BSP_TOP)drivers/smartcard/Kconfig"
+source "$(BSP_TOP)drivers/wiegand/Kconfig"
+
+# Wireless
+source "$(BSP_TOP)drivers/net/Kconfig"
+source "$(BSP_TOP)drivers/bluetooth/Kconfig"
+
+# Power Management
+source "$(BSP_TOP)drivers/irqchip/Kconfig"
+source "$(BSP_TOP)drivers/standby/Kconfig"
+source "$(BSP_TOP)drivers/thermal/Kconfig"
+source "$(BSP_TOP)drivers/nvmem/Kconfig"
+source "$(BSP_TOP)drivers/pm_domain/Kconfig"
+source "$(BSP_TOP)drivers/power/Kconfig"
+source "$(BSP_TOP)drivers/cpufreq/Kconfig"
+source "$(BSP_TOP)drivers/devfreq/Kconfig"
+source "$(BSP_TOP)drivers/dsufreq/Kconfig"
+
+# AMP/XPU
+source "$(BSP_TOP)drivers/msgbox/Kconfig"
+source "$(BSP_TOP)drivers/hwspinlock/Kconfig"
+source "$(BSP_TOP)drivers/remoteproc/Kconfig"
+source "$(BSP_TOP)drivers/rpmsg/Kconfig"
+source "$(BSP_TOP)drivers/rpbuf/Kconfig"
+source "$(BSP_TOP)drivers/npu/Kconfig"
+
+# Misc
+source "$(BSP_TOP)drivers/misc/Kconfig"
+source "$(BSP_TOP)drivers/vendor_hooks/Kconfig"
+source "$(BSP_TOP)drivers/aw_trace/Kconfig"
+
+# Debugging
+source "$(BSP_TOP)drivers/crashdump/Kconfig"
+source "$(BSP_TOP)drivers/jtag/Kconfig"
+source "$(BSP_TOP)drivers/debug/Kconfig"
+
+# pstore
+source "$(BSP_TOP)drivers/pstore/Kconfig"
+
+# FS
+source "$(BSP_TOP)drivers/fs/Kconfig"
+
+#andes adaptor
+source "$(BSP_TOP)drivers/andes_adaptor/Kconfig"
+
+#awlink
+source "$(BSP_TOP)drivers/awlink/Kconfig"
+
+endmenu

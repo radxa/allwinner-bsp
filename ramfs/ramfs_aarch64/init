@@ -1,0 +1,234 @@
+#!/bin/sh
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs none /dev
+
+/sbin/insmod /lib/modules/$(uname -r)/irq-sunxi-wakeupgen.ko;
+/sbin/insmod /lib/modules/$(uname -r)/ccu-sunxi-rtc.ko;
+/sbin/insmod /lib/modules/$(uname -r)/ccu-sunxi-ng.ko;
+/sbin/insmod /lib/modules/$(uname -r)/ccu-sun50iw10.ko;
+/sbin/insmod /lib/modules/$(uname -r)/ccu-sun50iw10-r.ko;
+/sbin/insmod /lib/modules/$(uname -r)/pinctrl-sunxi.ko;
+/sbin/insmod /lib/modules/$(uname -r)/pinctrl-sun50iw10p1.ko;
+/sbin/insmod /lib/modules/$(uname -r)/pinctrl-sun50iw10p1-r.ko;
+/sbin/insmod /lib/modules/$(uname -r)/virt-dma.ko;
+/sbin/insmod /lib/modules/$(uname -r)/sunxi-dma.ko;
+/sbin/insmod /lib/modules/$(uname -r)/sunxi-uart.ko;
+/sbin/insmod /lib/modules/$(uname -r)/rtc-sunxi.ko;
+
+/sbin/insmod /lib/modules/$(uname -r)/i2c-core.ko;
+/sbin/insmod /lib/modules/$(uname -r)/i2c-dev.ko;
+/sbin/insmod /lib/modules/$(uname -r)/i2c-sunxi.ko;
+/sbin/insmod /lib/modules/$(uname -r)/sunxi-iommu.ko;
+/sbin/insmod /lib/modules/$(uname -r)/mfd-core.ko;
+/sbin/insmod /lib/modules/$(uname -r)/regmap-i2c.ko;
+/sbin/insmod /lib/modules/$(uname -r)/irq-sun8i-nmi.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp2101.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp2101-i2c.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp2101-regulator.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp2101-pek.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp803_ac_power.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp803_battery.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp803_usb_power.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp2202_battery.ko;
+/sbin/insmod /lib/modules/$(uname -r)/axp2202_usb_power.ko;
+/sbin/insmod /lib/modules/$(uname -r)/virtual.ko;
+
+exec < /dev/console > /dev/console 2>&1
+
+refind_root()
+{
+	local BOOT_NAND=/dev/nand0
+	local BOOT_EMMC=/dev/mmcblk0
+	local BOOT_NOR=/dev/mtdblock0
+	local BOOT_DEV ROOT_DEVICE
+
+	if [ -e $BOOT_NAND ]; then
+		BOOT_DEV=$BOOT_NAND
+	elif [ -e $BOOT_EMMC ]; then
+		BOOT_DEV=$BOOT_EMMC
+	elif [ -e $BOOT_NOR ]; then
+		BOOT_DEV=$BOOT_NOR
+	fi
+
+	if [ -n "$BOOT_DEV" ]; then
+		ROOT_DEVICE=`fdisk -l $BOOT_DEV | awk '/rootfs/{print "'$BOOT_DEV'p"$1}'`
+	fi
+	echo $ROOT_DEVICE
+}
+
+for parm in $(cat /proc/cmdline); do
+	case $parm in
+	ramfs)
+		RAMFS_MODE=1
+		;;
+	root=*)
+		ROOT_DEVICE=$(refind_root)
+		[ -z "$ROOT_DEVICE" ] && \
+		ROOT_DEVICE=`echo $parm | awk -F\= '{print $2}'`
+		;;
+	console=*)
+		CONSOLE_DEVICE=`echo $parm | awk -F\= '{print $2}' | awk -F\, '{print $1}'`
+		;;
+	gpt=*)
+		GPT_SUPPORT=`echo $parm | awk -F\= '{print $2}'`
+		;;
+	esac
+done
+
+if [ "x$ROOT_DEVICE" = "x" ]; then
+	ROOT_DEVICE=autoconfig
+fi
+
+echo [$0]: "getty is $CONSOLE_DEVICE"
+echo [$0]: RootDevice is \"$ROOT_DEVICE\" , GPT_SUPPORT=$GPT_SUPPORT
+
+#set the default device for autoconfig
+if [ "x$GPT_SUPPORT" = "x1" ]; then
+	NAND_DEF_DEVICE=nand0p5
+	SDMMC_DEF_DEVICE=mmcblk0p5
+else
+	NAND_DEF_DEVICE=nandd
+	SDMMC_DEF_DEVICE=mmcblk0p7
+fi
+
+# $1: the name of block device
+wait_for_ready()
+{
+	CNT=10
+	while true; do
+		if [ -b $1 ]; then
+			return 0
+		fi
+
+		echo [$0]: Wait $1 ready ...
+
+		CNT=`expr $CNT - 1`
+		if [ $CNT -eq 0 ]; then
+			echo [$0]: $1 is not available!
+			return 1
+		fi
+		sleep 1
+	done
+}
+
+# $1: The block device
+do_mount()
+{
+case $1 in
+	/dev/mtdblock*)
+		mount -o ro,noatime,nodiratime,norelatime -t squashfs $1 /mnt
+		;;
+	*)
+		e2fsck -y $1
+		mount -o rw,noatime,nodiratime,norelatime,noauto_da_alloc,barrier=0,data=ordered -t ext4 $1 /mnt
+		;;
+esac
+
+	if [ $? -ne 0 ]; then
+		echo [$0]: Failed to mount $1!
+	fi
+}
+
+load_nand()
+{
+	echo [$0]: Try to load Nand ...
+
+	NAND_MODULE=/lib/modules/$(uname -r)/nand.ko
+	if [ ! -f $NAND_MODULE ]; then
+		echo [$0]: $NAND_MODULE does not exist!
+#		return 1
+	fi
+
+	insmod $NAND_MODULE
+	if [ $? -ne 0 ]; then
+		echo [$0]: $NAND_MODULE is invalid!
+#		return 2
+	fi
+	wait_for_ready $1
+	if [ $? -eq 0 ]; then
+		do_mount $1
+	fi
+}
+
+load_emmc()
+{
+	echo [$0]: Try to load EMMC ...
+
+	EMMC_MODULE=/lib/modules/$(uname -r)/sunxi_mmc_host.ko
+	if [ ! -f $EMMC_MODULE ]; then
+		echo [$0]: $EMMC_MODULE does not exist!
+#		return 1
+	fi
+
+	insmod $EMMC_MODULE
+	if [ $? -ne 0 ]; then
+		echo [$0]: $EMMC_MODULE is invalid!
+#		return 2
+	fi
+
+	wait_for_ready $1
+	if [ $? -eq 0 ]; then
+		local root_dev=$(refind_root)
+		[ -z "$root_dev" ] && root_dev=$1
+		do_mount $root_dev
+	fi
+}
+
+load_mtdblock()
+{
+	echo [$0]: Try to load nor ...
+
+	NOR_MODULE=/lib/modules/$(uname -r)/sunxi-spif.ko
+	if [ ! -f $NOR_MODULE ]; then
+		echo [$0]: $NOR_MODULE does not exist!
+#		return 1
+	fi
+
+	insmod $NOR_MODULE
+	if [ $? -ne 0 ]; then
+		echo [$0]: $NOR_MODULE is invalid!
+#		return 2
+	fi
+
+	wait_for_ready $1
+	if [ $? -eq 0 ]; then
+		local root_dev=$(refind_root)
+		[ -z "$root_dev" ] && root_dev=$1
+		do_mount $root_dev
+	fi
+}
+
+case $ROOT_DEVICE in
+	/dev/nand*|/dev/system)
+		load_nand $ROOT_DEVICE
+		;;
+	/dev/mmc*)
+		load_emmc $ROOT_DEVICE
+		;;
+	/dev/mtdblock*)
+		load_mtdblock $ROOT_DEVICE
+		;;
+	autoconfig*)
+		sleep 1;
+		echo [$0]: default device $SDMMC_DEF_DEVICE $NAND_DEF_DEVICE
+		if cat /proc/partitions|grep "$SDMMC_DEF_DEVICE" >/dev/null;then
+			magic_num=$(hexdump -s 1292 -n 2 -x /dev/$SDMMC_DEF_DEVICE|head -1|awk '{print $2 }')
+			echo $magic_num|grep "f30a" >/dev/null
+			if [ $? -eq 0 ]; then
+				echo [$0]: "magic_num[f30a] match!!!"
+			else
+				load_emmc /dev/$SDMMC_DEF_DEVICE
+			fi
+		else
+			load_nand /dev/$NAND_DEF_DEVICE
+		fi
+		;;
+	*)
+		echo [$0]: "Use default type"
+		;;
+esac
+
+[ -x /mnt/init ] && exec switch_root /mnt /init
+/sbin/getty -L $CONSOLE_DEVICE 115200 vt100 -n -l /bin/ash

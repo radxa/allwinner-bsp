@@ -1,0 +1,41 @@
+From e70d42c669d5e55b88a5e1dde22e7cf1421bfbeb Mon Sep 17 00:00:00 2001
+From: Enric Balletbo i Serra <enric.balletbo@collabora.com>
+Date: Fri, 25 Jun 2021 08:24:48 +0200
+Subject: [PATCH 7/7] soc: mediatek: mmsys: Fix missing UFOE component in mt8173
+ table routing
+
+The UFOE (data compression engine) component needs to be enabled to have
+the imgtec gpu driver working. If we don't enable it we see a black screen.
+Looks like when we switched to use and array for setting the routing
+registers in commit 440147639ac7 ("soc: mediatek: mmsys: Use an array for
+setting the routing registers") we missed to add this component in the new
+routing table, it was present before that commit, so fix it by adding
+this component in the mt8173 routing table.
+
+Fixes: 440147639ac7 ("soc: mediatek: mmsys: Use an array for setting the routing registers")
+Signed-off-by: Enric Balletbo i Serra <enric.balletbo@collabora.com>
+Tested-by: Eizan Miyamoto <eizan@chromium.org>
+Cc: <stable@vger.kernel.org>
+Link: https://lore.kernel.org/r/20210625062448.3462177-1-enric.balletbo@collabora.com
+Signed-off-by: Matthias Brugger <matthias.bgg@gmail.com>
+---
+ drivers/soc/mediatek/mtk-mmsys.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/soc/mediatek/mtk-mmsys.h b/drivers/soc/mediatek/mtk-mmsys.h
+index a760a34e6eca..11388961dded 100644
+--- a/drivers/soc/mediatek/mtk-mmsys.h
++++ b/drivers/soc/mediatek/mtk-mmsys.h
+@@ -209,6 +209,9 @@ static const struct mtk_mmsys_routes mmsys_default_routing_table[] = {
+ 	}, {
+ 		DDP_COMPONENT_RDMA2, DDP_COMPONENT_DSI3,
+ 		DISP_REG_CONFIG_DSIO_SEL_IN, DSI3_SEL_IN_RDMA2
++	}, {
++		DDP_COMPONENT_UFOE, DDP_COMPONENT_DSI0,
++		DISP_REG_CONFIG_DISP_UFOE_MOUT_EN, UFOE_MOUT_EN_DSI0,
+ 	}
+ };
+ 
+-- 
+2.25.1
+

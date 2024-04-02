@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Allwinner audio driver Kconfig
+#
+# Copyright(c) 2022-2027 Allwinnertech Co., Ltd.
+
+menu "SOUND Drivers"
+	depends on AW_BSP
+
+if SND_SOC
+	source "$(BSP_TOP)drivers/sound/codecs/Kconfig"
+	source "$(BSP_TOP)drivers/sound/platform/Kconfig"
+endif
+
+endmenu

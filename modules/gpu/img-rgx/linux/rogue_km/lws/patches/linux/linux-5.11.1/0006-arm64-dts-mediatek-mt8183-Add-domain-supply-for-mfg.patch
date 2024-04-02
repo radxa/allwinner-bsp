@@ -1,0 +1,44 @@
+From 21eb284b72b4e34a3b473d7c70f27742eb7cb2a6 Mon Sep 17 00:00:00 2001
+From: Hsin-Yi Wang <hsinyi@chromium.org>
+Date: Fri, 29 Jan 2021 18:12:08 +0800
+Subject: [PATCH 6/9] arm64: dts: mediatek: mt8183: Add domain supply for mfg
+
+Add domain supply node.
+
+Signed-off-by: Hsin-Yi Wang <hsinyi@chromium.org>
+---
+ arch/arm64/boot/dts/mediatek/mt8183-kukui.dtsi | 4 ++++
+ arch/arm64/boot/dts/mediatek/mt8183.dtsi       | 2 +-
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/mediatek/mt8183-kukui.dtsi b/arch/arm64/boot/dts/mediatek/mt8183-kukui.dtsi
+index bf2ad1294dd3..ebd53755d538 100644
+--- a/arch/arm64/boot/dts/mediatek/mt8183-kukui.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt8183-kukui.dtsi
+@@ -709,6 +709,10 @@ cros_ec {
+ 	};
+ };
+ 
++&mfg {
++	domain-supply = <&mt6358_vgpu_reg>;
++};
++
+ &soc_data {
+ 	status = "okay";
+ };
+diff --git a/arch/arm64/boot/dts/mediatek/mt8183.dtsi b/arch/arm64/boot/dts/mediatek/mt8183.dtsi
+index 5b782a4769e7..bda283fa9245 100644
+--- a/arch/arm64/boot/dts/mediatek/mt8183.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt8183.dtsi
+@@ -360,7 +360,7 @@ power-domain@MT8183_POWER_DOMAIN_MFG_ASYNC {
+ 					#size-cells = <0>;
+ 					#power-domain-cells = <1>;
+ 
+-					power-domain@MT8183_POWER_DOMAIN_MFG {
++					mfg: power-domain@MT8183_POWER_DOMAIN_MFG {
+ 						reg = <MT8183_POWER_DOMAIN_MFG>;
+ 						#address-cells = <1>;
+ 						#size-cells = <0>;
+-- 
+2.25.1
+

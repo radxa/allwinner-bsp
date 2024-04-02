@@ -1,0 +1,32 @@
+From 5697c1d41706ff8afd1a8bfc2b0747adaeb5572b Mon Sep 17 00:00:00 2001
+From: Bilal Wasim <bilalwasim676@gmail.com>
+Date: Mon, 1 Feb 2021 17:14:15 +0500
+Subject: [PATCH 8/9] soc: mediatek: pm-domains: Add domain_supply cap for
+ mfg_async PD
+
+The mfg_async power domain in mt8173 is used to power up imgtec
+gpu. This domain requires the da9211 regulator to be enabled before
+the power domain can be enabled successfully.
+
+Signed-off-by: Bilal Wasim <Bilal.Wasim@imgtec.com>
+Reviewed-by: Hsin-Yi Wang <hsinyi@chromium.org>
+Reported-by: kernel test robot <lkp@intel.com>
+---
+ drivers/soc/mediatek/mt8173-pm-domains.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/soc/mediatek/mt8173-pm-domains.h b/drivers/soc/mediatek/mt8173-pm-domains.h
+index 3e8ee5dabb43..065b8195e7d6 100644
+--- a/drivers/soc/mediatek/mt8173-pm-domains.h
++++ b/drivers/soc/mediatek/mt8173-pm-domains.h
+@@ -63,6 +63,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8173[] = {
+ 		.ctl_offs = SPM_MFG_ASYNC_PWR_CON,
+ 		.sram_pdn_bits = GENMASK(11, 8),
+ 		.sram_pdn_ack_bits = 0,
++		.caps = MTK_SCPD_DOMAIN_SUPPLY,
+ 	},
+ 	[MT8173_POWER_DOMAIN_MFG_2D] = {
+ 		.sta_mask = PWR_STATUS_MFG_2D,
+-- 
+2.25.1
+

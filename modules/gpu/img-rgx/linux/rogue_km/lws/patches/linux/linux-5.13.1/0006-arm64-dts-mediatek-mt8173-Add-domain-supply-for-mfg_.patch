@@ -1,0 +1,65 @@
+From fc0217b9bb228fab74365df690fc26f29b0ef2b6 Mon Sep 17 00:00:00 2001
+From: Bilal Wasim <bilalwasim676@gmail.com>
+Date: Mon, 1 Feb 2021 17:14:16 +0500
+Subject: [PATCH 6/7] arm64: dts: mediatek: mt8173: Add domain supply for
+ mfg_async
+
+da9211 regulator needs to be enabled before enabling the mfg_async power
+domain. Otherwise the subdomain is not enabled and causes failure in
+imgtec gpu driver boot.
+
+Add the "domain-supply" property to the "mfg_async" node in DT.
+
+Signed-off-by: Bilal Wasim <Bilal.Wasim@imgtec.com>
+---
+ arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi | 4 ++++
+ arch/arm64/boot/dts/mediatek/mt8173-evb.dts  | 4 ++++
+ arch/arm64/boot/dts/mediatek/mt8173.dtsi     | 2 +-
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi b/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi
+index 77127a4ecf77..f182dbb39389 100644
+--- a/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi
+@@ -157,6 +157,10 @@ hdmi_connector_in: endpoint {
+ 	};
+ };
+ 
++&mfg_async {
++	domain-supply = <&da9211_vgpu_reg>;
++};
++
+ &cec {
+ 	status = "okay";
+ };
+diff --git a/arch/arm64/boot/dts/mediatek/mt8173-evb.dts b/arch/arm64/boot/dts/mediatek/mt8173-evb.dts
+index f6a1738dfbaa..4fa1e93302c7 100644
+--- a/arch/arm64/boot/dts/mediatek/mt8173-evb.dts
++++ b/arch/arm64/boot/dts/mediatek/mt8173-evb.dts
+@@ -62,6 +62,10 @@ usb_p0_vbus: regulator@1 {
+ 	};
+ };
+ 
++&mfg_async {
++	domain-supply = <&da9211_vgpu_reg>;
++};
++
+ &cec {
+ 	status = "okay";
+ };
+diff --git a/arch/arm64/boot/dts/mediatek/mt8173.dtsi b/arch/arm64/boot/dts/mediatek/mt8173.dtsi
+index 189d2c3b154c..3e8d4fa6e8d4 100644
+--- a/arch/arm64/boot/dts/mediatek/mt8173.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt8173.dtsi
+@@ -510,7 +510,7 @@ power-domain@MT8173_POWER_DOMAIN_USB {
+ 					reg = <MT8173_POWER_DOMAIN_USB>;
+ 					#power-domain-cells = <0>;
+ 				};
+-				power-domain@MT8173_POWER_DOMAIN_MFG_ASYNC {
++				mfg_async: power-domain@MT8173_POWER_DOMAIN_MFG_ASYNC {
+ 					reg = <MT8173_POWER_DOMAIN_MFG_ASYNC>;
+ 					clocks = <&clk26m>;
+ 					clock-names = "mfg";
+-- 
+2.25.1
+

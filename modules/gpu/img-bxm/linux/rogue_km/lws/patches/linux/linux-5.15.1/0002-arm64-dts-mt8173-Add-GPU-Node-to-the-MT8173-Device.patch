@@ -1,0 +1,110 @@
+From a871f9d976aa4759169f4418f69ebe7269930ad8 Mon Sep 17 00:00:00 2001
+From: Ravi Kiri <ravi.kiri@imgtec.com>
+Date: Sat, 5 Feb 2022 17:41:35 +0000
+Subject: [PATCH 2/3] arm64: dts: mt8173: Add GPU Node to the MT8173 Device 
+ Tree
+
+Added GPU node to the MT8173 SoC device tree file and enabled the
+GPU device for MT8173-Elm board. This includes enabling the device
+by setting status to "okay", providing respective "operating-points"
+etc.
+
+Also added the "mfg-async_supply" property in the "scpsys" node for
+ELM board because this supply is used to power on the GPU.
+
+These DT nodes are taken from the Google Chrome-OS Linux sources,
+
+  URL=chromium-review.googlesource.com/admin/repos/chromiumos/third_party/kernel
+  COMMIT_ID=2e3e46b91da4aac56e9679141a803849019edf42
+
+On top of this commit, we made the following changes,
+  - Removed the redundant "mfgsys@13fff000" node as the imgtec mtk system driver
+    used the "reg" property of "mfgsys-gpu@13000000" to get its base address.
+  - Used macros for "cooling-device" property instead of hardcoded constants for
+    better readability.
+
+Signed-off-by: Ravi Kiri <ravi.kiri@imgtec.com>
+---
+ arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi | 13 ++++++++
+ arch/arm64/boot/dts/mediatek/mt8173.dtsi     | 34 ++++++++++++++++++++
+ 2 files changed, 47 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi b/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi
+index e666ebb28980..ee0eddfeed49 100644
+--- a/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt8173-elm.dtsi
+@@ -217,6 +217,19 @@ &dpi0 {
+ 	status = "okay";
+ };
+ 
++&gpu {
++	mfgsys-power-supply = <&da9211_vgpu_reg>;
++	operating-points = <
++		253500 1000000
++		299000 1000000
++		396500 1000000
++		455000 1000000
++		494000 1130000
++		598000 1130000
++	>;
++	status = "okay";
++};
++
+ &hdmi0 {
+ 	status = "okay";
+ 	ports {
+diff --git a/arch/arm64/boot/dts/mediatek/mt8173.dtsi b/arch/arm64/boot/dts/mediatek/mt8173.dtsi
+index d9e005ae5bb0..1fcb7a2262c2 100644
+--- a/arch/arm64/boot/dts/mediatek/mt8173.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt8173.dtsi
+@@ -317,6 +317,12 @@ THERMAL_NO_LIMIT>,
+ 							  THERMAL_NO_LIMIT>;
+ 					contribution = <1024>;
+ 				};
++				map2 {
++					trip = <&target>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT
++							  THERMAL_NO_LIMIT>;
++					contribution = <2048>;
++				};
+ 			};
+ 		};
+ 	};
+@@ -989,6 +995,34 @@ u2port1: usb-phy@11291000 {
+ 			};
+ 		};
+ 
++		gpu: mfgsys-gpu@13000000 {
++			compatible = "mediatek,mt8173-gpu";
++			reg = <0 0x13000000 0 0xffff>, <0 0x13fff000 0 0x1000>;
++			power-domains =	<&spm MT8173_POWER_DOMAIN_MFG>;
++			clocks = <&apmixedsys CLK_APMIXED_MMPLL>,
++					 <&topckgen CLK_TOP_MEM_MFG_IN_SEL>,
++					 <&topckgen CLK_TOP_AXI_MFG_IN_SEL>,
++					 <&topckgen CLK_TOP_AXI_SEL>,
++					 <&topckgen CLK_TOP_MEM_SEL>,
++					 <&topckgen CLK_TOP_MFG_SEL>,
++					 <&topckgen CLK_TOP_MMPLL>,
++					 <&clk26m>;
++			clock-names = "mmpll_clk",
++						  "mfg_mem_in_sel",
++						  "mfg_axi_in_sel",
++						  "top_axi",
++						  "top_mem",
++						  "top_mfg",
++						  "top_mmpll",
++						  "clk26m";
++			interrupts = <GIC_SPI 217 IRQ_TYPE_LEVEL_LOW>;
++			interrupt-names = "RGX";
++			status = "disabled";
++			#cooling-cells = <2>;
++			#cooling-min-level = <0>;
++			#cooling-max-level = <3>;
++		};
++
+ 		mmsys: syscon@14000000 {
+ 			compatible = "mediatek,mt8173-mmsys", "syscon";
+ 			reg = <0 0x14000000 0 0x1000>;
+-- 
+2.25.1
+

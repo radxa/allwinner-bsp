@@ -1,0 +1,28 @@
+ctp {
+		compatible = "allwinner,ft5x_ts";
+		reg = <0x38>;
+		device_type = "ctp";
+		status = "okay";
+		ctp_name = "ft5x_ts";
+		ctp_twi_id = <0x0>;
+		ctp_twi_addr = <0x38>;
+		ctp_screen_max_x = <1200>;
+		ctp_screen_max_y = <2000>;
+		ctp_revert_x_flag = <0>;
+		ctp_revert_y_flag = <0>;
+
+		ctp_exchange_x_y_flag = <0x0>;
+		ctp_int_port = <&pio PH 9 GPIO_ACTIVE_LOW>;
+		ctp_wakeup = <&pio PH 10 GPIO_ACTIVE_LOW>;
+		ctp-supply = <&reg_cldo2>;
+		ctp_power_ldo_vol = <3300>;
+	};
+
+lcd:
+    lcd_dclk_freq       = <162>;
+    lcd_hbp             = <20>;
+	lcd_ht              = <1232>;
+	lcd_hspw            = <8>;
+	lcd_vbp             = <40>;
+	lcd_vt              = <2195>; 
+	lcd_vspw            = <8>;

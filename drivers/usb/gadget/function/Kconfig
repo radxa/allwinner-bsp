@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+if USB_GADGET
+
+config USB_SUNXI_CONFIGFS_F_HID
+	tristate "Allwinner HID function"
+        depends on USB_SUNXI_GADGET
+	depends on USB_CONFIGFS
+	select USB_F_HID
+	help
+	  The HID function driver provides generic emulation of USB
+	  Human Interface Devices (HID).
+
+	  For more information, see Documentation/usb/gadget_hid.rst.
+
+endif # USB_GADGET

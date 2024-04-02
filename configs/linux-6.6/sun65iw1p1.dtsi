@@ -1,0 +1,236 @@
+// SPDX-License-Identifier: (GPL-2.0+ or MIT)
+#include <dt-bindings/clock/sun65iw1-ccu.h>
+#include <dt-bindings/clock/sun65iw1-rtc.h>
+#include <dt-bindings/clock/sun65iw1-r-ccu.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/gpio/sun4i-gpio.h>
+#include <dt-bindings/reset/sun65iw1-ccu.h>
+#include <dt-bindings/reset/sun65iw1-r-ccu.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/phy/phy.h>
+#include <dt-bindings/thermal/thermal.h>
+
+/ {
+	model = "sun65iw1";
+	interrupt-parent = <&gic>;
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	/* avoid panic when memory-node err(from uboot) */
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x00000000 0x40000000 0x00000000 0x20000000>;
+	};
+
+	cpus {
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a53";
+			reg = <0x0 0x0>;
+		};
+	};
+
+	dcxo24M: dcxo24M_clk {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+		clock-frequency = <24000000>;
+		clock-output-names = "dcxo24M";
+	};
+
+	rc_16m: rc16m_clk {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+		clock-frequency = <16000000>;
+		clock-accuracy = <300000000>;
+		clock-output-names = "rc-16m";
+	};
+
+	ext_32k: ext32k_clk {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+		clock-frequency = <32768>;
+		clock-output-names = "ext-32k";
+	};
+
+	gic: interrupt-controller@8000000{
+		compatible = "arm,cortex-a15-gic", "arm,cortex-a9-gic";
+		#interrupt-cells = <3>;
+		#address-cells = <0>;
+		device_type = "gic";
+		interrupt-controller;
+		reg = <0x0 0x08001000 0 0x1000>, /* GIC Dist */
+			<0x0 0x08002000 0 0x2000>, /* GIC CPU */
+			<0x0 0x08004000 0 0x2000>, /* GIC VCPU Control */
+			<0x0 0x08006000 0 0x2000>; /* GIC VCPU */
+		interrupts = <GIC_PPI 9 0xf04>; /* GIC Maintenence IRQ */
+		interrupt-parent = <&gic>;
+	};
+
+	timer_arch {
+		compatible = "arm,armv8-timer";
+		interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>,
+			     <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>,
+			     <GIC_PPI 11 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>,
+			     <GIC_PPI 10 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>;
+		clock-frequency = <24000000>;
+		interrupt-parent = <&gic>;
+		arm,no-tick-in-suspend;
+	};
+
+	soc: soc@3000000 {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		rtc_ccu: rtc_ccu@7200000 {
+			compatible = "allwinner,sun65iw1-rtc-ccu";
+			reg = <0x0 0x07200000 0x0 0x400>;
+			#clock-cells = <1>;
+			#reset-cells = <1>;
+		};
+
+		ccu: ccu@3008000 {
+			compatible = "allwinner,sun65iw1-ccu";
+			reg = <0x0 0x03008000 0x0 0x2000>;
+			clocks = <&dcxo24M>, <&rtc_ccu CLK_OSC32K>, <&rc_16m>;
+			clock-names = "hosc", "losc", "iosc";
+			#clock-cells = <1>;
+			#reset-cells = <1>;
+		};
+
+		r_ccu: r_ccu@7030000 {
+			compatible = "allwinner,sun65iw1-r-ccu";
+			reg = <0x0 0x07030000 0x0 0x230>;
+			#clock-cells = <1>;
+			#reset-cells = <1>;
+		};
+
+		pio: pinctrl@3000000 {
+			compatible = "allwinner,sun65iw1-pinctrl";
+			reg = <0x0 0x03000000 0x0 0x800>;
+			interrupts = <GIC_SPI 134 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 138 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_APB1>, <&dcxo24M>, <&rtc_ccu CLK_OSC32K>;
+			clock-names = "apb", "hosc", "losc";
+			gpio-controller;
+			#gpio-cells = <3>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+		};
+
+		uart0: uart@2B00000 {
+			compatible = "allwinner,uart-v100";
+			reg = <0x0 0x02B00000 0x0 0x400>;
+			interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_BUS_UART0>;
+			resets = <&ccu RST_BUS_UART0>;
+			uart0_port = <0>;
+			uart0_type = <2>;
+		};
+
+		rtc: rtc@7200000 {
+			compatible = "allwinner,rtc-v201";
+			device_type = "rtc";
+			wakeup-source;
+			reg = <0x0 0x07200000 0x0 0x320>;
+			interrupts = <GIC_SPI 232 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&r_ccu CLK_RTC>, <&rtc_ccu CLK_RTC_1K>, <&rtc_ccu CLK_RTC_SPI>;
+			clock-names = "r-ahb-rtc", "rtc-1k", "rtc-spi";
+			resets = <&r_ccu RST_BUS_RTC>;
+			gpr_cur_pos = <6>;
+			gpr_bootcount_pos = <7>;
+		};
+
+		pwm0: pwm0@2810000 {
+			#pwm-cells = <0x3>;
+			compatible = "allwinner,sunxi-pwm-v201";
+			reg = <0x0 0x02810000 0x0 0x400>;
+			clocks = <&ccu CLK_APB_PWM0>;
+			interrupts = <GIC_SPI 26 IRQ_TYPE_LEVEL_HIGH>;
+			resets = <&ccu RST_BUS_PWM0>;
+			pwm-number = <4>;
+			pwm-base = <0x0>;
+			sunxi-pwms = <&pwm0_0>, <&pwm0_1>, <&pwm0_2>, <&pwm0_3>;
+			status = "disabled";
+		};
+
+		pwm0_0: pwm0_0@2810010 {
+			compatible = "allwinner,sunxi-pwm0";
+			pinctrl-names = "active", "sleep";
+			reg = <0x0 0x02810010 0x0 0x4>;
+			reg_base = <0x02810000>;
+			status = "disabled";
+		};
+
+		pwm0_1: pwm0_1@2810011 {
+			compatible = "allwinner,sunxi-pwm1";
+			pinctrl-names = "active", "sleep";
+			reg = <0x0 0x02810011 0x0 0x4>;
+			reg_base = <0x02810000>;
+			status = "disabled";
+		};
+
+		pwm0_2: pwm0_2@2810012 {
+			compatible = "allwinner,sunxi-pwm2";
+			pinctrl-names = "active", "sleep";
+			reg = <0x0 0x02810012 0x0 0x4>;
+			reg_base = <0x02810000>;
+			status = "disabled";
+		};
+
+		pwm0_3: pwm0_3@2810013 {
+			compatible = "allwinner,sunxi-pwm3";
+			pinctrl-names = "active", "sleep";
+			reg = <0x0 0x02810013 0x0 0x4>;
+			reg_base = <0x02810000>;
+			status = "disabled";
+		};
+
+		s_pwm: s_pwm@70a0000 {
+			#pwm-cells = <0x3>;
+			compatible = "allwinner,sunxi-pwm-v202";
+			reg = <0x0 0x070a0000 0x0 0x400>;
+			clocks = <&r_ccu CLK_R_PWM>,<&r_ccu CLK_BUS_R_PWM>;
+			interrupts = <GIC_SPI 243 IRQ_TYPE_LEVEL_HIGH>;
+			clock-names = "clk_pwm","clk_bus_pwm";
+			resets = <&r_ccu RST_BUS_R_PWM>;
+			pwm-number = <1>;
+			pwm-base = <0x4>;
+			sunxi-pwms = <&s_pwm0>;
+			status = "disabled";
+		};
+
+		s_pwm0: s_pwm0@70a0010 {
+			compatible = "allwinner,sunxi-pwm20";
+			pinctrl-names = "active", "sleep";
+			reg = <0x0 0x070a0010 0x0 0x4>;
+			reg_base = <0x070a0000>;
+			status = "disabled";
+		};
+
+		dma: dma-controller@3228000 {
+			compatible = "allwinner,dma-v107";
+			reg = <0x0 0x3228000 0x0 0x2000>;
+			interrupts = <GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_AHB_DMA>, <&ccu CLK_MBUS_DMAC0_GATE>;
+			clock-names = "bus", "mbus";
+			dma-channels = <8>;
+			dma-requests = <64>;
+			resets = <&ccu RST_BUS_DMAC0>;
+			#dma-cells = <1>;
+		};
+
+		dump_reg:dump_reg@40000 {
+			compatible = "allwinner,sunxi-dump-reg";
+			reg = <0x0 0x00040000 0x0 0x0004>;
+		};
+	};
+};

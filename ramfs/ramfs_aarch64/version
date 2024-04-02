@@ -1,0 +1,4 @@
+arch: aarch64
+type: ramfs
+version: 1.0.0
+toolchain: 

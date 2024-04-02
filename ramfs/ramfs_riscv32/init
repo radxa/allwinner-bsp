@@ -1,0 +1,144 @@
+#!/bin/sh
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs none /dev
+
+exec < /dev/console > /dev/console 2>&1
+
+for parm in $(cat /proc/cmdline); do
+	case $parm in
+	ramfs)
+		RAMFS_MODE=1
+		;;
+	root=*)
+		ROOT_DEVICE=`echo $parm | awk -F\= '{print $2}'`
+		;;
+	console=*)
+		CONSOLE_DEVICE=`echo $parm | awk -F\= '{print $2}' | awk -F\, '{print $1}'`
+		;;
+	gpt=*)
+		GPT_SUPPORT=`echo $parm | awk -F\= '{print $2}'`
+		;;
+	esac
+done
+
+if [ "x$ROOT_DEVICE" = "x" ]; then
+	echo 0x42500000 0x47 > /sys/class/sunxi_dump/write;
+	ROOT_DEVICE=autoconfig
+fi
+
+echo [$0]: "getty is $CONSOLE_DEVICE"
+echo [$0]: RootDevice is \"$ROOT_DEVICE\" , GPT_SUPPORT=$GPT_SUPPORT
+
+#set the default device for autoconfig
+if [ "x$GPT_SUPPORT" = "x1" ]; then
+	NAND_DEF_DEVICE=nand0p5
+	SDMMC_DEF_DEVICE=mmcblk0p5
+else
+	NAND_DEF_DEVICE=nandd
+	SDMMC_DEF_DEVICE=mmcblk0p7
+fi
+
+# $1: the name of block device
+wait_for_ready()
+{
+	CNT=2
+	while true; do
+		if [ -b $1 ]; then
+			return 0
+		fi
+
+		echo [$0]: Wait $1 ready ...
+
+		CNT=`expr $CNT - 1`
+		if [ $CNT -eq 0 ]; then
+			echo [$0]: $1 is not available!
+			return 1
+		fi
+		sleep 1
+	done
+}
+
+# $1: The block device
+do_mount()
+{
+	e2fsck -y $1
+	mount -o rw,noatime,nodiratime,norelatime,noauto_da_alloc,barrier=0,data=ordered -t ext4 $1 /mnt
+	if [ $? -ne 0 ]; then
+		echo [$0]: Failed to mount $1!
+	fi
+}
+
+load_nand()
+{
+	echo [$0]: Try to load Nand ...
+
+	NAND_MODULE=/lib/modules/$(uname -r)/nand.ko
+	if [ ! -f $NAND_MODULE ]; then
+		echo [$0]: $NAND_MODULE does not exist!
+#		return 1
+	fi
+
+	insmod $NAND_MODULE
+	if [ $? -ne 0 ]; then
+		echo [$0]: $NAND_MODULE is invalid!
+#		return 2
+	fi
+	wait_for_ready $1
+	if [ $? -eq 0 ]; then
+		do_mount $1
+	fi
+}
+
+load_emmc()
+{
+	echo [$0]: Try to load EMMC ...
+
+	EMMC_MODULE=/lib/modules/$(uname -r)/sunxi_mmc_host.ko
+	if [ ! -f $EMMC_MODULE ]; then
+		echo [$0]: $EMMC_MODULE does not exist!
+#		return 1
+	fi
+
+	insmod $EMMC_MODULE
+	if [ $? -ne 0 ]; then
+		echo [$0]: $EMMC_MODULE is invalid!
+#		return 2
+	fi
+
+	wait_for_ready $1
+	if [ $? -eq 0 ]; then
+		do_mount $1
+	fi
+}
+
+case $ROOT_DEVICE in
+	/dev/nand*|/dev/system)
+		load_nand $ROOT_DEVICE
+		;;
+	/dev/mmc*)
+		load_emmc $ROOT_DEVICE
+		;;
+	autoconfig*)
+		sleep 1;
+		echo [$0]: default device $SDMMC_DEF_DEVICE $NAND_DEF_DEVICE
+		if cat /proc/partitions|grep "$SDMMC_DEF_DEVICE" >/dev/null;then
+			magic_num=$(hexdump -s 1292 -n 2 -x /dev/$SDMMC_DEF_DEVICE|head -1|awk '{print $2 }')
+			echo $magic_num|grep "f30a" >/dev/null
+			if [ $? -eq 0 ]; then
+				echo [$0]: "magic_num[f30a] match!!!"
+			else
+				load_emmc /dev/$SDMMC_DEF_DEVICE
+			fi
+		else
+			load_nand /dev/$NAND_DEF_DEVICE
+		fi
+		;;
+	*)
+		echo [$0]: "Use default type"
+		;;
+esac
+
+[ -x /mnt/sbin/init ] && exec switch_root /mnt /sbin/init
+/sbin/getty -L $CONSOLE_DEVICE 115200 vt100 -n -l /bin/ash
