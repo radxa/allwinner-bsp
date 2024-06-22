@@ -15,9 +15,9 @@
 #include <drm/drm_modes.h>
 
 #include <linux/platform_device.h>
-#include <video/sunxi_display2.h>
 #include <video/drv_hdmi.h>
 
+#include "include.h"
 #include "lowlevel_hdmi20/dw_i2cm.h"
 #include "lowlevel_hdmi20/dw_mc.h"
 #include "lowlevel_hdmi20/dw_avp.h"
@@ -32,107 +32,58 @@
 #include "lowlevel_hdmi20/phy_inno.h"
 #include "lowlevel_hdmi20/phy_snps.h"
 
-/************************************************
- * @desc: define sunxi hdmi private marco
- ************************************************/
-/* define only use hdmi14 */
-#if (IS_ENABLED(CONFIG_ARCH_SUN8IW16))
-#define SUXNI_HDMI_USE_HDMI14
-#endif
-
-/* define use color space convert */
-#if (IS_ENABLED(CONFIG_ARCH_SUN8IW16) || IS_ENABLED(CONFIG_ARCH_SUN55IW3))
-#define SUNXI_HDMI20_USE_CSC
-#endif
-
-/* define use tcon pad */
-#if (IS_ENABLED(CONFIG_ARCH_SUN8IW16) || \
-	IS_ENABLED(CONFIG_ARCH_SUN8IW20)  || \
-	IS_ENABLED(CONFIG_ARCH_SUN20IW1)  || \
-	IS_ENABLED(CONFIG_ARCH_SUN50IW9))
-#define SUNXI_HDMI20_USE_TCON_PAD
-#endif
-
-/* define use hdmi phy model */
-#if (IS_ENABLED(CONFIG_ARCH_SUN8IW20))
-	#ifndef SUNXI_HDMI20_PHY_AW
-	#define SUNXI_HDMI20_PHY_AW   /* allwinner phy */
-	#endif
-#elif (IS_ENABLED(CONFIG_ARCH_SUN55IW3))
-	#ifndef SUNXI_HDMI20_PHY_INNO
-	#define SUNXI_HDMI20_PHY_INNO /* innosilicon phy */
-	#endif
-#else
-	#ifndef SUNXI_HDMI20_PHY_SNPS
-	#define SUNXI_HDMI20_PHY_SNPS /* synopsys phy */
-	#endif
-#endif
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_HDCP14) || IS_ENABLED(CONFIG_AW_HDMI20_HDCP22)
-#define SUNXI_HDMI20_USE_HDCP
-#endif
-
-#define SUNXI_HDMI20_TMDS_CLK_MAX		(340000)
-
 #define SUNXI_HDMI_ENABLE   			(0x1)
 #define SUNXI_HDMI_DISABLE  			(0x0)
 
-#define	DISP_CONFIG_UPDATE_NULL			(0x0)
-#define	DISP_CONFIG_UPDATE_MODE		    BIT(0)
-#define	DISP_CONFIG_UPDATE_FORMAT		BIT(1)
-#define	DISP_CONFIG_UPDATE_BITS			BIT(2)
-#define	DISP_CONFIG_UPDATE_EOTF		    BIT(3)
-#define	DISP_CONFIG_UPDATE_CS			BIT(4)
-#define	DISP_CONFIG_UPDATE_DVI			BIT(5)
-#define	DISP_CONFIG_UPDATE_RANGE		BIT(6)
-#define	DISP_CONFIG_UPDATE_SCAN		    BIT(7)
-#define	DISP_CONFIG_UPDATE_RATIO		BIT(8)
+enum sunxi_hdmi_color_capability {
+	SUNXI_COLOR_RGB888_8BITS    = 0,
+	SUNXI_COLOR_YUV444_8BITS    = 1,
+	SUNXI_COLOR_YUV422_8BITS    = 2,
+	SUNXI_COLOR_YUV420_8BITS    = 3,
+	SUNXI_COLOR_RGB888_10BITS   = 4,
+	SUNXI_COLOR_YUV444_10BITS   = 5,
+	SUNXI_COLOR_YUV422_10BITS   = 6,
+	SUNXI_COLOR_YUV420_10BITS   = 7,
+	SUNXI_COLOR_RGB888_12BITS   = 8,
+	SUNXI_COLOR_YUV444_12BITS   = 9,
+	SUNXI_COLOR_YUV422_12BITS   = 10,
+	SUNXI_COLOR_YUV420_12BITS   = 11,
+	SUNXI_COLOR_RGB888_16BITS   = 12,
+	SUNXI_COLOR_YUV444_16BITS   = 13,
+	SUNXI_COLOR_YUV422_16BITS   = 14,
+	SUNXI_COLOR_YUV420_16BITS   = 15,
+	SUNXI_COLOR_MAX_MASK,
+};
 
-#define SUNXI_KFREE_POINT(p)    \
-	do {                        \
-		if (p) {                \
-			kfree(p);           \
-			p = NULL;           \
-		}                       \
-	} while (0)
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_CEC)
 enum sunxi_cec_irq_state_e {
-	SUNXI_CEC_IRQ_NULL          = 0x0,
-	SUNXI_CEC_IRQ_DONE          = IH_CEC_STAT0_DONE_MASK,
-	SUNXI_CEC_IRQ_EOM           = IH_CEC_STAT0_EOM_MASK,
-	SUNXI_CEC_IRQ_NACK          = IH_CEC_STAT0_NACK_MASK,
-	SUNXI_CEC_IRQ_ARB           = IH_CEC_STAT0_ARB_LOST_MASK,
-	SUNXI_CEC_IRQ_ERR_INITIATOR = IH_CEC_STAT0_ERROR_INITIATOR_MASK,
-	SUNXI_CEC_IRQ_ERR_FOLLOW    = IH_CEC_STAT0_ERROR_FOLLOW_MASK,
-	SUNXI_CEC_IRQ_WAKEUP        = IH_CEC_STAT0_WAKEUP_MASK,
+	SUNXI_CEC_IRQ_NULL				= 0x0,
+	SUNXI_CEC_IRQ_DONE				= IH_CEC_STAT0_DONE_MASK,
+	SUNXI_CEC_IRQ_EOM				= IH_CEC_STAT0_EOM_MASK,
+	SUNXI_CEC_IRQ_NACK				= IH_CEC_STAT0_NACK_MASK,
+	SUNXI_CEC_IRQ_ARB				= IH_CEC_STAT0_ARB_LOST_MASK,
+	SUNXI_CEC_IRQ_ERR_INITIATOR		= IH_CEC_STAT0_ERROR_INITIATOR_MASK,
+	SUNXI_CEC_IRQ_ERR_FOLLOW		= IH_CEC_STAT0_ERROR_FOLLOW_MASK,
+	SUNXI_CEC_IRQ_WAKEUP			= IH_CEC_STAT0_WAKEUP_MASK,
 };
 
 enum sunxi_cec_wait_bit_times_e {
-	SUNXI_CEC_WAIT_3BIT = DW_CEC_WAIT_3BIT,
-	SUNXI_CEC_WAIT_5BIT = DW_CEC_WAIT_5BIT,
-	SUNXI_CEC_WAIT_7BIT = DW_CEC_WAIT_7BIT,
-	SUNXI_CEC_WAIT_NULL = DW_CEC_WAIT_NULL,
+	SUNXI_CEC_WAIT_3BIT				= DW_CEC_WAIT_3BIT,
+	SUNXI_CEC_WAIT_5BIT				= DW_CEC_WAIT_5BIT,
+	SUNXI_CEC_WAIT_7BIT				= DW_CEC_WAIT_7BIT,
+	SUNXI_CEC_WAIT_NULL				= DW_CEC_WAIT_NULL,
 };
-#endif
 
 enum sunxi_hdcp_state_e {
-	SUNXI_HDCP_DISABLE       = 0,
-	SUNXI_HDCP_ING           = 1,
-	SUNXI_HDCP_FAILED        = 2,
-	SUNXI_HDCP_SUCCESS       = 3,
+	SUNXI_HDCP_DISABLE				= DW_HDCP_DISABLE,
+	SUNXI_HDCP_ING					= DW_HDCP_ING,
+	SUNXI_HDCP_FAILED				= DW_HDCP_FAILED,
+	SUNXI_HDCP_SUCCESS				= DW_HDCP_SUCCESS,
 };
 
 typedef enum {
-    SUNXI_PHY_ACCESS_NULL    = DW_PHY_ACCESS_NULL,
-    SUNXI_PHY_ACCESS_I2C     = DW_PHY_ACCESS_I2C,
-    SUNXI_PHY_ACCESS_JTAG    = DW_PHY_ACCESS_JTAG,
-} sunxi_hdmi_phy_access_e;
-
-typedef enum {
-	SUNXI_HDCP_TYPE_NULL          = DW_HDCP_TYPE_NULL,
-	SUNXI_HDCP_TYPE_HDCP14        = DW_HDCP_TYPE_HDCP14,
-	SUNXI_HDCP_TYPE_HDCP22        = DW_HDCP_TYPE_HDCP22,
+	SUNXI_HDCP_TYPE_NULL			= DW_HDCP_TYPE_NULL,
+	SUNXI_HDCP_TYPE_HDCP14			= DW_HDCP_TYPE_HDCP14,
+	SUNXI_HDCP_TYPE_HDCP22			= DW_HDCP_TYPE_HDCP22,
 } sunxi_hdcp_type_t;
 
 #define HDMI_VIC_3D_OFFSET    (0x80)
@@ -182,218 +133,328 @@ enum HDMI_CEA_VIC {
 	HDMI_VIC_MAX,
 };
 
-#define SUNXI_HDMI_VIC_1080P_24_3D_FP	(HDMI_VIC_1920x1080P24 + HDMI_VIC_3D_OFFSET)
-#define SUNXI_HDMI_VIC_720P_50_3D_FP	(HDMI_VIC_1280x720P50  + HDMI_VIC_3D_OFFSET)
-#define SUNXI_HDMI_VIC_720P_60_3D_FP	(HDMI_VIC_1280x720P60  + HDMI_VIC_3D_OFFSET)
-
-struct sunxi_hdmi_specify_mode_s {
-	int code;
-	struct drm_display_mode mode;
-};
-
-struct sunxi_hdmi_vic_mode {
-	char name[25];
-	int  vic_code;
-};
-
-struct sunxi_disp_hdmi_mode {
-    enum disp_tv_mode mode;
-    int  hdmi_mode; /* vic code */
-};
-
 /******************************************************************
  * @desc: sunxi hdmi level struct
  * funsion hdmi20 hdmi21
  *****************************************************************/
 struct sunxi_hdmi_s {
-    struct platform_device    *pdev;
-
-	struct disp_device_config disp_info;
+	struct platform_device    *pdev;
 	struct drm_connector      *connect;
+	struct i2c_adapter        *i2c_adap;
 
-    int   blacklist_index;
+	uintptr_t reg_base;
+	struct disp_device_config	disp_info;
 
-    uintptr_t reg_base;
-
-    int hdcp14_done;
-    int hdcp22_done;
-
-    struct i2c_adapter *i2c;
-
-	struct dw_phy_ops_s   *phy_func;
-
-    struct dw_hdmi_dev_s   dw_hdmi;
+	struct dw_phy_ops_s    *phy_func;
+	struct dw_hdmi_dev_s    dw_hdmi;
 };
-
+/**
+ * @desc: sunxi hdmi get color format string
+ * @bits: disp define format
+ * @return: format string
+ */
+char *sunxi_hdmi_color_format_string(enum disp_csc_type format);
+/**
+ * @desc: sunxi hdmi get color depth string
+ * @bits: disp define data bits
+ * @return: bits string
+ */
+char *sunxi_hdmi_color_depth_string(enum disp_data_bits bits);
+/*******************************************************************************
+ * sunxi hdmi core register write and read function
+ ******************************************************************************/
+/**
+ * @desc: sunxi hdmi contorl register write
+ * @addr: write address
+ * @data: write value
+ */
 void sunxi_hdmi_ctrl_write(uintptr_t addr, u32 data);
-
+/**
+ * @desc: sunxi hdmi contorl register read
+ * @addr: read address
+ * @return: read value
+ */
 u32 sunxi_hdmi_ctrl_read(uintptr_t addr);
 /*******************************************************************************
- * @desc: sunxi hdmi scdc core api
+ * sunxi hdmi core scdc write and read function
  ******************************************************************************/
-#ifndef SUXNI_HDMI_USE_HDMI14
 /**
- * @desc: sunxi hdmi scdc read
- * @addr: scdc offset address
- * @return: scdc read value
- */
-u8 sunxi_hdmi_scdc_read(u8 addr);
-/**
- * @desc: sunxi hdmi scdc write
- * @addr: scdc offset address
- * @data: scdc write data
+ * @desc: sunxi hdmi scdc register write
+ * @addr: write address
+ * @data: write value
  */
 void sunxi_hdmi_scdc_write(u8 addr, u8 data);
-#endif
-
+/**
+ * @desc: sunxi hdmi scdc register read
+ * @addr: read address
+ * @return: read value
+ */
+u8 sunxi_hdmi_scdc_read(u8 addr);
 /*******************************************************************************
- * @desc: sunxi hdmi phy core api
+ * sunxi hdmi core phy function
  ******************************************************************************/
 /**
- * @desc: sunxi hdmi phy write
- * @addr: phy write address
- * @data: phy write value
+ * @desc: sunxi hdmi phy register write
+ * @addr: write address
+ * @data: write value
+ * @return: 0 - write success
+ *         -1 - write failed
  */
 int sunxi_hdmi_phy_write(u8 addr, u32 data);
 /**
- * @desc: sunxi hdmi phy read
- * @addr: phy read address
- * @data: phy read value
+ * @desc: sunxi hdmi phy register read
+ * @addr: read address
+ * @data: point to read value
+ * @return: 0 - read success
+ *         -1 - read failed
  */
 int sunxi_hdmi_phy_read(u8 addr, u32 *data);
-
 /**
- * @desc: sunxi hdmi phy reset config flow
+ * @desc: sunxi hdmi phy config
+ * @return: 0 - config success
+ *         -1 - config failed
+ */
+int sunxi_hdmi_phy_config(void);
+/**
+ * @desc: sunxi hdmi phy reset(Optional)
  */
 void sunxi_hdmi_phy_reset(void);
 /**
- * @desc: sunxi hdmi phy resume config flow
+ * @desc: sunxi hdmi phy resume(Optional)
+ * @return: 0 - resume success
+ *         -1 - resume failed
  */
 int sunxi_hdmi_phy_resume(void);
 /**
- * @desc: sunxi hdmi phy get hpd status
- * @return: 1 - detect hpd
- *          0 - undetect hpd
+ * @desc: sunxi hdmi i2c master xfer, support send and receive
+ * @msgs: buffer fot send or receive message
+ * @num: send or receive message number
  */
-u8 sunxi_hdmi_get_hpd(void);
+int sunxi_hdmi_i2cm_xfer(struct i2c_msg *msgs, int num);
+/**
+ * @desc: sunxi hdmi edid parse
+ * @buffer: point to edid buffer
+ * @return: 0 - parse success
+ *         -1 - parse failed
+ */
+int sunxi_hdmi_edid_parse(u8 *buffer);
 
 /*******************************************************************************
- * @desc: sunxi hdmi audio core api
+ * sunxi hdmi core hdcp function
  ******************************************************************************/
 /**
- * @desc: suxni hdmi audio update params
- * @params: audio set params point
- * @return: update status
+ * @desc: sunxi hdcp get sink is support hdcp1x
+ * @return: 1 - sink support
+ *          0 - sink unsupport
  */
-int sunxi_hdmi_audio_set_info(hdmi_audio_t *params);
+int sunxi_hdcp1x_get_sink_cap(void);
 /**
- * @desc: suxni hdmi audio main config flow
- * @return: config status
+ * @desc: sunxi hdcp get sink is support hdcp2x
+ * @return: 1 - sink support
+ *          0 - sink unsupport
  */
-int sunxi_hdmi_audio_setup(void);
-
-/*******************************************************************************
- * @desc: sunxi hdmi video core api
- ******************************************************************************/
+int sunxi_hdcp2x_get_sink_cap(void);
 /**
- * @desc: sunxi hdmi video set pattern
- * @bit: 1 - enable pattern
- *       0 - disable pattern
- * @value: pattern rgb value
+ * @desc: sunxi hdcp2x esm firmware state
+ * @return: 1 - firmware valid
+ *          0 - firmware invalid
  */
-void sunxi_hdmi_video_set_pattern(u8 bit, u32 value);
-
-int sunxi_hdmi_i2c_xfer(struct i2c_msg *msgs, int num);
-
-int sunxi_hdmi_disconfig(void);
-
-/*******************************************************************************
- * @desc: sunxi hdmi hdcp core api
- ******************************************************************************/
-#ifdef SUNXI_HDMI20_USE_HDCP
-int sunxi_hdcp_get_sink_cap(void);
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_HDCP14)
-int sunxi_hdcp14_set_config(u8 state);
-#endif
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_HDCP22)
-int sunxi_hdcp22_set_config(u8 state);
-#endif
-
+int sunxi_hdcp2x_fw_state(void);
 /**
- * @desc: sunxi hdmi hdcp get encry state
- * @return: 0 - disabled
- *          1 - processing
- *          2 - failed
- *          3 - success
+ * @desc: sunxi hdcp2x loading firmware
+ * @data: point to firmware data buffer
+ * @size: firmware size
+ * @return: 0 - loading success
+ *         -1 - loading failed
+ */
+int sunxi_hdcp2x_fw_loading(const u8 *data, size_t size);
+/**
+ * @desc: sunxi hdcp1x config
+ * @state: 1 - enable hdcp1x
+ *         0 - disable hdcp 1x
+ * @return: 0 - enable/disable success
+ *         -1 - enable/disable failed
+ */
+int sunxi_hdcp1x_config(u8 state);
+/**
+ * @desc: sunxi hdcp2x config
+ * @state: 1 - enable hdcp1x
+ *         0 - disable hdcp 1x
+ * @return: 0 - enable/disable success
+ *         -1 - enable/disable failed
+ */
+int sunxi_hdcp2x_config(u8 state);
+/**
+ * @desc: sunxi hdcp state
+ * @return: SUNXI_HDCP_DISABLE - disable state
+ *          SUNXI_HDCP_ING     - encrypting
+ *          SUNXI_HDCP_FAILED  - encry failed
+ *          SUNXI_HDCP_SUCCESS - encry success
  */
 u8 sunxi_hdcp_get_state(void);
 
-unsigned long *sunxi_hdcp22_get_fw_addr(void);
-u32 sunxi_hdcp22_get_fw_size(void);
-#endif
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_CEC)
+/*******************************************************************************
+ * sunxi hdmi core cec function
+ ******************************************************************************/
+/**
+ * @desc: sunxi cec message dump
+ * @msg: point to message buffer
+ * @len: message length
+ */
+void sunxi_cec_msg_dump(u8 *msg, u8 len);
+/**
+ * @desc: sunxi cec enable/disable
+ * @state: 1 - enable
+ *         0 - disable
+ */
 void sunxi_cec_enable(u8 state);
-
-void sunxi_cec_set_logic_addr(u16 addr);
-
-void suxni_cec_message_send(u8 *buf, u8 len, u8 times);
-
+/**
+ * @desc: sunxi cec receive message
+ * @buf: point to message buffer
+ * @return: -1 - failed
+ *       other - receive message length
+ */
 int sunxi_cec_message_receive(u8 *buf);
-
+/**
+ * @desc: sunxi cec send message
+ * @buf: point to send message buffer
+ * @len: message length
+ * @times: send retry count
+ */
+void sunxi_cec_message_send(u8 *buf, u8 len, u8 times);
+/**
+ * @desc: sunxi cec config logical address
+ * @addr: logical address
+ */
+void sunxi_cec_set_logic_addr(u16 addr);
+/**
+ * @desc: sunxi cec irq state
+ * @return: irq state
+ */
 u8 sunxi_cec_get_irq_state(void);
-
-#endif /* CONFIG_AW_HDMI20_CEC */
-
 /*******************************************************************************
- * @desc: sunxi hdmi edid core api
+ * sunxi hdmi core audio function
  ******************************************************************************/
 /**
- * @desc: sunxi hdmi edid update video params by sink edid info
+ * @desc: sunxi hdmi audio set info params
+ * @snd_param: sunxi snd params
+ * @return: 0 - set info success
+ *         -1 - set info failed
  */
-void sunxi_hdmi_update_prefered_video(void);
-
-int sunxi_edid_parse(u8 *buffer);
-
+int sunxi_hdmi_audio_set_info(hdmi_audio_t *snd_param);
 /**
- * @desc: sunxi hdmi edid correct hardware config
+ * @desc: sunxi hdmi audio enable
+ * @return: 0 - enable success
+ *         -1 - enable failed
  */
-void sunxi_hdmi_correct_config(void);
-
+int sunxi_hdmi_audio_enable(void);
 /*******************************************************************************
- * @desc: sunxi hdmi core api
+ * sunxi hdmi core video info function
  ******************************************************************************/
 /**
- * @desc: sunxi hdmi set debug log level
+ * @desc: sunxi hdmi get useing disp info
+ * @return: disp info struct
+ */
+struct disp_device_config *sunxi_hdmi_get_disp_info(void);
+/**
+ * @desc: check sink is support current eotf
+ * @info: point to config
+ */
+int sunxi_hdmi_disp_select_eotf(struct disp_device_config *info);
+/**
+ * @desc: check sink is support current color space
+ * @info: point to config
+ * @vic_code: vic code
+ */
+int sunxi_hdmi_disp_select_space(struct disp_device_config *info, u32 vic_code);
+/**
+ * @desc: check sink is support current color format
+ * @info: point to config
+ * @vic_code: vic code
+ */
+int sunxi_hdmi_disp_select_format(struct disp_device_config *info, u32 vic_code);
+/**
+ * @desc: check current format,bits is sink support
+ * @format: current use format
+ * @bits: current use bits
+ * @pixel_clk: current timing pixel clock
+ */
+int sunxi_hdmi_video_check_tmds_clock(u8 format, u8 bits, u32 pixel_clk);
+/**
+ * @desc: sunxi hdmi video set disp info
+ * @disp_param: disp info
+ */
+int sunxi_hdmi_set_disp_info(struct disp_device_config *disp_param);
+/**
+ * @desc: sunxi hdmi video force patterm
+ * @bit: force enable
+ * @value: force value
+ */
+void sunxi_hdmi_video_set_pattern(u8 bit, u32 value);
+/**
+ * @desc: sunxi hdmi update sink color capality
+ * @vic: current timing vic
+ * @return: current timing support vic
+ */
+u32 sunxi_hdmi_get_color_capality(u32 vic);
+/**
+ * @desc: sunxi hdmi update send perfer video infoframe
+ */
+void sunxi_hdmi_select_output_packets(u8 flags);
+/**
+ * @desc: sunxi hdmi get hpd state
+ * @return: 1 - hight
+ *          0 - low
+ */
+u8 sunxi_hdmi_get_hpd(void);
+/**
+ * @desc: sunxi hdmi get lowlevel loglevel
+ * @return: log level
+ */
+u8 sunxi_hdmi_get_loglevel(void);
+/**
+ * @desc: sunxi hdmi set log level
  * @level: log level
  */
 int suxni_hdmi_set_loglevel(u8 level);
 /**
- * @desc: sunxi hdmi main close
+ * @desc: sunxi hdmi disconfig
+ * @return: 0 - success
  */
-int sunxi_hdmi_close(void);
+int sunxi_hdmi_disconfig(void);
 /**
- * @desc: sunxi hdmi main config
+ * @desc: sunxi hdmi config
+ * @return: 0 - success
  */
 int sunxi_hdmi_config(void);
-
-int sunxi_hdmi_mode_convert(struct drm_display_mode *mode);
-
-int sunxi_hdmi_init(struct sunxi_hdmi_s *core);
-
-void sunxi_hdmi_exit(struct sunxi_hdmi_s *g_aw_core);
-
-struct disp_device_config *sunxi_hdmi_video_get_info(void);
-
-int sunxi_hdmi_video_set_info(struct disp_device_config *config);
-int sunxi_hdmi_adap_bind(struct i2c_adapter *i2c_adap);
-int sunxi_hdmi_connect_creat(struct drm_connector *data);
 /**
- * @desc: sunxi hdmi core dump. point different hw
- * @buf: save dump info buffer
+ * @desc: sunxi hdmi mode set.
+ * @mode: set mode
+ * @return: 0 - success
+ *         -1 - failed
  */
-ssize_t sunxi_hdmi_dump(char *buf);
+int sunxi_hdmi_set_disp_mode(struct drm_display_mode *mode);
+/**
+ * @desc: sunxi hdmi init
+ * @hdmi: sunxi hdmi point
+ * @return: 0 - init success
+ */
+int sunxi_hdmi_init(struct sunxi_hdmi_s *hdmi);
+/**
+ * @desc: sunxi hdmi exit
+ */
+void sunxi_hdmi_exit(void);
+/**
+ * @desc: sunxi hdmi tx info dump
+ * @buf: point to save info buffer
+ * @return: save buffer size
+ */
+ssize_t sunxi_hdmi_tx_dump(char *buf);
+/**
+ * @desc: sunxi hdmi rx info dump
+ * @buf: point to save info buffer
+ * @return: save buffer size
+ */
+ssize_t sunxi_hdmi_rx_dump(char *buf);
 
 #endif /* _SUNXI_HDMI_H_ */

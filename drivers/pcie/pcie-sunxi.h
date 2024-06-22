@@ -219,6 +219,8 @@ struct sunxi_pcie_of_data {
 	enum sunxi_pcie_device_mode mode;
 	u32 func_offset;
 	bool cpu_pcie_addr_quirk;
+	bool has_pcie_slv_clk;
+	bool need_pcie_rst;
 };
 
 struct sunxi_pcie_ep_func {
@@ -275,6 +277,8 @@ struct sunxi_pcie_port {
 	bool				cpu_pcie_addr_quirk;
 };
 
+struct sunxi_pci_edma_chan;
+
 struct sunxi_pcie {
 	struct device		*dev;
 	void __iomem		*dbi_base;
@@ -287,15 +291,20 @@ struct sunxi_pcie {
 	int			link_gen;
 	struct sunxi_pcie_port	pp;
 	struct sunxi_pcie_ep	ep;
-	struct clk		*pcie_ref;
-	struct clk		*pcie_per;
 	struct clk		*pcie_aux;
+	struct clk		*pcie_slv;
 	struct reset_control    *pcie_rst;
+	struct reset_control    *pwrup_rst;
 	struct phy		*phy;
 	struct dma_trx_obj	*dma_obj;
 	const struct sunxi_pcie_of_data *drvdata;
 	struct gpio_desc	*rst_gpio;
 	u32			lanes;
+	u32			num_edma;
+	unsigned long		*rd_edma_map;
+	unsigned long		*wr_edma_map;
+	struct sunxi_pci_edma_chan	*dma_wr_chn;
+	struct sunxi_pci_edma_chan	*dma_rd_chn;
 	struct regulator	*pcie1v8;
 	struct regulator	*pcie3v3;
 };

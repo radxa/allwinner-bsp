@@ -36,7 +36,8 @@
 static const char *const axp20x_model_names[] = {
 	"AXP152", "AXP202", "AXP209", "AXP221",  "AXP223",
 	"AXP288", "AXP806", "AXP809", "AXP2101", "AXP15",
-	"AXP1530", "AXP858", "AXP803", "AXP2202",
+	"AXP1530", "AXP858", "AXP803", "AXP2202", "AXP2585",
+	"AXP8191"
 };
 
 static const struct regmap_range axp152_writeable_ranges[] = {
@@ -255,6 +256,23 @@ static const struct regmap_access_table axp2202_volatile_table = {
 	.n_yes_ranges	= ARRAY_SIZE(axp2202_volatile_ranges),
 };
 
+static const struct regmap_range axp8191_writeable_ranges[] = {
+	regmap_reg_range(AXP8191_IC_TYPE,  AXP8191_DCDC_DEBUG4),
+};
+
+static const struct regmap_range axp8191_volatile_ranges[] = {
+	regmap_reg_range(AXP8191_IC_TYPE,  AXP8191_DCDC_DEBUG4),
+};
+
+static const struct regmap_access_table axp8191_writeable_table = {
+	.yes_ranges	= axp8191_writeable_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(axp8191_writeable_ranges),
+};
+
+static const struct regmap_access_table axp8191_volatile_table = {
+	.yes_ranges	= axp8191_volatile_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(axp8191_volatile_ranges),
+};
 /*---------------*/
 static struct resource axp152_pek_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP152_IRQ_PEK_RIS_EDGE, "PEK_DBR"),
@@ -503,6 +521,15 @@ static const struct regmap_config axp2202_regmap_config = {
 	.cache_type	= REGCACHE_RBTREE,
 };
 
+static const struct regmap_config axp8191_regmap_config = {
+	.reg_bits	= 8,
+	.val_bits	= 8,
+	.wr_table	= &axp8191_writeable_table,
+	.volatile_table	= &axp8191_volatile_table,
+	.max_register	= AXP8191_DCDC_DEBUG4,
+	.use_single_write = true,
+	.cache_type	= REGCACHE_RBTREE,
+};
 /*------------------*/
 #define INIT_REGMAP_IRQ(_variant, _irq, _off, _mask)			\
 	[_variant##_IRQ_##_irq] = { .reg_offset = (_off), .mask = BIT(_mask) }
@@ -834,6 +861,33 @@ static const struct regmap_irq axp2202_regmap_irqs[] = {
 	INIT_REGMAP_IRQ(AXP2202, PWR_CHNG,    4, 0),
 };
 
+static const struct regmap_irq axp8191_regmap_irqs[] = {
+	INIT_REGMAP_IRQ(AXP8191, DCDC8UV,     0, 7),
+	INIT_REGMAP_IRQ(AXP8191, DCDC7UV,     0, 6),
+	INIT_REGMAP_IRQ(AXP8191, DCDC6UV,     0, 5),
+	INIT_REGMAP_IRQ(AXP8191, DCDC5UV,     0, 4),
+	INIT_REGMAP_IRQ(AXP8191, DCDC4UV,     0, 3),
+	INIT_REGMAP_IRQ(AXP8191, DCDC3UV,     0, 2),
+	INIT_REGMAP_IRQ(AXP8191, DCDC2UV,     0, 1),
+	INIT_REGMAP_IRQ(AXP8191, DCDC1UV,     0, 0),
+	INIT_REGMAP_IRQ(AXP8191, LDOOC,       1, 7),
+	INIT_REGMAP_IRQ(AXP8191, POKPIEN,     1, 6),
+	INIT_REGMAP_IRQ(AXP8191, POKNIEN,     1, 5),
+	INIT_REGMAP_IRQ(AXP8191, POKSIEN,     1, 4),
+	INIT_REGMAP_IRQ(AXP8191, POKLIEN,     1, 3),
+	INIT_REGMAP_IRQ(AXP8191, DTOL2,       1, 2),
+	INIT_REGMAP_IRQ(AXP8191, DTOL1,       1, 1),
+	INIT_REGMAP_IRQ(AXP8191, DCDC9UV,     1, 0),
+	INIT_REGMAP_IRQ(AXP8191, GPIO3EN,     2, 6),
+	INIT_REGMAP_IRQ(AXP8191, GPIO2EN,     2, 5),
+	INIT_REGMAP_IRQ(AXP8191, GPIO1EN,     2, 4),
+	INIT_REGMAP_IRQ(AXP8191, PCBUT,       2, 3),
+	INIT_REGMAP_IRQ(AXP8191, QTUT,        2, 2),
+	INIT_REGMAP_IRQ(AXP8191, PCBOT,       2, 1),
+	INIT_REGMAP_IRQ(AXP8191, QTOT,        2, 0),
+	INIT_REGMAP_IRQ(AXP8191, WATDOG,     3, 0),
+};
+
 static const struct regmap_irq_chip axp152_regmap_irq_chip = {
 	.name			= "axp152_irq_chip",
 	.status_base		= AXP152_IRQ1_STATE,
@@ -981,6 +1035,19 @@ static const struct regmap_irq_chip axp2202_regmap_irq_chip = {
 	.num_regs		= 5,
 };
 
+static const struct regmap_irq_chip axp8191_regmap_irq_chip = {
+	.name			= "axp8191_irq_chip",
+	.status_base		= AXP8191_IRQ_STATUS1,
+	.ack_base		= AXP8191_IRQ_STATUS1,
+	.mask_base		= AXP8191_IRQ_ENABLE1,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+	.mask_invert		= true,
+#endif
+	.init_ack_masked	= true,
+	.irqs			= axp8191_regmap_irqs,
+	.num_irqs		= ARRAY_SIZE(axp8191_regmap_irqs),
+	.num_regs		= 4,
+};
 /*--------------------*/
 static struct mfd_cell axp20x_cells[] = {
 	{
@@ -1403,6 +1470,11 @@ static struct resource axp806_pek_resources[] = {
 static struct resource axp2202_pek_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP2202_IRQ_PONN, "PEK_DBF"),
 	DEFINE_RES_IRQ_NAMED(AXP2202_IRQ_PONP, "PEK_DBR"),
+};
+
+static struct resource axp8191_pek_resources[] = {
+	DEFINE_RES_IRQ_NAMED(AXP8191_IRQ_POKNIEN, "PEK_DBF"),
+	DEFINE_RES_IRQ_NAMED(AXP8191_IRQ_POKPIEN, "PEK_DBR"),
 };
 
 static struct resource axp2202_bat_power_supply_resources[] = {
@@ -2618,6 +2690,345 @@ static struct mfd_cell axp2202_cells[] = {
 };
 
 /*----------------------*/
+#define AXP8191_DCDC1 "dcdc1"
+#define AXP8191_DCDC2 "dcdc2"
+#define AXP8191_DCDC3 "dcdc3"
+#define AXP8191_DCDC4 "dcdc4"
+#define AXP8191_DCDC5 "dcdc5"
+#define AXP8191_DCDC6 "dcdc6"
+#define AXP8191_DCDC7 "dcdc7"
+#define AXP8191_DCDC8 "dcdc8"
+#define AXP8191_DCDC9 "dcdc9"
+#define AXP8191_ALDO1 "aldo1"
+#define AXP8191_ALDO2 "aldo2"
+#define AXP8191_ALDO3 "aldo3"
+#define AXP8191_ALDO4 "aldo4"
+#define AXP8191_ALDO5 "aldo5"
+#define AXP8191_ALDO6 "aldo6"
+#define AXP8191_BLDO1 "bldo1"
+#define AXP8191_BLDO2 "bldo2"
+#define AXP8191_BLDO3 "bldo3"
+#define AXP8191_BLDO4 "bldo4"
+#define AXP8191_BLDO5 "bldo5"
+#define AXP8191_CLDO1 "cldo1"
+#define AXP8191_CLDO2 "cldo2"
+#define AXP8191_CLDO3 "cldo3"
+#define AXP8191_CLDO4 "cldo4"
+#define AXP8191_CLDO5 "cldo5"
+#define AXP8191_DLDO1 "dldo1"
+#define AXP8191_DLDO2 "dldo2"
+#define AXP8191_DLDO3 "dldo3"
+#define AXP8191_DLDO4 "dldo4"
+#define AXP8191_DLDO5 "dldo5"
+#define AXP8191_DLDO6 "dldo6"
+#define AXP8191_ELDO1 "eldo1"
+#define AXP8191_ELDO2 "eldo2"
+#define AXP8191_ELDO3 "eldo3"
+#define AXP8191_ELDO4 "eldo4"
+#define AXP8191_ELDO5 "eldo5"
+#define AXP8191_ELDO6 "eldo6"
+#define AXP8191_RTCLDO "rtcldo"
+#define AXP8191_DC1SW1 "dc1sw1"
+#define AXP8191_DC1SW2 "dc1sw2"
+
+static struct mfd_cell axp8191_cells[] = {
+	{
+		.name = "axp2101-regulator",
+	},
+	{
+		.name = "axp2101-pek",
+		.of_compatible = "x-powers,axp2101-pek",
+		.resources = axp8191_pek_resources,
+		.num_resources = ARRAY_SIZE(axp8191_pek_resources),
+
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc1",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC1,
+		.pdata_size = sizeof(AXP8191_DCDC1),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc2",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC2,
+		.pdata_size = sizeof(AXP8191_DCDC2),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc3",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC3,
+		.pdata_size = sizeof(AXP8191_DCDC3),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc4",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC4,
+		.pdata_size = sizeof(AXP8191_DCDC4),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc5",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC5,
+		.pdata_size = sizeof(AXP8191_DCDC5),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc6",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC6,
+		.pdata_size = sizeof(AXP8191_DCDC6),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc7",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC7,
+		.pdata_size = sizeof(AXP8191_DCDC7),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc8",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC8,
+		.pdata_size = sizeof(AXP8191_DCDC8),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dcdc9",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DCDC9,
+		.pdata_size = sizeof(AXP8191_DCDC9),
+	},
+	{
+		.of_compatible = "xpower-vregulator,aldo1",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ALDO1,
+		.pdata_size = sizeof(AXP8191_ALDO1),
+	},
+	{
+		.of_compatible = "xpower-vregulator,aldo2",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ALDO2,
+		.pdata_size = sizeof(AXP8191_ALDO2),
+	},
+	{
+		.of_compatible = "xpower-vregulator,aldo3",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ALDO3,
+		.pdata_size = sizeof(AXP8191_ALDO3),
+	},
+	{
+		.of_compatible = "xpower-vregulator,aldo4",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ALDO4,
+		.pdata_size = sizeof(AXP8191_ALDO4),
+	},
+	{
+		.of_compatible = "xpower-vregulator,aldo5",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ALDO5,
+		.pdata_size = sizeof(AXP8191_ALDO5),
+	},
+	{
+		.of_compatible = "xpower-vregulator,aldo6",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ALDO6,
+		.pdata_size = sizeof(AXP8191_ALDO6),
+	},
+
+	{
+		.of_compatible = "xpower-vregulator,bldo1",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_BLDO1,
+		.pdata_size = sizeof(AXP8191_BLDO1),
+	},
+	{
+		.of_compatible = "xpower-vregulator,bldo2",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_BLDO2,
+		.pdata_size = sizeof(AXP8191_BLDO2),
+	},
+	{
+		.of_compatible = "xpower-vregulator,bldo3",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_BLDO3,
+		.pdata_size = sizeof(AXP8191_BLDO3),
+	},
+	{
+		.of_compatible = "xpower-vregulator,bldo4",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_BLDO4,
+		.pdata_size = sizeof(AXP8191_BLDO4),
+	},
+	{
+		.of_compatible = "xpower-vregulator,bldo5",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_BLDO5,
+		.pdata_size = sizeof(AXP8191_BLDO5),
+	},
+
+	{
+		.of_compatible = "xpower-vregulator,cldo1",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_CLDO1,
+		.pdata_size = sizeof(AXP8191_CLDO1),
+	},
+	{
+		.of_compatible = "xpower-vregulator,cldo2",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_CLDO2,
+		.pdata_size = sizeof(AXP8191_CLDO2),
+	},
+	{
+		.of_compatible = "xpower-vregulator,cldo3",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_CLDO3,
+		.pdata_size = sizeof(AXP8191_CLDO3),
+	},
+	{
+		.of_compatible = "xpower-vregulator,cldo4",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_CLDO4,
+		.pdata_size = sizeof(AXP8191_CLDO4),
+	},
+	{
+		.of_compatible = "xpower-vregulator,cldo5",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_CLDO5,
+		.pdata_size = sizeof(AXP8191_CLDO5),
+	},
+
+	{
+		.of_compatible = "xpower-vregulator,dldo1",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DLDO1,
+		.pdata_size = sizeof(AXP8191_DLDO1),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dldo2",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DLDO2,
+		.pdata_size = sizeof(AXP8191_DLDO2),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dldo3",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DLDO3,
+		.pdata_size = sizeof(AXP8191_DLDO3),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dldo4",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DLDO4,
+		.pdata_size = sizeof(AXP8191_DLDO4),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dldo5",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DLDO5,
+		.pdata_size = sizeof(AXP8191_DLDO5),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dldo6",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DLDO6,
+		.pdata_size = sizeof(AXP8191_DLDO6),
+	},
+
+	{
+		.of_compatible = "xpower-vregulator,eldo1",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ELDO1,
+		.pdata_size = sizeof(AXP8191_ELDO1),
+	},
+	{
+		.of_compatible = "xpower-vregulator,eldo2",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ELDO2,
+		.pdata_size = sizeof(AXP8191_DLDO2),
+	},
+	{
+		.of_compatible = "xpower-vregulator,eldo3",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ELDO3,
+		.pdata_size = sizeof(AXP8191_DLDO3),
+	},
+	{
+		.of_compatible = "xpower-vregulator,eldo4",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ELDO4,
+		.pdata_size = sizeof(AXP8191_DLDO4),
+	},
+	{
+		.of_compatible = "xpower-vregulator,eldo5",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ELDO5,
+		.pdata_size = sizeof(AXP8191_ELDO5),
+	},
+	{
+		.of_compatible = "xpower-vregulator,eldo6",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_ELDO6,
+		.pdata_size = sizeof(AXP8191_ELDO6),
+	},
+	{
+		.of_compatible = "xpower-vregulator,rtcldo",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP2202_RTCLDO,
+		.pdata_size = sizeof(AXP2202_RTCLDO),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dc1sw1",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DC1SW1,
+		.pdata_size = sizeof(AXP8191_DC1SW1),
+	},
+	{
+		.of_compatible = "xpower-vregulator,dc1sw2",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP8191_DC1SW2,
+		.pdata_size = sizeof(AXP8191_DC1SW2),
+	},
+};
+
+/*----------------------*/
 static struct axp20x_dev *axp20x_pm_power_off;
 static void axp20x_power_off(void)
 {
@@ -2838,6 +3249,57 @@ static void axp2202_dts_parse(struct axp20x_dev *axp20x)
 		regmap_write(map, AXP2202_DIE_TEMP_CFG, val);
 	} else {
 		regmap_update_bits(map, AXP2202_PWROFF_EN, BIT(2), 0);
+	}
+}
+
+static void axp8191_dts_parse(struct axp20x_dev *axp20x)
+{
+	struct device_node *node = axp20x->dev->of_node;
+	struct regmap *map = axp20x->regmap;
+	u32 val, tempval;
+
+	/* init ldo/dcdc over current protection */
+	if (of_property_read_u32(node, "pmu_over_current", &val))
+		val = 1;
+	if (val) {
+		regmap_write(map, AXP8191_POWEROFF_SOURCE_EN1, 0xff);
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(0), BIT(0));
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(2), BIT(2));
+	} else {
+		regmap_write(map, AXP8191_POWEROFF_SOURCE_EN1, 0x00);
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(0), 0);
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(2), 0);
+	}
+
+	/* init pmu over temperature protection */
+	if (of_property_read_u32(node, "pmu_hot_shutdown", &val))
+		val = 1;
+	if (val) {
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(3), BIT(3));
+	} else {
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(3), 0);
+	}
+
+	if (of_property_read_u32(node, "pmu_hot_shutdown", &val))
+		val = 0;
+	if (val) {
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(3), BIT(3));
+		if (of_property_read_u32(node,
+					"pmu_hot_shutdown_value", &tempval))
+			tempval = 125;
+		regmap_read(map, AXP8191_OVP_DISCHARGE_TEMPERATURE_CFG, &val);
+		val &= 0xFC;
+		if (tempval > 135)
+			val |= 0x03;
+		else if (tempval > 125)
+			val |= 0x02;
+		else if (tempval > 115)
+			val |= 0x01;
+		else
+			val |= 0x00;
+		regmap_write(map, AXP8191_OVP_DISCHARGE_TEMPERATURE_CFG, val);
+	} else {
+		regmap_update_bits(map, AXP8191_POWEROFF_SOURCE_EN2, BIT(3), 0);
 	}
 }
 
@@ -3163,6 +3625,13 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 		axp20x->regmap_cfg = &axp2202_regmap_config;
 		axp20x->regmap_irq_chip = &axp2202_regmap_irq_chip;
 		axp20x->dts_parse = axp2202_dts_parse;
+		break;
+	case AXP8191_ID:
+		axp20x->nr_cells = ARRAY_SIZE(axp8191_cells);
+		axp20x->cells = axp8191_cells;
+		axp20x->regmap_cfg = &axp8191_regmap_config;
+		axp20x->regmap_irq_chip = &axp8191_regmap_irq_chip;
+		axp20x->dts_parse = axp8191_dts_parse;
 		break;
 /*-------------------*/
 	default:

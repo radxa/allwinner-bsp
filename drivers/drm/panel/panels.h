@@ -25,7 +25,7 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_panel.h>
 
-#include "de_dsi.h"
+//#include "de_dsi.h"
 
 #define PANEL_POWER_MAX 10
 #define PANEL_GPIO_MAX 10
@@ -47,8 +47,8 @@ struct sunxi_panel {
 	unsigned int num_modes;
 	struct display_timing timings;
 	unsigned int num_timings;
-	struct disp_panel_para panel_para;
-	struct panel_extend_para extend_para;
+//	struct disp_panel_para panel_para;
+//	struct panel_extend_para extend_para;
 	struct sunxi_panel_delay delay;
 
 	struct regulator *supply[PANEL_POWER_MAX];

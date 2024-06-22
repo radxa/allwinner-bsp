@@ -15,15 +15,6 @@
 /*****************************************************
  * sunxi hdmi public function
  ****************************************************/
-#if IS_ENABLED(CONFIG_AW_DRM_HDMI_TX)
-int sunxi_hdmi_drm_create(struct tcon_device *tcon);
-#else
-int sunxi_hdmi_drm_create(struct tcon_device *tcon)
-{
-	return 0;
-}
-#endif
-
 static inline void hdmi_log(const char *fmt, ...)
 {
 }

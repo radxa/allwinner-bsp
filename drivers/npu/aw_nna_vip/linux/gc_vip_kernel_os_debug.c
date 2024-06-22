@@ -486,6 +486,7 @@ static loff_t gckvip_core_loading_get(
 		core_loading[0].infer_time = 0;
 		core_loading[0].last_infer_time = 0;
 		core_loading[0].last_record_time = 0;
+		core_loading[0].latest_sbumit_time = 0;
 	}
 	total_time_ms = total_time;
 	do_div(total_time_ms, 1000);
@@ -503,21 +504,22 @@ static loff_t gckvip_core_loading_get(
 			FS_PRINTF(ptr, len, offset, "                       Core%d: Inference Time=%"PRId64" ms (%2d%%)\n",
 					i, infer_ms, ratio);
 		}*/
-		vip_uint64_t step_infer = core_loading[i].infer_time - core_loading[0].last_infer_time; /*us*/
-		vip_uint64_t step_total_us = cur_time - core_loading[0].last_record_time;
-		vip_uint64_t ratio = step_infer * 100;
-		do_div(step_infer, 1000);
+		vip_uint64_t step_infer_us = core_loading[i].infer_time - core_loading[0].last_infer_time;
+		vip_uint64_t step_total_us = 0, ratio = 0;
+		cur_time = gckvip_os_get_time();
+		step_total_us = cur_time - core_loading[0].last_record_time;
+		ratio = step_infer_us * 100;
 		do_div(ratio, step_total_us);
 		if (0 == i) {
-			FS_PRINTF(ptr, len, offset, "NPU Loading -----> Core%d: %2d%%\n",
-					i, ratio, step_infer);
+			FS_PRINTF(ptr, len, offset, "NPU Loading -----> Core%d: %2d%% \n",
+					i, ratio);
 		} else {
 			FS_PRINTF(ptr, len, offset, "                   Core%d: %2d%%\n",
 					i, ratio);
 		}
 	}
 
-	core_loading[0].last_record_time = cur_time;
+	core_loading[0].last_record_time = core_loading[0].latest_sbumit_time;/*cur_time;*/
 	core_loading[0].last_infer_time = core_loading[0].infer_time;
 
 
@@ -547,6 +549,7 @@ static ssize_t gckvip_core_loading_set(
 		    core_loading[i].destory_time = 0;
 		    core_loading[i].last_record_time = core_loading[i].init_time;
 		    core_loading[i].last_infer_time = 0;
+		    core_loading[i].latest_sbumit_time = 0;
 	    }
     } else {
 	    PRINTK_E("invalid param, please set reset string to reset core loading data.\n");
@@ -1257,6 +1260,7 @@ vip_status_e gckvip_debug_set_profile_data(
     case PROFILE_SUBMIT:
     {
         kdriver->profile_data.submit_time = time;
+	core_loading[0].latest_sbumit_time = time;
     }
     break;
 
@@ -2790,6 +2794,7 @@ vip_status_e gckvip_debug_profile_start(void)
 	    core_loading[i].infer_time = 0;
 	    core_loading[i].last_record_time = time;
 	    core_loading[i].last_infer_time = 0;
+	    core_loading[i].latest_sbumit_time = 0;
     }
 
     return status;

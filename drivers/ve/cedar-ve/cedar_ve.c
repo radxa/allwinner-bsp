@@ -127,7 +127,7 @@ struct regulator *regu;
 #endif
 
 #define VE_CLK_HIGH_WATER  (900)
-#define VE_CLK_LOW_WATER   (100)
+#define VE_CLK_LOW_WATER   (50)
 
 #define PRINTK_IOMMU_ADDR 0
 #define MAX_VE_DEBUG_INFO_NUM (16)

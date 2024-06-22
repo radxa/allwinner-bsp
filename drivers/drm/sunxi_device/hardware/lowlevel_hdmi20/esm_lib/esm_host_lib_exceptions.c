@@ -41,7 +41,6 @@ ESM_STATUS esm_hostlib_put_exceptions(esm_instance_t *esm)
 	uint32_t last_id = 0;
 	uint32_t last_id_put = 0;
 
-	log_trace();
 	/* copy data exceptions buffer */
 	if (esm->driver->data_read(esm->driver->instance, esm->esm_exc_off,
 			exceptions_buffer, sizeof(struct ESM_EV)) != ESM_HL_SUCCESS) {

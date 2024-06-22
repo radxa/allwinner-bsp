@@ -8,29 +8,30 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _DW_MC_H_
 #define _DW_MC_H_
 
 #include "dw_dev.h"
 
 typedef enum irq_sources {
-    DW_IRQ_AUDIO_PACKET = 1,
-    DW_IRQ_OTHER_PACKET,
-    DW_IRQ_PACKETS_OVERFLOW,
-    DW_IRQ_AUDIO_SAMPLER,
-    DW_IRQ_PHY,
-    DW_IRQ_I2CM,
-    DW_IRQ_CEC,
-    DW_IRQ_VIDEO_PACKETIZER,
-    DW_IRQ_I2C_PHY,
-    DW_IRQ_AUDIO_DMA,
+	DW_IRQ_AUDIO_PACKET = 1,
+	DW_IRQ_OTHER_PACKET,
+	DW_IRQ_PACKETS_OVERFLOW,
+	DW_IRQ_AUDIO_SAMPLER,
+	DW_IRQ_PHY,
+	DW_IRQ_I2CM,
+	DW_IRQ_CEC,
+	DW_IRQ_VIDEO_PACKETIZER,
+	DW_IRQ_I2C_PHY,
+	DW_IRQ_AUDIO_DMA,
 } irq_sources_t;
 
 /**
  * @desc: main control set hdcp clock
  */
 void dw_mc_disable_hdcp_clock(u8 bit);
+
+u8 dw_mc_get_hdcp_clk(void);
 
 /**
  * @desc: main control set cec clock
@@ -60,23 +61,12 @@ void dw_mc_reset_phy(u8 bit);
 /**
  * @desc: main control all clock enable
  */
-void dw_mc_all_clock_enable(struct dw_hdmi_dev_s *dev);
+void dw_mc_all_clock_enable(void);
 
 /**
  * @desc: main control all clock disable
  */
 void dw_mc_all_clock_disable(void);
-
-/**
- * @desc: main control all clock standby
- */
-void dw_mc_all_clock_standby(void);
-
-/**
- * @desc: main control get audio module irq state
- * @return: audio irq state
- */
-u32 dw_mc_irq_get_audio(void);
 
 int dw_mc_irq_mute_source(irq_sources_t irq_source);
 
@@ -88,17 +78,12 @@ int dw_mc_irq_clear_state(irq_sources_t irq, u8 state);
  * @desc: main control set irq unmute by source
  */
 int dw_mc_irq_unmute_source(irq_sources_t irq_source);
-
 /**
- * @desc: main control mute all irq
+ * @desc: main control set main irq
+ * @state: 1 - enable main irq
+ *         0 - disable main irq
  */
-void dw_mc_irq_all_mute(void);
-
-/**
- * @desc: main control unmute all irq
- */
-void dw_mc_irq_all_unmute(void);
-
+void dw_mc_set_main_irq(u8 state);
 /**
  * @desc: main control mask all irq
  */

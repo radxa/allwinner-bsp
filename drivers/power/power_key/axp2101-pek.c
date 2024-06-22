@@ -447,7 +447,7 @@ static int axp803_config_set(struct axp20x_pek *axp20x_pek)
 	/* Init offlevel restart or not */
 	if (pk_dts->pmu_powkey_off_func)
 		regmap_update_bits(regmap, AXP803_POK_SET, 0x04,
-				   0x01); /* restart */
+				   0x04); /* restart */
 	else
 		regmap_update_bits(regmap, AXP803_POK_SET, 0x04,
 				   0x00); /* not restart */
@@ -518,7 +518,7 @@ static int axp22x_config_set(struct axp20x_pek *axp20x_pek)
 	/* Init offlevel restart or not */
 	if (pk_dts->pmu_powkey_off_func)
 		regmap_update_bits(regmap, AXP22X_POK_SET, 0x04,
-				   0x01); /* restart */
+				   0x04); /* restart */
 	else
 		regmap_update_bits(regmap, AXP22X_POK_SET, 0x04,
 				   0x00); /* not restart */
@@ -668,6 +668,76 @@ static int axp2202_config_set(struct axp20x_pek *axp20x_pek)
 
 	/* vbat use all channels */
 	/* regmap_write(regmap, AXP2202_VBAT_H, 0x40); */
+
+	return 0;
+}
+
+static int axp8191_config_set(struct axp20x_pek *axp20x_pek)
+{
+	struct axp20x_dev *axp20x_dev = axp20x_pek->axp20x;
+	struct regmap *regmap = axp20x_dev->regmap;
+	struct pk_dts *pk_dts = &axp20x_pek->pk_dts;
+	unsigned int val;
+
+	regmap_read(regmap, AXP8191_PONLEVEL_SET, &val);
+	if (pk_dts->pmu_powkey_on_time < 128)
+		val &= 0xFC;
+	else if (pk_dts->pmu_powkey_on_time < 512) {
+		val &= 0xFC;
+		val |= 0x01;
+	} else if (pk_dts->pmu_powkey_on_time < 1000) {
+		val &= 0xFC;
+		val |= 0x02;
+	} else {
+		val &= 0xFC;
+		val |= 0x03;
+	}
+	regmap_write(regmap, AXP8191_PONLEVEL_SET, val);
+
+	/* pok long time set */
+	if (pk_dts->pmu_powkey_long_time < 1000)
+		pk_dts->pmu_powkey_long_time = 1000;
+
+	if (pk_dts->pmu_powkey_long_time > 2500)
+		pk_dts->pmu_powkey_long_time = 2500;
+
+	regmap_read(regmap, AXP8191_PONLEVEL_SET, &val);
+	val &= 0xcf;
+	val |= (((pk_dts->pmu_powkey_long_time - 1000) / 500)
+		<< 4);
+	regmap_write(regmap, AXP8191_PONLEVEL_SET, val);
+
+	/* pek offlevel poweroff en set */
+	if (pk_dts->pmu_powkey_off_en)
+		pk_dts->pmu_powkey_off_en = 1;
+	else
+		pk_dts->pmu_powkey_off_en = 0;
+
+	regmap_read(regmap, AXP8191_POWEROFF_SOURCE_EN2, &val);
+	val &= 0xdf;
+	val |= (pk_dts->pmu_powkey_off_en << 5);
+	regmap_write(regmap, AXP8191_POWEROFF_SOURCE_EN2, val);
+
+	/* Init offlevel restart or not */
+	if (pk_dts->pmu_powkey_off_func)
+		regmap_update_bits(regmap, AXP8191_POWEROFF_SOURCE_EN2, BIT(4),
+				   BIT(4)); /* restart */
+	else
+		regmap_update_bits(regmap, AXP8191_POWEROFF_SOURCE_EN2, BIT(4),
+				   0); /* power off */
+
+	/* pek offlevel time set */
+	if (pk_dts->pmu_powkey_off_time < 4000)
+		pk_dts->pmu_powkey_off_time = 4000;
+
+	if (pk_dts->pmu_powkey_off_time > 10000)
+		pk_dts->pmu_powkey_off_time = 10000;
+
+	regmap_read(regmap, AXP8191_PONLEVEL_SET, &val);
+	val &= 0xf3;
+	val |= ((pk_dts->pmu_powkey_off_time - 4000) / 2000
+		<< 2);
+	regmap_write(regmap, AXP8191_PONLEVEL_SET, val);
 
 	return 0;
 }
@@ -892,6 +962,9 @@ static void axp20x_dts_param_set(struct axp20x_pek *axp20x_pek)
 		case AXP1530_ID:
 			axp1530_config_set(axp20x_pek);
 			break;
+		case AXP8191_ID:
+			axp8191_config_set(axp20x_pek);
+			break;
 		default:
 			pr_warn("Setting power key for unsupported AXP variant\n");
 		}
@@ -942,6 +1015,9 @@ static int axp20x_pek_probe(struct platform_device *pdev)
 		break;
 	case AXP2202_ID:
 		idev->name = "axp2202-pek";
+		break;
+	case AXP8191_ID:
+		idev->name = "axp8191-pek";
 		break;
 	case AXP152_ID:
 		idev->name = "axp152-pek";
@@ -1078,6 +1154,11 @@ static int axp2101_powerkey_resume_noirq(struct device *dev)
 		reg_mask_n = BIT(1);
 		reg_mask_p = BIT(0);
 		break;
+	case AXP8191_ID:
+		reg = AXP8191_IRQ_STATUS2;
+		reg_mask_n = BIT(5);
+		reg_mask_p = BIT(6);
+		break;
 	default:
 		return 0;
 		break;
@@ -1104,6 +1185,7 @@ static struct of_device_id axp_match_table[] = {
 	{ .compatible = "x-powers,axp803-pek" },
 	{ .compatible = "x-powers,axp806-pek" },
 	{ .compatible = "x-powers,axp152-pek" },
+	{ .compatible = "x-powers,axp8191-pek" },
 { /* sentinel */ },
 };
 

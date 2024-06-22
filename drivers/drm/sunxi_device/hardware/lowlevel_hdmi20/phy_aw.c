@@ -714,9 +714,9 @@ int aw_phy_config(void)
 	struct aw_phy_params *config = NULL;
 	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
 
-	u32 pixel_clk = hdmi->ctrl_dev.pixel_clk;
-	dw_pixel_repetition_t pixel = hdmi->ctrl_dev.pixel_repetition;
-	dw_color_depth_t   bits = hdmi->ctrl_dev.color_resolution;
+	u32 pixel_clk = hdmi->pixel_clk;
+	dw_pixel_repetition_t pixel = hdmi->pixel_repeat;
+	dw_color_depth_t   bits = hdmi->color_bits;
 	dw_color_format_t  format = hdmi->video_dev.mEncodingOut;
 
 	/* Color resolution 0 is 8 bit color depth */

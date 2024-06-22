@@ -20,7 +20,6 @@ typedef struct fc_spd_info {
     const u8 *pName;
     u8 pLength;
     u8 code;
-    u8 autoSend;
 } fc_spd_info_t;
 
 typedef struct channel_count {
@@ -47,16 +46,6 @@ void fc_audio_mute(struct dw_hdmi_dev_s *dev);
  * @desc: get audio current mute state
 */
 u8 dw_fc_audio_get_mute(void);
-
-/**
- * @desc: get audio current packet layout
-*/
-u8 dw_fc_audio_get_packet_layout(void);
-
-/**
- * @desc: get audio current channel count
-*/
-u8 dw_fc_audio_get_channel_count(void);
 
 /**
  * @desc: set audio infoframe config
@@ -96,13 +85,6 @@ void dw_fc_video_set_hdcp_keepout(u8 bit);
 int dw_fc_video_config(struct dw_video_s *video);
 
 /**
- * @desc: set video mode. hdmi or dvi
- * @bit: 1 - hdmi mode
- *       0 - dvi mode
-*/
-void dw_fc_video_set_tmds_mode(u8 bit);
-
-/**
  * @desc: get video current mode
  * @return: 1 - hdmi mode
  *          0 - dvi mode
@@ -128,19 +110,9 @@ u8 dw_fc_video_get_hsync_polarity(void);
 u8 dw_fc_video_get_vsync_polarity(void);
 
 /**
- * @desc: force audio output
-*/
-void dw_fc_audio_force(u8 bit);
-
-/**
- * @desc: both force audio and video output
-*/
-void dw_fc_force_output(int enable);
-
-/**
  * @desc: packets configure is the same as infoframe configure
 */
-int dw_infoframe_packet(struct dw_video_s *video, struct dw_product_s *prod);
+int dw_infoframe_packet(void);
 
 /**
  * @desc: packet config set avmute
@@ -156,39 +128,9 @@ int dw_drm_packet_filling_data(dw_fc_drm_pb_t *data);
 
 void dw_drm_packet_clear(dw_fc_drm_pb_t *pb);
 
-void dw_drm_packet_up(dw_fc_drm_pb_t *pb);
-
-void dw_drm_packet_disabled(void);
-
-u8 dw_avi_get_colori_metry(void);
-
-void dw_avi_set_colori_metry(u8 metry, u8 ex_metry);
-
-void dw_avi_set_scan_info(u8 left);
-
 u8 dw_avi_get_rgb_ycc(void);
 
 u8 dw_avi_get_video_code(void);
-
-void dw_avi_set_video_code(u8 data);
-
-void dw_avi_set_aspect_ratio(u8 left);
-
-void dw_avi_set_quantization_range(u8 range);
-
-/*
-* get vsif data
-* data[0]: hdmi_format filed in vsif
-* data[1]: hdmi_vic or 3d strcture filed in vsif
-*/
-void dw_vsif_get_hdmi_vic(u8 *data);
-
-/*
-* set vsif data
-* data[0]: hdmi_format filed in vsif
-* data[1]: hdmi_vic or 3d strcture filed in vsif
-*/
-void dw_vsif_set_hdmi_vic(u8 *data);
 
 u32 dw_fc_audio_get_sample_freq(void);
 

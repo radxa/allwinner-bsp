@@ -15,7 +15,7 @@
 #include <drm/drm_plane.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_print.h>
-#include "video/sunxi_display2.h"
+#include "include.h"
 
 struct drm_property *
 sunxi_drm_create_attach_property_enum(struct drm_device *drm,

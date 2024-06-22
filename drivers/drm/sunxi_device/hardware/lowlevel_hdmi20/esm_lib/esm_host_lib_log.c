@@ -16,7 +16,6 @@ ESM_STATUS ESM_LogControl(esm_instance_t *esm, uint32_t Cmd, uint32_t Size)
 	ESM_STATUS err;
 	uint32_t req_param = Cmd;
 
-	log_trace();
 	if (esm == 0)
 		return ESM_HL_NO_INSTANCE;
 

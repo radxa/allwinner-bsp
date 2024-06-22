@@ -20,6 +20,7 @@
 #include <dt-bindings/thermal/thermal.h>
 #include <dt-bindings/spi/sunxi-spi.h>
 #include <dt-bindings/clock/sunxi-ccu.h>
+#include <dt-bindings/display/sunxi-lcd.h>
 
 / {
 	model = "sun55iw3";
@@ -1197,7 +1198,7 @@
 		};
 
 		de: de@5000000 {
-			compatible = "allwinner,display-engine";
+			compatible = "allwinner,display-engine-v350";
 			iommus = <&mmu_aw 5 1>;
 			power-domains = <&pd1 A523_PCK_DE>;
 			reg = <0x0 0x5000000 0x0 0x400000>;
@@ -1297,12 +1298,9 @@
 				<&ccu CLK_BUS_VO0_TCONLCD0>;
 			clock-names = "clk_tcon",
 					"clk_bus_tcon";
-			resets = <&ccu RST_BUS_VO0_TCONLCD0>,
-				 <&ccu RST_BUS_LVDS0>;
-			reset-names = "rst_bus_tcon", "rst_bus_lvds";
+			resets = <&ccu RST_BUS_VO0_TCONLCD0>;
+			reset-names = "rst_bus_tcon";
 			top = <&vo0>;
-			phys = <&dsi0combophy>, <&dsi1combophy>;
-			phy-names = "lvds_combo_phy0", "lvds_combo_phy1";
 			status = "disabled";
 			ports {
 				#address-cells = <1>;
@@ -1324,13 +1322,21 @@
 					#address-cells = <1>;
 					#size-cells = <0>;
 					reg = <1>;
-					tcon0_out_dsi0: endpoint@0 {
+					tcon0_out_lvds0: endpoint@0 {
 						reg = <0>;
+						remote-endpoint = <&lvds0_in_tcon0>;
+					};
+					tcon0_out_dsi0: endpoint@1 {
+						reg = <1>;
 						remote-endpoint = <&dsi0_in_tcon0>;
 					};
-					tcon0_out_dsi1: endpoint@1 {
-						reg = <1>;
+					tcon0_out_dsi1: endpoint@2 {
+						reg = <2>;
 						remote-endpoint = <&dsi1_in_tcon0>;
+					};
+					tcon0_out_rgb0: endpoint@3 {
+						reg = <3>;
+						remote-endpoint = <&rgb0_in_tcon0>;
 					};
 				};
 			};
@@ -1385,16 +1391,10 @@
 				<&ccu CLK_BUS_VO1_TCONLCD0>;
 			clock-names = "clk_tcon",
 					"clk_bus_tcon";
-			resets = <&ccu RST_BUS_VO1_TCONLCD0>,
-				<&ccu RST_BUS_LVDS1>;
-			reset-names = "rst_bus_tcon",
-					"rst_bus_lvds";
+			resets = <&ccu RST_BUS_VO1_TCONLCD0>;
+			reset-names = "rst_bus_tcon";
 			top = <&vo1>;
-			phys = <&dsi0combophy>, <&dsi1combophy>;
-			phy-names = "lvds_combo_phy0", "lvds_combo_phy1";
-
 			status = "disabled";
-
 			ports {
 				#address-cells = <1>;
 				#size-cells = <0>;
@@ -1412,11 +1412,102 @@
 					};
 				};
 				tcon4_out: port@1 {
+					#address-cells = <1>;
+					#size-cells = <0>;
 					reg = <1>;
-	/*			tcon4_out_panel: endpoint@0 {
+					tcon4_out_lvds1: endpoint@0 {
+						reg = <0>;
+						remote-endpoint = <&lvds1_in_tcon4>;
+					};
+					tcon4_out_rgb1: endpoint@1 {
+						reg = <1>;
+						remote-endpoint = <&rgb1_in_tcon4>;
+					};
+				};
+			};
+		};
+
+		lvds0: lvds0@0001000 {
+			compatible = "allwinner,lvds0";
+			resets = <&ccu RST_BUS_LVDS0>;
+			reset-names = "rst_bus_lvds";
+			phys = <&dsi0combophy>, <&dsi1combophy>;
+			phy-names = "combophy0", "combophy1";
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				lvds0_in: port@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
 					reg = <0>;
-					remote-endpoint = <&xxxxx>;
-				}*/
+					lvds0_in_tcon0: endpoint@0 {
+						reg = <0>;
+						remote-endpoint = <&tcon0_out_lvds0>;
+					};
+				};
+			};
+		};
+
+		lvds1: lvds1@0001000 {
+			compatible = "allwinner,lvds1";
+			reg = <0>;
+			resets = <&ccu RST_BUS_LVDS1>;
+			reset-names = "rst_bus_lvds";
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				lvds1_in: port@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+					lvds1_in_tcon4: endpoint@0 {
+						reg = <0>;
+						remote-endpoint = <&tcon4_out_lvds1>;
+					};
+				};
+			};
+		};
+
+		rgb0: rgb0@0001000 {
+			compatible = "allwinner,rgb0";
+			reg = <0>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				rgb0_in: port@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+					rgb0_in_tcon0: endpoint@0 {
+						reg = <0>;
+						remote-endpoint = <&tcon0_out_rgb0>;
+					};
+				};
+			};
+		};
+
+		rgb1: rgb1@0001000 {
+			compatible = "allwinner,rgb1";
+			reg = <0>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				rgb1_in: port@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+					rgb1_in_tcon4: endpoint@0 {
+						reg = <0>;
+						remote-endpoint = <&tcon4_out_rgb1>;
+					};
 				};
 			};
 		};
@@ -1424,14 +1515,10 @@
 		dsi0combophy: phy@5507000 {
 			compatible = "allwinner,sunxi-dsi-combo-phy0";
 			reg = <0x0 0x05507000 0x0 0x1ff>;
-			clocks = <&ccu CLK_DSI0>,
-				<&ccu CLK_BUS_DSI0>,
-				<&ccu CLK_COMBPHY0>;
-			clock-names = "clk_mipi_dsi",
-					"clk_bus_mipi_dsi",
-					"clk_mipi_dsi_combphy";
+			clocks = <&ccu CLK_BUS_DSI0>;
+			clock-names = "phy_gating_clk";
 			resets = <&ccu RST_BUS_DSI0>;
-			reset-names = "rst_bus_mipi_dsi";
+			reset-names = "phy_rst_clk";
 			#phy-cells = <0>;
 			status = "disabled";
 		};
@@ -1441,14 +1528,15 @@
 			reg = <0x0 0x05506000 0x0 0xfff>;
 			interrupts = <GIC_SPI 94 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&ccu CLK_DSI0>,
-				<&ccu CLK_BUS_DSI0>,
-				<&ccu CLK_COMBPHY0>;
-			clock-names = "clk_mipi_dsi",
-					"clk_bus_mipi_dsi",
-					"clk_mipi_dsi_combphy";
+				<&ccu CLK_BUS_DSI0>;
+			clock-names = "dsi_clk",
+					"dsi_gating_clk";
 			resets = <&ccu RST_BUS_DSI0>;
-			reset-names = "rst_bus_mipi_dsi";
+			reset-names = "dsi_rst_clk";
+			assigned-clocks = <&ccu CLK_DSI0>;
+			assigned-clock-parents = <&ccu CLK_PLL_PERI0_150M>;
 			phys = <&dsi0combophy>;
+			phy-names = "combophy";
 			status = "disabled";
 
 			ports {
@@ -1469,15 +1557,10 @@
 		dsi1combophy: phy@5509000 {
 			compatible = "allwinner,sunxi-dsi-combo-phy1";
 			reg = <0x0 0x05509000 0x0 0x1ff>;
-
-			clocks = <&ccu CLK_DSI1>,
-				<&ccu CLK_BUS_DSI1>,
-				<&ccu CLK_COMBPHY1>;
-			clock-names = "clk_mipi_dsi",
-					"clk_bus_mipi_dsi",
-					"clk_mipi_dsi_combphy";
+			clocks = <&ccu CLK_BUS_DSI1>;
+			clock-names = "phy_gating_clk";
 			resets = <&ccu RST_BUS_DSI1>;
-			reset-names = "rst_bus_mipi_dsi";
+			reset-names = "phy_rst_clk";
 			#phy-cells = <0>;
 			status = "disabled";
 		};
@@ -1487,38 +1570,37 @@
 			reg = <0x0 0x05508000 0x0 0xfff>;
 			interrupts = <GIC_SPI 95 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&ccu CLK_DSI1>,
-				<&ccu CLK_BUS_DSI1>,
-				<&ccu CLK_COMBPHY1>;
-			clock-names = "clk_mipi_dsi",
-					"clk_bus_mipi_dsi",
-					"clk_mipi_dsi_combphy";
+				<&ccu CLK_BUS_DSI1>;
+			clock-names = "dsi_clk",
+					"dsi_gating_clk";
 			resets = <&ccu RST_BUS_DSI1>;
-			reset-names = "rst_bus_mipi_dsi";
+			reset-names = "dsi_rst_clk";
+			assigned-clocks = <&ccu CLK_DSI1>;
+			assigned-clock-parents = <&ccu CLK_PLL_PERI0_150M>;
 			phys = <&dsi1combophy>;
-
+			phy-names = "combophy";
 			status = "disabled";
 			ports {
 				#address-cells = <1>;
 				#size-cells = <0>;
-
 				dsi1_in: port@0 {
 					reg = <0>;
 					#address-cells = <1>;
 					#size-cells = <0>;
-					dsi1_in_tcon0: endpoint@0 {
+					dsi1_in_tcon1: endpoint@0 {
 						reg = <0>;
-						remote-endpoint = <&tcon0_out_dsi1>;
-					};
-					dsi1_in_tcon1: endpoint@1 {
-						reg = <1>;
 						remote-endpoint = <&tcon1_out_dsi1>;
+					};
+					dsi1_in_tcon0: endpoint@1 {
+						reg = <1>;
+						remote-endpoint = <&tcon0_out_dsi1>;
 					};
 				};
 			};
 		};
 
 		tv0: tcon2@5503000 {
-			compatible = "allwinner,tcon-tv-hdmi";
+			compatible = "allwinner,tcon-tv";
 			reg = <0x0 0x05503000 0x0 0x1000>;
 			interrupts = <GIC_SPI 91 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&ccu CLK_TCONTV>,
@@ -1569,10 +1651,14 @@
 				      "clk_hdmi_24M",
 				      "clk_cec",
 				      "clk_tcon_tv";
-			resets = <&ccu RST_BUS_HDMI_SUB>, <&ccu RST_BUS_HDMI_MAIN>;
-			reset-names = "rst_bus_sub", "rst_bus_main";
+			resets = <&ccu RST_BUS_HDMI_SUB>,
+				<&ccu RST_BUS_HDMI_MAIN>;
+			reset-names = "rst_bus_sub",
+				      "rst_bus_main";
 			assigned-clocks = <&ccu CLK_HDMI>;
 			assigned-clock-rates = <0>, <0>;
+			power-domains = <&pd1 A523_PCK_VO0>;
+
 			status = "disabled";
 			ports {
 				#address-cells = <1>;
@@ -1590,7 +1676,7 @@
 		};
 
 		tv1: tcon3@5504000 {
-			compatible = "allwinner,tcon-tv-edp";
+			compatible = "allwinner,tcon-tv";
 			reg = <0x0 0x05504000 0x0 0x1000>;
 			interrupts = <GIC_SPI 96 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&ccu CLK_TCONTV1>,
@@ -1634,6 +1720,7 @@
 			compatible = "allwinner,drm-edp";
 			reg = <0x0 0x05720000 0x0 0x4000>;
 			interrupts = <GIC_SPI 144 IRQ_TYPE_LEVEL_HIGH>;
+			power-domains = <&pd1 A523_PCK_VO0>;
 			clocks = <&ccu CLK_BUS_EDP>,
 					<&ccu CLK_EDP>,
 					<&ccu CLK_HDMI_24M>;
@@ -2038,6 +2125,16 @@
 					function = "gpio_in";
 			};
 
+			lvds0_pins_a: lvds0@0 {
+				pins = "PD0", "PD1", "PD2", "PD3", "PD4", "PD5", "PD6", "PD7", "PD8", "PD9";
+				function = "lvds0";
+				drive-strength = <30>;
+			};
+			lvds0_pins_b: lvds0@1 {
+				pins = "PD0", "PD1", "PD2", "PD3", "PD4", "PD5", "PD6", "PD7", "PD8", "PD9";
+				function = "gpio_in";
+			};
+
 			lvds1_pins_a: lvds1@0 {
 				pins = "PD10", "PD11", "PD12", "PD13", "PD14", "PD15", "PD16", "PD17", "PD18", "PD19";
 				function = "lvds1";
@@ -2068,6 +2165,51 @@
 
 			lvds3_pins_b: lvds3@1 {
 				pins = "PJ10", "PJ11", "PJ12", "PJ13", "PJ14", "PJ15", "PJ16", "PJ17", "PJ18", "PJ19";
+				function = "gpio_in";
+			};
+
+			rgb1_24pins_a: rgb1@0 {
+				pins = "PJ0", "PJ1", "PJ2", "PJ3", "PJ4", "PJ5", "PJ6", "PJ7", "PJ8", "PJ9", \
+					"PJ10", "PJ11", "PJ12", "PJ13", "PJ14", "PJ15", "PJ16", "PJ17", "PJ18", "PJ19", \
+					"PJ20", "PJ21", "PJ22", "PJ23", "PJ24", "PJ25", "PJ26", "PJ27";
+				function = "lcd1";
+				drive-strength = <30>;
+			};
+
+			rgb1_24pins_b: rgb1@1 {
+				pins = "PJ0", "PJ1", "PJ2", "PJ3", "PJ4", "PJ5", "PJ6", "PJ7", "PJ8", "PJ9", \
+					"PJ10", "PJ11", "PJ12", "PJ13", "PJ14", "PJ15", "PJ16", "PJ17", "PJ18", "PJ19", \
+					"PJ20", "PJ21", "PJ22", "PJ23", "PJ24", "PJ25", "PJ26", "PJ27";
+				function = "gpio_in";
+			};
+
+			rgb0_24pins_a: rgb0@0 {
+				pins = "PB0", "PB1", "PD0", "PD1", "PD2", "PD3", "PD4", "PD5", "PB2", "PB3", "PD6", "PD7", "PD8", "PD9", \
+					"PD10", "PD11", "PB7", "PB8", "PD12", "PD13", "PD14", "PD15", "PD16", "PD17", "PD18", "PD19", \
+					"PD20", "PD21";
+				function = "lcd0";
+				drive-strength = <30>;
+			};
+
+			rgb0_24pins_b: rgb0@1 {
+				pins = "PB0", "PB1", "PD0", "PD1", "PD2", "PD3", "PD4", "PD5", "PB2", "PB3", "PD6", "PD7", "PD8", "PD9", \
+					"PD10", "PD11", "PB7", "PB8", "PD12", "PD13", "PD14", "PD15", "PD16", "PD17", "PD18", "PD19", \
+					"PD20", "PD21";
+				function = "gpio_in";
+			};
+
+			rgb0_18pins_a: rgb0@2 {
+				pins = "PD0", "PD1", "PD2", "PD3", "PD4", "PD5", "PD6", "PD7", "PD8", "PD9", \
+					"PD10", "PD11", "PD12", "PD13", "PD14", "PD15", "PD16", "PD17", "PD18", "PD19", \
+					"PD20", "PD21";
+				function = "dpss";
+				drive-strength = <30>;
+			};
+
+			rgb0_18pins_b: rgb0@3{
+				pins = "PD0", "PD1", "PD2", "PD3", "PD4", "PD5", "PD6", "PD7", "PD8", "PD9", \
+					"PD10", "PD11", "PD12", "PD13", "PD14", "PD15", "PD16", "PD17", "PD18", "PD19", \
+					"PD20", "PD21";
 				function = "gpio_in";
 			};
 			csi_mclk0_pins_a: csi_mclk0@0 {
@@ -4599,7 +4741,10 @@
 			reg-names = "phy-ctl", "phy-clk";
 			power-domains = <&pd1 A523_PCK_PCIE>;
 			phy_refclk_sel = <0>; /* 0:internal clk; 1:external clk */
+			clocks = <&ccu CLK_USB3_REF>, <&ccu CLK_PLL_PERI0_200M>;
+			clock-names = "phyclk_ref","refclk_par";
 			resets = <&ccu RST_BUS_PCIE_USB3>;
+			reset-names = "phy_rst";
 			#phy-cells = <1>;
 			status = "disabled";
 		};
@@ -4638,8 +4783,8 @@
 			num-viewport = <8>;
 			linux,pci-domain = <0>;
 			power-domains = <&pd1 A523_PCK_PCIE>;
-			clocks = <&ccu CLK_USB3_REF>, <&ccu CLK_PLL_PERI0_200M>, <&dcxo24M>, <&ccu CLK_PCIE_AUX>;
-			clock-names = "pclk_ref", "pclk_per", "hosc", "pclk_aux";
+			clocks = <&dcxo24M>, <&ccu CLK_PCIE_AUX>;
+			clock-names = "hosc", "pclk_aux";
 			busno = <0>;
 			status = "disabled";
 		};

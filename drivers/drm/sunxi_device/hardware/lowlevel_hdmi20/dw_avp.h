@@ -9,87 +9,173 @@
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
 
-#ifndef _DW_VIDEO_H_
-#define _DW_VIDEO_H_
+#ifndef _DW_AVP_H_
+#define _DW_AVP_H_
 
 #include "dw_dev.h"
-#include "dw_edid.h"
 
-
-int dw_video_get_cea_vic(int hdmi_vic_code);
-
-void dw_video_update_ycc420(dw_dtd_t *paramsDtd, dw_edid_block_svd_t *paramsSvd);
-
-int dw_video_get_hdmi_vic(int cea_code);
-
+/*******************************************************************************
+ * dw audio config function
+ ******************************************************************************/
 /**
- * @param params pointer to the video parameters structure
- * @return Video PixelClock in [0.01 MHz]
+ * @desc: dw audio set acr cts mode and value
+ * @value: 0 - use auto mode
+ *     other - want to set cts value
  */
-u32 dw_video_get_pixel_clk(struct dw_video_s *params);
-
-void dw_video_csc_update_coefficients(struct dw_video_s *params);
-
-u8 videoParams_IsLimitedToYcc420(struct dw_hdmi_dev_s *dev, struct dw_video_s *params);
-
+void dw_audio_set_clock_cts(u32 value);
 /**
- * Configures the video blocks to do any video processing and to
- * transmit the video set up required by the user, allowing to
- * force video pixels (from the DEBUG pixels) to be transmitted
- * rather than the video stream being received.
- * @param baseAddr Base Address of module
- * @param params VideoParams
- * @return true if successful
+ * @desc: dw audio set audio param data
+ * @data: point to param data buffer
+ * @return: 0 - success
+ *         -1 - failed
  */
-int dw_video_on(struct dw_video_s *params);
-
-int dw_video_update_color_format(dw_color_format_t format);
-
-int dw_video_update_color_depth(u8 bits);
-
-int dw_video_update_color_metry(u8 metry, u8 ext_metry);
-
-int dw_video_update_hdr_eotf(u8 hdr, u8 eotf);
-
-int dw_video_update_tmds_mode(u8 mode);
-
-int dw_video_update_range(u8 range);
-
-int dw_video_update_scaninfo(u8 scan);
-
-int dw_video_update_ratio(u8 ratio);
-
-void dw_video_param_print(struct dw_video_s *video_dev);
-
-ssize_t dw_avp_dump(char *buf);
-
-int dw_audio_param_print(struct dw_audio_s *audio);
-
 int dw_audio_set_info(void *data);
-
+/**
+ * @desc: dw audio init
+ * @return: 0 - success
+ *         -1 - failed
+ */
 int dw_audio_init(void);
-
+/**
+ * @desc: dw audio open
+ * @return: 0 - success
+ *         -1 - failed
+ */
 int dw_audio_on(void);
-
-u32 dw_video_get_dtd_code(void);
-
+/*******************************************************************************
+ * dw video config function
+ ******************************************************************************/
+/**
+ * @desc: dw video set dtd timing info
+ * @dtd: point to need set dtd
+ * @rate: current dtd timing frame rate
+ * @return: 0 - success
+ *         -1 - failed
+ */
+int dw_video_filling_timing(dw_dtd_t *dtd, u32 rate);
+/**
+ * @desc: dw video get software pixel clock
+ * @return: pixel clock. unit: KHZ
+ */
+u32 dw_video_get_pixel_clk(void);
+/**
+ * @desc: dw video get dtd timing cea vic code
+ * @return: cea vic code
+ */
+u32 dw_video_get_cea_vic(void);
+/**
+ * @desc: dw video get hdmi vic by cea vic
+ * @return: -1 - failed
+ *       other - hdmi spec define hdmi_vic
+ */
+int dw_video_cea_to_hdmi_vic(int cea_vic);
+/**
+ * @desc: dw video select send hdmi14 vsif
+ * @format: vsif video format
+ * @hdmi_vic: hdmi vic code
+ * @return: 0 - success
+ */
+int dw_video_use_hdmi14_vsif(u8 format, u8 data_pb5);
+/**
+ * @desc: dw video select send hdmi20 vsif
+ * @return: 0 - success
+ */
+int dw_video_use_hdmi20_vsif(void);
+/**
+ * @desc: dw video set video format and vic code
+ * @type: video format type
+ * @code: hdmi or vic code
+ */
+int dw_video_set_vic_format(enum dw_video_format_e type, u32 code);
+/**
+ * @desc: dw video color space convert coefficients. now not use
+ * @video: point to video dev
+ */
+void dw_video_csc_update_coefficients(struct dw_video_s *video);
+/**
+ * @desc: dw video software update color format
+ * @format: color format
+ * @return: 0 - success
+ */
+int dw_video_update_color_format(dw_color_format_t format);
+/**
+ * @desc: dw video software update color depth
+ * @bits: color depth
+ * @return: 0 - success
+ */
+int dw_video_update_color_depth(u8 bits);
+/**
+ * @desc: dw video software update color metry
+ * @metry: color metry
+ * @ext_metry: extrenal color metry
+ * @return: 0 - success
+ */
+int dw_video_update_color_metry(u8 metry, u8 ext_metry);
+/**
+ * @desc: dw video software update color eotf
+ * @hdr: hdr mode flag
+ * @eotf: set eotf value
+ * @return: 0 - success
+ */
+int dw_video_update_hdr_eotf(u8 hdr, u8 eotf);
+/**
+ * @desc: dw video software update tmds mode
+ * @mode: tmds mode. hdmi or dvi
+ * @return: 0 - success
+ */
+int dw_video_update_tmds_mode(u8 mode);
+/**
+ * @desc: dw video software update color range
+ * @range: color range
+ * @return: 0 - success
+ */
+int dw_video_update_range(u8 range);
+/**
+ * @desc: dw video software update color scan
+ * @format: color scan
+ * @return: 0 - success
+ */
+int dw_video_update_scaninfo(u8 scan);
+/**
+ * @desc: dw video software update picture ratio
+ * @ratio: picture ratio
+ * @return: 0 - success
+ */
+int dw_video_update_ratio(u8 ratio);
+/**
+ * @desc: dw video print disp info
+ * @return 0 - success
+ */
+int dw_video_dump_disp_info(void);
+/*******************************************************************************
+ * dw audio video path config function
+ ******************************************************************************/
+/**
+ * @desc: dw avp dump
+ * @buf: point to dump buffer
+ * @return: dump info size. Unit: byte
+ */
+ssize_t dw_avp_dump(char *buf);
+/**
+ * @desc: dw avp set send avmute singal
+ * @enable: 0 - disable avmute
+ *          1 - enable avmute
+ * @return: 0 - success
+ *         -1 - failed
+ */
 int dw_avp_set_mute(u8 enable);
-
-int dw_video_update_hdmi14_prod(void);
-
-int dw_video_update_hdmi14_4k_prod(void);
-
-int dw_video_update_hdmi20_4k_prod(void);
-
-int dw_video_update_vic_format(enum dw_video_format_e type, u8 code);
-
-void dw_avp_correct_config(void);
-
-int dw_avp_update_perfer_info(u8 hdmi20_4k);
-
+/**
+ * @desc: dw avp config send scramble
+ * @return: 0 - success
+ *         -1 - failed
+ */
+int dw_avp_config_scramble(void);
+/**
+ * @desc: dw avp config flow
+ * @return: 0 - success
+ *         -1 - failed
+ */
 int dw_avp_config(void);
-
-int dw_video_dtd_filling(dw_dtd_t *dtd, u32 rate);
 
 /*****************************************************************************
  *                                                                           *
@@ -807,4 +893,4 @@ int dw_video_dtd_filling(dw_dtd_t *dtd, u32 rate);
 #define CSC_LIMIT_DN_LSB        0x0000411D
 #define CSC_LIMIT_DN_LSB_CSC_LIMIT_DN_LSB_MASK      0x000000FF
 
-#endif  /* _DW_VIDEO_H_ */
+#endif  /* _DW_AVP_H_ */

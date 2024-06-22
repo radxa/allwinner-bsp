@@ -93,6 +93,7 @@ typedef struct _gckvip_core_loading_profile_t {
 
     vip_uint64_t last_record_time; /* the last record time */
     vip_uint64_t last_infer_time; /* the last record infer time */
+    vip_uint64_t latest_sbumit_time; /* the last submit time */
 } gckvip_core_loading_profile_t;
 
 typedef enum _gckvip_profile_data_type_t {

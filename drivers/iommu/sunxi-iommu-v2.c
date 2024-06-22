@@ -932,14 +932,19 @@ static void sunxi_iommu_detach_dev(struct iommu_domain *domain,
 	return;
 }
 
+static void sunxi_iommu_probe_device_finalize(struct device *dev)
+{
+	struct sunxi_iommu_owner *owner = dev_iommu_priv_get(dev);
+
+	sunxi_enable_device_iommu(owner->tlbid, owner->flag);
+}
+
 static struct iommu_device *sunxi_iommu_probe_device(struct device *dev)
 {
 	struct sunxi_iommu_owner *owner = dev_iommu_priv_get(dev);
 
 	if (!owner) /* Not a iommu client device */
 		return ERR_PTR(-ENODEV);
-
-	sunxi_enable_device_iommu(owner->tlbid, owner->flag);
 
 	return &owner->data->iommu;
 }
@@ -1607,6 +1612,7 @@ static const struct iommu_ops sunxi_iommu_ops = {
 			 SZ_16M,
 	.domain_alloc = sunxi_iommu_domain_alloc,
 	.probe_device = sunxi_iommu_probe_device,
+	.probe_finalize = sunxi_iommu_probe_device_finalize,
 	.release_device = sunxi_iommu_release_device,
 	.device_group = sunxi_iommu_device_group,
 	.of_xlate = sunxi_iommu_of_xlate,
@@ -1629,6 +1635,7 @@ static const struct iommu_ops sunxi_iommu_ops = {
 	.attach_dev = sunxi_iommu_attach_dev,
 	.detach_dev = sunxi_iommu_detach_dev,
 	.probe_device = sunxi_iommu_probe_device,
+	.probe_finalize = sunxi_iommu_probe_device_finalize,
 	.release_device = sunxi_iommu_release_device,
 	.device_group = sunxi_iommu_device_group,
 	.of_xlate = sunxi_iommu_of_xlate,

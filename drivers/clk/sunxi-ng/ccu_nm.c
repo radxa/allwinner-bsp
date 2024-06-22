@@ -256,8 +256,10 @@ static int ccu_nm_set_rate(struct clk_hw *hw, unsigned long _rate,
 	spin_lock_irqsave(nm->common.lock, flags);
 
 	reg = readl(nm->common.base + nm->common.reg);
-	reg &= ~GENMASK(nm->n.width + nm->n.shift - 1, nm->n.shift);
-	reg &= ~GENMASK(nm->m.width + nm->m.shift - 1, nm->m.shift);
+	if (nm->n.width)
+		reg &= ~GENMASK(nm->n.width + nm->n.shift - 1, nm->n.shift);
+	if (nm->m.width)
+		reg &= ~GENMASK(nm->m.width + nm->m.shift - 1, nm->m.shift);
 
 	reg |= (_nm.n - nm->n.offset) << nm->n.shift;
 	reg |= (_nm.m - nm->m.offset) << nm->m.shift;

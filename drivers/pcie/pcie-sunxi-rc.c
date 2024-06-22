@@ -18,6 +18,9 @@
  * GNU General Public License for more details.
  *
  */
+
+#define SUNXI_MODNAME "pcie-rc"
+#include <sunxi-log.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/kernel.h>
@@ -119,7 +122,7 @@ static int sunxi_msi_domain_alloc(struct irq_domain *domain, unsigned int virq,
 	raw_spin_unlock_irqrestore(&pp->lock, flags);
 
 	if (unlikely(hwirq < 0)) {
-		dev_err(pp->dev, "failed to alloc hwirq\n");
+		sunxi_err(pp->dev, "failed to alloc hwirq\n");
 		return -ENOSPC;
 	}
 
@@ -151,7 +154,7 @@ static const struct irq_domain_ops sunxi_msi_domain_ops = {
 };
 
 static struct msi_domain_info sunxi_msi_info = {
-	.flags	= (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS),
+	.flags	= (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS | MSI_FLAG_MULTI_PCI_MSI),
 	.chip	= &sunxi_msi_top_chip,
 };
 
@@ -162,14 +165,14 @@ static int sunxi_allocate_msi_domains(struct sunxi_pcie_port *pp)
 	pp->irq_domain = irq_domain_create_linear(fwnode, INT_PCI_MSI_NR,
 							  &sunxi_msi_domain_ops, pp);
 	if (!pp->irq_domain) {
-		dev_err(pp->dev, "failed to create IRQ domain\n");
+		sunxi_err(pp->dev, "failed to create IRQ domain\n");
 		return -ENOMEM;
 	}
 	irq_domain_update_bus_token(pp->irq_domain, DOMAIN_BUS_NEXUS);
 
 	pp->msi_domain = pci_msi_create_irq_domain(fwnode, &sunxi_msi_info, pp->irq_domain);
 	if (!pp->msi_domain) {
-		dev_err(pp->dev, "failed to create MSI domain\n");
+		sunxi_err(pp->dev, "failed to create MSI domain\n");
 		irq_domain_remove(pp->irq_domain);
 		return -ENOMEM;
 	}
@@ -334,7 +337,7 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 		pp->va_cfg0_base = devm_pci_remap_cfgspace(dev,
 					pp->cfg0_base, pp->cfg0_size);
 		if (!pp->va_cfg0_base) {
-			dev_err(dev, "Error with ioremap in function\n");
+			sunxi_err(dev, "Error with ioremap in function\n");
 			return -ENOMEM;
 		}
 	}
@@ -368,7 +371,7 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 		if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its)
 			sunxi_free_msi_domains(pp);
 
-		dev_err(pp->dev, "Failed to probe host bridge\n");
+		sunxi_err(pp->dev, "Failed to probe host bridge\n");
 
 		return ret;
 	}
@@ -439,7 +442,7 @@ void sunxi_pcie_host_setup_rc(struct sunxi_pcie_port *pp)
 			sunxi_pcie_prog_outbound_atu(pp, atu_idx, PCIE_ATU_TYPE_IO, pp->io_base,
 							pp->io_bus_addr, pp->io_size);
 		else
-			dev_err(pp->dev, "Resources exceed number of ATU entries (%d)",
+			sunxi_err(pp->dev, "Resources exceed number of ATU entries (%d)",
 							pp->num_ob_windows);
 	}
 
@@ -469,7 +472,7 @@ static int sunxi_pcie_host_wait_for_speed_change(struct sunxi_pcie *pci)
 		usleep_range(SPEED_CHANGE_USLEEP_MIN, SPEED_CHANGE_USLEEP_MAX);
 	}
 
-	dev_err(pci->dev, "Speed change timeout\n");
+	sunxi_err(pci->dev, "Speed change timeout\n");
 	return -ETIMEDOUT;
 }
 
@@ -494,9 +497,9 @@ int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
 
 	ret = sunxi_pcie_host_wait_for_speed_change(pci);
 	if (!ret)
-		dev_info(pci->dev, "PCIe speed of Gen%d\n", gen);
+		sunxi_info(pci->dev, "PCIe speed of Gen%d\n", gen);
 	else
-		dev_info(pci->dev, "PCIe speed of Gen1\n");
+		sunxi_info(pci->dev, "PCIe speed of Gen1\n");
 
 	sunxi_pcie_dbi_ro_wr_dis(pci);
 	return 0;
@@ -548,7 +551,7 @@ static int sunxi_pcie_host_wait_for_link(struct sunxi_pcie_port *pp)
 
 	for (retries = 0; retries < LINK_WAIT_MAX_RETRIE; retries++) {
 		if (sunxi_pcie_host_link_up(pp)) {
-			dev_info(pp->dev, "pcie link up success\n");
+			sunxi_info(pp->dev, "pcie link up success\n");
 			return 0;
 		}
 		usleep_range(LINK_WAIT_USLEEP_MIN, LINK_WAIT_USLEEP_MAX);
@@ -562,7 +565,7 @@ int sunxi_pcie_host_establish_link(struct sunxi_pcie *pci)
 	struct sunxi_pcie_port *pp = &pci->pp;
 
 	if (sunxi_pcie_host_link_up(pp)) {
-		dev_info(pci->dev, "pcie is already link up\n");
+		sunxi_info(pci->dev, "pcie is already link up\n");
 		return 0;
 	}
 
@@ -610,7 +613,7 @@ int sunxi_pcie_host_add_port(struct sunxi_pcie *pci, struct platform_device *pde
 
 	ret = of_property_read_u32(pp->dev->of_node, "num-ob-windows", &pp->num_ob_windows);
 	if (ret) {
-		dev_err(&pdev->dev, "failed to parse num-ob-windows\n");
+		sunxi_err(&pdev->dev, "failed to parse num-ob-windows\n");
 		return -EINVAL;
 	}
 
@@ -624,7 +627,7 @@ int sunxi_pcie_host_add_port(struct sunxi_pcie *pci, struct platform_device *pde
 		ret = devm_request_irq(&pdev->dev, pp->msi_irq, sunxi_pcie_host_msi_irq_handler,
 					IRQF_SHARED, "pcie-msi", pp);
 		if (ret) {
-			dev_err(&pdev->dev, "failed to request MSI IRQ\n");
+			sunxi_err(&pdev->dev, "failed to request MSI IRQ\n");
 			return ret;
 		}
 	}
@@ -634,7 +637,7 @@ int sunxi_pcie_host_add_port(struct sunxi_pcie *pci, struct platform_device *pde
 
 	ret = sunxi_pcie_host_init(pp);
 	if (ret) {
-		dev_err(&pdev->dev, "failed to initialize host\n");
+		sunxi_err(&pdev->dev, "failed to initialize host\n");
 		return ret;
 	}
 

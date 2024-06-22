@@ -29,7 +29,6 @@ ESM_STATUS ESM_GetStatusRegister(esm_instance_t *esm, esm_status_t *status,
 	uint32_t reg0 = 0;
 	uint32_t clr = 0, clr1 = 0;
 
-	/* log_trace(); */
 	if (esm == 0)
 		return ESM_HL_NO_INSTANCE;
 

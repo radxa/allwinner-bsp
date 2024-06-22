@@ -25,6 +25,7 @@
 
 /* Sub-System PCIE Bus Gating Reset Register */
 #define PCIE_COMBO_PHY_BGR		0x04
+#define   PCIE_SLV_ACLK_EN		BIT(18)
 #define   PCIE_ACLK_EN			BIT(17)
 #define   PCIE_HCLK_EN			BIT(16)
 #define   PCIE_PERSTN			BIT(1)
@@ -34,6 +35,9 @@
 #define USB3_COMBO_PHY_BGR		0x08
 #define   USB3_ACLK_EN			BIT(17)
 #define   USB3_HCLK_EN			BIT(16)
+#define   USB3_U2_PHY_RSTN		BIT(4)
+#define   USB3_U2_PHY_MUX_EN		BIT(3)
+#define   USB3_U2_PHY_MUX_SEL		BIT(0)
 #define   USB3_RESETN			BIT(0)
 
 /* Sub-System PCIE PHY Control Register */
@@ -75,18 +79,39 @@ enum phy_refclk_sel {
 	EXTER_DIF_REF_CLK, /* PHY use external single end reference clock */
 };
 
+struct sunxi_combophy_of_data {
+	bool has_cfg_clk;
+	bool has_slv_clk;
+	bool has_phy_mbus_clk;
+	bool has_phy_ahb_clk;
+	bool has_pcie_axi_clk;
+	bool has_u2_phy_mux;
+	bool need_noppu_rst;
+};
+
 struct sunxi_combphy {
 	struct device *dev;
 	struct phy *phy;
 	void __iomem *phy_ctl;  /* parse dts, control the phy mode, reset and power */
 	void __iomem *phy_clk;  /* parse dts, set the phy clock */
 	struct reset_control *reset;
+	struct reset_control *noppu_reset;
+
 	struct clk *clk;
+	struct clk *phyclk_ref;
+	struct clk *refclk_par;
+	struct clk *phyclk_cfg;
+	struct clk *cfgclk_par;
+	struct clk *phy_mclk;
+	struct clk *phy_hclk;
+	struct clk *phy_axi;
+	struct clk *phy_axi_par;
 	__u8 mode;
 	__u32 vernum; /* version number */
 	enum phy_use_sel user;
 	enum phy_refclk_sel ref;
 	struct notifier_block pwr_nb;
+	const struct sunxi_combophy_of_data *drvdata;
 };
 
 ATOMIC_NOTIFIER_HEAD(inno_subsys_notifier_list);
@@ -98,7 +123,10 @@ static void combo_pcie_clk_set(struct sunxi_combphy *combphy, bool enable)
 	u32 val, tmp = 0;
 
 	val = readl(COMBO_REG_PCIEBGR(combphy->phy_ctl));
-	tmp = PCIE_ACLK_EN | PCIE_HCLK_EN | PCIE_PERSTN | PCIE_PW_UP_RSTN;
+	if (combphy->drvdata->has_slv_clk)
+		tmp = PCIE_SLV_ACLK_EN | PCIE_ACLK_EN | PCIE_HCLK_EN | PCIE_PERSTN | PCIE_PW_UP_RSTN;
+	else
+		tmp = PCIE_ACLK_EN | PCIE_HCLK_EN | PCIE_PERSTN | PCIE_PW_UP_RSTN;
 	if (enable)
 		val |= tmp;
 	else
@@ -111,7 +139,10 @@ static void combo_usb3_clk_set(struct sunxi_combphy *combphy, bool enable)
 	u32 val, tmp = 0;
 
 	val = readl(COMBO_REG_USB3BGR(combphy->phy_ctl));
-	tmp = USB3_ACLK_EN | USB3_HCLK_EN | USB3_RESETN;
+	if (combphy->drvdata->has_u2_phy_mux)
+		tmp = USB3_ACLK_EN | USB3_HCLK_EN | USB3_U2_PHY_MUX_SEL | USB3_U2_PHY_RSTN | USB3_U2_PHY_MUX_EN;
+	else
+		tmp = USB3_ACLK_EN | USB3_HCLK_EN | USB3_RESETN;
 	if (enable)
 		val |= tmp;
 	else
@@ -205,6 +236,64 @@ static int pcie_usb3_sub_system_init(struct platform_device *pdev)
 		return ret;
 	}
 
+	if (combphy->drvdata->need_noppu_rst) {
+		ret = reset_control_deassert(combphy->noppu_reset);
+		if (ret) {
+			if (!IS_ERR(combphy->clk))
+				clk_disable_unprepare(combphy->clk);
+			return ret;
+		}
+	}
+	if (combphy->user == PHY_USE_BY_PCIE || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
+		ret = clk_set_rate(combphy->phyclk_ref, 100000000);
+		if (ret) {
+			dev_err(dev, "failed to set phyclk_ref freq 100M!\n");
+		}
+
+		if (!IS_ERR(combphy->phyclk_ref)) {
+			ret = clk_prepare_enable(combphy->phyclk_ref);
+			if (ret)
+				return ret;
+		}
+	}
+
+	if (combphy->drvdata->has_cfg_clk) {
+		ret = clk_set_rate(combphy->phyclk_cfg, 200000000);
+		if (ret) {
+			dev_err(dev, "failed to set phyclk_cfg freq 200M!\n");
+		}
+
+		if (!IS_ERR(combphy->phyclk_cfg)) {
+			ret = clk_prepare_enable(combphy->phyclk_cfg);
+			if (ret)
+				return ret;
+		}
+	}
+
+	if (combphy->drvdata->has_phy_ahb_clk) {
+		ret = clk_prepare_enable(combphy->phy_hclk);
+		if (ret) {
+			dev_err(dev, "cannot prepare/enable phy_hclk\n");
+			return ret;
+		}
+	}
+
+	if (combphy->drvdata->has_pcie_axi_clk) {
+		ret = clk_prepare_enable(combphy->phy_axi);
+		if (ret) {
+			dev_err(dev, "cannot prepare/enable phy_axi clock\n");
+			return ret;
+		}
+	}
+
+	if (combphy->drvdata->has_phy_mbus_clk) {
+		ret = clk_prepare_enable(combphy->phy_mclk);
+		if (ret) {
+			dev_err(dev, "cannot prepare/enable phy_mclk \n");
+			return ret;
+		}
+	}
+
 	pcie_usb3_sub_system_enable(combphy);
 
 	if (combphy->vernum == COMBO_VERSION_ANY)
@@ -218,6 +307,35 @@ static int pcie_usb3_sub_system_exit(struct platform_device *pdev)
 	struct sunxi_combphy *combphy = platform_get_drvdata(pdev);
 
 	pcie_usb3_sub_system_disable(combphy);
+
+	if (combphy->drvdata->has_cfg_clk) {
+		if (!IS_ERR(combphy->phyclk_cfg))
+			clk_disable_unprepare(combphy->phyclk_cfg);
+	}
+	if (combphy->user == PHY_USE_BY_PCIE || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
+		if (!IS_ERR(combphy->phyclk_ref))
+			clk_disable_unprepare(combphy->phyclk_ref);
+	}
+
+	if (combphy->drvdata->has_pcie_axi_clk) {
+		if (!IS_ERR(combphy->phy_axi))
+			clk_disable_unprepare(combphy->phy_axi);
+	}
+
+	if (combphy->drvdata->has_phy_mbus_clk) {
+		if (!IS_ERR(combphy->phy_mclk))
+			clk_disable_unprepare(combphy->phy_mclk);
+	}
+
+	if (combphy->drvdata->has_phy_ahb_clk) {
+		if (!IS_ERR(combphy->phy_hclk))
+			clk_disable_unprepare(combphy->phy_hclk);
+	}
+
+	if (combphy->drvdata->need_noppu_rst) {
+		if (!IS_ERR(combphy->noppu_reset))
+			reset_control_assert(combphy->noppu_reset);
+	}
 
 	if (!IS_ERR(combphy->reset))
 		reset_control_assert(combphy->reset);
@@ -247,6 +365,7 @@ static void sunxi_combphy_pcie_phy_enable(struct sunxi_combphy *combphy)
 	u32 val;
 
 	/* set the phy:
+	 * bit(18): slv aclk enable
 	 * bit(17): aclk enable
 	 * bit(16): hclk enbale
 	 * bit(1) : pcie_presetn
@@ -256,7 +375,10 @@ static void sunxi_combphy_pcie_phy_enable(struct sunxi_combphy *combphy)
 	val &= (~(0x03<<0));
 	val &= (~(0x03<<16));
 	val |= (0x03<<0);
-	val |= (0x03<<16);
+	if (combphy->drvdata->has_slv_clk)
+		val |= (0x07<<16);
+	else
+		val |= (0x03<<16);
 	writel(val, combphy->phy_ctl + PCIE_COMBO_PHY_BGR);
 
 
@@ -569,7 +691,11 @@ static int sunxi_combphy_set_mode(struct sunxi_combphy *combphy)
 		sunxi_combphy_pcie_init(combphy);
 		break;
 	case PHY_TYPE_USB3:
-		sunxi_combphy_usb3_init(combphy);
+		if (combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
+			sunxi_combphy_pcie_init(combphy);
+		} else if (combphy->user == PHY_USE_BY_USB3) {
+			sunxi_combphy_usb3_init(combphy);
+		}
 		break;
 	default:
 		dev_err(combphy->dev, "incompatible PHY type\n");
@@ -684,15 +810,93 @@ static int sunxi_combphy_parse_dt(struct platform_device *pdev,
 	struct resource *res_ctl;
 	struct resource *res_clk;
 
+	/* combo phy use sel */
+	ret = of_property_read_u32(np, KEY_PHY_USE_SEL, &combphy->user);
+	if (ret)
+		dev_err(dev, "get phy_use_sel is fail, %d\n", ret);
+
 	combphy->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(combphy->clk)) {
 		if (PTR_ERR(combphy->clk) != -EPROBE_DEFER)
 			dev_dbg(dev, "failed to get com clock\n");
 	}
 
-	combphy->reset = devm_reset_control_get(dev, NULL);
+	combphy->reset = devm_reset_control_get(dev, "phy_rst");
 	if (IS_ERR(combphy->reset))
 		dev_dbg(dev, "failed to get reset control\n");
+
+	if (combphy->drvdata->need_noppu_rst) {
+		combphy->noppu_reset = devm_reset_control_get(dev, "noppu_rst");
+		if (IS_ERR(combphy->noppu_reset))
+			dev_dbg(dev, "failed to get noppu_reset control\n");
+	}
+	if (combphy->user == PHY_USE_BY_PCIE || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
+		combphy->phyclk_ref = devm_clk_get(&pdev->dev, "phyclk_ref");
+		if (IS_ERR(combphy->phyclk_ref))
+			dev_dbg(dev, "failed to get phyclk_ref\n");
+
+		combphy->refclk_par = devm_clk_get(&pdev->dev, "refclk_par");
+		if (IS_ERR(combphy->refclk_par))
+			dev_dbg(dev, "failed to get refclk_par\n");
+
+		ret = clk_set_parent(combphy->phyclk_ref, combphy->refclk_par);
+		if (ret) {
+			dev_err(dev, "failed to set refclk parent\n");
+			return -EINVAL;
+		}
+	}
+
+	if (combphy->drvdata->has_cfg_clk) {
+		combphy->phyclk_cfg = devm_clk_get(&pdev->dev, "phyclk_cfg");
+		if (IS_ERR(combphy->phyclk_cfg))
+			dev_dbg(dev, "failed to get phyclk_cfg\n");
+
+		combphy->cfgclk_par = devm_clk_get(&pdev->dev, "cfgclk_par");
+		if (IS_ERR(combphy->cfgclk_par))
+			dev_dbg(dev, "failed to get cfgclk_par\n");
+
+		ret = clk_set_parent(combphy->phyclk_cfg, combphy->cfgclk_par);
+		if (ret) {
+			dev_err(dev, "failed to set cfgclk parent\n");
+			return -EINVAL;
+		}
+	}
+
+	if (combphy->drvdata->has_pcie_axi_clk) {
+		combphy->phy_axi = devm_clk_get(&pdev->dev, "pclk_axi");
+		if (IS_ERR(combphy->phy_axi)) {
+			dev_err(dev, "failed to get pclk_axi\n");
+			return PTR_ERR(combphy->phy_axi);
+		}
+
+		combphy->phy_axi_par = devm_clk_get(&pdev->dev, "pclk_axi_par");
+		if (IS_ERR(combphy->phy_axi_par)) {
+			dev_err(dev, "failed to get pcie_axi_par\n");
+			return PTR_ERR(combphy->phy_axi_par);
+		}
+
+		ret = clk_set_parent(combphy->phy_axi, combphy->phy_axi_par);
+		if (ret) {
+			dev_err(dev, "failed to set parent\n");
+			return -EINVAL;
+		}
+	}
+
+	if (combphy->drvdata->has_phy_mbus_clk) {
+		combphy->phy_mclk = devm_clk_get(&pdev->dev, "phy_mclk");
+		if (IS_ERR(combphy->phy_mclk)) {
+			dev_err(dev, "fail to get phy_mclk\n");
+			return PTR_ERR(combphy->phy_mclk);
+		}
+	}
+
+	if (combphy->drvdata->has_phy_ahb_clk) {
+		combphy->phy_hclk  = devm_clk_get(&pdev->dev, "phy_hclk");
+		if (IS_ERR(combphy->phy_hclk)) {
+			dev_err(dev, "fail to get phy_hclk\n");
+			return PTR_ERR(combphy->phy_hclk);
+		}
+	}
 
 	res_ctl = platform_get_resource_byname(pdev, IORESOURCE_MEM, "phy-ctl");
 	if (!res_ctl) {
@@ -718,11 +922,6 @@ static int sunxi_combphy_parse_dt(struct platform_device *pdev,
 		return PTR_ERR(combphy->phy_clk);
 	}
 
-	/* combo phy use sel */
-	ret = of_property_read_u32(np, KEY_PHY_USE_SEL, &combphy->user);
-	if (ret)
-		dev_err(dev, "get phy_use_sel is fail, %d\n", ret);
-
 	/* combo phy refclk sel */
 	ret = of_property_read_u32(np, KEY_PHY_REFCLK_SEL, &combphy->ref);
 	if (ret)
@@ -736,7 +935,10 @@ static int sunxi_combphy_probe(struct platform_device *pdev)
 	struct phy_provider *phy_provider;
 	struct device *dev = &pdev->dev;
 	struct sunxi_combphy *combphy;
+	const struct sunxi_combophy_of_data *data;
 	int ret;
+
+	data = of_device_get_match_data(&pdev->dev);
 
 	combphy = devm_kzalloc(dev, sizeof(*combphy), GFP_KERNEL);
 	if (!combphy)
@@ -744,6 +946,7 @@ static int sunxi_combphy_probe(struct platform_device *pdev)
 
 	combphy->dev = dev;
 	combphy->mode = PHY_NONE;
+	combphy->drvdata = data;
 
 	ret = sunxi_combphy_parse_dt(pdev, combphy);
 	if (ret) {
@@ -769,15 +972,13 @@ static int sunxi_combphy_probe(struct platform_device *pdev)
 
 	phy_provider = devm_of_phy_provider_register(dev, sunxi_combphy_xlate);
 
-	if (combphy->user == PHY_USE_BY_USB3 || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
-		combphy->pwr_nb.notifier_call = sunxi_inno_combophy_power_event;
-		/* register inno power notifier */
-		atomic_notifier_chain_register(&inno_subsys_notifier_list, &combphy->pwr_nb);
+	combphy->pwr_nb.notifier_call = sunxi_inno_combophy_power_event;
+	/* register inno power notifier */
+	atomic_notifier_chain_register(&inno_subsys_notifier_list, &combphy->pwr_nb);
 
-		pm_runtime_set_active(dev);
-		pm_runtime_enable(dev);
-		pm_runtime_get_sync(dev);
-	}
+	pm_runtime_set_active(dev);
+	pm_runtime_enable(dev);
+	pm_runtime_get_sync(dev);
 
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
@@ -794,14 +995,12 @@ static int sunxi_combphy_remove(struct platform_device *pdev)
 		return ret;
 	}
 
-	if (combphy->user == PHY_USE_BY_USB3 || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
-		/* unregister inno power notifier */
-		atomic_notifier_chain_unregister(&inno_subsys_notifier_list, &combphy->pwr_nb);
+	/* unregister inno power notifier */
+	atomic_notifier_chain_unregister(&inno_subsys_notifier_list, &combphy->pwr_nb);
 
-		pm_runtime_disable(dev);
-		pm_runtime_put_noidle(dev);
-		pm_runtime_set_suspended(dev);
-	}
+	pm_runtime_disable(dev);
+	pm_runtime_put_noidle(dev);
+	pm_runtime_set_suspended(dev);
 
 	return 0;
 }
@@ -842,9 +1041,28 @@ static struct dev_pm_ops sunxi_combo_pm_ops = {
 /*
  * inno-combphy: innosilicon combo phy
  */
+static const struct sunxi_combophy_of_data sunxi_inno_v1_of_data = {
+	.has_cfg_clk = false,
+};
+
+static const struct sunxi_combophy_of_data sunxi_inno_v2_of_data = {
+	.has_cfg_clk = true,
+	.has_slv_clk = true,
+	.has_phy_mbus_clk = true,
+	.has_phy_ahb_clk = true,
+	.has_pcie_axi_clk = true,
+	.has_u2_phy_mux = true,
+	.need_noppu_rst = true,
+};
+
 static const struct of_device_id sunxi_combphy_of_match[] = {
 	{
 		.compatible = "allwinner,inno-combphy",
+		.data = &sunxi_inno_v1_of_data,
+	},
+	{
+		.compatible = "allwinner,inno-v2-combphy",
+		.data = &sunxi_inno_v2_of_data,
 	},
 	{ },
 };
@@ -863,5 +1081,5 @@ module_platform_driver(sunxi_combphy_driver);
 
 MODULE_DESCRIPTION("Allwinner INNO COMBOPHY driver");
 MODULE_AUTHOR("songjundong@allwinnertech.com");
-MODULE_VERSION("0.0.18");
+MODULE_VERSION("0.0.20");
 MODULE_LICENSE("GPL v2");

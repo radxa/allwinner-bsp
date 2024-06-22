@@ -12,7 +12,7 @@
 
 #include "../../../sunxi_edp.h"
 #include "inno_edp13.h"
-#include "../edp_lowlevel.h"
+//#include "../edp_lowlevel.h"
 #include <linux/pinctrl/consumer.h>
 #include <linux/delay.h>
 #include <linux/io.h>
@@ -22,12 +22,11 @@
 /*link symbol per TU*/
 #define LS_PER_TU 64
 
-static void __iomem *edp_base;
-static u64 g_bit_rate;
-static u32 cur_request;
-
-struct mutex aux_lock;
-
+/* REG88[BIT0]: set 1 when a narrow hpd plus between 0.25s-2ms in hpd pin*/
+/* REG1A4[BIT16-BIT23]: default 0xff, value would change if ESD overvoltage occurs */
+/* we can use these bits to judge if ESD overvoltage happen */
+#define REG_HPD_NARROW_PLUSE_DEF 0x0
+#define REG_ESD_DEF 0xff
 
 /* training_param_array [param_type][sw][pre]
  * param_type as follow:
@@ -145,30 +144,47 @@ static struct recommand_corepll recom_corepll[] = {
 };
 
 /*0:voltage_mode  1:cureent_mode*/
-static void edp_mode_init(u32 mode)
+static void edp_mode_init(struct sunxi_edp_hw_desc *edp_hw, u32 mode)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_TX_PRESEL);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX_PRESEL);
 	if (mode) {
 		reg_val = SET_BITS(24, 4, reg_val, 0xf);
 	} else {
 		reg_val = SET_BITS(24, 4, reg_val, 0x0);
 	}
-	writel(reg_val, edp_base + REG_EDP_TX_PRESEL);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_TX_PRESEL);
 }
 
-static void edp_resistance_init(void)
+/*0:edp_mode   1:dp_mode*/
+static void edp_controller_mode_init(struct sunxi_edp_hw_desc *edp_hw, u32 mode)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_RES1000_CFG);
-	reg_val = SET_BITS(8, 1, reg_val, 0x1);
-	reg_val = SET_BITS(0, 6, reg_val, 0x0);
-	writel(reg_val, edp_base + REG_EDP_RES1000_CFG);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HPD_SCALE);
+	if (mode)
+		/* dp_mode*/
+		reg_val = SET_BITS(27, 1, reg_val, 0);
+	else
+		/* edp_mode*/
+		reg_val = SET_BITS(27, 1, reg_val, 1);
+
+	writel(reg_val, edp_hw->reg_base + REG_EDP_HPD_SCALE);
 }
 
-void edp_aux_16m_config(u64 bit_rate)
+
+static void edp_resistance_init(struct sunxi_edp_hw_desc *edp_hw)
+{
+	u32 reg_val;
+
+	reg_val = readl(edp_hw->reg_base + REG_EDP_RES1000_CFG);
+	reg_val = SET_BITS(8, 1, reg_val, 0x1);
+	reg_val = SET_BITS(0, 6, reg_val, 0x0);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_RES1000_CFG);
+}
+
+void edp_aux_16m_config(struct sunxi_edp_hw_desc *edp_hw, u64 bit_rate)
 {
 	u32 bit_clock = 0;
 	u32 div_16m = 0;
@@ -183,37 +199,37 @@ void edp_aux_16m_config(u64 bit_rate)
 		return;
 	}
 
-	reg_val = readl(edp_base + REG_EDP_ANA_AUX_CLOCK);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_AUX_CLOCK);
 	div_16m = (bit_clock / 8) / 8;
 	reg_val = SET_BITS(0, 5, reg_val, div_16m);
-	writel(reg_val, edp_base + REG_EDP_ANA_AUX_CLOCK);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_AUX_CLOCK);
 
 	/*set main isel*/
-	reg_val = readl(edp_base + REG_EDP_TX_MAINSEL);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX_MAINSEL);
 	reg_val = SET_BITS(16, 5, reg_val, 0x14);
 	reg_val = SET_BITS(24, 5, reg_val, 0x14);
-	writel(reg_val, edp_base + REG_EDP_TX_MAINSEL);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_TX_MAINSEL);
 
-	reg_val = readl(edp_base + REG_EDP_TX_POSTSEL);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 	reg_val = SET_BITS(0, 5, reg_val, 0x14);
 	reg_val = SET_BITS(8, 5, reg_val, 0x14);
-	writel(reg_val, edp_base + REG_EDP_TX_POSTSEL);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 
 	/*set pre isel*/
-	reg_val = readl(edp_base + REG_EDP_TX_PRESEL);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX_PRESEL);
 	reg_val = SET_BITS(0, 15, reg_val, 0x0);
-	writel(reg_val, edp_base + REG_EDP_TX_PRESEL);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_TX_PRESEL);
 
 	/* set aux channel swing level to max, enhance compatibility */
-	reg_val = readl(edp_base + REG_EDP_AUX_ISEL_MAINSET);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUX_ISEL_MAINSET);
 	/* AUX ISEL */
 	reg_val = SET_BITS(4, 4, reg_val, 0xf);
 	/* AUX MAINSET */
 	reg_val = SET_BITS(8, 4, reg_val, 0xf);
-	writel(reg_val, edp_base + REG_EDP_AUX_ISEL_MAINSET);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUX_ISEL_MAINSET);
 }
 
-void edp_corepll_config(u64 bit_rate)
+void edp_corepll_config(struct sunxi_edp_hw_desc *edp_hw, u64 bit_rate)
 {
 	u32 reg_val;
 	u32 index;
@@ -222,45 +238,45 @@ void edp_corepll_config(u64 bit_rate)
 		index = 0;
 	else
 		index = 1;
-	g_bit_rate = bit_rate;
+	edp_hw->cur_bit_rate = bit_rate;
 
 	/*turnoff corepll*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	reg_val = SET_BITS(0, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 
 	/*config corepll prediv*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	reg_val = SET_BITS(8, 6, reg_val, recom_corepll[index].prediv);
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 
 	/*config corepll fbdiv*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	reg_val = SET_BITS(16, 4, reg_val, recom_corepll[index].fbdiv_h4);
 	reg_val = SET_BITS(24, 8, reg_val, recom_corepll[index].fbdiv_l8);
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 
 	/*config corepll postdiv*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_POSDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_POSDIV);
 	reg_val = SET_BITS(2, 2, reg_val, recom_corepll[index].postdiv);
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_POSDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_POSDIV);
 
 	/*config corepll frac_pd*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	reg_val = SET_BITS(4, 2, reg_val, recom_corepll[index].frac_pd);
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 
 	/*config corepll frac*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FRAC);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FRAC);
 	reg_val = SET_BITS(0, 8, reg_val, recom_corepll[index].frac_h8);
 	reg_val = SET_BITS(8, 8, reg_val, recom_corepll[index].frac_m8);
 	reg_val = SET_BITS(16, 8, reg_val, recom_corepll[index].frac_l8);
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FRAC);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FRAC);
 
 	/*turnon corepll*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	reg_val = SET_BITS(0, 1, reg_val, 0);
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 }
 
 s32 pixpll_cal(u32 pixel_clk, struct recommand_pixpll *pixpll)
@@ -337,7 +353,7 @@ s32 pixpll_cal(u32 pixel_clk, struct recommand_pixpll *pixpll)
 
 }
 
-s32 edp_pixpll_cfg(u32 pixel_clk)
+s32 edp_pixpll_cfg(struct sunxi_edp_hw_desc *edp_hw, u32 pixel_clk)
 {
 	u32 reg_val;
 	s32 ret = 0;
@@ -350,140 +366,140 @@ s32 edp_pixpll_cfg(u32 pixel_clk)
 		return ret;
 
 	/*turnoff pixpll*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 	reg_val = SET_BITS(0, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 
 	/*config pixpll prediv*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 	reg_val = SET_BITS(8, 6, reg_val, pixpll.prediv);
-	writel(reg_val, edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 
 	/*config pixpll fbdiv*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 	reg_val = SET_BITS(16, 4, reg_val, pixpll.fbdiv_h4);
 	reg_val = SET_BITS(24, 8, reg_val, pixpll.fbdiv_l8);
-	writel(reg_val, edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 
 	/*config pixpll divabc*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_DIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_DIV);
 	reg_val = SET_BITS(0, 5, reg_val, pixpll.plldiv_a);
 	reg_val = SET_BITS(8, 2, reg_val, pixpll.plldiv_b);
 	reg_val = SET_BITS(16, 5, reg_val, pixpll.plldiv_c);
-	writel(reg_val, edp_base + REG_EDP_ANA_PIXPLL_DIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_DIV);
 
 	/*config pixpll frac_pd*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 	reg_val = SET_BITS(4, 2, reg_val, pixpll.frac_pd);
-	writel(reg_val, edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 
 	/*config pixpll frac*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_FRAC);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FRAC);
 	reg_val = SET_BITS(0, 8, reg_val, pixpll.frac_h8);
 	reg_val = SET_BITS(8, 8, reg_val, pixpll.frac_m8);
 	reg_val = SET_BITS(16, 8, reg_val, pixpll.frac_l8);
-	writel(reg_val, edp_base + REG_EDP_ANA_PIXPLL_FRAC);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FRAC);
 
 	/*turnon pixpll*/
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 	reg_val = SET_BITS(0, 1, reg_val, 0);
-	writel(reg_val, edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 
 	return RET_OK;
 }
 
-void edp_set_misc(u32 misc0_val, u32 misc1_val)
+void edp_set_misc(struct sunxi_edp_hw_desc *edp_hw, u32 misc0_val, u32 misc1_val)
 {
 	u32 reg_val;
 
 	/*misc0 setting*/
-	reg_val = readl(edp_base + REG_EDP_MSA_MISC0);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_MSA_MISC0);
 	reg_val = SET_BITS(24, 8, reg_val, misc0_val);
-	writel(reg_val, edp_base + REG_EDP_MSA_MISC0);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_MSA_MISC0);
 
 	/*misc1 setting*/
-	reg_val = readl(edp_base + REG_EDP_MSA_MISC1);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_MSA_MISC1);
 	reg_val = SET_BITS(24, 8, reg_val, misc1_val);
-	writel(reg_val, edp_base + REG_EDP_MSA_MISC1);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_MSA_MISC1);
 }
 
-void edp_video_stream_enable(void)
+void edp_video_stream_enable(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_VIDEO_STREAM_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 	reg_val = SET_BITS(5, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_VIDEO_STREAM_EN);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 }
 
-void edp_video_stream_disable(void)
+void edp_video_stream_disable(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_VIDEO_STREAM_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 	reg_val = SET_BITS(5, 1, reg_val, 0);
-	writel(reg_val, edp_base + REG_EDP_VIDEO_STREAM_EN);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 }
 
-void edp_hal_set_training_pattern(u32 pattern)
+void inno_set_training_pattern(struct sunxi_edp_hw_desc *edp_hw, u32 pattern)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_CAPACITY);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_CAPACITY);
 	reg_val = SET_BITS(0, 4, reg_val, pattern);
-	writel(reg_val, edp_base + REG_EDP_CAPACITY);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_CAPACITY);
 }
 
-void edp_audio_stream_vblank_setting(bool enable)
+void edp_audio_stream_vblank_setting(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO_VBLANK_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO_VBLANK_EN);
 	reg_val = SET_BITS(1, 1, reg_val, enable);
-	writel(reg_val, edp_base + REG_EDP_AUDIO_VBLANK_EN);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO_VBLANK_EN);
 }
 
-void edp_audio_timestamp_vblank_setting(bool enable)
+void edp_audio_timestamp_vblank_setting(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO_VBLANK_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO_VBLANK_EN);
 	reg_val = SET_BITS(0, 1, reg_val, enable);
-	writel(reg_val, edp_base + REG_EDP_AUDIO_VBLANK_EN);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO_VBLANK_EN);
 }
 
-void edp_audio_stream_hblank_setting(bool enable)
+void edp_audio_stream_hblank_setting(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO_HBLANK_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO_HBLANK_EN);
 	reg_val = SET_BITS(1, 1, reg_val, enable);
-	writel(reg_val, edp_base + REG_EDP_AUDIO_HBLANK_EN);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO_HBLANK_EN);
 }
 
-void edp_audio_timestamp_hblank_setting(bool enable)
+void edp_audio_timestamp_hblank_setting(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO_HBLANK_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO_HBLANK_EN);
 	reg_val = SET_BITS(0, 1, reg_val, enable);
-	writel(reg_val, edp_base + REG_EDP_AUDIO_HBLANK_EN);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO_HBLANK_EN);
 }
 
-void edp_audio_interface_config(u32 interface)
+void edp_audio_interface_config(struct sunxi_edp_hw_desc *edp_hw, u32 interface)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	reg_val = SET_BITS(0, 1, reg_val, interface);
-	writel(reg_val, edp_base + REG_EDP_AUDIO);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO);
 }
 
-void edp_audio_channel_config(u32 chn_num)
+void edp_audio_channel_config(struct sunxi_edp_hw_desc *edp_hw, u32 chn_num)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 
 	switch (chn_num) {
 	case 1:
@@ -499,25 +515,25 @@ void edp_audio_channel_config(u32 chn_num)
 		reg_val = SET_BITS(1, 4, reg_val, 0xf);
 		break;
 	}
-	writel(reg_val, edp_base + REG_EDP_AUDIO);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO);
 }
 
-void edp_audio_mute_config(bool mute)
+void edp_audio_mute_config(struct sunxi_edp_hw_desc *edp_hw, bool mute)
 {
 
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	reg_val = SET_BITS(15, 1, reg_val, mute);
-	writel(reg_val, edp_base + REG_EDP_AUDIO);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO);
 }
 
-void edp_audio_data_width_config(u32 data_width)
+void edp_audio_data_width_config(struct sunxi_edp_hw_desc *edp_hw, u32 data_width)
 {
 
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	switch (data_width) {
 	case 16:
 		reg_val = SET_BITS(5, 5, reg_val, 0x10);
@@ -529,21 +545,21 @@ void edp_audio_data_width_config(u32 data_width)
 		reg_val = SET_BITS(5, 5, reg_val, 0x18);
 		break;
 	}
-	writel(reg_val, edp_base + REG_EDP_AUDIO);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUDIO);
 }
 
-void edp_audio_soft_reset(void)
+void edp_audio_soft_reset(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_RESET);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_RESET);
 	reg_val = SET_BITS(3, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_RESET);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_RESET);
 	reg_val = SET_BITS(3, 1, reg_val, 0);
-	writel(reg_val, edp_base + REG_EDP_RESET);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_RESET);
 }
 
-void edp_set_input_video_mapping(enum edp_video_mapping_e mapping)
+void edp_set_input_video_mapping(struct sunxi_edp_hw_desc *edp_hw, enum edp_video_mapping_e mapping)
 {
 	u32 reg_val;
 	u32 mapping_val;
@@ -603,24 +619,28 @@ void edp_set_input_video_mapping(enum edp_video_mapping_e mapping)
 		mapping_val = 12;
 		misc0_val = (4 << 5) | (1 << 1);
 		break;
+	default:
+		mapping_val = 1;
+		misc0_val = (1 << 5);
+		break;
 	}
 
-	reg_val = readl(edp_base + REG_EDP_VIDEO_STREAM_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 	reg_val = SET_BITS(16, 5, reg_val, mapping_val);
-	writel(reg_val, edp_base + REG_EDP_VIDEO_STREAM_EN);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 
-	edp_set_misc(misc0_val, misc1_val);
+	edp_set_misc(edp_hw, misc0_val, misc1_val);
 }
 
-s32 edp_bist_test(struct edp_tx_core *edp_core)
+s32 edp_bist_test(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	u32 reg_val;
 	s32 ret;
 
 	/*set bist_test_sel to 1*/
-	reg_val = readl(edp_base + REG_EDP_BIST_CFG);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_BIST_CFG);
 	reg_val = SET_BITS(0, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_BIST_CFG);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_BIST_CFG);
 
 	/*assert reset pin*/
 	//if (gpio_is_valid(edp_core->rst_gpio)) {
@@ -628,22 +648,22 @@ s32 edp_bist_test(struct edp_tx_core *edp_core)
 	//}
 
 	/*set bist_test_en to 1*/
-	reg_val = readl(edp_base + REG_EDP_BIST_CFG);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_BIST_CFG);
 	reg_val = SET_BITS(1, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_BIST_CFG);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_BIST_CFG);
 
 	usleep_range(5, 10);
 
 	/*wait for bist_test_done to 1*/
 	while (1) {
-		reg_val = readl(edp_base + REG_EDP_BIST_CFG);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_BIST_CFG);
 		reg_val = GET_BITS(4, 1, reg_val);
 		if (reg_val == 1)
 			break;
 	}
 
 	/*checke bist_test_done*/
-	reg_val = readl(edp_base + REG_EDP_BIST_CFG);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_BIST_CFG);
 	reg_val = GET_BITS(5, 1, reg_val);
 	if (reg_val == 1)
 		ret = RET_OK;
@@ -654,105 +674,105 @@ s32 edp_bist_test(struct edp_tx_core *edp_core)
 	//if (gpio_is_valid(edp_core->rst_gpio)) {
 	//	gpio_direction_output(edp_core->rst_gpio, 1);
 	//}
-	writel(0x0, edp_base + REG_EDP_BIST_CFG);
+	writel(0x0, edp_hw->reg_base + REG_EDP_BIST_CFG);
 
 	return RET_OK;
 }
 
-void edp_phy_soft_reset(void)
+void edp_controller_soft_reset(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_RESET);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_RESET);
 	reg_val = SET_BITS(1, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_RESET);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_RESET);
 	usleep_range(5, 10);
 	reg_val = SET_BITS(1, 1, reg_val, 0);
-	writel(reg_val, edp_base + REG_EDP_RESET);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_RESET);
 }
 
-void edp_main_link_reset(void)
+void edp_main_link_reset(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_CAPACITY);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_CAPACITY);
 	reg_val = SET_BITS(0, 12, reg_val, 0);
 	reg_val = SET_BITS(26, 3, reg_val, 0);
-	writel(reg_val, edp_base + REG_EDP_CAPACITY);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_CAPACITY);
 }
 
-void edp_hpd_irq_enable(void)
+void edp_hpd_irq_enable(struct sunxi_edp_hw_desc *edp_hw)
 {
-	writel(0x1, edp_base + REG_EDP_HPD_INT);
-	writel(0x6, edp_base + REG_EDP_HPD_EN);
+	writel(0x1, edp_hw->reg_base + REG_EDP_HPD_INT);
+	writel(0x6, edp_hw->reg_base + REG_EDP_HPD_EN);
 }
 
-void edp_hpd_irq_disable(void)
+void edp_hpd_irq_disable(struct sunxi_edp_hw_desc *edp_hw)
 {
-	writel(0x0, edp_base + REG_EDP_HPD_INT);
-	writel(0x0, edp_base + REG_EDP_HPD_EN);
+	writel(0x0, edp_hw->reg_base + REG_EDP_HPD_INT);
+	writel(0x0, edp_hw->reg_base + REG_EDP_HPD_EN);
 }
 
-void edp_hpd_enable(void)
+void edp_hpd_enable(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 	u32 reg_val1;
 
-	reg_val = readl(edp_base + REG_EDP_HPD_SCALE);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HPD_SCALE);
 	reg_val = SET_BITS(3, 1, reg_val, 1);
-	writel(reg_val, edp_base + REG_EDP_HPD_SCALE);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_HPD_SCALE);
 
 	/* only hpd enable need, irq is not necesssary*/
-	reg_val1 = readl(edp_base + REG_EDP_HPD_EN);
+	reg_val1 = readl(edp_hw->reg_base + REG_EDP_HPD_EN);
 	reg_val1 = SET_BITS(1, 2, reg_val1, 3);
-	writel(reg_val1, edp_base + REG_EDP_HPD_EN);
-	edp_hpd_irq_enable();
+	writel(reg_val1, edp_hw->reg_base + REG_EDP_HPD_EN);
+	edp_hpd_irq_enable(edp_hw);
 }
 
-void edp_hpd_disable(void)
+void edp_hpd_disable(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_HPD_SCALE);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HPD_SCALE);
 	reg_val = SET_BITS(3, 1, reg_val, 0);
-	writel(reg_val, edp_base + REG_EDP_HPD_SCALE);
-	edp_hpd_irq_disable();
+	writel(reg_val, edp_hw->reg_base + REG_EDP_HPD_SCALE);
+	edp_hpd_irq_disable(edp_hw);
 }
 
-bool edp_hal_get_hotplug_change(void)
+bool inno_get_hotplug_change(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 int_event_en = 0;
 	u32 int_en = 0;
 	u32 reg_val = 0;
 
-	int_event_en = readl(edp_base + REG_EDP_HPD_INT);
-	int_en = readl(edp_base + REG_EDP_HPD_EN);
+	int_event_en = readl(edp_hw->reg_base + REG_EDP_HPD_INT);
+	int_en = readl(edp_hw->reg_base + REG_EDP_HPD_EN);
 
 	if ((int_event_en & (1 << 0)) &&
 	    ((int_en & (1 << 1)) || (int_en & (1 << 2)))) {
-		reg_val =  readl(edp_base + REG_EDP_HPD_PLUG) & ((1 << 1) | (1 << 2));
+		reg_val =  readl(edp_hw->reg_base + REG_EDP_HPD_PLUG) & ((1 << 1) | (1 << 2));
 		return reg_val ? true : false;
 	}
 
 	return false;
 }
 
-s32 edp_hal_get_hotplug_state(void)
+s32 inno_get_hotplug_state(struct sunxi_edp_hw_desc *edp_hw)
 {
 	bool hpd_plugin;
 	bool hpd_plugout;
 
 	/* hpd plugin interrupt */
-	hpd_plugin = readl(edp_base + REG_EDP_HPD_PLUG) & (1 << 1);
+	hpd_plugin = readl(edp_hw->reg_base + REG_EDP_HPD_PLUG) & (1 << 1);
 	if (hpd_plugin == true) {
-		writel((1 << 1), edp_base + REG_EDP_HPD_PLUG);
+		writel((1 << 1), edp_hw->reg_base + REG_EDP_HPD_PLUG);
 		return 1;;
 	}
 
 	/* hpd plugout interrupt */
-	hpd_plugout = readl(edp_base + REG_EDP_HPD_PLUG) & (1 << 2);
+	hpd_plugout = readl(edp_hw->reg_base + REG_EDP_HPD_PLUG) & (1 << 2);
 	if (hpd_plugout == true) {
-		writel((1 << 2), edp_base + REG_EDP_HPD_PLUG);
+		writel((1 << 2), edp_hw->reg_base + REG_EDP_HPD_PLUG);
 		return 0;
 	}
 
@@ -760,34 +780,24 @@ s32 edp_hal_get_hotplug_state(void)
 }
 
 
-void edp_hal_irq_handler(struct edp_tx_core *edp_core)
+void inno_irq_handle(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 }
 
-s32 edp_hal_irq_enable(u32 irq_id)
+s32 inno_irq_enable(struct sunxi_edp_hw_desc *edp_hw, u32 irq_id)
 {
-	edp_hpd_irq_enable();
+	edp_hpd_irq_enable(edp_hw);
 	return 0;
 }
 
-s32 edp_hal_irq_disable(u32 irq_id)
+s32 inno_irq_disable(struct sunxi_edp_hw_desc *edp_hw, u32 irq_id)
 {
 	/*fixme: irq is not need?*/
 	//edp_hpd_irq_disable();
 	return 0;
 }
 
-s32 edp_hal_irq_query(void)
-{
-	return 0;
-}
-
-s32 edp_hal_irq_clear(void)
-{
-	return 0;
-}
-
-s32 edp_aux_read(s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -802,37 +812,37 @@ s32 edp_aux_read(s32 addr, s32 len, char *buf, bool retry)
 
 	memset(buf, 0, 16);
 
-	mutex_lock(&aux_lock);
+	mutex_lock(&edp_hw->aux_lock);
 	if (!retry) {
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		writel(0, edp_base + REG_EDP_AUX_DATA0);
-		writel(0, edp_base + REG_EDP_AUX_DATA1);
-		writel(0, edp_base + REG_EDP_AUX_DATA2);
-		writel(0, edp_base + REG_EDP_AUX_DATA3);
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		regval = readl(edp_base + REG_EDP_HPD_EVENT);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA2);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA3);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 		regval |= (1 << 1);
-		writel(regval, edp_base + REG_EDP_HPD_EVENT);
+		writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
 
 		regval = 0;
 		/* aux read request*/
 		regval |= (len - 1);
 		regval = SET_BITS(8, 20, regval, addr);
 		regval = SET_BITS(28, 4, regval, NATIVE_READ);
-		cur_request = regval;
+		edp_hw->cur_aux_request = regval;
 		EDP_LOW_DBG("[%s] aux_cmd: 0x%x\n", __func__, regval);
-		writel(regval, edp_base + REG_EDP_PHY_AUX);
+		writel(regval, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		udelay(1);
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	} else {
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	}
 
 	/* wait aux reply event */
-	while (!(readl(edp_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_read wait AUX_REPLY event timeout, request:0x%x\n", cur_request);
-			mutex_unlock(&aux_lock);
+			EDP_LOW_DBG("edp_aux_read wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
+			mutex_unlock(&edp_hw->aux_lock);
 			return RET_AUX_TIMEOUT;
 		}
 		timeout++;
@@ -840,37 +850,37 @@ s32 edp_aux_read(s32 addr, s32 len, char *buf, bool retry)
 
 	/* wait for AUX_REPLY*/
 	//fixme
-	regval = readl(edp_base + REG_EDP_AUX_TIMEOUT);
-	while (((readl(edp_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
+	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_read wait AUX_REPLY timeout, request:0x%x\n", cur_request);
+			EDP_LOW_DBG("edp_aux_read wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
 			ret = RET_AUX_TIMEOUT;
 			goto CLR_EVENT;
 		}
 		timeout++;
 	}
 
-	regval = readl(edp_base + REG_EDP_AUX_TIMEOUT);
+	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
 	/* not ensure, need confirm from inno */
 	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NO_STOP;
 		goto CLR_EVENT;
 	}
 	regval &= 0xf0;
 	if ((regval >> 4) == AUX_REPLY_NACK) {
-		EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_NACK, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NACK;
 		goto CLR_EVENT;
 	} else if ((regval >> 4) == AUX_REPLY_DEFER) {
-		EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_DEFER, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_DEFER;
 		goto CLR_EVENT;
 	}
 
 	/* aux read reply*/
 	for (i = 0; i < 4; i++) {
-		reg_val[i] = readl(edp_base + REG_EDP_AUX_DATA0 + i * 0x4);
+		reg_val[i] = readl(edp_hw->reg_base + REG_EDP_AUX_DATA0 + i * 0x4);
 		usleep_range(10, 20);
 		EDP_LOW_DBG("[%s] result: reg_val[%d] = 0x%x\n", __func__, i, reg_val[i]);
 	}
@@ -880,15 +890,15 @@ s32 edp_aux_read(s32 addr, s32 len, char *buf, bool retry)
 	}
 
 CLR_EVENT:
-	regval = readl(edp_base + REG_EDP_HPD_EVENT);
+	regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 	regval |= (1 << 1);
-	writel(regval, edp_base + REG_EDP_HPD_EVENT);
-	mutex_unlock(&aux_lock);
+	writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
+	mutex_unlock(&edp_hw->aux_lock);
 
 	return ret;
 }
 
-s32 edp_aux_write(s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -903,24 +913,24 @@ s32 edp_aux_write(s32 addr, s32 len, char *buf, bool retry)
 
 	memset(reg_val, 0, sizeof(reg_val));
 
-	mutex_lock(&aux_lock);
+	mutex_lock(&edp_hw->aux_lock);
 	if (!retry) {
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		writel(0, edp_base + REG_EDP_AUX_DATA0);
-		writel(0, edp_base + REG_EDP_AUX_DATA1);
-		writel(0, edp_base + REG_EDP_AUX_DATA2);
-		writel(0, edp_base + REG_EDP_AUX_DATA3);
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		regval = readl(edp_base + REG_EDP_HPD_EVENT);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA2);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA3);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 		regval |= (1 << 1);
-		writel(regval, edp_base + REG_EDP_HPD_EVENT);
+		writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
 
 		for (i = 0; i < len; i++) {
 			reg_val[i / 4] = SET_BITS((i % 4) * 8, 8, reg_val[i / 4], buf[i]);
 		}
 
 		for (i = 0; i < (1 + ((len - 1) / 4)); i++) {
-			writel(reg_val[i], edp_base + REG_EDP_AUX_DATA0 + (i * 0x4));
+			writel(reg_val[i], edp_hw->reg_base + REG_EDP_AUX_DATA0 + (i * 0x4));
 			usleep_range(10, 20);
 			EDP_LOW_DBG("[%s]: date: reg_val[%d] = 0x%x", __func__, i, reg_val[i]);
 		}
@@ -930,21 +940,21 @@ s32 edp_aux_write(s32 addr, s32 len, char *buf, bool retry)
 		regval |= (len - 1);
 		regval = SET_BITS(8, 20, regval, addr);
 		regval = SET_BITS(28, 4, regval, NATIVE_WRITE);
-		cur_request = regval;
+		edp_hw->cur_aux_request = regval;
 		EDP_LOW_DBG("[%s] aux_cmd: 0x%x\n", __func__, regval);
-		writel(regval, edp_base + REG_EDP_PHY_AUX);
+		writel(regval, edp_hw->reg_base + REG_EDP_PHY_AUX);
 
 		udelay(1);
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	} else {
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	}
 
 	/* wait aux reply event */
-	while (!(readl(edp_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_write wait AUX_REPLY event timeout, request:0x%x\n", cur_request);
-			mutex_unlock(&aux_lock);
+			EDP_LOW_DBG("edp_aux_write wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
+			mutex_unlock(&edp_hw->aux_lock);
 			return RET_AUX_TIMEOUT;
 		}
 		timeout++;
@@ -952,43 +962,43 @@ s32 edp_aux_write(s32 addr, s32 len, char *buf, bool retry)
 
 
 	/* wait for AUX_REPLY*/
-	while (((readl(edp_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_write wait AUX_REPLY timeout, request:0x%x\n", cur_request);
+			EDP_LOW_DBG("edp_aux_write wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
 			ret = RET_AUX_TIMEOUT;
 			goto CLR_EVENT;
 		}
 		timeout++;
 	}
 
-	regval = readl(edp_base + REG_EDP_AUX_TIMEOUT);
+	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
 	/* not ensure, need confirm from inno */
 	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NO_STOP;
 		goto CLR_EVENT;
 	}
 	regval &= 0xf0;
 	if ((regval >> 4) == AUX_REPLY_NACK) {
-		EDP_LOW_DBG("edp_aux_write recieve AUX_NACK, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_write recieve AUX_NACK, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NACK;
 		goto CLR_EVENT;
 	} else if ((regval >> 4) == AUX_REPLY_DEFER) {
-		EDP_LOW_DBG("edp_aux_write recieve AUX_REPLY_DEFER, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_write recieve AUX_REPLY_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_DEFER;
 		goto CLR_EVENT;
 	}
 
 CLR_EVENT:
-	regval = readl(edp_base + REG_EDP_HPD_EVENT);
+	regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 	regval |= (1 << 1);
-	writel(regval, edp_base + REG_EDP_HPD_EVENT);
-	mutex_unlock(&aux_lock);
+	writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
+	mutex_unlock(&edp_hw->aux_lock);
 
 	return ret;
 }
 
-s32 edp_aux_i2c_read(s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -1003,73 +1013,74 @@ s32 edp_aux_i2c_read(s32 addr, s32 len, char *buf, bool retry)
 
 	memset(buf, 0, 16);
 
-	mutex_lock(&aux_lock);
+	mutex_lock(&edp_hw->aux_lock);
 	if (!retry) {
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		writel(0, edp_base + REG_EDP_AUX_DATA0);
-		writel(0, edp_base + REG_EDP_AUX_DATA1);
-		writel(0, edp_base + REG_EDP_AUX_DATA2);
-		writel(0, edp_base + REG_EDP_AUX_DATA3);
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		regval = readl(edp_base + REG_EDP_HPD_EVENT);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA2);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA3);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 		regval |= (1 << 1);
-		writel(regval, edp_base + REG_EDP_HPD_EVENT);
+		writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
 
 		/* aux read request*/
 		regval = 0;
 		regval |= (len - 1);
 		regval = SET_BITS(8, 20, regval, addr);
 		regval = SET_BITS(28, 4, regval, AUX_I2C_READ);
-		cur_request = regval;
+		edp_hw->cur_aux_request = regval;
 		EDP_LOW_DBG("[%s] aux_cmd: 0x%x\n", __func__, regval);
-		writel(regval, edp_base + REG_EDP_PHY_AUX);
+		writel(regval, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		udelay(1);
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	} else {
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	}
 
 	/* wait aux reply event */
-	while (!(readl(edp_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY event timeout, request:0x%x\n", cur_request);
-			mutex_unlock(&aux_lock);
+			EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
+			mutex_unlock(&edp_hw->aux_lock);
 			return RET_AUX_TIMEOUT;
 		}
 		timeout++;
 	}
 
 	/* wait for AUX_REPLY*/
-	while (((readl(edp_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY timeout, request:0x%x\n", cur_request);
+			EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
 			ret = RET_AUX_TIMEOUT;
 			goto CLR_EVENT;
 		}
 		timeout++;
 	}
 
-	regval = readl(edp_base + REG_EDP_AUX_TIMEOUT);
+	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
 	/* not ensure, need confirm from inno */
 	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NO_STOP;
 		goto CLR_EVENT;
 	}
 	regval &= 0xf0;
 	if ((regval >> 4) == AUX_REPLY_I2C_NACK) {
-		EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_NACK, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NACK;
 		goto CLR_EVENT;
 	} else if ((regval >> 4) == AUX_REPLY_I2C_DEFER) {
-		EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_DEFER;
 		goto CLR_EVENT;
 	}
 
 	/* aux read reply*/
 	for (i = 0; i < 4; i++) {
-		reg_val[i] = readl(edp_base + REG_EDP_AUX_DATA0 + i * 0x4);
+		reg_val[i] = readl(edp_hw->reg_base + REG_EDP_AUX_DATA0 + i * 0x4);
+		usleep_range(10, 20);
 		EDP_LOW_DBG("[%s]: data: reg_val[%d] = 0x%x", __func__, i, reg_val[i]);
 	}
 
@@ -1078,15 +1089,15 @@ s32 edp_aux_i2c_read(s32 addr, s32 len, char *buf, bool retry)
 	}
 
 CLR_EVENT:
-	regval = readl(edp_base + REG_EDP_HPD_EVENT);
+	regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 	regval |= (1 << 1);
-	writel(regval, edp_base + REG_EDP_HPD_EVENT);
-	mutex_unlock(&aux_lock);
+	writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
+	mutex_unlock(&edp_hw->aux_lock);
 
 	return ret;
 }
 
-s32 edp_aux_i2c_write(s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -1099,17 +1110,17 @@ s32 edp_aux_i2c_write(s32 addr, s32 len, char *buf, bool retry)
 		return RET_FAIL;
 	}
 
-	mutex_lock(&aux_lock);
+	mutex_lock(&edp_hw->aux_lock);
 	if (!retry) {
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		writel(0, edp_base + REG_EDP_AUX_DATA0);
-		writel(0, edp_base + REG_EDP_AUX_DATA1);
-		writel(0, edp_base + REG_EDP_AUX_DATA2);
-		writel(0, edp_base + REG_EDP_AUX_DATA3);
-		writel(0, edp_base + REG_EDP_PHY_AUX);
-		regval = readl(edp_base + REG_EDP_HPD_EVENT);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA2);
+		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA3);
+		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
+		regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 		regval |= (1 << 1);
-		writel(regval, edp_base + REG_EDP_HPD_EVENT);
+		writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
 
 
 		for (i = 0; i < len; i++) {
@@ -1117,7 +1128,8 @@ s32 edp_aux_i2c_write(s32 addr, s32 len, char *buf, bool retry)
 		}
 
 		for (i = 0; i < 4; i++) {
-			writel(reg_val[i], edp_base + REG_EDP_AUX_DATA0 + i * 0x4);
+			writel(reg_val[i], edp_hw->reg_base + REG_EDP_AUX_DATA0 + i * 0x4);
+			usleep_range(10, 20);
 			EDP_LOW_DBG("[%s]: data: reg_val[%d] = 0x%x", __func__, i, reg_val[i]);
 		}
 
@@ -1126,89 +1138,89 @@ s32 edp_aux_i2c_write(s32 addr, s32 len, char *buf, bool retry)
 		regval |= (len - 1);
 		regval = SET_BITS(8, 20, regval, addr);
 		regval = SET_BITS(28, 4, regval, AUX_I2C_WRITE);
-		cur_request = regval;
+		edp_hw->cur_aux_request = regval;
 		EDP_LOW_DBG("[%s] aux_cmd: 0x%x\n", __func__, regval);
-		writel(regval, edp_base + REG_EDP_PHY_AUX);
+		writel(regval, edp_hw->reg_base + REG_EDP_PHY_AUX);
 
 		udelay(1);
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	} else {
-		writel(1, edp_base + REG_EDP_AUX_START);
+		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 	}
 
 	/* wait aux reply event */
-	while (!(readl(edp_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY event timeout, request:0x%x\n", cur_request);
-			mutex_unlock(&aux_lock);
+			EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
+			mutex_unlock(&edp_hw->aux_lock);
 			return RET_AUX_TIMEOUT;
 		}
 		timeout++;
 	}
 
 	/* wait for AUX_REPLY*/
-	while (((readl(edp_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
 		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY timeout, request:0x%x\n", cur_request);
+			EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
 			ret = RET_AUX_TIMEOUT;
 			goto CLR_EVENT;
 		}
 		timeout++;
 	}
 
-	regval = readl(edp_base + REG_EDP_AUX_TIMEOUT);
+	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
 	/* not ensure, need confirm from inno */
 	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NO_STOP;
 		goto CLR_EVENT;
 	}
 	regval &= 0xf0;
 	if ((regval >> 4) == AUX_REPLY_I2C_NACK) {
-		EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_NACK, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_NACK;
 		goto CLR_EVENT;
 	} else if ((regval >> 4) == AUX_REPLY_I2C_DEFER) {
-		EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", cur_request);
+		EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
 		ret = RET_AUX_DEFER;
 		goto CLR_EVENT;
 	}
 
 CLR_EVENT:
-	regval = readl(edp_base + REG_EDP_HPD_EVENT);
+	regval = readl(edp_hw->reg_base + REG_EDP_HPD_EVENT);
 	regval |= (1 << 1);
-	writel(regval, edp_base + REG_EDP_HPD_EVENT);
-	mutex_unlock(&aux_lock);
+	writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
+	mutex_unlock(&edp_hw->aux_lock);
 
 	return ret;
 }
 
-s32 edp_hal_aux_read(s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
 {
-	return edp_aux_read(addr, len, buf, retry);
+	return edp_aux_read(edp_hw, addr, len, buf, retry);
 }
 
-s32 edp_hal_aux_write(s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
 {
-	return edp_aux_write(addr, len, buf, retry);
+	return edp_aux_write(edp_hw, addr, len, buf, retry);
 }
 
-s32 edp_hal_aux_i2c_read(s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 len, char *buf, bool retry)
 {
-	return edp_aux_i2c_read(addr, len, buf, retry);
+	return edp_aux_i2c_read(edp_hw, i2c_addr, len, buf, retry);
 }
 
-s32 edp_hal_aux_i2c_write(s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 len, char *buf, bool retry)
 {
-	return edp_aux_i2c_write(addr, len, buf, retry);
+	return edp_aux_i2c_write(edp_hw, i2c_addr, len, buf, retry);
 }
 
-s32 edp_hal_aux_read_ext(s32 addr, s32 len, char *buf)
+s32 inno_aux_read_ext(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
 {
 	u32 retry_cnt = 0;
 	s32 ret = 0;
 	while (retry_cnt < 7) {
-		ret = edp_hal_aux_read(addr, len, buf, retry_cnt ? true : false);
+		ret = inno_aux_read(edp_hw, addr, len, buf, retry_cnt ? true : false);
 		/*
 		 * for CTS 4.2.1.1, add retry when AUX_NACK, AUX_DEFER,
 		 * AUX_TIMEOUT, AUX_NO_STOP
@@ -1226,12 +1238,12 @@ s32 edp_hal_aux_read_ext(s32 addr, s32 len, char *buf)
 	return ret;
 }
 
-s32 edp_hal_aux_i2c_read_ext(s32 addr, s32 len, char *buf)
+s32 inno_aux_i2c_read_ext(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 len, char *buf)
 {
 	u32 retry_cnt = 0;
 	s32 ret = 0;
 	while (retry_cnt < 7) {
-		ret = edp_hal_aux_i2c_read(addr, len, buf, retry_cnt ? true : false);
+		ret = inno_aux_i2c_read(edp_hw, i2c_addr, i2c_addr, len, buf, retry_cnt ? true : false);
 		/*
 		 * for CTS 4.2.1.1, add retry when AUX_NACK, AUX_DEFER,
 		 * AUX_TIMEOUT, AUX_NO_STOP
@@ -1249,12 +1261,12 @@ s32 edp_hal_aux_i2c_read_ext(s32 addr, s32 len, char *buf)
 	return ret;
 }
 
-s32 edp_hal_aux_i2c_write_ext(s32 addr, s32 len, char *buf)
+s32 inno_aux_i2c_write_ext(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 len, char *buf)
 {
 	u32 retry_cnt = 0;
 	s32 ret = 0;
 	while (retry_cnt < 7) {
-		ret = edp_hal_aux_i2c_write(addr, len, buf, retry_cnt ? true : false);
+		ret = inno_aux_i2c_write(edp_hw, i2c_addr, i2c_addr, len, buf, retry_cnt ? true : false);
 		/*
 		 * for CTS 4.2.1.1, add retry when AUX_NACK, AUX_DEFER,
 		 * AUX_TIMEOUT, AUX_NO_STOP
@@ -1273,7 +1285,7 @@ s32 edp_hal_aux_i2c_write_ext(s32 addr, s32 len, char *buf)
 }
 
 
-s32 edp_transfer_unit_config(u32 bpp, u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
+s32 edp_transfer_unit_config(struct sunxi_edp_hw_desc *edp_hw, u32 bpp, u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
 {
 	u32 reg_val;
 	u32 pack_data_rate;
@@ -1282,7 +1294,7 @@ s32 edp_transfer_unit_config(u32 bpp, u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
 	u32 bandwidth;
 	u32 pre_div = 1000;
 
-	reg_val = readl(edp_base + REG_EDP_HACTIVE_BLANK);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HACTIVE_BLANK);
 	hblank = GET_BITS(2, 14, reg_val);
 
 	/*
@@ -1305,7 +1317,7 @@ s32 edp_transfer_unit_config(u32 bpp, u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
 
 	EDP_LOW_DBG("[edp_transfer_unit]: bpp:%d valid_symbol:%d\n", bpp, valid_symbol);
 
-	reg_val = readl(edp_base + REG_EDP_FRAME_UNIT);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_FRAME_UNIT);
 	reg_val = SET_BITS(0, 7, reg_val, valid_symbol / pre_div);
 	reg_val = SET_BITS(16, 4, reg_val, (valid_symbol % pre_div) / 100);
 
@@ -1317,13 +1329,13 @@ s32 edp_transfer_unit_config(u32 bpp, u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
 		else
 			reg_val = SET_BITS(7, 7, reg_val, 16);
 	}
-	writel(reg_val, edp_base + REG_EDP_FRAME_UNIT);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_FRAME_UNIT);
 
 	return RET_OK;
 }
 
 
-void edp_set_link_clk_cyc(u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
+void edp_set_link_clk_cyc(struct sunxi_edp_hw_desc *edp_hw, u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
 {
 	u32 reg_val;
 	u32 hblank;
@@ -1331,7 +1343,7 @@ void edp_set_link_clk_cyc(u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
 	u32 link_cyc;
 
 	/*hblank_link_cyc = hblank * (symbol_clk / 4) / pixclk*/
-	reg_val = readl(edp_base + REG_EDP_HACTIVE_BLANK);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HACTIVE_BLANK);
 	hblank = GET_BITS(2, 14, reg_val);
 
 	symbol_clk = bit_rate / 10000000;
@@ -1340,19 +1352,19 @@ void edp_set_link_clk_cyc(u32 lane_cnt, u64 bit_rate, u32 pixel_clk)
 	link_cyc = 1000 * hblank * (symbol_clk / lane_cnt) / (pixel_clk / 1000);
 	EDP_LOW_DBG("link_cyc:%d hblank:%d symbol_clk:%d pixel_clk:%d\n", link_cyc, hblank, symbol_clk, pixel_clk);
 
-	reg_val = readl(edp_base + REG_EDP_HBLANK_LINK_CYC);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HBLANK_LINK_CYC);
 	reg_val = SET_BITS(0, 16, reg_val, link_cyc);
-	writel(reg_val, edp_base + REG_EDP_HBLANK_LINK_CYC);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_HBLANK_LINK_CYC);
 }
 
-s32 edp_hal_init_early(void)
+s32 inno_init_early(struct sunxi_edp_hw_desc *edp_hw)
 {
-	mutex_init(&aux_lock);
+	mutex_init(&edp_hw->aux_lock);
 
 	return RET_OK;
 }
 
-s32 edp_hal_phy_init(struct edp_tx_core *edp_core)
+s32 inno_controller_init(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	s32 ret = 0;
 
@@ -1360,105 +1372,134 @@ s32 edp_hal_phy_init(struct edp_tx_core *edp_core)
 	//ret = edp_bist_test(edp_core);
 	if (ret < 0)
 		return ret;
-	edp_phy_soft_reset();
-	edp_hpd_enable();
-	edp_mode_init(1);
-	edp_resistance_init();
+	edp_controller_soft_reset(edp_hw);
+	edp_hpd_enable(edp_hw);
+	edp_mode_init(edp_hw, 1);
+	edp_controller_mode_init(edp_hw, edp_core->controller_mode);
+	edp_resistance_init(edp_hw);
 
 	/* use 2.7G bitrate to configurate, ensure aux can be accessed
 	 * to get sink capability such as timing and lane parameter
 	 */
-	edp_aux_16m_config(BIT_RATE_2G7);
-	edp_corepll_config(BIT_RATE_2G7);
+	edp_aux_16m_config(edp_hw, BIT_RATE_2G7);
+	edp_corepll_config(edp_hw, BIT_RATE_2G7);
 	usleep_range(500, 1000);
 
 	return ret;
 }
 
-void edp_hal_set_reg_base(uintptr_t base)
-{
-	edp_base = (void __iomem *)(base);
-}
 
-
-s32 edp_hal_enable(struct edp_tx_core *edp_core)
+s32 inno_enable(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	u64 bit_rate;
 
 	bit_rate = edp_core->lane_para.bit_rate;
-	if (bit_rate == g_bit_rate)
+	if (bit_rate == edp_hw->cur_bit_rate)
 		return RET_OK;
 
-	edp_aux_16m_config(bit_rate);
+	edp_aux_16m_config(edp_hw, bit_rate);
 
-	edp_corepll_config(bit_rate);
+	edp_corepll_config(edp_hw, bit_rate);
 
 	usleep_range(500, 1000);
 
 	return RET_OK;
 }
 
-s32 edp_hal_disable(struct edp_tx_core *edp_core)
+s32 inno_disable(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
-	edp_video_stream_disable();
-	edp_main_link_reset();
+	edp_video_stream_disable(edp_hw);
+	edp_main_link_reset(edp_hw);
 
 	return 0;
 }
 
-u64 edp_hal_get_max_rate(void)
+void inno_scrambling_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
+{
+}
+
+u64 inno_get_max_rate(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return BIT_RATE_2G7;
 }
 
-u32 edp_hal_get_max_lane(void)
+u32 inno_get_max_lane(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return 4;
 }
 
-bool edp_hal_support_tps3(void)
+bool inno_support_tps3(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return false;
 }
 
-bool edp_hal_support_fast_train(void)
+bool inno_support_fast_train(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return false;
 }
 
-bool edp_hal_support_audio(void)
+bool inno_support_audio(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return true;
 }
 
-bool edp_hal_support_psr(void)
+bool inno_support_psr(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return false;
 }
 
-bool edp_hal_support_ssc(void)
-{
-	return true;
-}
-
-bool edp_hal_support_assr(void)
-{
-	return true;
-}
-
-bool edp_hal_support_mst(void)
+bool inno_support_psr2(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return false;
 }
 
+bool inno_support_ssc(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return true;
+}
 
-s32 edp_read_edid(u8 *edid, size_t len)
+bool inno_support_assr(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return true;
+}
+
+bool inno_support_mst(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return false;
+}
+
+bool inno_support_fec(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return false;
+}
+
+bool inno_support_hdcp1x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return false;
+}
+
+bool inno_support_hw_hdcp1x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return false;
+}
+
+bool inno_support_hdcp2x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return false;
+}
+
+bool inno_support_hw_hdcp2x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return false;
+}
+
+s32 edp_read_edid(struct sunxi_edp_hw_desc *edp_hw,  u8 *edid, size_t len)
 {
 	s32 i;
 	s32 ret;
 
 	for (i = 0; i < (len / 16); i++) {
-		ret = edp_hal_aux_i2c_read_ext(EDID_ADDR, 16, (char *)(edid) + (i * 16));
+		ret = inno_aux_i2c_read_ext(edp_hw, EDID_ADDR, 16, (char *)(edid) + (i * 16));
 		if (ret < 0)
 			return ret;
 
@@ -1469,59 +1510,61 @@ s32 edp_read_edid(u8 *edid, size_t len)
 	return 0;
 }
 
-s32 edp_hal_read_edid_block(u8 *raw_edid, unsigned int block_id, size_t len)
+s32 inno_read_edid_block(struct sunxi_edp_hw_desc *edp_hw,
+			 u8 *raw_edid, unsigned int block_id, size_t len)
 {
 	char g_tx_buf[16];
 
 	memset(g_tx_buf, 0, sizeof(g_tx_buf));
 
 	if (block_id == 0)
-		edp_hal_aux_i2c_write_ext(EDID_ADDR, 1, &g_tx_buf[0]);
+		inno_aux_i2c_write_ext(edp_hw, EDID_ADDR, 1, &g_tx_buf[0]);
 
-	return edp_read_edid(raw_edid, len);
+	return edp_read_edid(edp_hw, raw_edid, len);
 
 }
 
-void edp_set_video_timings(struct disp_video_timings *timings)
+void edp_set_video_timings(struct sunxi_edp_hw_desc *edp_hw,
+			   struct disp_video_timings *timings)
 {
 	u32 reg_val;
 
 	/*hsync/vsync polarity setting*/
-	reg_val = readl(edp_base + REG_EDP_SYNC_POLARITY);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_SYNC_POLARITY);
 	reg_val = SET_BITS(1, 1, reg_val, timings->hor_sync_polarity);
 	reg_val = SET_BITS(0, 1, reg_val, timings->ver_sync_polarity);
-	writel(reg_val, edp_base + REG_EDP_SYNC_POLARITY);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_SYNC_POLARITY);
 
 	/*h/vactive h/vblank setting*/
-	reg_val = readl(edp_base + REG_EDP_HACTIVE_BLANK);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HACTIVE_BLANK);
 	reg_val = SET_BITS(16, 16, reg_val, timings->x_res);
 	reg_val = SET_BITS(2, 14, reg_val, (timings->hor_total_time - timings->x_res));
-	writel(reg_val, edp_base + REG_EDP_HACTIVE_BLANK);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_HACTIVE_BLANK);
 
-	reg_val = readl(edp_base + REG_EDP_VACTIVE_BLANK);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_VACTIVE_BLANK);
 	reg_val = SET_BITS(0, 16, reg_val, timings->y_res);
 	reg_val = SET_BITS(16, 16, reg_val, (timings->ver_total_time - timings->y_res));
-	writel(reg_val, edp_base + REG_EDP_VACTIVE_BLANK);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_VACTIVE_BLANK);
 
 	/*h/vstart setting*/
-	reg_val = readl(edp_base + REG_EDP_SYNC_START);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_SYNC_START);
 	reg_val = SET_BITS(0, 16, reg_val, (timings->hor_sync_time + timings->hor_back_porch));
 	reg_val = SET_BITS(16, 16, reg_val, (timings->ver_sync_time + timings->ver_back_porch));
-	writel(reg_val, edp_base + REG_EDP_SYNC_START);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_SYNC_START);
 
 	/*hs/vswidth  h/v_front_porch setting*/
-	reg_val = readl(edp_base + REG_EDP_HSW_FRONT_PORCH);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_HSW_FRONT_PORCH);
 	reg_val = SET_BITS(16, 16, reg_val, timings->hor_sync_time);
 	reg_val = SET_BITS(0, 16, reg_val, timings->hor_front_porch);
-	writel(reg_val, edp_base + REG_EDP_HSW_FRONT_PORCH);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_HSW_FRONT_PORCH);
 
-	reg_val = readl(edp_base + REG_EDP_VSW_FRONT_PORCH);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_VSW_FRONT_PORCH);
 	reg_val = SET_BITS(16, 16, reg_val, timings->ver_sync_time);
 	reg_val = SET_BITS(0, 16, reg_val, timings->ver_front_porch);
-	writel(reg_val, edp_base + REG_EDP_VSW_FRONT_PORCH);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_VSW_FRONT_PORCH);
 }
 
-s32 edp_hal_set_video_format(struct edp_tx_core *edp_core)
+s32 inno_set_video_format(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	u32 colordepth;
 	u32 color_fmt;
@@ -1587,19 +1630,20 @@ s32 edp_hal_set_video_format(struct edp_tx_core *edp_core)
 		return RET_FAIL;
 	}
 
-	edp_set_input_video_mapping((enum edp_video_mapping_e) video_map);
+	edp_set_input_video_mapping(edp_hw, (enum edp_video_mapping_e) video_map);
 
 	return RET_OK;
 
 }
 
-s32 edp_hal_set_video_timings(struct disp_video_timings *tmgs)
+s32 inno_set_video_timings(struct sunxi_edp_hw_desc *edp_hw,
+			   struct disp_video_timings *tmgs)
 {
 	u32 pixel_clk = tmgs->pixel_clk;
 	s32 ret = 0;
 
-	edp_set_video_timings(tmgs);
-	ret = edp_pixpll_cfg(pixel_clk);
+	edp_set_video_timings(edp_hw, tmgs);
+	ret = edp_pixpll_cfg(edp_hw, pixel_clk);
 	if (ret) {
 		EDP_ERR("pixclk pll param calculate error!\n");
 		return RET_FAIL;
@@ -1608,7 +1652,8 @@ s32 edp_hal_set_video_timings(struct disp_video_timings *tmgs)
 	return RET_OK;
 }
 
-s32 edp_hal_set_transfer_config(struct edp_tx_core *edp_core)
+s32 inno_set_transfer_config(struct sunxi_edp_hw_desc *edp_hw,
+			     struct edp_tx_core *edp_core)
 {
 	struct disp_video_timings *tmgs = &edp_core->timings;
 	u32 pixel_clk = tmgs->pixel_clk;
@@ -1617,32 +1662,32 @@ s32 edp_hal_set_transfer_config(struct edp_tx_core *edp_core)
 	u32 bpp = edp_core->lane_para.bpp;
 	s32 ret;
 
-	ret = edp_transfer_unit_config(bpp, lane_cnt, bit_rate, pixel_clk);
+	ret = edp_transfer_unit_config(edp_hw, bpp, lane_cnt, bit_rate, pixel_clk);
 	if (ret)
 		return ret;
 
-	edp_set_link_clk_cyc(lane_cnt, bit_rate, pixel_clk);
+	edp_set_link_clk_cyc(edp_hw, lane_cnt, bit_rate, pixel_clk);
 
 	return RET_OK;
 }
 
-s32 edp_hal_audio_enable(void)
+s32 inno_audio_enable(struct sunxi_edp_hw_desc *edp_hw)
 {
-	edp_audio_timestamp_hblank_setting(true);
-	edp_audio_timestamp_vblank_setting(true);
-	edp_audio_stream_hblank_setting(true);
-	edp_audio_stream_vblank_setting(true);
-	edp_audio_soft_reset();
+	edp_audio_timestamp_hblank_setting(edp_hw, true);
+	edp_audio_timestamp_vblank_setting(edp_hw, true);
+	edp_audio_stream_hblank_setting(edp_hw, true);
+	edp_audio_stream_vblank_setting(edp_hw, true);
+	edp_audio_soft_reset(edp_hw);
 
 	return RET_OK;
 }
 
-s32 edp_hal_audio_disable(void)
+s32 inno_audio_disable(struct sunxi_edp_hw_desc *edp_hw)
 {
-	edp_audio_timestamp_hblank_setting(false);
-	edp_audio_timestamp_vblank_setting(false);
-	edp_audio_stream_hblank_setting(false);
-	edp_audio_stream_vblank_setting(false);
+	edp_audio_timestamp_hblank_setting(edp_hw, false);
+	edp_audio_timestamp_vblank_setting(edp_hw, false);
+	edp_audio_stream_hblank_setting(edp_hw, false);
+	edp_audio_stream_vblank_setting(edp_hw, false);
 
 	return RET_OK;
 }
@@ -1660,17 +1705,17 @@ s32 edp_hal_audio_set_para(edp_audio_t *para)
 }
 */
 
-s32 edp_hal_ssc_enable(bool enable)
+s32 inno_ssc_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	u32 reg_val;
 	u32 index;
 
-	if (g_bit_rate == BIT_RATE_1G62)
+	if (edp_hw->cur_bit_rate == BIT_RATE_1G62)
 		index = 0;
 	else
 		index = 1;
 
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	if (enable) {
 		reg_val = SET_BITS(4, 2, reg_val, 0);
 		reg_val = SET_BITS(21, 1, reg_val, 0);
@@ -1678,16 +1723,16 @@ s32 edp_hal_ssc_enable(bool enable)
 		reg_val = SET_BITS(4, 2, reg_val, recom_corepll[index].frac_pd);
 		reg_val = SET_BITS(21, 1, reg_val, 1);
 	}
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FBDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 
 	return RET_OK;
 }
 
-bool edp_hal_ssc_is_enabled(void)
+bool inno_ssc_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	reg_val = GET_BITS(21, 1, reg_val);
 
 	if (!reg_val)
@@ -1696,23 +1741,23 @@ bool edp_hal_ssc_is_enabled(void)
 	return false;
 }
 
-s32 edp_hal_ssc_get_mode(void)
+s32 inno_ssc_get_mode(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
 	reg_val = GET_BITS(20, 1, reg_val);
 
 	return reg_val;
 }
 
-s32 edp_hal_ssc_set_mode(u32 mode)
+s32 inno_ssc_set_mode(struct sunxi_edp_hw_desc *edp_hw, u32 mode)
 {
 	u32 reg_val;
 	u32 reg_val1;
 
-	reg_val = readl(edp_base + REG_EDP_ANA_PLL_FBDIV);
-	reg_val1 = readl(edp_base + REG_EDP_ANA_PLL_POSDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
+	reg_val1 = readl(edp_hw->reg_base + REG_EDP_ANA_PLL_POSDIV);
 
 	switch (mode) {
 	case SSC_CENTER_MODE:
@@ -1727,63 +1772,64 @@ s32 edp_hal_ssc_set_mode(u32 mode)
 	reg_val1 = SET_BITS(24, 4, reg_val1, 3);
 	reg_val1 = SET_BITS(28, 3, reg_val1, 4);
 
-	writel(reg_val, edp_base + REG_EDP_ANA_PLL_FBDIV);
-	writel(reg_val1, edp_base + REG_EDP_ANA_PLL_POSDIV);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PLL_FBDIV);
+	writel(reg_val1, edp_hw->reg_base + REG_EDP_ANA_PLL_POSDIV);
 
 	return RET_OK;
 }
 
 
-s32 edp_hal_psr_enable(bool enable)
+s32 inno_psr_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	EDP_ERR("psr isn't support\n");
 	return RET_FAIL;
 }
 
-bool edp_hal_psr_is_enabled(void)
+bool inno_psr_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 {
 	EDP_ERR("psr isn't support\n");
 	return false;
 }
 
-s32 edp_hal_assr_enable(bool enable)
+s32 inno_assr_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	u32 reg_val;
 
 	if (enable) {
-		reg_val = readl(edp_base + REG_EDP_VIDEO_STREAM_EN);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 		reg_val = SET_BITS(24, 1, reg_val, 1);
-		writel(reg_val, edp_base + REG_EDP_VIDEO_STREAM_EN);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 	} else {
-		reg_val = readl(edp_base + REG_EDP_VIDEO_STREAM_EN);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 		reg_val = SET_BITS(24, 1, reg_val, 0);
-		writel(reg_val, edp_base + REG_EDP_VIDEO_STREAM_EN);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 	}
 
 	return RET_OK;
 }
 
-s32 edp_hal_set_pattern(u32 pattern)
+s32 inno_set_pattern(struct sunxi_edp_hw_desc *edp_hw,
+		     u32 pattern, u32 lane_cnt)
 {
 	if (pattern > 6)
 		pattern = 6;
 
 	switch (pattern) {
 	case PRBS7:
-		edp_hal_set_training_pattern(6);
+		inno_set_training_pattern(edp_hw, 6);
 		break;
 	default:
-		edp_hal_set_training_pattern(pattern);
+		inno_set_training_pattern(edp_hw, pattern);
 		break;
 	}
 	return RET_OK;
 }
 
-s32 edp_hal_get_color_fmt(void)
+s32 inno_get_color_fmt(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_VIDEO_STREAM_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_VIDEO_STREAM_EN);
 
 	reg_val = GET_BITS(16, 5, reg_val);
 
@@ -1820,7 +1866,7 @@ s32 edp_hal_get_color_fmt(void)
 }
 
 
-s32 edp_hal_get_pixclk(void)
+u32 inno_get_pixclk(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 	u32 fb_div;
@@ -1829,11 +1875,11 @@ s32 edp_hal_get_pixclk(void)
 	u32 pll_divc;
 	u32 pixclk;
 
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
 	fb_div = GET_BITS(24, 8, reg_val);
 	pre_div = GET_BITS(8, 6, reg_val);
 
-	reg_val = readl(edp_base + REG_EDP_ANA_PIXPLL_DIV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_DIV);
 	pll_divc = GET_BITS(16, 5, reg_val);
 	reg_val = GET_BITS(8, 2, reg_val);
 	if (reg_val == 1)
@@ -1851,24 +1897,28 @@ s32 edp_hal_get_pixclk(void)
 	return pixclk * 1000000;
 }
 
-s32 edp_hal_get_train_pattern(void)
+u32 inno_get_pattern(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_CAPACITY);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_CAPACITY);
 
 	reg_val = GET_BITS(0, 4, reg_val);
+
+	if (reg_val == 0x6)
+		reg_val = PRBS7;
 
 	return reg_val;
 }
 
-s32 edp_hal_get_lane_para(struct edp_lane_para *tmp_lane_para)
+s32 inno_get_lane_para(struct sunxi_edp_hw_desc *edp_hw,
+		       struct edp_lane_para *tmp_lane_para)
 {
 	u32 reg_val;
 	u32 regval;
 
 	/* bit rate */
-	reg_val = readl(edp_base + REG_EDP_CAPACITY);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_CAPACITY);
 	regval = GET_BITS(26, 3, reg_val);
 	if (regval == 1)
 		tmp_lane_para->bit_rate = 2160000000;
@@ -1896,106 +1946,106 @@ s32 edp_hal_get_lane_para(struct edp_lane_para *tmp_lane_para)
 		tmp_lane_para->lane_cnt = 0;
 
 	/*sw*/
-	reg_val = readl(edp_base + REG_EDP_TX_MAINSEL);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX_MAINSEL);
 	regval = GET_BITS(0, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane0_sw = 0;
+		tmp_lane_para->lane_sw[0] = 0;
 	if (regval == 2)
-		tmp_lane_para->lane0_sw = 1;
+		tmp_lane_para->lane_sw[0] = 1;
 	if (regval == 4)
-		tmp_lane_para->lane0_sw = 2;
+		tmp_lane_para->lane_sw[0] = 2;
 	if (regval == 6)
-		tmp_lane_para->lane0_sw = 3;
+		tmp_lane_para->lane_sw[0] = 3;
 
 	regval = GET_BITS(4, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane1_sw = 0;
+		tmp_lane_para->lane_sw[1] = 0;
 	if (regval == 2)
-		tmp_lane_para->lane1_sw = 1;
+		tmp_lane_para->lane_sw[1] = 1;
 	if (regval == 4)
-		tmp_lane_para->lane1_sw = 2;
+		tmp_lane_para->lane_sw[1] = 2;
 	if (regval == 6)
-		tmp_lane_para->lane1_sw = 3;
+		tmp_lane_para->lane_sw[1] = 3;
 
-	reg_val = readl(edp_base + REG_EDP_TX32_ISEL_DRV);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX32_ISEL_DRV);
 	regval = GET_BITS(24, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane2_sw = 0;
+		tmp_lane_para->lane_sw[2] = 0;
 	if (regval == 2)
-		tmp_lane_para->lane2_sw = 1;
+		tmp_lane_para->lane_sw[2] = 1;
 	if (regval == 4)
-		tmp_lane_para->lane2_sw = 2;
+		tmp_lane_para->lane_sw[2] = 2;
 	if (regval == 6)
-		tmp_lane_para->lane2_sw = 3;
+		tmp_lane_para->lane_sw[2] = 3;
 
 	regval = GET_BITS(28, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane3_sw = 0;
+		tmp_lane_para->lane_sw[3] = 0;
 	if (regval == 2)
-		tmp_lane_para->lane3_sw = 1;
+		tmp_lane_para->lane_sw[3] = 1;
 	if (regval == 4)
-		tmp_lane_para->lane3_sw = 2;
+		tmp_lane_para->lane_sw[3] = 2;
 	if (regval == 6)
-		tmp_lane_para->lane3_sw = 3;
+		tmp_lane_para->lane_sw[3] = 3;
 
 
 	/*pre*/
-	reg_val = readl(edp_base + REG_EDP_TX_POSTSEL);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 	regval = GET_BITS(24, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane0_pre = 0;
+		tmp_lane_para->lane_pre[0] = 0;
 	if (regval == 1)
-		tmp_lane_para->lane0_pre = 1;
+		tmp_lane_para->lane_pre[0] = 1;
 	if (regval == 2)
-		tmp_lane_para->lane0_pre = 2;
+		tmp_lane_para->lane_pre[0] = 2;
 	if (regval == 3)
-		tmp_lane_para->lane0_pre = 3;
+		tmp_lane_para->lane_pre[0] = 3;
 
 	regval = GET_BITS(28, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane1_pre = 0;
+		tmp_lane_para->lane_pre[1] = 0;
 	if (regval == 1)
-		tmp_lane_para->lane1_pre = 1;
+		tmp_lane_para->lane_pre[1] = 1;
 	if (regval == 2)
-		tmp_lane_para->lane1_pre = 2;
+		tmp_lane_para->lane_pre[1] = 2;
 	if (regval == 3)
-		tmp_lane_para->lane1_pre = 3;
+		tmp_lane_para->lane_pre[1] = 3;
 
 	regval = GET_BITS(16, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane2_pre = 0;
+		tmp_lane_para->lane_pre[2] = 0;
 	if (regval == 1)
-		tmp_lane_para->lane2_pre = 1;
+		tmp_lane_para->lane_pre[2] = 1;
 	if (regval == 2)
-		tmp_lane_para->lane2_pre = 2;
+		tmp_lane_para->lane_pre[2] = 2;
 	if (regval == 3)
-		tmp_lane_para->lane2_pre = 3;
+		tmp_lane_para->lane_pre[2] = 3;
 
 	regval = GET_BITS(20, 4, reg_val);
 	if (regval == 0)
-		tmp_lane_para->lane3_pre = 0;
+		tmp_lane_para->lane_pre[3] = 0;
 	if (regval == 1)
-		tmp_lane_para->lane3_pre = 1;
+		tmp_lane_para->lane_pre[3] = 1;
 	if (regval == 2)
-		tmp_lane_para->lane3_pre = 2;
+		tmp_lane_para->lane_pre[3] = 2;
 	if (regval == 3)
-		tmp_lane_para->lane3_pre = 3;
+		tmp_lane_para->lane_pre[3] = 3;
 
 	return RET_OK;
 }
 
-s32 edp_hal_get_tu_size(void)
+u32 inno_get_tu_size(struct sunxi_edp_hw_desc *edp_hw)
 {
 	return LS_PER_TU;
 }
 
-s32 edp_hal_get_valid_symbol_per_tu(void)
+u32 inno_get_tu_valid_symbol(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 	u32 regval;
 	u32 valid_symbol;
 
-	reg_val = readl(edp_base + REG_EDP_FRAME_UNIT);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_FRAME_UNIT);
 	regval = GET_BITS(0, 7, reg_val);
 	valid_symbol = regval * 10;
 
@@ -2005,7 +2055,7 @@ s32 edp_hal_get_valid_symbol_per_tu(void)
 	return valid_symbol;
 }
 
-bool edp_hal_audio_is_enabled(void)
+bool inno13_audio_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 	u32 regval0;
@@ -2013,11 +2063,11 @@ bool edp_hal_audio_is_enabled(void)
 	u32 regval2;
 	u32 regval3;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO_HBLANK_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO_HBLANK_EN);
 	regval0 = GET_BITS(0, 1, reg_val);
 	regval1 = GET_BITS(1, 1, reg_val);
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO_VBLANK_EN);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO_VBLANK_EN);
 	regval2 = GET_BITS(0, 1, reg_val);
 	regval3 = GET_BITS(1, 1, reg_val);
 
@@ -2027,31 +2077,31 @@ bool edp_hal_audio_is_enabled(void)
 	return false;
 }
 
-s32 edp_hal_get_audio_if(void)
+s32 inno_get_audio_if(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	reg_val = GET_BITS(0, 1, reg_val);
 
 	return reg_val;
 }
 
-s32 edp_hal_audio_is_mute(void)
+s32 inno_audio_is_muted(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	reg_val = GET_BITS(15, 1, reg_val);
 
 	return reg_val;
 }
 
-s32 edp_hal_get_audio_chn_cnt(void)
+s32 inno_get_audio_chn_cnt(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	reg_val = GET_BITS(12, 3, reg_val);
 
 	if (reg_val == 0)
@@ -2062,11 +2112,11 @@ s32 edp_hal_get_audio_chn_cnt(void)
 		return 8;
 }
 
-s32 edp_hal_get_audio_date_width(void)
+s32 inno_get_audio_date_width(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
-	reg_val = readl(edp_base + REG_EDP_AUDIO);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	reg_val = GET_BITS(5, 5, reg_val);
 
 	if (reg_val == 0x10)
@@ -2077,43 +2127,23 @@ s32 edp_hal_get_audio_date_width(void)
 		return 24;
 }
 
-s32 edp_hal_get_cur_line(void)
+s32 inno_link_start(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return 0;
-}
-
-s32 edp_hal_get_start_dly(void)
-{
-	return 0;
-}
-
-void edp_hal_show_builtin_patten(u32 pattern)
-{
-}
-
-
-void edp_hal_clean_hpd_status(void)
-{
-	writel((1 << 1), edp_base + REG_EDP_HPD_PLUG);
-}
-
-
-s32 edp_hal_link_start(void)
-{
-	edp_video_stream_enable();
+	edp_video_stream_enable(edp_hw);
 
 	return RET_OK;
 }
 
-s32 edp_hal_link_stop(void)
+s32 inno_link_stop(struct sunxi_edp_hw_desc *edp_hw)
 {
-	edp_video_stream_disable();
-	edp_main_link_reset();
+	edp_video_stream_disable(edp_hw);
+	edp_main_link_reset(edp_hw);
 
 	return RET_OK;
 }
 
-s32 edp_hal_query_transfer_unit(struct edp_tx_core *edp_core,
+s32 inno_query_transfer_unit(struct sunxi_edp_hw_desc *edp_hw,
+				struct edp_tx_core *edp_core,
 				struct disp_video_timings *tmgs)
 {
 	u32 pack_data_rate;
@@ -2163,7 +2193,7 @@ s32 edp_hal_query_transfer_unit(struct edp_tx_core *edp_core,
  * 1: high voltage level, for dp display that may follow with voltage attenuation
  * 2: width scope voltage, cover some low and high voltahe
  */
-void edp_hal_set_lane_sw_pre(u32 lane_id, u32 sw, u32 pre, u32 param_type)
+void inno_set_lane_sw_pre(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, u32 sw, u32 pre, u32 param_type)
 {
 	u32 sw_lv = training_param_table[param_type][sw][pre].sw_lv;
 	u32 pre_lv = training_param_table[param_type][sw][pre].pre_lv;
@@ -2171,54 +2201,54 @@ void edp_hal_set_lane_sw_pre(u32 lane_id, u32 sw, u32 pre, u32 param_type)
 
 	if (lane_id == 0) {
 		/* lane0 swing voltage level*/
-		reg_val = readl(edp_base + REG_EDP_TX_MAINSEL);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX_MAINSEL);
 		reg_val = SET_BITS(0, 4, reg_val, sw_lv);
-		writel(reg_val, edp_base + REG_EDP_TX_MAINSEL);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX_MAINSEL);
 
 		/* lane0 pre emphasis level */
-		reg_val = readl(edp_base + REG_EDP_TX_POSTSEL);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 		reg_val = SET_BITS(24, 4, reg_val, pre_lv);
-		writel(reg_val, edp_base + REG_EDP_TX_POSTSEL);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 	} else if (lane_id == 1) {
 		/* lane1 swing voltage level*/
-		reg_val = readl(edp_base + REG_EDP_TX_MAINSEL);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX_MAINSEL);
 		reg_val = SET_BITS(4, 4, reg_val, sw_lv);
-		writel(reg_val, edp_base + REG_EDP_TX_MAINSEL);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX_MAINSEL);
 
 		/* lane1 pre emphasis level */
-		reg_val = readl(edp_base + REG_EDP_TX_POSTSEL);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 		reg_val = SET_BITS(28, 4, reg_val, pre_lv);
-		writel(reg_val, edp_base + REG_EDP_TX_POSTSEL);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 	} else if (lane_id == 2) {
 		/* lane2 swing voltage level*/
-		reg_val = readl(edp_base + REG_EDP_TX32_ISEL_DRV);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX32_ISEL_DRV);
 		reg_val = SET_BITS(24, 4, reg_val, sw_lv);
-		writel(reg_val, edp_base + REG_EDP_TX32_ISEL_DRV);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX32_ISEL_DRV);
 
 		/* lane2 pre emphasis level */
-		reg_val = readl(edp_base + REG_EDP_TX_POSTSEL);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 		reg_val = SET_BITS(16, 4, reg_val, pre_lv);
-		writel(reg_val, edp_base + REG_EDP_TX_POSTSEL);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 	} else if (lane_id == 3) {
 		/* lane3 swing voltage level*/
-		reg_val = readl(edp_base + REG_EDP_TX32_ISEL_DRV);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX32_ISEL_DRV);
 		reg_val = SET_BITS(28, 4, reg_val, sw_lv);
-		writel(reg_val, edp_base + REG_EDP_TX32_ISEL_DRV);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX32_ISEL_DRV);
 
 		/* lane3 pre emphasis level */
-		reg_val = readl(edp_base + REG_EDP_TX_POSTSEL);
+		reg_val = readl(edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 		reg_val = SET_BITS(20, 4, reg_val, pre_lv);
-		writel(reg_val, edp_base + REG_EDP_TX_POSTSEL);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_TX_POSTSEL);
 	} else
 		EDP_WRN("%s: lane number is not support!\n", __func__);
 }
 
-void edp_hal_set_lane_rate(u64 bit_rate)
+void inno_set_lane_rate(struct sunxi_edp_hw_desc *edp_hw, u64 bit_rate)
 {
 	u32 reg_val;
 
 	/*config lane bit rate*/
-	reg_val = readl(edp_base + REG_EDP_CAPACITY);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_CAPACITY);
 	switch (bit_rate) {
 	case BIT_RATE_1G62:
 		reg_val = SET_BITS(26, 3, reg_val, 0x0);
@@ -2230,10 +2260,10 @@ void edp_hal_set_lane_rate(u64 bit_rate)
 		reg_val = SET_BITS(4, 2, reg_val, 0x1);
 		break;
 	}
-	writel(reg_val, edp_base + REG_EDP_CAPACITY);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_CAPACITY);
 }
 
-void edp_hal_set_lane_cnt(u32 lane_cnt)
+void inno_set_lane_cnt(struct sunxi_edp_hw_desc *edp_hw, u32 lane_cnt)
 {
 	u32 reg_val;
 
@@ -2242,7 +2272,7 @@ void edp_hal_set_lane_cnt(u32 lane_cnt)
 	}
 
 	/*config lane number*/
-	reg_val = readl(edp_base + REG_EDP_CAPACITY);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_CAPACITY);
 	switch (lane_cnt) {
 	case 0:
 	case 3:
@@ -2261,5 +2291,94 @@ void edp_hal_set_lane_cnt(u32 lane_cnt)
 		reg_val = SET_BITS(8, 4, reg_val, 0xf);
 		break;
 	}
-	writel(reg_val, edp_base + REG_EDP_CAPACITY);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_CAPACITY);
 }
+
+bool inno_check_controller_error(struct sunxi_edp_hw_desc *edp_hw)
+{
+	u32 reg_val, reg_val1;
+
+	reg_val = readl(edp_hw->reg_base + REG_EDP_TX32_ISEL_DRV);
+	reg_val = GET_BITS(16, 8, reg_val);
+
+	reg_val1 = readl(edp_hw->reg_base + REG_EDP_HPD_PLUG);
+	reg_val1 = GET_BITS(0, 1, reg_val1);
+	EDP_LOW_DBG("reg[0x1a4][bit16:bit23]: original_val:0x%x, cur_value:0x%x\n",
+		    REG_ESD_DEF, reg_val);
+	EDP_LOW_DBG("reg[0x88][bit0]: original_val:0x%x, cur_value:0x%x\n",
+		    REG_HPD_NARROW_PLUSE_DEF, reg_val1);
+	if ((reg_val != REG_ESD_DEF) || (reg_val1 != REG_HPD_NARROW_PLUSE_DEF))
+		return true;
+	else
+		return false;
+}
+
+static struct sunxi_edp_hw_video_ops inno_edp13_video_ops = {
+	.check_controller_error = inno_check_controller_error,
+	.assr_enable = inno_assr_enable,
+	.psr_enable = inno_psr_enable,
+	.psr_is_enabled = inno_psr_is_enabled,
+	.get_tu_size = inno_get_tu_size,
+	.get_pixel_clk = inno_get_pixclk,
+	.get_color_format = inno_get_color_fmt,
+	.get_lane_para = inno_get_lane_para,
+	.get_tu_valid_symbol = inno_get_tu_valid_symbol,
+	.get_hotplug_change = inno_get_hotplug_change,
+	.get_hotplug_state = inno_get_hotplug_state,
+	.audio_is_enabled = inno13_audio_is_enabled,
+	.get_audio_if = inno_get_audio_if,
+	.audio_is_muted = inno_audio_is_muted,
+	.audio_enable = inno_audio_enable,
+	.audio_disable = inno_audio_disable,
+	.get_pattern = inno_get_pattern,
+	.get_audio_data_width = inno_get_audio_date_width,
+	.get_audio_chn_cnt = inno_get_audio_chn_cnt,
+	.set_pattern = inno_set_pattern,
+	.ssc_enable = inno_ssc_enable,
+	.ssc_is_enabled = inno_ssc_is_enabled,
+	.ssc_set_mode = inno_ssc_set_mode,
+	.ssc_get_mode = inno_ssc_get_mode,
+	.aux_read = inno_aux_read,
+	.aux_write = inno_aux_write,
+	.aux_i2c_read = inno_aux_i2c_read,
+	.aux_i2c_write = inno_aux_i2c_write,
+	.read_edid_block = inno_read_edid_block,
+	.irq_enable = inno_irq_enable,
+	.irq_disable = inno_irq_disable,
+	.irq_handle = inno_irq_handle,
+	.main_link_start = inno_link_start,
+	.main_link_stop = inno_link_stop,
+	.scrambling_enable = inno_scrambling_enable,
+	.set_lane_sw_pre = inno_set_lane_sw_pre,
+	.set_lane_cnt = inno_set_lane_cnt,
+	.set_lane_rate = inno_set_lane_rate,
+	.init_early = inno_init_early,
+	.init = inno_controller_init,
+	.enable = inno_enable,
+	.disable = inno_disable,
+	.set_video_timings = inno_set_video_timings,
+	.set_video_format = inno_set_video_format,
+	.config_tu = inno_set_transfer_config,
+	.query_tu_capability = inno_query_transfer_unit,
+	.support_max_rate = inno_get_max_rate,
+	.support_max_lane = inno_get_max_lane,
+	.support_tps3 = inno_support_tps3,
+	.support_fast_training = inno_support_fast_train,
+	.support_audio = inno_support_audio,
+	.support_psr = inno_support_psr,
+	.support_psr2 = inno_support_psr2,
+	.support_ssc = inno_support_ssc,
+	.support_mst = inno_support_mst,
+	.support_fec = inno_support_fec,
+	.support_assr = inno_support_assr,
+	.support_hdcp1x = inno_support_hdcp1x,
+	.support_hdcp2x = inno_support_hdcp2x,
+	.support_hw_hdcp1x = inno_support_hw_hdcp1x,
+	.support_hw_hdcp2x = inno_support_hw_hdcp2x,
+};
+
+struct sunxi_edp_hw_video_ops *sunxi_edp_get_hw_video_ops(void)
+{
+	return &inno_edp13_video_ops;
+}
+

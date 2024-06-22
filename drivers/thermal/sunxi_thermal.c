@@ -127,9 +127,10 @@ static int sun55iw3_ths0_get_temp(void *data, int *temp)
 	regmap_read(tmdev->regmap, tmdev->chip->temp_data_base +
 		    0x4 * s->id, &val);
 	regmap_read(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, &data_ints);
+	data_ints &= BIT(s->id);
 
 	/* ths have no data yet */
-	if (unlikely((!val) || (!(data_ints & BIT(tmdev->chip->sensor_num - 1)))))
+	if (unlikely((!val) || (!data_ints)))
 		return -EAGAIN;
 
 	*temp = sun55iw3_calc_temp(tmdev, s->id, val);
@@ -155,9 +156,10 @@ static int sun55iw3_ths1_get_temp(void *data, int *temp)
 	regmap_read(tmdev->regmap, tmdev->chip->temp_data_base +
 		    0x4 * s->id, &val);
 	regmap_read(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, &data_ints);
+	data_ints &= BIT(s->id);
 
 	/* ths have no data yet */
-	if (unlikely((!val) || (!(data_ints & BIT(tmdev->chip->sensor_num - 1)))))
+	if (unlikely((!val) || (!data_ints)))
 		return -EAGAIN;
 
 	*temp = sun55iw3_ths1_calc_temp(tmdev, s->id, val);

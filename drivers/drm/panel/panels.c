@@ -183,6 +183,7 @@ s32 sunxi_panel_parse_lvds(struct sunxi_panel *sunxi_panel)
 
 	return 0;
 }
+EXPORT_SYMBOL(sunxi_panel_parse_lvds);
 
 s32 sunxi_panel_parse_hv(struct sunxi_panel *sunxi_panel)
 {

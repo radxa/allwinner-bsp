@@ -7,6 +7,8 @@
  * Author: songjundong <songjundong@allwinnertech.com>
  */
 
+#define SUNXI_MODNAME "pcie-ep"
+#include <sunxi-log.h>
 #include <linux/configfs.h>
 #include <linux/delay.h>
 #include <linux/kernel.h>
@@ -163,7 +165,7 @@ static int sunxi_pcie_ep_inbound_atu(struct sunxi_pcie_ep *ep, u8 func_no, int t
 		free_win = ep->bar_to_atu[bar];
 
 	if (free_win >= ep->num_ib_windows) {
-		dev_err(&pci->dev, "No free inbound window\n");
+		sunxi_err(pci->dev, "No free inbound window\n");
 		return -EINVAL;
 	}
 
@@ -185,7 +187,7 @@ static int sunxi_pcie_ep_outbound_atu(struct sunxi_pcie_ep *ep, u8 func_no,
 
 	free_win = find_first_zero_bit(ep->ob_window_map, ep->num_ob_windows);
 	if (free_win >= ep->num_ob_windows) {
-		dev_err(&pci->dev, "No free outbound window\n");
+		sunxi_err(pci->dev, "No free outbound window\n");
 		return -EINVAL;
 	}
 
@@ -355,7 +357,7 @@ static int sunxi_pcie_ep_map_addr(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 
 	ret = sunxi_pcie_ep_outbound_atu(ep, func_no, cpu_addr, pci_addr, size);
 	if (ret) {
-		dev_err(&pci->dev, "Failed to enable address\n");
+		sunxi_err(pci->dev, "Failed to enable address\n");
 		return ret;
 	}
 
@@ -529,13 +531,13 @@ static int sunxi_pcie_parse_ep_dts(struct sunxi_pcie_ep *ep)
 	void *addr;
 	struct resource *res;
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
-	struct device *dev = &pci->dev;
+	struct device *dev = pci->dev;
 	struct platform_device *pdev = to_platform_device(dev);
 	struct device_node *np = dev->of_node;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "addr_space");
 	if (!res) {
-		dev_err(dev, "unable to read *addr_space* property\n");
+		sunxi_err(dev, "unable to read *addr_space* property\n");
 		return -EINVAL;
 	}
 
@@ -546,14 +548,14 @@ static int sunxi_pcie_parse_ep_dts(struct sunxi_pcie_ep *ep)
 	ret = of_property_read_u32(np, "num-ib-windows",
 					&ep->num_ib_windows);
 	if (ret < 0) {
-		dev_err(dev, "unable to read *num-ib-windows* property\n");
+		sunxi_err(dev, "unable to read *num-ib-windows* property\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "num-ob-windows",
 					&ep->num_ob_windows);
 	if (ret < 0) {
-		dev_err(dev, "unable to read *num-ob-windows* property\n");
+		sunxi_err(dev, "unable to read *num-ob-windows* property\n");
 		return ret;
 	}
 
@@ -606,7 +608,7 @@ int sunxi_plat_ep_init_end(struct sunxi_pcie_ep *ep)
 	hdr_type = sunxi_pcie_readb_dbi(pci, PCI_HEADER_TYPE) &
 							PCI_HEADER_TYPE_MASK;
 	if (hdr_type != PCI_HEADER_TYPE_NORMAL) {
-		dev_err(&pci->dev,
+		sunxi_err(pci->dev,
 			"PCIe controller is not set to EP mode (hdr_type:0x%x)!\n",
 			hdr_type);
 		return -EIO;
@@ -637,7 +639,7 @@ int sunxi_pcie_ep_init(struct sunxi_pcie *pci)
 	u8 func_no;
 	struct pci_epc *epc;
 	struct sunxi_pcie_ep *ep = &pci->ep;
-	struct device *dev = &pci->dev;
+	struct device *dev = pci->dev;
 	struct device_node *np = dev->of_node;
 	struct sunxi_pcie_ep_func *ep_func;
 
@@ -645,13 +647,13 @@ int sunxi_pcie_ep_init(struct sunxi_pcie *pci)
 
 	ret = sunxi_pcie_parse_ep_dts(ep);
 	if (ret) {
-		dev_err(dev, "failed to parse ep dts\n");
+		sunxi_err(dev, "failed to parse ep dts\n");
 		return ret;
 	}
 
 	epc = devm_pci_epc_create(dev, &sunxi_pcie_epc_ops);
 	if (IS_ERR(epc)) {
-		dev_err(dev, "failed to create epc device\n");
+		sunxi_err(dev, "failed to create epc device\n");
 		return PTR_ERR(epc);
 	}
 
@@ -681,7 +683,7 @@ int sunxi_pcie_ep_init(struct sunxi_pcie *pci)
 	ret = pci_epc_mem_init(epc, ep->phys_base, ep->addr_size,
 			       ep->page_size);
 	if (ret < 0) {
-		dev_err(dev, "Failed to initialize address space\n");
+		sunxi_err(dev, "Failed to initialize address space\n");
 		return ret;
 	}
 
@@ -689,7 +691,7 @@ int sunxi_pcie_ep_init(struct sunxi_pcie *pci)
 					     epc->mem->window.page_size);
 	if (!ep->msi_mem) {
 		ret = -ENOMEM;
-		dev_err(dev, "Failed to reserve memory for MSI\n");
+		sunxi_err(dev, "Failed to reserve memory for MSI\n");
 		goto err_exit_epc_mem;
 	}
 
@@ -711,7 +713,8 @@ EXPORT_SYMBOL_GPL(sunxi_pcie_ep_init);
 
 void sunxi_pcie_ep_deinit(struct sunxi_pcie *pci)
 {
-	struct pci_epc *epc = &pci->ep->epc;
+	struct pci_epc *epc = pci->ep.epc;
+	struct sunxi_pcie_ep *ep = &pci->ep;
 
 	pci_epc_mem_exit(epc);
 	pci_epc_mem_free_addr(epc, ep->msi_mem_phys, ep->msi_mem, epc->mem->window.page_size);

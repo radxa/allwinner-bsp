@@ -80,6 +80,11 @@ static atomic_t usb2_enable_passly_cnt = ATOMIC_INIT(0);
 static atomic_t usb3_enable_passly_cnt = ATOMIC_INIT(0);
 static atomic_t usb4_enable_passly_cnt = ATOMIC_INIT(0);
 
+static atomic_t usb0_enable_siddq_cnt = ATOMIC_INIT(0);
+static atomic_t usb1_enable_siddq_cnt = ATOMIC_INIT(0);
+static atomic_t usb2_enable_siddq_cnt = ATOMIC_INIT(0);
+static atomic_t usb3_enable_siddq_cnt = ATOMIC_INIT(0);
+
 static atomic_t usb_standby_cnt[4];
 
 ATOMIC_NOTIFIER_HEAD(usb_pm_notifier_list);
@@ -939,9 +944,32 @@ static void USBC_SelectPhyToHci(struct sunxi_hci_hcd *sunxi_hci)
 	USBC_Writel(reg_value, (sunxi_hci->otg_vbase + SUNXI_OTG_PHY_CFG));
 }
 
+static unsigned char USBC_SIDDP_Disable_Check(struct sunxi_hci_hcd *sunxi_hci)
+{
+	if (sunxi_hci->usbc_no == HCI0_USBC_NO && atomic_read(&usb0_enable_siddq_cnt) == 0)
+		return 1;
+	else if (sunxi_hci->usbc_no == HCI1_USBC_NO && atomic_read(&usb1_enable_siddq_cnt) == 0)
+		return 1;
+	else if (sunxi_hci->usbc_no == HCI2_USBC_NO && atomic_read(&usb2_enable_siddq_cnt) == 0)
+		return 1;
+	else if (sunxi_hci->usbc_no == HCI3_USBC_NO && atomic_read(&usb3_enable_siddq_cnt) == 0)
+		return 1;
+	else
+		return 0;
+}
+
 static void USBC_Clean_SIDDP(struct sunxi_hci_hcd *sunxi_hci)
 {
 	int reg_value = 0;
+
+	if (sunxi_hci->usbc_no == HCI0_USBC_NO)
+		atomic_add(1, &usb0_enable_siddq_cnt);
+	else if (sunxi_hci->usbc_no == HCI1_USBC_NO)
+		atomic_add(1, &usb1_enable_siddq_cnt);
+	else if (sunxi_hci->usbc_no == HCI2_USBC_NO)
+		atomic_add(1, &usb2_enable_siddq_cnt);
+	else if (sunxi_hci->usbc_no == HCI3_USBC_NO)
+		atomic_add(1, &usb3_enable_siddq_cnt);
 
 	reg_value = USBC_Readl(sunxi_hci->usb_vbase + SUNXI_HCI_PHY_CTRL);
 	reg_value &= ~(0x01 << SUNXI_HCI_PHY_CTRL_SIDDQ);
@@ -951,10 +979,20 @@ static void USBC_Clean_SIDDP(struct sunxi_hci_hcd *sunxi_hci)
 static void USBC_Set_SIDDP(struct sunxi_hci_hcd *sunxi_hci)
 {
 	int reg_value = 0;
+	if (sunxi_hci->usbc_no == HCI0_USBC_NO)
+		atomic_sub(1, &usb0_enable_siddq_cnt);
+	else if (sunxi_hci->usbc_no == HCI1_USBC_NO)
+		atomic_sub(1, &usb1_enable_siddq_cnt);
+	else if (sunxi_hci->usbc_no == HCI2_USBC_NO)
+		atomic_sub(1, &usb2_enable_siddq_cnt);
+	else if (sunxi_hci->usbc_no == HCI3_USBC_NO)
+		atomic_sub(1, &usb3_enable_siddq_cnt);
 
-	reg_value = USBC_Readl(sunxi_hci->usb_vbase + SUNXI_HCI_PHY_CTRL);
-	reg_value |= (0x01 << SUNXI_HCI_PHY_CTRL_SIDDQ);
-	USBC_Writel(reg_value, (sunxi_hci->usb_vbase + SUNXI_HCI_PHY_CTRL));
+	if (USBC_SIDDP_Disable_Check(sunxi_hci)) {
+		reg_value = USBC_Readl(sunxi_hci->usb_vbase + SUNXI_HCI_PHY_CTRL);
+		reg_value |= (0x01 << SUNXI_HCI_PHY_CTRL_SIDDQ);
+		USBC_Writel(reg_value, (sunxi_hci->usb_vbase + SUNXI_HCI_PHY_CTRL));
+	}
 }
 
 #if IS_ENABLED(CONFIG_ARCH_SUN50IW10)
@@ -1391,6 +1429,8 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 
 static int close_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 {
+	if (sunxi_hci->is_suspend_flag == 0)
+		USBC_Set_SIDDP(sunxi_hci);
 	if (sunxi_hci->clk_is_open) {
 		sunxi_hci->clk_is_open = 0;
 
@@ -1457,8 +1497,6 @@ static int close_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 			sunxi_hci->clk_is_open,
 			sunxi_hci->mod_usb);
 	}
-	if (sunxi_hci->is_suspend_flag == 0)
-		USBC_Set_SIDDP(sunxi_hci);
 #if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 	usb_phyx_res_cal(sunxi_hci->usbc_no, false);
 #endif

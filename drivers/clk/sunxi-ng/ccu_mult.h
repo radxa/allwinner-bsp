@@ -24,6 +24,9 @@ struct ccu_mult_internal {
 		.width	= _width,					\
 	}
 
+#define _SUNXI_CCU_MULT_MIN_MAX(_shift, _width, _min, _max)	\
+		_SUNXI_CCU_MULT_OFFSET_MIN_MAX(_shift, _width, 1, _min, _max)
+
 #define _SUNXI_CCU_MULT_MIN(_shift, _width, _min)	\
 	_SUNXI_CCU_MULT_OFFSET_MIN_MAX(_shift, _width, 1, _min, 0)
 

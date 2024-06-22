@@ -11,7 +11,7 @@
 */
 
 #include "sunxi_edp.h"
-#include "hardware/lowlevel_edp/edp_lowlevel.h"
+//#include "hardware/lowlevel_edp/edp_lowlevel.h"
 #include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
@@ -60,8 +60,14 @@ int edp_get_edid_block(void *data, u8 *block_raw_data,
 			  unsigned int block_id, size_t len)
 {
 	int ret = 0;
+	struct sunxi_edp_hw_desc *edp_hw = (struct sunxi_edp_hw_desc *)(data);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-	ret = edp_hal_read_edid_block(block_raw_data, block_id, len);
+	if (ops->read_edid_block)
+		ret = ops->read_edid_block(edp_hw, block_raw_data, block_id, len);
+	else
+		ret = RET_OK;
+
 	if (ret < 0) {
 		EDP_ERR("EDID: edp read edid block%d failed\n", block_id);
 	}
@@ -124,20 +130,30 @@ s32 edp_edid_cea_db_offsets(const u8 *cea, s32 *start, s32 *end)
 	return 0;
 }
 
-/*edp_hal_xxx means xxx function is from lowlevel*/
-s32 edp_core_init_early(void)
+s32 edp_hw_init_early(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_init_early();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->init_early)
+		return ops->init_early(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_phy_init(struct edp_tx_core *edp_core)
+s32 edp_hw_controller_init(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
-	return edp_hal_phy_init(edp_core);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->init)
+		return ops->init(edp_hw, edp_core);
+	else
+		return RET_OK;
 }
 
-void edp_core_set_reg_base(uintptr_t base)
+void edp_hw_set_reg_base(struct sunxi_edp_hw_desc *edp_hw, void __iomem *base)
 {
-	edp_hal_set_reg_base(base);
+
+	edp_hw->reg_base = base;
 }
 
 /*
@@ -145,45 +161,64 @@ void edp_core_set_reg_base(uintptr_t base)
  *  0: change_to_plugout
  *  1: change_to_plugin
  */
-s32 edp_core_get_hotplug_state(void)
+s32 edp_hw_get_hotplug_state(struct sunxi_edp_hw_desc *edp_hw)
 {
-	if (edp_hal_get_hotplug_change())
-		return edp_hal_get_hotplug_state();
-	else
-		return -1;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_hotplug_change && ops->get_hotplug_state) {
+		if (ops->get_hotplug_change(edp_hw))
+			return ops->get_hotplug_state(edp_hw);
+	}
+
+	return -1;
 }
 
 /* set color space, color depth */
-s32 edp_core_set_video_format(struct edp_tx_core *edp_core)
+s32 edp_hw_set_video_format(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	s32 ret = RET_OK;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-	ret = edp_hal_set_video_format(edp_core);
+	if (ops->set_video_format)
+		ret = ops->set_video_format(edp_hw, edp_core);
+	else
+		ret = RET_OK;
+
 	if (ret)
-		EDP_ERR("edp_core_set_video_format fail!\n");
+		EDP_ERR("edp_hw_set_video_format fail!\n");
 
 	return ret;
 }
 
-s32 edp_core_set_video_timings(struct disp_video_timings *tmgs)
+s32 edp_hw_set_video_timings(struct sunxi_edp_hw_desc *edp_hw, struct disp_video_timings *tmgs)
 {
 	s32 ret = RET_OK;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-	ret = edp_hal_set_video_timings(tmgs);
+	if (ops->set_video_timings)
+		ret = ops->set_video_timings(edp_hw, tmgs);
+	else
+		ret = RET_OK;
+
 	if (ret)
-		EDP_ERR("edp_core_set_video_timings fail!\n");
+		EDP_ERR("edp_hw_set_video_timings fail!\n");
 
 	return ret;
 }
 
-s32 edp_core_set_transfer_config(struct edp_tx_core *edp_core)
+s32 edp_hw_set_transfer_config(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	s32 ret = RET_OK;
 	struct edp_lane_para *lane_para = &edp_core->lane_para;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-	ret = edp_hal_set_transfer_config(edp_core);
+	if (ops->config_tu)
+		ret = ops->config_tu(edp_hw, edp_core);
+	else
+		ret = RET_OK;
+
 	if (ret) {
-		EDP_ERR("edp_core_set_transfer_config fail! Maybe pixelclk out of lane's capability!\n");
+		EDP_ERR("edp_hw_set_transfer_config fail! Maybe pixelclk out of lane's capability!\n");
 		EDP_ERR("Check lane param! Lane param now: lane_cnt:%d lane_rate:%lld bpp:%d pixel_clk:%d\n",
 			lane_para->lane_cnt, lane_para->bit_rate, lane_para->bpp, edp_core->timings.pixel_clk);
 	}
@@ -191,70 +226,204 @@ s32 edp_core_set_transfer_config(struct edp_tx_core *edp_core)
 	return ret;
 }
 
-s32 edp_core_enable(struct edp_tx_core *edp_core)
+s32 edp_hw_enable(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
-	return edp_hal_enable(edp_core);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->enable)
+		return ops->enable(edp_hw, edp_core);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_disable(struct edp_tx_core *edp_core)
+s32 edp_hw_disable(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
-	return edp_hal_disable(edp_core);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->disable)
+		return ops->disable(edp_hw, edp_core);
+	else
+		return RET_OK;
 }
 
-u64 edp_source_get_max_rate(void)
+u64 edp_source_get_max_rate(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_max_rate();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_max_rate)
+		return ops->support_max_rate(edp_hw);
+	else
+		return 0;
 }
 
-u32 edp_source_get_max_lane(void)
+u32 edp_source_get_max_lane(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_max_lane();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_max_lane)
+		return ops->support_max_lane(edp_hw);
+	else
+		return 0;
 }
 
-bool edp_source_support_tps3(void)
+bool edp_source_support_tps3(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_support_tps3();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_tps3)
+		return ops->support_tps3(edp_hw);
+	else
+		return false;
 }
 
-bool edp_source_support_fast_train(void)
+bool edp_source_support_fast_training(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_support_fast_train();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_fast_training)
+		return ops->support_fast_training(edp_hw);
+	else
+		return false;
 }
 
-bool edp_source_support_audio(void)
+bool edp_source_support_audio(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_support_audio();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_audio)
+		return ops->support_audio(edp_hw);
+	else
+		return false;
 }
 
-bool edp_source_support_ssc(void)
+bool edp_source_support_ssc(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_support_ssc();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_ssc)
+		return ops->support_ssc(edp_hw);
+	else
+		return false;
 }
 
-bool edp_source_support_psr(void)
+bool edp_source_support_fec(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_support_psr();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_fec)
+		return ops->support_fec(edp_hw);
+	else
+		return false;
 }
 
-bool edp_source_support_assr(void)
+bool edp_source_support_psr(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_support_assr();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_psr)
+		return ops->support_psr(edp_hw);
+	else
+		return false;
 }
 
-bool edp_source_support_mst(void)
+bool edp_source_support_psr2(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_support_mst();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_psr2)
+		return ops->support_psr2(edp_hw);
+	else
+		return false;
 }
 
+bool edp_source_support_assr(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-s32 edp_core_query_max_pixclk(struct edp_tx_core *edp_core,
+	if (ops->support_assr)
+		return ops->support_assr(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_support_mst(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_mst)
+		return ops->support_mst(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_support_lane_remap(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_lane_remap)
+		return ops->support_lane_remap(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_support_lane_invert(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_lane_invert)
+		return ops->support_lane_invert(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_support_hdcp1x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_hdcp1x)
+		return ops->support_hdcp1x(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_support_hardware_hdcp1x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_hw_hdcp1x)
+		return ops->support_hw_hdcp1x(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_support_hdcp2x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_hdcp2x)
+		return ops->support_hdcp2x(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_support_hardware_hdcp2x(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_hw_hdcp2x)
+		return ops->support_hw_hdcp2x(edp_hw);
+	else
+		return false;
+}
+
+s32 edp_hw_query_max_pixclk(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core,
 			      struct disp_video_timings *tmgs)
 {
 	u32 pixclk_max = 0;
 	u32 pixclk = tmgs->pixel_clk;
-	u32 lane_cnt_max = edp_source_get_max_lane();
+	u32 lane_cnt_max = edp_source_get_max_lane(edp_hw);
 	/* lane's bandwidth = lane_rate / 10, such as 2.7G's bandwidth = 270M */
-	u64 lane_bandwidth_max = edp_source_get_max_rate() / 10;
+	u64 lane_bandwidth_max = edp_source_get_max_rate(edp_hw) / 10;
 	u32 bpp = edp_core->lane_para.bpp;
 
 	/* 1 component's byte = bpp / 8bit */
@@ -272,7 +441,7 @@ s32 edp_core_query_max_pixclk(struct edp_tx_core *edp_core,
 	return RET_OK;
 }
 
-s32 edp_core_query_current_pixclk(struct edp_tx_core *edp_core,
+s32 edp_hw_query_current_pixclk(struct edp_tx_core *edp_core,
 				  struct disp_video_timings *tmgs)
 {
 	u32 pixclk_cur_max = 0;
@@ -304,25 +473,30 @@ s32 edp_core_query_current_pixclk(struct edp_tx_core *edp_core,
 	return RET_OK;
 }
 
-s32 edp_core_query_transfer_unit(struct edp_tx_core *edp_core,
+s32 edp_hw_query_transfer_unit(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core,
 				 struct disp_video_timings *tmgs)
 {
-	return edp_hal_query_transfer_unit(edp_core, tmgs);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->query_tu_capability)
+		return ops->query_tu_capability(edp_hw, edp_core, tmgs);
+	else
+		return RET_OK;
 }
 
 
-s32 edp_core_query_lane_capability(struct edp_tx_core *edp_core,
+s32 edp_hw_query_lane_capability(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core,
 				   struct disp_video_timings *tmgs)
 {
 	s32 ret = 0;
 
 	/* check if pixclk out of lane's max capability */
-	ret = edp_core_query_max_pixclk(edp_core, tmgs);
+	ret = edp_hw_query_max_pixclk(edp_hw, edp_core, tmgs);
 	if (ret)
 		return RET_FAIL;
 
 	/* check if pixclk out of current lane config's capability */
-	ret = edp_core_query_current_pixclk(edp_core, tmgs);
+	ret = edp_hw_query_current_pixclk(edp_core, tmgs);
 	if (ret)
 		return RET_FAIL;
 
@@ -331,26 +505,63 @@ s32 edp_core_query_lane_capability(struct edp_tx_core *edp_core,
 	 * lane (64 is defined as MAX in DP spec), query if pixclk
 	 * out of lane's link symbol limit
 	 */
-	ret = edp_core_query_transfer_unit(edp_core, tmgs);
+	ret = edp_hw_query_transfer_unit(edp_hw, edp_core, tmgs);
 	if (ret)
 		return RET_FAIL;
 
 	return RET_OK;
 }
 
-s32 edp_get_link_status(char *link_status)
+static void edp_phy_set_lane_para(struct edp_tx_core *edp_core)
 {
-	return edp_core_aux_read(DPCD_0202H, LINK_STATUS_SIZE, link_status);
+	struct edp_lane_para *lane_para = &edp_core->lane_para;
+	union phy_configure_opts phy_opts;
+	struct phy_configure_opts_dp *dp_opts = &phy_opts.dp;
+
+	dp_opts->link_rate = (u32)(lane_para->bit_rate / 1000000);
+	dp_opts->lanes = lane_para->lane_cnt;
+	dp_opts->set_rate = 1;
+	dp_opts->set_lanes = 1;
+	if (edp_core->combo_phy)
+		phy_configure(edp_core->combo_phy, &phy_opts);
+
+	if (edp_core->dp_phy)
+		phy_configure(edp_core->dp_phy, &phy_opts);
 }
 
-bool edp_sink_support_fast_train(void)
+static void edp_phy_set_training_para(struct edp_tx_core *edp_core)
+{
+	struct edp_lane_para *lane_para = &edp_core->lane_para;
+	union phy_configure_opts phy_opts;
+	struct phy_configure_opts_dp *dp_opts = &phy_opts.dp;
+	u32 i = 0;
+
+	for (i = 0; i < lane_para->lane_cnt; i++) {
+		dp_opts->voltage[i] = lane_para->lane_sw[i];
+		dp_opts->pre[i] = lane_para->lane_pre[i];
+	}
+	dp_opts->set_voltages = 1;
+
+	if (edp_core->combo_phy)
+		phy_configure(edp_core->combo_phy, &phy_opts);
+
+	if (edp_core->dp_phy)
+		phy_configure(edp_core->dp_phy, &phy_opts);
+}
+
+s32 edp_get_link_status(struct sunxi_edp_hw_desc *edp_hw, char *link_status)
+{
+	return edp_hw_aux_read(edp_hw, DPCD_0202H, LINK_STATUS_SIZE, link_status);
+}
+
+bool edp_sink_support_fast_training(struct sunxi_edp_hw_desc *edp_hw)
 {
 
 	char tmp_rx_buf[16];
 
 	memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
 
-	if (edp_core_aux_read(DPCD_0003H, 1, &tmp_rx_buf[0]) < 0)
+	if (edp_hw_aux_read(edp_hw, DPCD_0003H, 1, &tmp_rx_buf[0]) < 0)
 		return false;
 
 	if (tmp_rx_buf[0] & DPCD_FAST_TRAIN_MASK)
@@ -359,13 +570,13 @@ bool edp_sink_support_fast_train(void)
 		return false;
 }
 
-bool edp_sink_support_tps3(void)
+bool edp_sink_support_tps3(struct sunxi_edp_hw_desc *edp_hw)
 {
 	char tmp_rx_buf[16];
 
 	memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
 
-	if (edp_core_aux_read(DPCD_0002H, 1, &tmp_rx_buf[0]) < 0)
+	if (edp_hw_aux_read(edp_hw, DPCD_0002H, 1, &tmp_rx_buf[0]) < 0)
 		return false;
 
 	if (tmp_rx_buf[0] & DPCD_TPS3_SUPPORT_MASK)
@@ -375,59 +586,65 @@ bool edp_sink_support_tps3(void)
 }
 
 
-void edp_core_set_lane_para(struct edp_tx_core *edp_core)
+void edp_hw_set_lane_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
 	u64 bit_rate = edp_core->lane_para.bit_rate;
 	u32 lane_cnt = edp_core->lane_para.lane_cnt;
 
-	edp_hal_set_lane_rate(bit_rate);
-	edp_hal_set_lane_cnt(lane_cnt);
+	if (ops->set_lane_rate)
+		ops->set_lane_rate(edp_hw, bit_rate);
+
+	if (ops->set_lane_cnt)
+		ops->set_lane_cnt(edp_hw, lane_cnt);
 }
 
 void edp_lane_training_para_reset(struct edp_lane_para *lane_para)
 {
-	lane_para->lane0_sw = 0;
-	lane_para->lane1_sw = 0;
-	lane_para->lane2_sw = 0;
-	lane_para->lane3_sw = 0;
-	lane_para->lane0_pre = 0;
-	lane_para->lane1_pre = 0;
-	lane_para->lane2_pre = 0;
-	lane_para->lane3_pre = 0;
+	lane_para->lane_sw[0] = 0;
+	lane_para->lane_sw[1] = 0;
+	lane_para->lane_sw[2] = 0;
+	lane_para->lane_sw[3] = 0;
+	lane_para->lane_pre[0] = 0;
+	lane_para->lane_pre[1] = 0;
+	lane_para->lane_pre[2] = 0;
+	lane_para->lane_pre[3] = 0;
 }
 
-void edp_core_set_training_para(struct edp_tx_core *edp_core)
+void edp_hw_set_training_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 	u32 sw[4];
 	u32 pre[4];
 	u32 lane_count = edp_core->lane_para.lane_cnt;
 	u32 param_type = edp_core->training_param_type;
 	u32 i = 0;
 
-	sw[0] = edp_core->lane_para.lane0_sw;
-	sw[1] = edp_core->lane_para.lane1_sw;
-	sw[2] = edp_core->lane_para.lane2_sw;
-	sw[3] = edp_core->lane_para.lane3_sw;
-	pre[0] = edp_core->lane_para.lane0_pre;
-	pre[1] = edp_core->lane_para.lane1_pre;
-	pre[2] = edp_core->lane_para.lane2_pre;
-	pre[3] = edp_core->lane_para.lane3_pre;
+	sw[0] = edp_core->lane_para.lane_sw[0];
+	sw[1] = edp_core->lane_para.lane_sw[1];
+	sw[2] = edp_core->lane_para.lane_sw[2];
+	sw[3] = edp_core->lane_para.lane_sw[3];
+	pre[0] = edp_core->lane_para.lane_pre[0];
+	pre[1] = edp_core->lane_para.lane_pre[1];
+	pre[2] = edp_core->lane_para.lane_pre[2];
+	pre[3] = edp_core->lane_para.lane_pre[3];
 
-	for (i = 0; i < lane_count; i++) {
-		EDP_CORE_DBG("set training para: lane[%d] sw:%d pre:%d\n", i, sw[i], pre[i]);
-		edp_hal_set_lane_sw_pre(i, sw[i], pre[i], param_type);
+	/*
+	 * not sure if both need set in phy and controller in some platform, so
+	 * leave both of these code here
+	 */
+	if (ops->set_lane_sw_pre) {
+		for (i = 0; i < lane_count; i++) {
+			EDP_CORE_DBG("set training para: lane[%d] sw:%d pre:%d\n", i, sw[i], pre[i]);
+			ops->set_lane_sw_pre(edp_hw, i, sw[i], pre[i], param_type);
+		}
 	}
 }
 
-s32 edp_core_set_training_pattern(u32 pattern)
-{
-	edp_hal_set_training_pattern(pattern);
-	return RET_OK;
-}
 
 
-
-s32 edp_dpcd_set_lane_para(struct edp_tx_core *edp_core)
+s32 edp_dpcd_set_lane_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	char tmp_tx_buf[16];
 	s32 ret = RET_FAIL;
@@ -436,12 +653,12 @@ s32 edp_dpcd_set_lane_para(struct edp_tx_core *edp_core)
 	tmp_tx_buf[0] = edp_core->lane_para.bit_rate / 10000000 / 27;
 	tmp_tx_buf[1] = edp_core->lane_para.lane_cnt;
 
-	ret = edp_core_aux_write(DPCD_0100H, 2,  &tmp_tx_buf[0]);
+	ret = edp_hw_aux_write(edp_hw, DPCD_0100H, 2,  &tmp_tx_buf[0]);
 
 	return ret;
 }
 
-s32 edp_dpcd_set_training_para(struct edp_tx_core *edp_core)
+s32 edp_dpcd_set_training_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	char tmp_tx_buf[16];
 	u32 sw[4];
@@ -449,14 +666,14 @@ s32 edp_dpcd_set_training_para(struct edp_tx_core *edp_core)
 	u32 lane_count = edp_core->lane_para.lane_cnt;
 	u32 i = 0;
 
-	sw[0] = edp_core->lane_para.lane0_sw;
-	sw[1] = edp_core->lane_para.lane1_sw;
-	sw[2] = edp_core->lane_para.lane2_sw;
-	sw[3] = edp_core->lane_para.lane3_sw;
-	pre[0] = edp_core->lane_para.lane0_pre;
-	pre[1] = edp_core->lane_para.lane1_pre;
-	pre[2] = edp_core->lane_para.lane2_pre;
-	pre[3] = edp_core->lane_para.lane3_pre;
+	sw[0] = edp_core->lane_para.lane_sw[0];
+	sw[1] = edp_core->lane_para.lane_sw[1];
+	sw[2] = edp_core->lane_para.lane_sw[2];
+	sw[3] = edp_core->lane_para.lane_sw[3];
+	pre[0] = edp_core->lane_para.lane_pre[0];
+	pre[1] = edp_core->lane_para.lane_pre[1];
+	pre[2] = edp_core->lane_para.lane_pre[2];
+	pre[3] = edp_core->lane_para.lane_pre[3];
 
 	memset(tmp_tx_buf, 0, sizeof(tmp_tx_buf));
 
@@ -468,12 +685,12 @@ s32 edp_dpcd_set_training_para(struct edp_tx_core *edp_core)
 			tmp_tx_buf[i] |= DPCD_MAX_PLEVEL_REACHED_FLAG;
 	}
 
-	edp_core_aux_write(DPCD_0103H, lane_count, &tmp_tx_buf[0]);
+	edp_hw_aux_write(edp_hw, DPCD_0103H, lane_count, &tmp_tx_buf[0]);
 
 	return RET_OK;
 }
 
-s32 edp_dpcd_set_training_pattern(u8 pattern)
+s32 edp_dpcd_set_training_pattern(struct sunxi_edp_hw_desc *edp_hw, u8 pattern)
 {
 	char tmp_tx_buf[16];
 
@@ -484,17 +701,20 @@ s32 edp_dpcd_set_training_pattern(u8 pattern)
 	if (pattern && (pattern != TRAINING_PATTERN_4))
 		tmp_tx_buf[0] |= DPCD_SCRAMBLING_DISABLE_FLAG;
 
-	edp_core_aux_write(DPCD_0102H, 1, &tmp_tx_buf[0]);
+	edp_hw_aux_write(edp_hw, DPCD_0102H, 1, &tmp_tx_buf[0]);
 
 	return RET_OK;
 }
 
-s32 edp_training_pattern_clear(struct edp_tx_core *edp_core)
+s32 edp_training_pattern_clear(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	s32 ret = RET_OK;
+	u32 lane_count = edp_core->lane_para.lane_cnt;
 
-	edp_core_set_training_pattern(TRAINING_PATTERN_DISABLE);
-	ret = edp_dpcd_set_training_pattern(TRAINING_PATTERN_DISABLE);
+	edp_hw_set_pattern(edp_hw, TRAINING_PATTERN_DISABLE, lane_count);
+	/* add delay to avoid training pattern writing fail in DPCD in some panels */
+	usleep_range(2000, 2500);
+	ret = edp_dpcd_set_training_pattern(edp_hw, TRAINING_PATTERN_DISABLE);
 	if (ret < 0)
 		return ret;
 
@@ -580,10 +800,10 @@ bool edp_swing_level_reach_max(struct edp_tx_core *edp_core)
 	u32 sw[4];
 	u32 i = 0;
 
-	sw[0] = edp_core->lane_para.lane0_sw;
-	sw[1] = edp_core->lane_para.lane1_sw;
-	sw[2] = edp_core->lane_para.lane2_sw;
-	sw[3] = edp_core->lane_para.lane3_sw;
+	sw[0] = edp_core->lane_para.lane_sw[0];
+	sw[1] = edp_core->lane_para.lane_sw[1];
+	sw[2] = edp_core->lane_para.lane_sw[2];
+	sw[3] = edp_core->lane_para.lane_sw[3];
 
 	for (i = 0; i < lane_count; i++) {
 		if (sw[i] == MAX_VLEVEL)
@@ -606,14 +826,14 @@ u32 edp_adjust_train_para(char *link_status, struct edp_tx_core *edp_core)
 
 	change = 0;
 
-	old_sw[0] = lane_para->lane0_sw;
-	old_sw[1] = lane_para->lane1_sw;
-	old_sw[2] = lane_para->lane2_sw;
-	old_sw[3] = lane_para->lane3_sw;
-	old_pre[0] = lane_para->lane0_pre;
-	old_pre[1] = lane_para->lane1_pre;
-	old_pre[2] = lane_para->lane2_pre;
-	old_pre[3] = lane_para->lane3_pre;
+	old_sw[0] = lane_para->lane_sw[0];
+	old_sw[1] = lane_para->lane_sw[1];
+	old_sw[2] = lane_para->lane_sw[2];
+	old_sw[3] = lane_para->lane_sw[3];
+	old_pre[0] = lane_para->lane_pre[0];
+	old_pre[1] = lane_para->lane_pre[1];
+	old_pre[2] = lane_para->lane_pre[2];
+	old_pre[3] = lane_para->lane_pre[3];
 
 	for (i = 0; i < lane_count; i++) {
 		adjust_sw[i] = (link_status[DPCD_LANE_ADJ_OFFSET(i)] & VADJUST_MASK(i)) >> VADJUST_SHIFT(i);
@@ -625,15 +845,15 @@ u32 edp_adjust_train_para(char *link_status, struct edp_tx_core *edp_core)
 		       link_status[DPCD_LANE_ADJ_OFFSET(i)], i, adjust_pre[i]);
 	}
 
-	lane_para->lane0_sw = adjust_sw[0];
-	lane_para->lane1_sw = adjust_sw[1];
-	lane_para->lane2_sw = adjust_sw[2];
-	lane_para->lane3_sw = adjust_sw[3];
+	lane_para->lane_sw[0] = adjust_sw[0];
+	lane_para->lane_sw[1] = adjust_sw[1];
+	lane_para->lane_sw[2] = adjust_sw[2];
+	lane_para->lane_sw[3] = adjust_sw[3];
 
-	lane_para->lane0_pre = adjust_pre[0];
-	lane_para->lane1_pre = adjust_pre[1];
-	lane_para->lane2_pre = adjust_pre[2];
-	lane_para->lane3_pre = adjust_pre[3];
+	lane_para->lane_pre[0] = adjust_pre[0];
+	lane_para->lane_pre[1] = adjust_pre[1];
+	lane_para->lane_pre[2] = adjust_pre[2];
+	lane_para->lane_pre[3] = adjust_pre[3];
 
 	for (i = 0; i < lane_count; i++) {
 		if (old_sw[i] != adjust_sw[i])
@@ -649,24 +869,34 @@ u32 edp_adjust_train_para(char *link_status, struct edp_tx_core *edp_core)
 	return change;
 }
 
-s32 edp_link_cr_training(struct edp_tx_core *edp_core)
+s32 edp_link_cr_training(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	char link_status[16];
+	char training_info[16];
 	u32 try_cnt = 0;
 	u32 lane_count = edp_core->lane_para.lane_cnt;
 	u32 change;
 	u32 timeout = 0;
 	u32 fail_lane;
+	u32 i;
+	u32 training_info_len = 5;
 
-	edp_core_set_training_pattern(TRAINING_PATTERN_1);
-	edp_dpcd_set_training_pattern(TRAINING_PATTERN_1);
+	edp_hw_set_pattern(edp_hw, TRAINING_PATTERN_1, lane_count);
+	/* add delay to avoid training pattern writing fail in DPCD, show more in commits */
+	usleep_range(2000, 2500);
+	edp_dpcd_set_training_pattern(edp_hw, TRAINING_PATTERN_1);
+
+	memset(training_info, 0, sizeof(training_info));
+	edp_hw_aux_read(edp_hw, DPCD_0100H, training_info_len, training_info);
+	for (i = 0; i < training_info_len; i++)
+		EDP_CORE_DBG("CR_TRAINING: DPCD[0x%x] = 0x%x\n", i + DPCD_0100H, training_info[i]);
 
 	for (try_cnt = 0; try_cnt < TRY_CNT_MAX; try_cnt++) {
 		usleep_range(5 * edp_core->interval_CR, 10 * edp_core->interval_CR);
 
 		memset(link_status, 0, sizeof(link_status));
 		fail_lane = 0;
-		edp_get_link_status(link_status);
+		edp_get_link_status(edp_hw, link_status);
 		if (edp_cr_training_done(link_status, lane_count, &fail_lane)) {
 			EDP_CORE_DBG("edp training1(clock recovery training) success!\n");
 			return RET_OK;
@@ -688,8 +918,9 @@ s32 edp_link_cr_training(struct edp_tx_core *edp_core)
 		}
 
 		if ((change & SW_VOLTAGE_CHANGE_FLAG) || (change & PRE_EMPHASIS_CHANGE_FLAG)) {
-			edp_core_set_training_para(edp_core);
-			edp_dpcd_set_training_para(edp_core);
+			edp_phy_set_training_para(edp_core);
+			edp_hw_set_training_para(edp_hw, edp_core);
+			edp_dpcd_set_training_para(edp_hw, edp_core);
 		}
 
 		timeout++;
@@ -704,27 +935,39 @@ s32 edp_link_cr_training(struct edp_tx_core *edp_core)
 	return RET_FAIL;
 }
 
-s32 edp_link_eq_training(struct edp_tx_core *edp_core)
+s32 edp_link_eq_training(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	char link_status[16];
+	char training_info[16];
 	u32 lane_count = edp_core->lane_para.lane_cnt;
 	u32 try_cnt = 0;
 	bool change;
 	u32 fail_lane;
+	u32 i;
+	u32 training_info_len = 5;
 
-	if (edp_source_support_tps3() && edp_sink_support_tps3()) {
-		edp_core_set_training_pattern(TRAINING_PATTERN_3);
-		edp_dpcd_set_training_pattern(TRAINING_PATTERN_3);
+	if (edp_source_support_tps3(edp_hw) && edp_sink_support_tps3(edp_hw)) {
+		edp_hw_set_pattern(edp_hw, TRAINING_PATTERN_3, lane_count);
+		/* add delay to avoid training pattern writing fail in DPCD, show more in commits */
+		usleep_range(2000, 2500);
+		edp_dpcd_set_training_pattern(edp_hw, TRAINING_PATTERN_3);
 	} else {
-		edp_core_set_training_pattern(TRAINING_PATTERN_2);
-		edp_dpcd_set_training_pattern(TRAINING_PATTERN_2);
+		edp_hw_set_pattern(edp_hw, TRAINING_PATTERN_2, lane_count);
+		/* add delay to avoid training pattern writing fail in DPCD, show more in commits */
+		usleep_range(2000, 2500);
+		edp_dpcd_set_training_pattern(edp_hw, TRAINING_PATTERN_2);
 	}
+
+	memset(training_info, 0, sizeof(training_info));
+	edp_hw_aux_read(edp_hw, DPCD_0100H, training_info_len, training_info);
+	for (i = 0; i < training_info_len; i++)
+		EDP_CORE_DBG("EQ_Training: DPCD[0x%x] = 0x%x\n", i + DPCD_0100H, training_info[i]);
 
 	for (try_cnt = 0; try_cnt < TRY_CNT_MAX; try_cnt++) {
 		usleep_range(5 * edp_core->interval_EQ, 10 * edp_core->interval_EQ);
 		memset(link_status, 0, sizeof(link_status));
 		fail_lane = 0;
-		edp_get_link_status(link_status);
+		edp_get_link_status(edp_hw, link_status);
 		if (edp_eq_training_done(link_status, lane_count, &fail_lane)) {
 			EDP_CORE_DBG("edp training2 (equalization training) success!\n");
 			return RET_OK;
@@ -732,8 +975,9 @@ s32 edp_link_eq_training(struct edp_tx_core *edp_core)
 
 		change = edp_adjust_train_para(link_status, edp_core);
 		if ((change & SW_VOLTAGE_CHANGE_FLAG) || (change & PRE_EMPHASIS_CHANGE_FLAG)) {
-			edp_core_set_training_para(edp_core);
-			edp_dpcd_set_training_para(edp_core);
+			edp_phy_set_training_para(edp_core);
+			edp_hw_set_training_para(edp_hw, edp_core);
+			edp_dpcd_set_training_para(edp_hw, edp_core);
 		}
 	}
 
@@ -746,29 +990,33 @@ s32 edp_link_eq_training(struct edp_tx_core *edp_core)
 	return RET_FAIL;
 }
 
-s32 edp_fast_link_train(struct edp_tx_core *edp_core)
+s32 edp_fast_link_train(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	char link_status[LINK_STATUS_SIZE];
 	u32 lane_count = edp_core->lane_para.lane_cnt;
 	u32 fail_lane = 0;
 
-	edp_core_set_lane_para(edp_core);
+	edp_phy_set_lane_para(edp_core);
+	edp_hw_set_lane_para(edp_hw, edp_core);
 
-	edp_core_set_training_para(edp_core);
+	edp_phy_set_training_para(edp_core);
+	edp_hw_set_training_para(edp_hw, edp_core);
 
-	edp_core_set_training_pattern(TRAINING_PATTERN_1);
+	edp_hw_set_pattern(edp_hw, TRAINING_PATTERN_1, lane_count);
 	usleep_range(5 * edp_core->interval_CR, 10 * edp_core->interval_CR);
 
-	if (edp_source_support_tps3() && edp_sink_support_tps3()) {
-		edp_core_set_training_pattern(TRAINING_PATTERN_3);
+	/* add delay to avoid training pattern writing fail in DPCD, show more in commits */
+	usleep_range(2000, 2500);
+	if (edp_source_support_tps3(edp_hw) && edp_sink_support_tps3(edp_hw)) {
+		edp_hw_set_pattern(edp_hw, TRAINING_PATTERN_3, lane_count);
 	} else {
-		edp_core_set_training_pattern(TRAINING_PATTERN_2);
+		edp_hw_set_pattern(edp_hw, TRAINING_PATTERN_2, lane_count);
 	}
 	usleep_range(5 * edp_core->interval_EQ, 10 * edp_core->interval_EQ);
 
 	memset(link_status, 0, sizeof(link_status));
 	if (loglevel_debug & 0x2) {
-		edp_get_link_status(link_status);
+		edp_get_link_status(edp_hw, link_status);
 		if (!edp_cr_training_done(link_status, lane_count, &fail_lane)) {
 			EDP_ERR("CR training result: lane0:%s lane1:%s lane2:%s lane3:%s\n",
 				fail_lane & (1 << 0) ? "FAIL" : "PASS",
@@ -794,25 +1042,27 @@ s32 edp_fast_link_train(struct edp_tx_core *edp_core)
 	return RET_OK;
 }
 
-s32 edp_full_link_train(struct edp_tx_core *edp_core)
+s32 edp_full_link_train(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	s32 ret = RET_OK;
 
-	edp_core_set_lane_para(edp_core);
-	ret = edp_dpcd_set_lane_para(edp_core);
+	edp_phy_set_lane_para(edp_core);
+	edp_hw_set_lane_para(edp_hw, edp_core);
+	ret = edp_dpcd_set_lane_para(edp_hw, edp_core);
 	if (ret < 0)
 		return ret;
 
-	edp_core_set_training_para(edp_core);
-	ret = edp_dpcd_set_training_para(edp_core);
+	edp_phy_set_training_para(edp_core);
+	edp_hw_set_training_para(edp_hw, edp_core);
+	ret = edp_dpcd_set_training_para(edp_hw, edp_core);
 	if (ret < 0)
 		return ret;
 
-	ret = edp_link_cr_training(edp_core);
+	ret = edp_link_cr_training(edp_hw, edp_core);
 	if (ret < 0)
 		return ret;
 
-	ret = edp_link_eq_training(edp_core);
+	ret = edp_link_eq_training(edp_hw, edp_core);
 	if (ret < 0)
 		return ret;
 
@@ -820,41 +1070,57 @@ s32 edp_full_link_train(struct edp_tx_core *edp_core)
 }
 
 
-s32 edp_link_training(struct edp_tx_core *edp_core)
+s32 edp_link_training(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
-	if (edp_source_support_fast_train() \
-		&& edp_sink_support_fast_train())
-		return edp_fast_link_train(edp_core);
+	if (edp_source_support_fast_training(edp_hw) \
+		&& edp_sink_support_fast_training(edp_hw))
+		return edp_fast_link_train(edp_hw, edp_core);
 	else
-		return edp_full_link_train(edp_core);
+		return edp_full_link_train(edp_hw, edp_core);
 }
 
-s32 edp_main_link_setup(struct edp_tx_core *edp_core)
+s32 edp_main_link_setup(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	s32 ret = 0;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
 	/* DP Link CTS need ech training start from level-0 */
 	edp_lane_training_para_reset(&edp_core->lane_para);
 
-	ret = edp_link_training(edp_core);
+	// disable scrambling before training, because TP1/2/3 use
+	// unscrambled patterns
+	if (ops->scrambling_enable)
+		ops->scrambling_enable(edp_hw, false);
+
+	ret = edp_link_training(edp_hw, edp_core);
 	if (ret < 0)
 		return ret;
-	ret = edp_training_pattern_clear(edp_core);
+	ret = edp_training_pattern_clear(edp_hw, edp_core);
 
 	return ret;
 }
 
-s32 edp_core_link_start(void)
+s32 edp_hw_link_start(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_link_start();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->main_link_start)
+		return ops->main_link_start(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_link_stop(void)
+s32 edp_hw_link_stop(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_link_stop();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->main_link_stop)
+		return ops->main_link_stop(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_low_power_en(bool en)
+s32 edp_low_power_en(struct sunxi_edp_hw_desc *edp_hw, bool en)
 {
 	char tmp_tx_buf[16];
 
@@ -865,69 +1131,57 @@ s32 edp_low_power_en(bool en)
 	else
 		tmp_tx_buf[0] = DPCD_LOW_POWER_EXIT;
 
-	edp_core_aux_write(DPCD_0600H, 1, &tmp_tx_buf[0]);
+	edp_hw_aux_write(edp_hw, DPCD_0600H, 1, &tmp_tx_buf[0]);
 
 	return RET_OK;
 }
 
-void edp_core_irq_handler(struct edp_tx_core *edp_core)
+void edp_hw_irq_handler(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
-	edp_hal_irq_handler(edp_core);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->irq_handle)
+		ops->irq_handle(edp_hw, edp_core);
 }
 
-s32 edp_core_irq_enable(u32 irq_id, bool en)
+s32 edp_hw_irq_enable(struct sunxi_edp_hw_desc *edp_hw, u32 irq_id, bool en)
 {
-	if (en)
-		return edp_hal_irq_enable(irq_id);
-	else
-		return edp_hal_irq_disable(irq_id);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->irq_enable && ops->irq_disable) {
+		if (en)
+			return ops->irq_enable(edp_hw, irq_id);
+		else
+			return ops->irq_disable(edp_hw, irq_id);
+	} else
+		return RET_OK;
 }
 
-s32 edp_core_irq_query(void)
-{
-	return edp_hal_irq_query();
-}
-
-s32 edp_core_irq_clear(void)
-{
-	return edp_hal_irq_clear();
-}
-
-s32 edp_core_get_cur_line(void)
-{
-	return edp_hal_get_cur_line();
-}
-
-s32 edp_core_get_start_dly(void)
-{
-	return edp_hal_get_start_dly();
-}
-
-void edp_core_show_builtin_patten(u32 pattern)
-{
-	edp_hal_show_builtin_patten(pattern);
-}
-
-s32 edp_core_aux_read(s32 addr, s32 lenth, char *buf)
+s32 edp_hw_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char *buf)
 {
 	u32 retry_cnt = 0;
 	s32 ret = 0;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-	while (retry_cnt < 7) {
-		ret = edp_hal_aux_read(addr, lenth, buf, retry_cnt ? true : false);
-		/*
-		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-		 * AUX_TIMEOUT, AUX_NO_STOP
-		 */
-		if ((ret != RET_AUX_NACK) &&
-		    (ret != RET_AUX_TIMEOUT) &&
-		    (ret != RET_AUX_DEFER) &&
-		    (ret != RET_AUX_NO_STOP))
-			break;
-		/* at least 400us between two request is request in dp cts */
-		usleep_range(500, 550);
-		retry_cnt++;
-	}
+	if (ops->aux_read) {
+		while (retry_cnt < 7) {
+			ret = ops->aux_read(edp_hw, addr, lenth, buf, retry_cnt ? true : false);
+			/*
+			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+			 * AUX_TIMEOUT, AUX_NO_STOP
+			 */
+			if ((ret != RET_AUX_NACK) &&
+			    (ret != RET_AUX_TIMEOUT) &&
+			    (ret != RET_AUX_DEFER) &&
+			    (ret != RET_AUX_NO_STOP) &&
+			    (ret != RET_AUX_RPLY_ERR))
+				break;
+			/* at least 400us between two request is request in dp cts */
+			usleep_range(500, 550);
+			retry_cnt++;
+		}
+	} else
+		ret = RET_OK;
 
 	if (ret != RET_OK)
 		EDP_ERR("edp_aux_read fail, addr:0x%x lenth:0x%x\n", addr, lenth);
@@ -935,26 +1189,30 @@ s32 edp_core_aux_read(s32 addr, s32 lenth, char *buf)
 	return ret;
 }
 
-s32 edp_core_aux_write(s32 addr, s32 lenth, char *buf)
+s32 edp_hw_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char *buf)
 {
 	u32 retry_cnt = 0;
 	s32 ret = 0;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-	while (retry_cnt < 7) {
-		ret = edp_hal_aux_write(addr, lenth, buf, retry_cnt ? true : false);
-		/*
-		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-		 * AUX_TIMEOUT, AUX_NO_STOP
-		 */
-		if ((ret != RET_AUX_NACK) &&
-		    (ret != RET_AUX_TIMEOUT) &&
-		    (ret != RET_AUX_DEFER) &&
-		    (ret != RET_AUX_NO_STOP))
-			break;
-		/* at least 400us between two request is request in dp cts */
-		usleep_range(500, 550);
-		retry_cnt++;
-	}
+	if (ops->aux_write) {
+		while (retry_cnt < 7) {
+			ret = ops->aux_write(edp_hw, addr, lenth, buf, retry_cnt ? true : false);
+			/*
+			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+			 * AUX_TIMEOUT, AUX_NO_STOP
+			 */
+			if ((ret != RET_AUX_NACK) &&
+			    (ret != RET_AUX_TIMEOUT) &&
+			    (ret != RET_AUX_DEFER) &&
+			    (ret != RET_AUX_NO_STOP))
+				break;
+			/* at least 400us between two request is request in dp cts */
+			usleep_range(500, 550);
+			retry_cnt++;
+		}
+	} else
+		ret = RET_OK;
 
 	if (ret != RET_OK)
 		EDP_ERR("edp_aux_write fail, addr:0x%x lenth:0x%x\n", addr, lenth);
@@ -962,25 +1220,30 @@ s32 edp_core_aux_write(s32 addr, s32 lenth, char *buf)
 	return ret;
 }
 
-s32 edp_core_aux_i2c_read(s32 i2c_addr, s32 lenth, char *buf)
+s32 edp_hw_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 lenth, char *buf)
 {
 	u32 retry_cnt = 0;
 	s32 ret = 0;
-	while (retry_cnt < 7) {
-		ret = edp_hal_aux_i2c_read(i2c_addr, lenth, buf, retry_cnt ? true : false);
-		/*
-		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-		 * AUX_TIMEOUT, AUX_NO_STOP
-		 */
-		if ((ret != RET_AUX_NACK) &&
-		    (ret != RET_AUX_TIMEOUT) &&
-		    (ret != RET_AUX_DEFER) &&
-		    (ret != RET_AUX_NO_STOP))
-			break;
-		/* at least 400us between two request is request in dp cts */
-		usleep_range(500, 550);
-		retry_cnt++;
-	}
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->aux_i2c_read) {
+		while (retry_cnt < 7) {
+			ret = ops->aux_i2c_read(edp_hw, i2c_addr, addr, lenth, buf, retry_cnt ? true : false);
+			/*
+			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+			 * AUX_TIMEOUT, AUX_NO_STOP
+			 */
+			if ((ret != RET_AUX_NACK) &&
+			    (ret != RET_AUX_TIMEOUT) &&
+			    (ret != RET_AUX_DEFER) &&
+			    (ret != RET_AUX_NO_STOP))
+				break;
+			/* at least 400us between two request is request in dp cts */
+			usleep_range(500, 550);
+			retry_cnt++;
+		}
+	} else
+		ret = RET_OK;
 
 	if (ret != RET_OK)
 		EDP_ERR("edp_aux_i2c_read fail, addr:0x%x lenth:0x%x\n", i2c_addr, lenth);
@@ -988,25 +1251,30 @@ s32 edp_core_aux_i2c_read(s32 i2c_addr, s32 lenth, char *buf)
 	return ret;
 }
 
-s32 edp_core_aux_i2c_write(s32 i2c_addr, s32 lenth, char *buf)
+s32 edp_hw_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 lenth, char *buf)
 {
 	u32 retry_cnt = 0;
 	s32 ret = 0;
-	while (retry_cnt < 7) {
-		ret = edp_hal_aux_i2c_write(i2c_addr, lenth, buf, retry_cnt ? true : false);
-		/*
-		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-		 * AUX_TIMEOUT, AUX_NO_STOP
-		 */
-		if ((ret != RET_AUX_NACK) &&
-		    (ret != RET_AUX_TIMEOUT) &&
-		    (ret != RET_AUX_DEFER) &&
-		    (ret != RET_AUX_NO_STOP))
-			break;
-		/* at least 400us between two request is request in dp cts */
-		usleep_range(500, 550);
-		retry_cnt++;
-	}
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->aux_i2c_write) {
+		while (retry_cnt < 7) {
+			ret = ops->aux_i2c_write(edp_hw, i2c_addr, addr, lenth, buf, retry_cnt ? true : false);
+			/*
+			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+			 * AUX_TIMEOUT, AUX_NO_STOP
+			 */
+			if ((ret != RET_AUX_NACK) &&
+			    (ret != RET_AUX_TIMEOUT) &&
+			    (ret != RET_AUX_DEFER) &&
+			    (ret != RET_AUX_NO_STOP))
+				break;
+			/* at least 400us between two request is request in dp cts */
+			usleep_range(500, 550);
+			retry_cnt++;
+		}
+	} else
+		ret = RET_OK;
 
 	if (ret != RET_OK)
 		EDP_ERR("edp_aux_i2c_write fail, addr:0x%x lenth:0x%x\n", i2c_addr, lenth);
@@ -1014,126 +1282,281 @@ s32 edp_core_aux_i2c_write(s32 i2c_addr, s32 lenth, char *buf)
 	return ret;
 }
 
-s32 edp_core_audio_enable(void)
+s32 edp_hw_audio_enable(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_audio_enable();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->audio_enable)
+		return ops->audio_enable(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_audio_disable(void)
+s32 edp_hw_audio_disable(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_audio_disable();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->audio_disable)
+		return ops->audio_disable(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_ssc_enable(bool enable)
+s32 edp_hw_ssc_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
-	return edp_hal_ssc_enable(enable);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->ssc_enable)
+		return ops->ssc_enable(edp_hw, enable);
+	else
+		return RET_OK;
 }
 
-bool edp_core_ssc_is_enabled(void)
+bool edp_hw_ssc_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_ssc_is_enabled();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->ssc_is_enabled)
+		return ops->ssc_is_enabled(edp_hw);
+	else
+		return false;
 }
 
-s32 edp_core_ssc_get_mode(void)
+s32 edp_hw_ssc_get_mode(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_ssc_get_mode();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->ssc_get_mode)
+		return ops->ssc_get_mode(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_ssc_set_mode(u32 mode)
+s32 edp_hw_ssc_set_mode(struct sunxi_edp_hw_desc *edp_hw, u32 mode)
 {
-	return edp_hal_ssc_set_mode(mode);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->ssc_set_mode)
+		return ops->ssc_set_mode(edp_hw, mode);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_psr_enable(bool enable)
+s32 edp_hw_psr_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
-	return edp_hal_psr_enable(enable);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->psr_enable)
+		return ops->psr_enable(edp_hw, enable);
+	else
+		return RET_OK;
 }
 
-bool edp_core_psr_is_enabled(void)
+bool edp_hw_psr_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_psr_is_enabled();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->psr_is_enabled)
+		return ops->psr_is_enabled(edp_hw);
+	else
+		return false;
 }
 
-s32 edp_core_assr_enable(bool enable)
+s32 edp_hw_assr_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	s32 ret = RET_FAIL;
 	char tmp_rx_buf[16];
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
-	ret = edp_hal_assr_enable(enable);
-	if (ret)
-		return ret;
+	if (ops->assr_enable) {
+		ret = ops->assr_enable(edp_hw, enable);
+		if (ret)
+			return ret;
 
-	memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
-	ret = edp_core_aux_read(DPCD_010AH, 1, &tmp_rx_buf[0]);
-	if (ret)
-		return ret;
+		memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
+		ret = edp_hw_aux_read(edp_hw, DPCD_010AH, 1, &tmp_rx_buf[0]);
+		if (ret)
+			return ret;
 
-	if (enable)
-		tmp_rx_buf[0] |= DPCD_ASSR_ENABLE_MASK;
-	else
-		tmp_rx_buf[0] &= ~DPCD_ASSR_ENABLE_MASK;
+		if (enable)
+			tmp_rx_buf[0] |= DPCD_ASSR_ENABLE_MASK;
+		else
+			tmp_rx_buf[0] &= ~DPCD_ASSR_ENABLE_MASK;
 
-	ret = edp_core_aux_write(DPCD_010AH, 1,  &tmp_rx_buf[0]);
+		ret = edp_hw_aux_write(edp_hw, DPCD_010AH, 1,  &tmp_rx_buf[0]);
+	} else
+		ret = RET_OK;
 
 	return ret;
 }
 
-s32 edp_core_set_pattern(u32 pattern)
+bool edp_hw_check_controller_error(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_set_pattern(pattern);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->check_controller_error)
+		return ops->check_controller_error(edp_hw);
+	else
+		return false;
 }
 
-s32 edp_core_get_color_fmt(void)
+s32 edp_hw_set_pattern(struct sunxi_edp_hw_desc *edp_hw, u32 pattern, u32 lane_cnt)
 {
-	return edp_hal_get_color_fmt();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->set_pattern)
+		return ops->set_pattern(edp_hw, pattern, lane_cnt);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_get_pixclk(void)
+void edp_hw_set_mst(struct sunxi_edp_hw_desc *edp_hw, u32 mst_cnt)
 {
-	return edp_hal_get_pixclk();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->config_mst)
+		ops->config_mst(edp_hw, mst_cnt);
 }
 
-s32 edp_core_get_train_pattern(void)
+s32 edp_hw_get_color_fmt(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_train_pattern();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_color_format)
+		return ops->get_color_format(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_get_lane_para(struct edp_lane_para *tmp_lane_para)
+u32 edp_hw_get_pixclk(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_lane_para(tmp_lane_para);
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_pixel_clk)
+		return ops->get_pixel_clk(edp_hw);
+	else
+		return 0;
 }
 
-s32 edp_core_get_tu_size(void)
+u32 edp_hw_get_pattern(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_tu_size();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_pattern)
+		return ops->get_pattern(edp_hw);
+	else
+		return 0;
 }
 
-s32 edp_core_get_valid_symbol_per_tu(void)
+s32 edp_hw_get_lane_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_lane_para *tmp_lane_para)
 {
-	return edp_hal_get_valid_symbol_per_tu();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_lane_para)
+		return ops->get_lane_para(edp_hw, tmp_lane_para);
+	else {
+		memset(tmp_lane_para, 0, sizeof(struct edp_lane_para));
+		return RET_OK;
+	}
 }
 
-bool edp_core_audio_is_enabled(void)
+u32 edp_hw_get_tu_size(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_audio_is_enabled();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_tu_size)
+		return ops->get_tu_size(edp_hw);
+	else
+		return 0;
 }
 
-s32 edp_core_get_audio_if(void)
+u32 edp_hw_get_valid_symbol_per_tu(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_audio_if();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_tu_valid_symbol)
+		return ops->get_tu_valid_symbol(edp_hw);
+	else
+		return 0;
 }
 
-s32 edp_core_audio_is_mute(void)
+bool edp_hw_audio_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_audio_is_mute();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->audio_is_enabled)
+		return ops->audio_is_enabled(edp_hw);
+	else
+		return false;
 }
 
-s32 edp_core_get_audio_chn_cnt(void)
+s32 edp_hw_get_audio_if(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_audio_chn_cnt();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_audio_if)
+		return ops->get_audio_if(edp_hw);
+	else
+		return RET_OK;
 }
 
-s32 edp_core_get_audio_date_width(void)
+s32 edp_hw_audio_is_mute(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return edp_hal_get_audio_date_width();
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->audio_is_muted)
+		return ops->audio_is_muted(edp_hw);
+	else
+		return RET_OK;
+}
+
+s32 edp_hw_get_audio_chn_cnt(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_audio_chn_cnt)
+		return ops->get_audio_chn_cnt(edp_hw);
+	else
+		return RET_OK;
+}
+
+s32 edp_hw_get_audio_data_width(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_audio_data_width)
+		return ops->get_audio_data_width(edp_hw);
+
+	else
+		return RET_OK;
+}
+
+s32 edp_hw_lane_remap(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, u32 remap_id)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->lane_remap)
+		return ops->lane_remap(edp_hw, lane_id, remap_id);
+	else
+		return RET_OK;
+}
+
+s32 edp_hw_lane_invert(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, bool invert)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->lane_invert)
+		return ops->lane_invert(edp_hw, lane_id, invert);
+	else
+		return RET_OK;
+}
+
+
+s32 sunxi_edp_hw_callback_init(struct sunxi_edp_hw_desc *edp_hw)
+{
+	edp_hw->video_ops = sunxi_edp_get_hw_video_ops();
+	//edp_hw->audio_ops = sunxi_edp_get_hw_aduio_ops();
+	edp_hw->hdcp_ops = sunxi_dp_get_hw_hdcp_ops();
+
+	return RET_OK;
 }

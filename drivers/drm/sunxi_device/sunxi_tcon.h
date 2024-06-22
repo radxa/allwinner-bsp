@@ -14,34 +14,32 @@
 #define _SUNXI_TCON_H_
 
 #include "include.h"
-#include "disp_al_tcon.h"
+#include "tcon_lcd.h"
+#include "tcon_tv.h"
+#include "tcon_top.h"
+#include "dsi_v1.h"
 
-enum tcon_type {
-	TCON_LCD = 0,
-	TCON_TV = 1,
-};
-
-enum tcon_interface_type {
+enum disp_interface_type {
 	INTERFACE_LCD = 0,
-	INTERFACE_HDMI = 1,
-	INTERFACE_TVE = 2,
-	INTERFACE_EDP = 3,
+	INTERFACE_DSI = 1,
+	INTERFACE_HDMI = 2,
+	INTERFACE_TVE = 3,
+	INTERFACE_EDP = 4,
+	INTERFACE_LVDS = 5,
+	INTERFACE_RGB = 6,
 	INTERFACE_INVALID,
 };
 
-struct lcd_clk_info {
-	enum disp_lcd_if lcd_if;
-	int tcon_div;
-	int lcd_div;
-	int dsi_div;
-	int dsi_rate;
-};
-
 struct disp_output_config {
+	enum disp_interface_type type;
 	unsigned int de_id;
 	bool sw_enable;
-	struct disp_panel_para panel;
-	struct panel_extend_para panel_ext;
+	bool slave_dsi;
+	bool displl_clk;
+	unsigned int tcon_lcd_div;
+	struct disp_dsi_para dsi_para;
+	struct disp_lvds_para lvds_para;
+	struct disp_rgb_para rgb_para;
 	struct disp_video_timings timing;
 	enum disp_csc_type format;
 	irq_handler_t irq_handler;
@@ -67,21 +65,19 @@ enum tcon_builin_pattern {
 	PATTERN_GRIDDING,
 };
 
-
-int sunxi_tcon_tcon0_open(struct tcon_device *tcon);
-int sunxi_tcon_tcon0_close(struct tcon_device *tcon);
-int sunxi_tcon_lvds_open(struct tcon_device *tcon);
-int sunxi_tcon_lvds_close(struct tcon_device *tcon);
-int sunxi_tcon_lcd_mode_init(struct tcon_device *tcon);
-int sunxi_tcon_lcd_mode_exit(struct tcon_device *tcon);
-int sunxi_tcon_hdmi_mode_init(struct tcon_device *tcon);
-int sunxi_tcon_hdmi_mode_exit(struct tcon_device *tcon);
-int sunxi_tcon_get_lcd_clk_info(struct lcd_clk_info *info,
-				const struct disp_panel_para *panel);
-
-int sunxi_tcon_show_pattern(struct tcon_device *tcon_dev, int pattern);
-int sunxi_tcon_pattern_get(struct tcon_device *tcon_dev);
-int sunxi_tcon_edp_mode_init(struct tcon_device *tcon_dev);
-int sunxi_tcon_edp_mode_exit(struct tcon_device *tcon_dev);
+bool sunxi_tcon_is_sync_time_enough(struct device *tcon_dev);
+bool sunxi_tcon_check_fifo_status(struct device *tcon_dev);
+int sunxi_tcon_dsi_enable_output(struct device *tcon_dev);
+int sunxi_tcon_dsi_disable_output(struct device *tcon_dev);
+int sunxi_lvds_enable_output(struct device *tcon_dev);
+int sunxi_lvds_disable_output(struct device *tcon_dev);
+int sunxi_rgb_enable_output(struct device *tcon_dev);
+int sunxi_rgb_disable_output(struct device *tcon_dev);
+int sunxi_tcon_show_pattern(struct device *tcon_dev, int pattern);
+int sunxi_tcon_pattern_get(struct device *tcon_dev);
+int sunxi_tcon_of_get_id(struct device *tcon_dev);
+void sunxi_tcon_enable_vblank(struct device *tcon_dev, bool enable);
+int sunxi_tcon_mode_init(struct device *tcon_dev, struct disp_output_config *disp_cfg);
+int sunxi_tcon_mode_exit(struct device *tcon_dev);
 
 #endif

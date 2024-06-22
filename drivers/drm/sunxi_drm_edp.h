@@ -47,7 +47,6 @@
 #include <linux/of_gpio.h>
 #include <linux/gpio.h>
 #include <linux/compat.h>
-#include <video/sunxi_display2.h>
 #include <linux/regulator/consumer.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/reset.h>
@@ -65,7 +64,6 @@
 
 #include "sunxi_device/sunxi_tcon.h"
 #include "sunxi_drm_intf.h"
-#include "include.h"
 #include "panel/panels.h"
 #include "sunxi_drm_crtc.h"
 
@@ -100,7 +98,6 @@ struct edp_debug {
 struct sunxi_drm_edp {
 	struct drm_connector connector;
 	struct drm_encoder encoder;
-	struct tcon_device *tcon_dev;
 	struct drm_device *drm_dev;
 	struct drm_display_mode mode;
 	unsigned int tcon_id;
@@ -110,12 +107,16 @@ struct sunxi_drm_edp {
 
 	u32 enable;
 	u32 irq;
-	uintptr_t base_addr;
+	void __iomem *base_addr;
 	dev_t devid;
 	struct cdev *edp_cdev;
 	struct class *edp_class;
 	struct device *edp_class_dev;
 	struct device *dev;
+	struct device *tcon_dev;
+	struct phy *dp_phy;
+	struct phy *aux_phy;
+	struct phy *combo_phy;
 	struct clk *clk_bus;
 	struct clk *clk;
 	struct clk *clk_24m;
@@ -130,8 +131,8 @@ struct sunxi_drm_edp {
 	bool hpd_state;
 	bool hpd_state_now;
 	bool dpcd_parsed;
+	bool use_dpcd;
 	/*FIXME:TODO: optimize relate code*/
-	bool sink_capacity_prefer;
 	bool fps_limit_60;
 	/*end FIXME*/
 	bool use_debug_para;
@@ -140,11 +141,12 @@ struct sunxi_drm_edp {
 	bool sw_enable;
 	bool allow_sw_enable;
 
-	struct mutex mlock;
 	struct edp_tx_core edp_core;
+	struct sunxi_edp_hw_desc edp_hw;
 	struct edp_tx_cap source_cap;
 	struct edp_rx_cap sink_cap;
 	struct edp_debug edp_debug;
+	struct sunxi_dp_hdcp hdcp;
 #if IS_ENABLED(CONFIG_EXTCON)
 	struct extcon_dev *extcon_edp;
 #endif
@@ -173,22 +175,7 @@ struct sunxi_edp_output_desc {
 	s32 (*runtime_resume)(struct sunxi_drm_edp *drm_edp);
 	s32 (*suspend)(struct sunxi_drm_edp *drm_edp);
 	s32 (*resume)(struct sunxi_drm_edp *drm_edp);
+	void (*soft_reset)(struct sunxi_drm_edp *drm_edp);
 };
-
-#if IS_ENABLED(CONFIG_AW_DRM_EDP)
-int sunxi_drm_edp_create(struct tcon_device *tcon_dev);
-int sunxi_drm_edp_destroy(struct tcon_device *tcon_dev);
-#else
-int sunxi_drm_edp_create(struct tcon_device *tcon_dev)
-{
-	return 0;
-}
-
-int sunxi_drm_edp_destroy(struct tcon_device *tcon_dev)
-{
-	return 0;
-}
-#endif
-
 
 #endif /*End of file*/

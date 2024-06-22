@@ -55,7 +55,6 @@ void dw_cec_send_msg(u8 *buf, u8 len, u8 type)
 
 void dw_cec_set_logical_addr(u16 addr)
 {
-	log_trace1(addr);
 	dw_write(CEC_ADDR_H, ((addr >> 8) & 0xFF));
 	dw_write(CEC_ADDR_L, ((addr >> 0) & 0xFF));
 }

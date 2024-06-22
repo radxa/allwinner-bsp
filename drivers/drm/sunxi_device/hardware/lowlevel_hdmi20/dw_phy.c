@@ -13,6 +13,13 @@
 #include "dw_mc.h"
 #include "dw_phy.h"
 
+#define PHY_TIMEOUT             200
+#define PHY_I2C_SLAVE_ADDR      0x69
+
+#define JTAG_TAP_ADDR_CMD   0
+#define JTAG_TAP_WRITE_CMD  1
+#define JTAG_TAP_READ_CMD   3
+
 dw_phy_access_t gPHY_interface = DW_PHY_ACCESS_NULL;
 
 #ifdef SUPPORT_PHY_JTAG
@@ -167,39 +174,31 @@ static int _phy_jtag_write(u16 addr,  u16 value)
 
 static void _dw_phy_power_down(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(PHY_CONF0, PHY_CONF0_SPARES_2_MASK, (bit ? 1 : 0));
 }
 
 static void _dw_phy_enable_tmds(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(PHY_CONF0, PHY_CONF0_SPARES_1_MASK, (bit ? 1 : 0));
 }
 
 static void _dw_phy_data_enable_polarity(u8 bit)
 {
-	log_trace1(bit);
-	dw_write_mask(PHY_CONF0, PHY_CONF0_SELDATAENPOL_MASK,
-					(bit ? 1 : 0));
+	dw_write_mask(PHY_CONF0, PHY_CONF0_SELDATAENPOL_MASK, (bit ? 1 : 0));
 }
 
 static void _dw_phy_interface_control(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(PHY_CONF0, PHY_CONF0_SELDIPIF_MASK, (bit ? 1 : 0));
 }
 
 static int _dw_phy_lock_state(void)
 {
-	log_trace();
 	return dw_read_mask((PHY_STAT0), PHY_STAT0_TX_PHY_LOCK_MASK);
 }
 
 static void _dw_phy_interrupt_mask(u8 mask)
 {
-	log_trace1(mask);
-	/* Mask will determine which bits will be enabled */
 	dw_write_mask(PHY_MASK0, mask, 0xff);
 }
 
@@ -210,7 +209,6 @@ static void _dw_phy_i2c_config(void)
 
 static void _dw_phy_i2c_mask_interrupts(int mask)
 {
-	log_trace1(mask);
 	dw_write_mask(PHY_I2CM_INT,
 			PHY_I2CM_INT_DONE_MASK_MASK, mask ? 1 : 0);
 	dw_write_mask(PHY_I2CM_CTLINT,
@@ -230,7 +228,6 @@ static void _dw_phy_i2c_mask_state(void)
 
 static void _dw_phy_i2c_slave_address(u8 value)
 {
-	log_trace1(value);
 	dw_write_mask(PHY_I2CM_SLAVE,
 			PHY_I2CM_SLAVE_SLAVEADDR_MASK, value);
 }
@@ -239,8 +236,6 @@ static int _dw_phy_i2c_write(u8 addr, u16 data)
 {
 	int timeout = PHY_TIMEOUT;
 	u32 status  = 0;
-
-	log_trace2(data, addr);
 
 	/* Set address */
 	dw_write(PHY_I2CM_ADDRESS, addr);
@@ -371,13 +366,11 @@ void dw_phy_power_enable(u8 enable)
 
 void dw_phy_i2c_fast_mode(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(PHY_I2CM_DIV, PHY_I2CM_DIV_FAST_STD_MODE_MASK, bit);
 }
 
 void dw_phy_i2c_master_reset(void)
 {
-	log_trace();
 	dw_write_mask(PHY_I2CM_SOFTRSTZ,
 			PHY_I2CM_SOFTRSTZ_I2C_SOFTRSTZ_MASK, 1);
 }
@@ -419,7 +412,7 @@ int dw_phy_standby(void)
 	_dw_phy_power_down(0);	/* disable PHY */
 	dw_phy_power_enable(0);
 #endif
-
+	hdmi_trace("dw phy standby done\n");
 	return 0;
 }
 
@@ -448,7 +441,6 @@ u8 dw_phy_hot_plug_state(void)
 
 u8 dw_phy_get_rxsense(void)
 {
-	log_trace();
 	return (u8)(dw_read_mask((PHY_STAT0), PHY_STAT0_RX_SENSE_0_MASK) |
 		dw_read_mask((PHY_STAT0), PHY_STAT0_RX_SENSE_1_MASK) |
 		dw_read_mask((PHY_STAT0), PHY_STAT0_RX_SENSE_2_MASK) |
@@ -467,13 +459,11 @@ u8 dw_phy_rxsense_state(void)
 
 u8 dw_phy_pll_lock_state(void)
 {
-	log_trace();
 	return dw_read_mask((PHY_STAT0), PHY_STAT0_TX_PHY_LOCK_MASK);
 }
 
 u8 dw_phy_power_state(void)
 {
-	log_trace();
 	return dw_read_mask(PHY_CONF0, PHY_CONF0_TXPWRON_MASK);
 }
 
@@ -524,8 +514,6 @@ int dw_phy_read(u8 addr, u16 *value)
 int dw_phy_initialize(void)
 {
 	u8 phy_mask = 0;
-
-	log_trace();
 
 	if (_dw_phy_set_interface(DW_PHY_ACCESS_I2C) < 0) {
 		hdmi_err("set phy interface i2c failed!\n");
@@ -585,7 +573,7 @@ ssize_t dw_phy_dump(char *buf)
 	int n = 0;
 
 	n += sprintf(buf + n, "[dw phy]\n");
-	n += sprintf(buf + n, " - hpd [%s], rxsense [0x%X], pll [%s], power [%s]\n",
+	n += sprintf(buf + n, " - hpd: [%s], rxsense: [0x%X], pll: [%s], power: [%s]\n",
 		dw_phy_hot_plug_state() ? "detect" : "undetect", dw_phy_rxsense_state(),
 		dw_phy_pll_lock_state() ? "lock" : "unlock",
 		dw_phy_power_state() ? "enable" : "disable");

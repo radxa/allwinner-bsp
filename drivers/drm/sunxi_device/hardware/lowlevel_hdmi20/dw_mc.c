@@ -33,43 +33,41 @@ static irq_vector_t irq_vec[] = {
 
 void _dw_mc_disable_csc_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_CLKDIS, MC_CLKDIS_CSCCLK_DISABLE_MASK, bit);
 }
 
 void _dw_mc_disable_tmds_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_CLKDIS, MC_CLKDIS_TMDSCLK_DISABLE_MASK, bit);
 }
 
 void _dw_mc_disable_pixel_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_CLKDIS, MC_CLKDIS_PIXELCLK_DISABLE_MASK, bit);
 }
 
 void _dw_mc_disable_pixel_repetition_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_CLKDIS, MC_CLKDIS_PREPCLK_DISABLE_MASK, bit);
 }
 
 void dw_mc_disable_hdcp_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_CLKDIS, MC_CLKDIS_HDCPCLK_DISABLE_MASK, bit);
+}
+
+u8 dw_mc_get_hdcp_clk(void)
+{
+	return dw_read_mask(MC_CLKDIS, MC_CLKDIS_HDCPCLK_DISABLE_MASK);
 }
 
 void dw_mc_disable_cec_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_CLKDIS, MC_CLKDIS_CECCLK_DISABLE_MASK, bit);
 }
 
 void dw_mc_disable_audio_sampler_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_CLKDIS, MC_CLKDIS_AUDCLK_DISABLE_MASK, bit);
 }
 
@@ -80,7 +78,6 @@ u8 dw_mc_get_audio_sample_clock(void)
 
 void _dw_mc_video_feed_through_off(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_FLOWCTRL, MC_FLOWCTRL_FEED_THROUGH_OFF_MASK, bit);
 }
 
@@ -91,34 +88,35 @@ void dw_mc_reset_audio_i2s(void)
 
 void dw_mc_reset_tmds_clock(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(MC_SWRSTZREQ, MC_SWRSTZREQ_TMDSSWRST_REQ_MASK, bit);
 }
 
 void dw_mc_reset_phy(u8 bit)
 {
-	log_trace1(bit);
-	/* active low */
 	dw_write_mask(MC_PHYRSTZ, MC_PHYRSTZ_PHYRSTZ_MASK, bit);
 }
 
-void dw_mc_all_clock_enable(struct dw_hdmi_dev_s *dev)
+void dw_mc_all_clock_enable(void)
 {
+	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
 	u8 val = 0;
-	log_trace();
+
+	hdmi_trace("dw hdmi mc enable all clock\n");
+
 	_dw_mc_video_feed_through_off(0);
 	_dw_mc_disable_pixel_clock(0);
 	_dw_mc_disable_tmds_clock(0);
-	val = (dev->ctrl_dev.pixel_repetition > 0) ? 0 : 1;
+	val = (hdmi->pixel_repeat > 0) ? 0 : 1;
 	_dw_mc_disable_pixel_repetition_clock(val);
 	_dw_mc_disable_csc_clock(0);
-	val = dev->ctrl_dev.audio_on ? 0 : 1;
+	val = (hdmi->audio_on) ? 0 : 1;
 	dw_mc_disable_audio_sampler_clock(val);
 	dw_mc_disable_hdcp_clock(1);/* disable it */
 }
 
 void dw_mc_all_clock_disable(void)
 {
+	hdmi_trace("dw hdmi mc disable all clock\n");
 	_dw_mc_disable_pixel_clock(1);
 	_dw_mc_disable_tmds_clock(1);
 	_dw_mc_disable_pixel_repetition_clock(1);
@@ -126,22 +124,6 @@ void dw_mc_all_clock_disable(void)
 	dw_mc_disable_audio_sampler_clock(1);
 	dw_mc_disable_cec_clock(1);
 	dw_mc_disable_hdcp_clock(1);
-}
-
-void dw_mc_all_clock_standby(void)
-{
-	_dw_mc_disable_pixel_clock(1);
-	_dw_mc_disable_tmds_clock(1);
-	_dw_mc_disable_pixel_repetition_clock(0x1);
-	_dw_mc_disable_csc_clock(1);
-	dw_mc_disable_audio_sampler_clock(1);
-	dw_mc_disable_cec_clock(0);
-	dw_mc_disable_hdcp_clock(1);
-}
-
-u32 dw_mc_irq_get_audio(void)
-{
-	return dw_read(IH_AS_STAT0);
 }
 
 u8 dw_mc_irq_get_state(irq_sources_t irq)
@@ -201,22 +183,16 @@ int dw_mc_irq_unmute_source(irq_sources_t irq_source)
 	return false;
 }
 
-void dw_mc_irq_all_mute(void)
+void dw_mc_set_main_irq(u8 state)
 {
-	log_trace();
-	dw_write(IH_MUTE, 0x3);
-}
-
-void dw_mc_irq_all_unmute(void)
-{
-	log_trace();
-	dw_write(IH_MUTE, 0x0);
+	hdmi_trace("dw hdmi mc %s main irq\n", state ? "enable" : "disable");
+	dw_write(IH_MUTE, state ? 0x0 : 0x3);
 }
 
 void dw_mc_irq_mask_all(void)
 {
-	log_trace();
-	dw_mc_irq_all_mute();
+	hdmi_trace("dw hdmi mc mask all irq\n");
+	dw_mc_set_main_irq(0x0);
 	dw_mc_irq_mute_source(DW_IRQ_AUDIO_PACKET);
 	dw_mc_irq_mute_source(DW_IRQ_OTHER_PACKET);
 	dw_mc_irq_mute_source(DW_IRQ_PACKETS_OVERFLOW);

@@ -108,8 +108,6 @@ ESM_STATUS ESM_Authenticate(esm_instance_t *esm, uint32_t Cmd,
 	uint32_t resp = 0;
 	uint32_t req_param;
 
-	log_trace();
-
 	if (esm == NULL) {
 		hdmi_inf("[hdcp2.2-error]:esm is NULL!\n");
 		return ESM_HL_NO_INSTANCE;
@@ -159,7 +157,6 @@ ESM_STATUS ESM_SetCapability(esm_instance_t *esm)
 {
 	ESM_STATUS err = -1;
 
-	log_trace();
 	if (esm == 0) {
 		hdmi_inf("ESM is NULL\n");
 		return ESM_HL_NO_INSTANCE;

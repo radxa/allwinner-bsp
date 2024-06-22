@@ -14,13 +14,6 @@
 
 #include "dw_dev.h"
 
-#define PHY_TIMEOUT             200
-#define PHY_I2C_SLAVE_ADDR      0x69
-
-#define JTAG_TAP_ADDR_CMD   0
-#define JTAG_TAP_WRITE_CMD  1
-#define JTAG_TAP_READ_CMD   3
-
 /**
  * Set PHY to standby mode - turn off all interrupts
  * @param dev device structure

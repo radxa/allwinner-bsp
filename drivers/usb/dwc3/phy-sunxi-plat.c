@@ -19,6 +19,8 @@
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
+#include <linux/of_device.h>
+#include <sunxi-log.h>
 
 #include <sunxi-log.h>
 
@@ -63,11 +65,16 @@
 #define  PHY_REG_U2_PHYCTL(u2phy_base_addr)		((u2phy_base_addr) \
 							+ PHY_USB2_PHYCTL)
 
+struct sunxi_phy_of_data {
+	bool has_vbusvldext;
+};
+
 struct sunxi_phy {
 	struct phy *phy;
 	void __iomem *u2;
 	struct reset_control *reset;
 	struct clk *clk;
+	const struct sunxi_phy_of_data *drvdata;
 };
 
 static void phy_u2_set(struct sunxi_phy *phy, bool enable)
@@ -85,7 +92,8 @@ static void phy_u2_set(struct sunxi_phy *phy, bool enable)
 #endif
 
 	val = readl(PHY_REG_U2_PHYCTL(phy->u2));
-	tmp = OTGDISABLE | VBUSVLDEXT;
+	if (phy->drvdata->has_vbusvldext)
+		tmp = OTGDISABLE | VBUSVLDEXT;
 	if (enable) {
 		val |= tmp;
 		val &= ~SIDDQ; /* write 0 to enable phy */
@@ -148,10 +156,14 @@ static int phy_sunxi_plat_probe(struct platform_device *pdev)
 	struct sunxi_phy *phy;
 	struct device *dev = &pdev->dev;
 	struct phy_provider *phy_provider;
+	const struct sunxi_phy_of_data *data;
+
+	data = of_device_get_match_data(&pdev->dev);
 
 	phy = devm_kzalloc(dev, sizeof(*phy), GFP_KERNEL);
 	if (!phy)
 		return -ENOMEM;
+	phy->drvdata = data;
 
 	phy->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(phy->clk)) {
@@ -181,8 +193,22 @@ static int phy_sunxi_plat_probe(struct platform_device *pdev)
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
 
+static const struct sunxi_phy_of_data sunxi_phy_v1_of_data = {
+	.has_vbusvldext = true,
+};
+
+static const struct sunxi_phy_of_data sunxi_phy_v2_of_data = {
+	.has_vbusvldext = false,
+};
 static const struct of_device_id phy_sunxi_plat_of_match[] = {
-	{ .compatible = "allwinner,sunxi-plat-phy" },
+	{
+		.compatible = "allwinner,sunxi-plat-phy",
+		.data = &sunxi_phy_v1_of_data,
+	},
+	{
+		.compatible = "allwinner,sunxi-plat-phy-v2",
+		.data = &sunxi_phy_v2_of_data,
+	},
 	{ /* Sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, phy_sunxi_plat_of_match);

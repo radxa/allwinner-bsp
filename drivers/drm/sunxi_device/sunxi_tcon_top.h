@@ -15,6 +15,7 @@
 
 #include <linux/clk.h>
 #include "include.h"
+#include "tcon_top.h"
 
 int sunxi_tcon_top_clk_enable(struct device *tcon_top);
 int sunxi_tcon_top_clk_disable(struct device *tcon_top);

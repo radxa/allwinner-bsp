@@ -17,6 +17,8 @@
 #include <linux/debugfs.h>
 #include <linux/platform_device.h>
 
+#include "pcie-sunxi.h"
+
 #define PCIE_DMA_TABLE_NUM		8
 #define PCIE_DMA_TRX_TYPE_NUM		3
 
@@ -69,13 +71,19 @@ enum dma_dir {
 	PCIE_DMA_READ,
 };
 
-typedef int *dma_hdl_t;
+typedef void (*sunxi_pcie_edma_callback)(void *param);
 
-typedef struct {
-	u32		dma_used;
+typedef struct sunxi_pci_edma_chan {
 	u32		chnl_num;
-	spinlock_t	lock;		/* dma channel lock */
-} dma_channel_t;
+	spinlock_t	lock;
+	bool		cookie;
+	phys_addr_t	src_addr;
+	phys_addr_t	dst_addr;
+	u32		size;
+	enum dma_dir	dma_trx;
+	void		*callback_param;
+	sunxi_pcie_edma_callback callback;
+} sunxi_pci_edma_chan_t;
 
 /*
  * The Channel Control Register for read and write.
@@ -257,13 +265,13 @@ struct dma_trx_obj {
 	struct pcie_misc_dev		*pcie_dev;
 	void 				(*start_dma_trx_func)(struct dma_table *table, struct dma_trx_obj *obj);
 	int				(*config_dma_trx_func)(struct dma_table *table, phys_addr_t sar_addr, phys_addr_t dar_addr,
-										unsigned int size, enum dma_dir dma_trx);
+							unsigned int size, enum dma_dir dma_trx, sunxi_pci_edma_chan_t *edma_chn);
 };
 
 struct dma_trx_obj *sunxi_pcie_dma_obj_probe(struct device *dev);
 int sunxi_pcie_dma_obj_remove(struct device *dev);
-int sunxi_pcie_dma_chan_release(u32 channel, enum dma_dir dma_trx);
-dma_hdl_t sunxi_pcie_dma_chan_request(enum dma_dir dma_trx);
+sunxi_pci_edma_chan_t *sunxi_pcie_dma_chan_request(enum dma_dir dma_trx, void *cb, void *data);
+int sunxi_pcie_dma_chan_release(struct sunxi_pci_edma_chan *edma_chan, enum dma_dir dma_trx);
 int sunxi_pcie_dma_mem_read(phys_addr_t sar_addr, phys_addr_t dar_addr, unsigned int size);
 int sunxi_pcie_dma_mem_write(phys_addr_t sar_addr, phys_addr_t dar_addr, unsigned int size);
 int sunxi_pcie_dma_get_chan(struct platform_device *pdev);

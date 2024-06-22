@@ -40,16 +40,17 @@
 #define UPD_KEY_VALUE 0x8000000
 
 #define SUN55IW3_PLL_DDR_CTRL_REG   0x0010
-static struct ccu_nkmp pll_ddr_clk = {
+static struct ccu_nm pll_ddr_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(0, 1), /* input divider */
-	.p		= _SUNXI_CCU_DIV(1, 1), /* output divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.m		= _SUNXI_CCU_DIV(0, 1), /* output divider */
+	.min_rate	= 600000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0010,
 		.hw.init	= CLK_HW_INIT("pll-ddr", "dcxo24M",
-				&ccu_nkmp_ops,
+				&ccu_nm_ops,
 				CLK_SET_RATE_UNGATE |
 				CLK_IS_CRITICAL),
 	},
@@ -59,8 +60,9 @@ static struct ccu_nkmp pll_ddr_clk = {
 static struct ccu_nm pll_peri0_parent_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.min_rate	= 1200000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0020,
 		.hw.init	= CLK_HW_INIT("pll-peri0-parent", "dcxo24M",
@@ -119,8 +121,9 @@ static CLK_FIXED_FACTOR(pll_peri0_25m_clk, "pll-peri0-25m",
 static struct ccu_nm pll_peri1_parent_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.min_rate	= 1200000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0028,
 		.hw.init	= CLK_HW_INIT("pll-peri1-parent", "dcxo24M",
@@ -164,87 +167,100 @@ static CLK_FIXED_FACTOR(pll_peri1_150m_clk, "pll-peri1-150m",
 		2, 1, 0);
 
 #define SUN55IW3_PLL_GPU_CTRL_REG   0x0030
-static struct ccu_nkmp pll_gpu_clk = {
+static struct ccu_nm pll_gpu_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
-	.p		= _SUNXI_CCU_DIV(0, 1), /* output divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.m		= _SUNXI_CCU_DIV(0, 1), /* output divider */
+	.min_rate	= 600000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0030,
 		.hw.init	= CLK_HW_INIT("pll-gpu", "dcxo24M",
-				&ccu_nkmp_ops,
+				&ccu_nm_ops,
 				CLK_SET_RATE_UNGATE),
 	},
 };
 
 #define SUN55IW3_PLL_VIDEO0_CTRL_REG   0x0040
-static struct ccu_nkmp pll_video0_4x_clk = {
+static struct ccu_nm pll_video0_parent_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
-	.p		= _SUNXI_CCU_DIV(0, 1), /* output divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.min_rate	= 1200000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0040,
-		.hw.init	= CLK_HW_INIT("pll-video0-4x", "dcxo24M",
-				&ccu_nkmp_ops,
-				CLK_SET_RATE_UNGATE | CLK_IGNORE_UNUSED),
-	},
-};
-
-static CLK_FIXED_FACTOR_HW(pll_video0_3x_clk, "pll-video0-3x",
-		&pll_video0_4x_clk.common.hw,
-		1, 3, 0);
-
-#define SUN55IW3_PLL_VIDEO1_CTRL_REG   0x0048
-static struct ccu_nm pll_video1_4x_clk = {
-	.enable		= BIT(27) | BIT(30) | BIT(31),
-	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
-	.common		= {
-		.reg		= 0x0048,
-		.hw.init	= CLK_HW_INIT("pll-video1-4x", "dcxo24M",
+		.hw.init	= CLK_HW_INIT("pll-video0-parent", "dcxo24M",
 				&ccu_nm_ops,
 				CLK_SET_RATE_UNGATE | CLK_IGNORE_UNUSED),
 	},
 };
 
-static CLK_FIXED_FACTOR_HW(pll_video1_3x_clk, "pll-video1-3x",
-		&pll_video1_4x_clk.common.hw,
-		1, 3, 0);
+static SUNXI_CCU_M(pll_video0_4x_clk, "pll-video0-4x",
+		"pll-video0-parent", 0x0040, 0, 1, CLK_SET_RATE_PARENT);
 
-#define SUN55IW3_PLL_VIDEO2_CTRL_REG   0x0050
-static struct ccu_nm pll_video2_4x_clk = {
+static CLK_FIXED_FACTOR_HW(pll_video0_3x_clk, "pll-video0-3x",
+		&pll_video0_parent_clk.common.hw,
+		3, 1, 0);
+
+#define SUN55IW3_PLL_VIDEO1_CTRL_REG   0x0048
+static struct ccu_nm pll_video1_parent_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.min_rate	= 1200000000,
+	.max_rate	= 2520000000,
+	.common		= {
+		.reg		= 0x0048,
+		.hw.init	= CLK_HW_INIT("pll-video1-parent", "dcxo24M",
+				&ccu_nm_ops,
+				CLK_SET_RATE_UNGATE | CLK_IGNORE_UNUSED),
+	},
+};
+
+static SUNXI_CCU_M(pll_video1_4x_clk, "pll-video1-4x",
+		"pll-video1-parent", 0x0048, 0, 1, CLK_SET_RATE_PARENT);
+
+static CLK_FIXED_FACTOR_HW(pll_video1_3x_clk, "pll-video1-3x",
+		&pll_video1_parent_clk.common.hw,
+		3, 1, 0);
+
+#define SUN55IW3_PLL_VIDEO2_CTRL_REG   0x0050
+static struct ccu_nm pll_video2_parent_clk = {
+	.enable		= BIT(27) | BIT(30) | BIT(31),
+	.lock		= BIT(28),
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.min_rate	= 1200000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0050,
-		.hw.init	= CLK_HW_INIT("pll-video2-4x", "dcxo24M",
+		.hw.init	= CLK_HW_INIT("pll-video2-parent", "dcxo24M",
 				&ccu_nm_ops,
 				CLK_SET_RATE_UNGATE),
 	},
 };
 
+static SUNXI_CCU_M(pll_video2_4x_clk, "pll-video2-4x",
+		"pll-video2-parent", 0x0050, 0, 1, CLK_SET_RATE_PARENT);
+
 static CLK_FIXED_FACTOR_HW(pll_video2_3x_clk, "pll-video2-3x",
-		&pll_video2_4x_clk.common.hw,
-		1, 3, 0);
+		&pll_video2_parent_clk.common.hw,
+		3, 1, 0);
 
 #define SUN55IW3_PLL_VE_CTRL_REG   0x0058
-static struct ccu_nkmp pll_ve_clk = {
+static struct ccu_nm pll_ve_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(0, 1), /* input divider */
-	.p		= _SUNXI_CCU_DIV(1, 1), /* output divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.m		= _SUNXI_CCU_DIV(0, 1), /* output divider */
 	.sdm		= _SUNXI_CCU_SDM_INFO(BIT(24), 0x158),
+	.min_rate	= 600000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0058,
 		.hw.init	= CLK_HW_INIT("pll-ve", "dcxo24M",
-				&ccu_nkmp_ops,
+				&ccu_nm_ops,
 				CLK_SET_RATE_UNGATE),
 	},
 };
@@ -253,9 +269,10 @@ static struct ccu_nkmp pll_ve_clk = {
 static struct ccu_nm pll_video3_parent_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
 	.sdm		= _SUNXI_CCU_SDM_INFO(BIT(24), 0x168),
+	.min_rate	= 1200000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0068,
 		.hw.init	= CLK_HW_INIT("pll-video3-parent", "dcxo24M",
@@ -273,14 +290,14 @@ static CLK_FIXED_FACTOR_HW(pll_video3_3x_clk, "pll-video3-3x",
 
 #define SUN55IW3_PLL_AUDIO0_REG		0x078
 static struct ccu_sdm_setting pll_audio0_sdm_table[] = {
-	{ .rate = 196608000,  .pattern = 0xC001EB85, .m = 5, .n = 40 }, /* 24.576 */
+	{ .rate = 196608000,  .pattern = 0xC001D70A, .m = 10, .n = 81 }, /* 24.576 */
 	{ .rate = 1083801600, .pattern = 0xA000A234, .m = 2, .n = 90 }, /* 22.5792 */
 };
 
 static struct ccu_nm pll_audio0_4x_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
 	.m		= _SUNXI_CCU_DIV(16, 6),
 	.sdm		= _SUNXI_CCU_SDM(pll_audio0_sdm_table, BIT(24),
 			0x178, BIT(31)),
@@ -309,8 +326,9 @@ static CLK_FIXED_FACTOR(pll_audio0_div_48m_clk, "pll-audio0-div-48m",
 static struct ccu_nm pll_npu_4x_clk = {
 	.enable		= BIT(27) | BIT(30) | BIT(31),
 	.lock		= BIT(28),
-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 12),
-	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
+	.n		= _SUNXI_CCU_MULT_MIN_MAX(8, 8, 50, 105),
+	.min_rate	= 1200000000,
+	.max_rate	= 2520000000,
 	.common		= {
 		.reg		= 0x0080,
 		.hw.init	= CLK_HW_INIT("pll-npu-4x", "dcxo24M",
@@ -1350,10 +1368,13 @@ static struct clk_hw_onecell_data sun55iw3_hw_clks = {
 		[CLK_PLL_PERI1_160M]		= &pll_peri1_160m_clk.hw,
 		[CLK_PLL_PERI1_150M]		= &pll_peri1_150m_clk.hw,
 		[CLK_PLL_GPU]			= &pll_gpu_clk.common.hw,
+		[CLK_PLL_VIDEO0_PARENT]		= &pll_video0_parent_clk.common.hw,
 		[CLK_PLL_VIDEO0_4X]		= &pll_video0_4x_clk.common.hw,
 		[CLK_PLL_VIDEO0_3X]		= &pll_video0_3x_clk.hw,
+		[CLK_PLL_VIDEO1_PARENT]		= &pll_video1_parent_clk.common.hw,
 		[CLK_PLL_VIDEO1_4X]		= &pll_video1_4x_clk.common.hw,
 		[CLK_PLL_VIDEO1_3X]		= &pll_video1_3x_clk.hw,
+		[CLK_PLL_VIDEO2_PARENT]		= &pll_video2_parent_clk.common.hw,
 		[CLK_PLL_VIDEO2_4X]		= &pll_video2_4x_clk.common.hw,
 		[CLK_PLL_VIDEO2_3X]		= &pll_video2_3x_clk.hw,
 		[CLK_PLL_VIDEO3_PARENT]		= &pll_video3_parent_clk.common.hw,
@@ -1532,8 +1553,11 @@ static struct ccu_common *sun55iw3_ccu_clks[] = {
 	&pll_peri1_800m_clk.common,
 	&pll_peri1_480m_clk.common,
 	&pll_gpu_clk.common,
+	&pll_video0_parent_clk.common,
 	&pll_video0_4x_clk.common,
+	&pll_video1_parent_clk.common,
 	&pll_video1_4x_clk.common,
+	&pll_video2_parent_clk.common,
 	&pll_video2_4x_clk.common,
 	&pll_video3_parent_clk.common,
 	&pll_video3_4x_clk.common,
@@ -1725,11 +1749,6 @@ static const u32 sun55iw3_pll_regs[] = {
 	SUN55IW3_PLL_NPU_CTRL_REG,
 };
 
-static const u32 sun55iw3_pll_video_regs[] = {
-	SUN55IW3_PLL_VIDEO1_CTRL_REG,
-	SUN55IW3_PLL_VIDEO2_CTRL_REG,
-};
-
 static const u32 sun55iw3_usb_clk_regs[] = {
 	SUN55IW3_USB0_CTRL_REG,
 	SUN55IW3_USB1_CTRL_REG,
@@ -1767,14 +1786,7 @@ static int sun55iw3_ccu_probe(struct platform_device *pdev)
 	set_reg(reg + SUN55IW3_PLL_PERIPH1_PATTERN0_REG, 0xd1303333, 32, 0);
 	set_reg(reg +SUN55IW3_PLL_PERI1_CTRL_REG, 1, 1, 24);
 
-	/*
-	 * Force the output divider of video PLLs to 0.
-	 *
-	 * See the comment before pll-video0 definition for the reason.
-	 */
-	for (i = 0; i < ARRAY_SIZE(sun55iw3_pll_video_regs); i++) {
-		set_reg(reg + sun55iw3_pll_video_regs[i], 0x0, 1, 0);
-	}
+	set_reg(reg + SUN55IW3_PLL_NPU_CTRL_REG, 0x0, 1, 1);
 
 	/* Enforce m1 = 0, m0 = 1 for Audio PLL */
 	set_reg(reg + SUN55IW3_PLL_AUDIO0_REG, 0x1, 0, 0);

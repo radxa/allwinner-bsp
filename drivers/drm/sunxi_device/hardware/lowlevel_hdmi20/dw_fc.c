@@ -13,11 +13,6 @@
 #include "dw_fc.h"
 
 #define FC_GMD_PB_SIZE			28
-#define FC_ACP_TX		       (0)
-#define FC_ISRC1_TX		       (1)
-#define FC_ISRC2_TX		       (2)
-#define FC_SPD_TX		       (4)
-#define FC_VSD_TX		       (3)
 
 channel_count_t channel_cnt[] = {
 	{0x00, 1}, {0x01, 2}, {0x02, 2}, {0x04, 2}, {0x03, 3}, {0x05, 3},
@@ -203,7 +198,6 @@ static u8 _audio_sw_check_channel_en(struct dw_audio_s *params, u8 channel)
 
 static void _dw_fc_audio_set_channel_right(u8 value, u8 channel)
 {
-	log_trace2(value, channel);
 	if (channel == 0)
 		dw_write_mask(FC_AUDSCHNL3, FC_AUDSCHNL3_OIEC_CHANNELNUMCR0_MASK, value);
 	else if (channel == 1)
@@ -216,9 +210,8 @@ static void _dw_fc_audio_set_channel_right(u8 value, u8 channel)
 		hdmi_err("set channel %d right is invalid!!!", channel);
 }
 
-static void _dw_fc_audio_set_channel_left(u8 value, unsigned channel)
+static void _dw_fc_audio_set_channel_left(u8 value, u8 channel)
 {
-	log_trace2(value, channel);
 	if (channel == 0)
 		dw_write_mask(FC_AUDSCHNL5, FC_AUDSCHNL5_OIEC_CHANNELNUMCL0_MASK, value);
 	else if (channel == 1)
@@ -229,12 +222,6 @@ static void _dw_fc_audio_set_channel_left(u8 value, unsigned channel)
 		dw_write_mask(FC_AUDSCHNL6, FC_AUDSCHNL6_OIEC_CHANNELNUMCL3_MASK, value);
 	else
 		hdmi_err("set channel %d left is invalid!!!", channel);
-}
-
-void dw_fc_audio_force(u8 bit)
-{
-	log_trace1(bit);
-	dw_write_mask(FC_DBGFORCE, FC_DBGFORCE_FORCEAUDIO_MASK, bit);
 }
 
 void dw_fc_audio_set_mute(u8 state)
@@ -248,24 +235,10 @@ u8 dw_fc_audio_get_mute(void)
 	return dw_read_mask(FC_AUDSCONF, FC_AUDSCONF_AUD_PACKET_SAMPFLT_MASK);
 }
 
-u8 dw_fc_audio_get_packet_layout(void)
-{
-	log_trace();
-	return dw_read_mask(FC_AUDSCONF, FC_AUDSCONF_AUD_PACKET_LAYOUT_MASK);
-}
-
-u8 dw_fc_audio_get_channel_count(void)
-{
-	log_trace();
-	return dw_read_mask(FC_AUDICONF0, FC_AUDICONF0_CC_MASK);
-}
-
 void dw_fc_audio_packet_config(struct dw_audio_s *audio)
 {
 	u8 channel_count = _audio_sw_get_channel_count(audio);
 	u8 fs_value = 0;
-
-	log_trace();
 
 	dw_write_mask(FC_AUDICONF0, FC_AUDICONF0_CC_MASK, channel_count);
 
@@ -277,7 +250,7 @@ void dw_fc_audio_packet_config(struct dw_audio_s *audio)
 	dw_write_mask(FC_AUDICONF3, FC_AUDICONF3_DM_INH_MASK,
 			(audio->mDownMixInhibitFlag ? 1 : 0));
 
-	audio_log("Audio packet:\n");
+	audio_log("[audio packet]\n");
 	audio_log(" - channel count = %d\n", channel_count);
 	audio_log(" - channel allocation = %d\n", audio->mChannelAllocation);
 	audio_log(" - level shift = %d\n", audio->mLevelShiftValue);
@@ -286,7 +259,6 @@ void dw_fc_audio_packet_config(struct dw_audio_s *audio)
 			(audio->mCodingType == DW_AUD_CODING_DST)) {
 		u32 freq = audio->mSamplingFrequency;
 
-		/* Audio InfoFrame sample frequency when OBA or DST */
 		if (freq == 32000)
 			fs_value = 1;
 		else if (freq == 44100)
@@ -310,11 +282,11 @@ void dw_fc_audio_packet_config(struct dw_audio_s *audio)
 	audio_log(" - freq number = %d\n", fs_value);
 	dw_write_mask(FC_AUDICONF1, FC_AUDICONF1_SF_MASK, fs_value);
 
-	/* for HDMI refer to stream header  (0) */
 	dw_write_mask(FC_AUDICONF0, FC_AUDICONF0_CT_MASK, 0x0);
 
-	/* for HDMI refer to stream header  (0) */
 	dw_write_mask(FC_AUDICONF1, FC_AUDICONF1_SS_MASK, 0x0);
+
+	audio_log("dw audio packet config done!\n");
 }
 
 void dw_fc_audio_sample_config(struct dw_audio_s *audio)
@@ -355,11 +327,12 @@ void dw_fc_audio_sample_config(struct dw_audio_s *audio)
 			dw_write_mask(FC_AUDSU, (1 << i), 0x1);
 		else
 			hdmi_err("invalid channel number: %d\n", i);
-
 	}
 
-	if (audio->mCodingType != DW_AUD_CODING_PCM)
-		return;
+	if (audio->mCodingType != DW_AUD_CODING_PCM) {
+		hdmi_inf("dw audio coding type %d unsupport\n", audio->mCodingType);
+		return ;
+	}
 
 	/* IEC - not needed if non-linear PCM */
 	dw_write_mask(FC_AUDSCHNL0,
@@ -392,6 +365,8 @@ void dw_fc_audio_sample_config(struct dw_audio_s *audio)
 
 	data = _audio_sw_get_iec_word_length(audio);
 	dw_write_mask(FC_AUDSCHNL8, FC_AUDSCHNL8_OIEC_WORDLENGTH_MASK, data);
+
+	audio_log("dw audio sample config done!\n");
 }
 
 u32 dw_fc_audio_get_sample_freq(void)
@@ -431,24 +406,6 @@ u32 dw_fc_video_get_hactive(void)
 	return value;
 }
 
-void _dw_fc_video_set_hactive(u16 value)
-{
-	log_trace1(value);
-	/* 12-bit width */
-	dw_write((FC_INHACTIV0), (u8) (value));
-	dw_write_mask(FC_INHACTIV1, FC_INHACTIV1_H_IN_ACTIV_MASK |
-			FC_INHACTIV1_H_IN_ACTIV_12_MASK, (u8)(value >> 8));
-}
-
-void _dw_fc_video_set_hblank(u16 value)
-{
-	log_trace1(value);
-	/* 10-bit width */
-	dw_write((FC_INHBLANK0), (u8) (value));
-	dw_write_mask(FC_INHBLANK1, FC_INHBLANK1_H_IN_BLANK_MASK |
-			FC_INHBLANK1_H_IN_BLANK_12_MASK, (u8)(value >> 8));
-}
-
 u32 dw_fc_video_get_vactive(void)
 {
 	u32 value = 0;
@@ -458,28 +415,8 @@ u32 dw_fc_video_get_vactive(void)
 	return value;
 }
 
-/* Setting Frame Composer Input Video HSync Front Porch */
-void _dw_fc_video_set_hsync_edge_delay(u16 value)
-{
-	log_trace1(value);
-	/* 11-bit width */
-	dw_write((FC_HSYNCINDELAY0), (u8) (value));
-	dw_write_mask(FC_HSYNCINDELAY1, FC_HSYNCINDELAY1_H_IN_DELAY_MASK |
-			FC_HSYNCINDELAY1_H_IN_DELAY_12_MASK, (u8)(value >> 8));
-}
-
-void _dw_fc_video_set_hsync_pluse_width(u16 value)
-{
-	log_trace1(value);
-	/* 9-bit width */
-	dw_write((FC_HSYNCINWIDTH0), (u8) (value));
-	dw_write_mask(FC_HSYNCINWIDTH1, FC_HSYNCINWIDTH1_H_IN_WIDTH_MASK,
-			(u8)(value >> 8));
-}
-
 void _dw_fc_video_set_preamble_filter(u8 value, u8 channel)
 {
-	log_trace1(value);
 	if (channel == 0)
 		dw_write((FC_CH0PREAM), value);
 	else if (channel == 1)
@@ -490,26 +427,6 @@ void _dw_fc_video_set_preamble_filter(u8 value, u8 channel)
 				FC_CH2PREAM_CH2_PREAMBLE_FILTER_MASK, value);
 	else
 		hdmi_err("invalid channel number: %d\n", channel);
-}
-
-void _dw_fc_video_force(u8 bit)
-{
-	log_trace1(bit);
-
-	/* avoid glitches */
-	if (bit != 0) {
-		dw_write(FC_DBGTMDS2, bit ? 0x00 : 0x00);	/* R */
-		dw_write(FC_DBGTMDS1, bit ? 0x00 : 0x00);	/* G */
-		dw_write(FC_DBGTMDS0, bit ? 0xFF : 0x00);	/* B */
-		dw_write_mask(FC_DBGFORCE,
-				FC_DBGFORCE_FORCEVIDEO_MASK, 1);
-	} else {
-		dw_write_mask(FC_DBGFORCE,
-				FC_DBGFORCE_FORCEVIDEO_MASK, 0);
-		dw_write(FC_DBGTMDS2, bit ? 0x00 : 0x00);	/* R */
-		dw_write(FC_DBGTMDS1, bit ? 0x00 : 0x00);	/* G */
-		dw_write(FC_DBGTMDS0, bit ? 0xFF : 0x00);	/* B */
-	}
 }
 
 void dw_fc_video_force_value(u8 bit, u32 value)
@@ -525,20 +442,11 @@ void dw_fc_video_force_value(u8 bit, u32 value)
 
 void dw_fc_video_set_hdcp_keepout(u8 bit)
 {
-	log_trace1(bit);
 	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_HDCP_KEEPOUT_MASK, bit);
-}
-
-void dw_fc_video_set_tmds_mode(u8 bit)
-{
-	log_trace1(bit);
-	/* 1: HDMI; 0: DVI */
-	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_DVI_MODEZ_MASK, bit);
 }
 
 u8 dw_fc_video_get_tmds_mode(void)
 {
-	log_trace();
 	/* 1: HDMI; 0: DVI */
 	return dw_read_mask(FC_INVIDCONF, FC_INVIDCONF_DVI_MODEZ_MASK);
 }
@@ -576,8 +484,6 @@ int dw_fc_video_config(struct dw_video_s *video)
 	u16 hsync_delay = dtd->mHSyncOffset;
 	u16 i = 0;
 
-	log_trace();
-
 	dtd = &video->mDtd;
 	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_VSYNC_IN_POLARITY_MASK,
 			dtd->mVSyncPolarity);
@@ -585,9 +491,11 @@ int dw_fc_video_config(struct dw_video_s *video)
 			dtd->mHSyncPolarity);
 	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_DE_IN_POLARITY_MASK, 0x1);
 
-	dw_fc_video_set_tmds_mode(video->mHdmi);
+	/* 1: HDMI; 0: DVI */
+	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_DVI_MODEZ_MASK, video->mHdmi);
 
-	if (video->mHdmiVideoFormat == 2 && video->m3dStructure == 0) {
+	if ((video->mHdmiVideoFormat == DW_VIDEO_FORMAT_3D) &&
+				(video->m3dStructure == HDMI_3D_STRUCTURE_FRAME_PACKING)) {
 		if (interlaced)
 			vactive = (dtd->mVActive << 2) + 3 * dtd->mVBlanking + 2;
 		else
@@ -608,10 +516,20 @@ int dw_fc_video_config(struct dw_video_s *video)
 		hsync_delay = dtd->mHSyncOffset / 2;
 	}
 
-	_dw_fc_video_set_hactive(hactive);
-	_dw_fc_video_set_hblank(hblank);
-	_dw_fc_video_set_hsync_pluse_width(hsync);
-	_dw_fc_video_set_hsync_edge_delay(hsync_delay);
+	dw_write(FC_INHACTIV0, (u8)(hactive));
+	dw_write_mask(FC_INHACTIV1, FC_INHACTIV1_H_IN_ACTIV_MASK |
+			FC_INHACTIV1_H_IN_ACTIV_12_MASK, (u8)(hactive >> 8));
+
+	dw_write(FC_INHBLANK0, (u8)(hblank));
+	dw_write_mask(FC_INHBLANK1, FC_INHBLANK1_H_IN_BLANK_MASK |
+			FC_INHBLANK1_H_IN_BLANK_12_MASK, (u8)(hblank >> 8));
+
+	dw_write(FC_HSYNCINWIDTH0, (u8)(hsync));
+	dw_write_mask(FC_HSYNCINWIDTH1, FC_HSYNCINWIDTH1_H_IN_WIDTH_MASK, (u8)(hsync >> 8));
+
+	dw_write(FC_HSYNCINDELAY0, (u8)(hsync_delay));
+	dw_write_mask(FC_HSYNCINDELAY1, FC_HSYNCINDELAY1_H_IN_DELAY_MASK |
+			FC_HSYNCINDELAY1_H_IN_DELAY_12_MASK, (u8)(hsync_delay >> 8));
 
 	dw_write_mask(FC_INVBLANK, FC_INVBLANK_V_IN_BLANK_MASK,
 			(u8)dtd->mVBlanking);
@@ -634,101 +552,153 @@ int dw_fc_video_config(struct dw_video_s *video)
 	dw_write_mask(FC_PRCONF, FC_PRCONF_INCOMING_PR_FACTOR_MASK,
 			(dtd->mPixelRepetitionInput + 1));
 
-	return true;
-}
-
-void _dw_gamut_set_content(const u8 *content, u8 length)
-{
-	u8 i = 0;
-
-	log_trace1(content[0]);
-	if (length > (FC_GMD_PB_SIZE)) {
-		length = (FC_GMD_PB_SIZE);
-		hdmi_wrn("gamut content truncated");
-	}
-
-	for (i = 0; i < length; i++)
-		dw_write(FC_GMD_PB0 + (i*4), content[i]);
-}
-
-void _dw_gamut_set_enable_tx(u8 enable)
-{
-	log_trace1(enable);
-	if (enable)
-		enable = 1; /* ensure value is 1 */
-	dw_write_mask(FC_GMD_EN, FC_GMD_EN_GMDENABLETX_MASK, enable);
-}
-
-void _dw_gamut_config(void)
-{
-	/* P0 */
-	dw_write_mask(FC_GMD_HB, FC_GMD_HB_GMDGBD_PROFILE_MASK, 0x0);
-
-	/* P0 */
-	dw_write_mask(FC_GMD_CONF, FC_GMD_CONF_GMDPACKETSINFRAME_MASK, 0x1);
-
-	dw_write_mask(FC_GMD_CONF, FC_GMD_CONF_GMDPACKETLINESPACING_MASK, 0x1);
-}
-
-void _dw_gamut_packet_config(const u8 *gbdContent, u8 length)
-{
-	u8 temp = 0x0;
-	_dw_gamut_set_enable_tx(1);
-	/* sequential */
-	temp = (u8)(dw_read(FC_GMD_STAT) & 0xF);
-	dw_write_mask(FC_GMD_HB,
-			FC_GMD_HB_GMDAFFECTED_GAMUT_SEQ_NUM_MASK, (temp + 1) % 16);
-
-	_dw_gamut_set_content(gbdContent, length);
-
-	/* set next_field to 1 */
-	dw_write_mask(FC_GMD_UP, FC_GMD_UP_GMDUPDATEPACKET_MASK, 0x1);
+	return 0;
 }
 
 void _dw_avi_set_color_metry(u8 value)
 {
-	log_trace1(value);
 	dw_write_mask(FC_AVICONF1, FC_AVICONF1_COLORIMETRY_MASK, value);
-}
-
-void _dw_avi_set_active_aspect_ratio_valid(u8 valid)
-{
-	log_trace1(valid);
-	dw_write_mask(FC_AVICONF0,
-			FC_AVICONF0_ACTIVE_FORMAT_PRESENT_MASK, valid);
-}
-
-void _dw_avi_set_active_format_aspect_ratio(u8 value)
-{
-	log_trace1(value);
-	dw_write_mask(FC_AVICONF1,
-			FC_AVICONF1_ACTIVE_ASPECT_RATIO_MASK, value);
 }
 
 void _dw_avi_set_extend_color_metry(u8 extColor)
 {
-	log_trace1(extColor);
 	dw_write_mask(FC_AVICONF2,
 			FC_AVICONF2_EXTENDED_COLORIMETRY_MASK, extColor);
 }
 
-void _dw_avi_config(struct dw_video_s *videoParams)
+u8 dw_avi_get_rgb_ycc(void)
+{
+	return dw_read_mask(FC_AVICONF0, FC_AVICONF0_RGC_YCC_INDICATION_MASK);
+}
+
+u8 dw_avi_get_video_code(void)
+{
+	return dw_read_mask(FC_AVIVID, FC_AVIVID_FC_AVIVID_MASK);
+}
+
+/**
+ * @desc: Configure Colorimetry packets
+ * @video: Video information structure
+ */
+void _dw_packet_gmd_config(struct dw_video_s *video)
+{
+	u8 temp = 0x0;
+	u8 gamut_metadata[28] = {0};
+	u8 length = sizeof(gamut_metadata) / sizeof(u8);
+	int gdb_color_space = 0;
+
+	/* disable gmd packet send */
+	dw_write_mask(FC_GMD_EN, FC_GMD_EN_GMDENABLETX_MASK, 0x0);
+
+	if (video->mColorimetryDataBlock != 0x1) {
+		hdmi_trace("dw video not send gmd packet\n");
+		return;
+	}
+
+	dw_write_mask(FC_GMD_HB, FC_GMD_HB_GMDGBD_PROFILE_MASK, 0x0);
+	dw_write_mask(FC_GMD_CONF, FC_GMD_CONF_GMDPACKETSINFRAME_MASK, 0x1);
+	dw_write_mask(FC_GMD_CONF, FC_GMD_CONF_GMDPACKETLINESPACING_MASK, 0x1);
+
+	if (video->mColorimetry != DW_METRY_EXTENDED)
+		return;
+
+	switch (video->mExtColorimetry) {
+	case DW_METRY_EXT_XV_YCC601:
+		gdb_color_space = 1;
+		break;
+	case DW_METRY_EXT_XV_YCC709:
+		gdb_color_space = 2;
+		break;
+	case DW_METRY_EXT_S_YCC601:
+	case DW_METRY_EXT_ADOBE_YCC601:
+	case DW_METRY_EXT_ADOBE_RGB:
+		gdb_color_space = 3;
+		break;
+	default:
+		gdb_color_space = 0;
+		break;
+	}
+
+	gamut_metadata[0] = (1 << 7) | gdb_color_space;
+
+	/* sequential */
+	temp = (u8)(dw_read(FC_GMD_STAT) & 0xF);
+	dw_write_mask(FC_GMD_HB, FC_GMD_HB_GMDAFFECTED_GAMUT_SEQ_NUM_MASK,
+			(temp + 1) % 16);
+
+	length = length > FC_GMD_PB_SIZE ? length : FC_GMD_PB_SIZE;
+	for (temp = 0; temp < length; temp++)
+		dw_write(FC_GMD_PB0 + temp, gamut_metadata[temp]);
+
+	/* set next_field to 1 */
+	dw_write_mask(FC_GMD_UP, FC_GMD_UP_GMDUPDATEPACKET_MASK, 0x1);
+
+	/* enable gmd packet send */
+	dw_write_mask(FC_GMD_EN, FC_GMD_EN_GMDENABLETX_MASK, 0x1);
+}
+
+int _dw_packet_vsi_config(void)
+{
+	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
+	struct dw_product_s  *prod = &hdmi->prod_dev;
+	u8 length = prod->mVendorPayloadLength;
+	int i = 0;
+
+	hdmi_trace("[vsif packet]\n");
+
+	/* prevent sending half the info. */
+	dw_write_mask(FC_DATAUTO0, FC_DATAUTO0_VSD_AUTO_MASK, 0x0);
+
+	/* write ieee-oui code */
+	dw_write(FC_VSDIEEEID0, (prod->mOUI >> 0));
+	dw_write(FC_VSDIEEEID1, (prod->mOUI >> 8));
+	dw_write(FC_VSDIEEEID2, (prod->mOUI >> 16));
+	hdmi_trace(" - oui code: 0x%x\n", prod->mOUI);
+
+	if (length > 24)
+		length = 24;
+	for (i = 0; i < length; i++) {
+		hdmi_trace(" - data[%d]: 0x%x\n", i, prod->mVendorPayload[i]);
+		dw_write(FC_VSDPAYLOAD0 + i, prod->mVendorPayload[i]);
+	}
+
+	mdelay(1);
+
+	dw_write_mask(FC_DATAUTO0, FC_DATAUTO0_VSD_AUTO_MASK, 0x1);
+	dw_write_mask(FC_PACKET_TX_EN, FC_PACKET_TX_EN_AUT_TX_EN_MASK, 0x1);
+
+	return 0;
+}
+
+void _dw_packet_avi_config(struct dw_video_s *video)
 {
 	u8 temp = 0;
-	u16 endTop = 0;
-	u16 startBottom = 0;
-	u16 endLeft = 0;
-	u16 startRight = 0;
-	dw_dtd_t *dtd = &videoParams->mDtd;
+	dw_dtd_t *dtd = &video->mDtd;
+	char *avi_format[] = {"rgb", "yuv422", "yuv444", "yuv420"};
+	char *scan_info[] = {"no-data", "overscan", "underscan"};
 
-	log_trace();
+	hdmi_trace("[avi packet]\n");
 
-	dw_write_mask(FC_AVICONF0,
-			FC_AVICONF0_RGC_YCC_INDICATION_MASK, videoParams->mEncodingOut);
+	switch (video->mEncodingOut) {
+	case DW_COLOR_FORMAT_YCC444:
+		temp = 0x2;
+		break;
+	case DW_COLOR_FORMAT_YCC422:
+		temp = 0x1;
+		break;
+	case DW_COLOR_FORMAT_YCC420:
+		temp = 0x3;
+		break;
+	default:
+		temp = 0x0;
+		break;
+	}
+	dw_write_mask(FC_AVICONF0, FC_AVICONF0_RGC_YCC_INDICATION_MASK, temp);
+	hdmi_trace(" - format: %s, scan: %s, cea code: %d\n",
+			avi_format[temp], scan_info[video->mScanInfo], video->mCea_code);
 
-	_dw_avi_set_active_format_aspect_ratio(0x8);
-
-	dw_avi_set_scan_info(videoParams->mScanInfo);
+	dw_write_mask(FC_AVICONF0, FC_AVICONF0_SCAN_INFORMATION_MASK,
+			video->mScanInfo);
 
 	temp = 0;
 	if ((dtd->mHImageSize != 0 || dtd->mVImageSize != 0)
@@ -741,20 +711,21 @@ void _dw_avi_config(struct dw_video_s *videoParams)
 			FC_AVICONF1_PICTURE_ASPECT_RATIO_MASK, temp);
 
 	dw_write_mask(FC_AVICONF2,
-			FC_AVICONF2_IT_CONTENT_MASK, (videoParams->mItContent ? 1 : 0));
-
-	dw_avi_set_quantization_range(videoParams->mRgbQuantizationRange);
+			FC_AVICONF2_IT_CONTENT_MASK, (video->mItContent ? 1 : 0));
 
 	dw_write_mask(FC_AVICONF2,
-			FC_AVICONF2_NON_UNIFORM_PICTURE_SCALING_MASK, videoParams->mNonUniformScaling);
+			FC_AVICONF2_QUANTIZATION_RANGE_MASK, video->mRgbQuantizationRange);
 
-	dw_write(FC_AVIVID, videoParams->mCea_code);
+	dw_write_mask(FC_AVICONF2,
+			FC_AVICONF2_NON_UNIFORM_PICTURE_SCALING_MASK, video->mNonUniformScaling);
 
-	if (videoParams->mColorimetry == DW_METRY_EXTENDED) {
+	dw_write(FC_AVIVID, video->mCea_code);
+
+	if (video->mColorimetry == DW_METRY_EXTENDED) {
 		/* ext colorimetry valid */
-		if (videoParams->mExtColorimetry != (u8) (-1)) {
-			_dw_avi_set_extend_color_metry(videoParams->mExtColorimetry);
-			_dw_avi_set_color_metry(videoParams->mColorimetry);/* EXT-3 */
+		if (video->mExtColorimetry != (u8) (-1)) {
+			_dw_avi_set_extend_color_metry(video->mExtColorimetry);
+			_dw_avi_set_color_metry(video->mColorimetry);/* EXT-3 */
 		} else {
 			_dw_avi_set_extend_color_metry(0);
 			_dw_avi_set_color_metry(0);	/* No Data */
@@ -762,318 +733,44 @@ void _dw_avi_config(struct dw_video_s *videoParams)
 	} else {
 		_dw_avi_set_extend_color_metry(0);
 		/* NODATA-0/ 601-1/ 709-2/ EXT-3 */
-		_dw_avi_set_color_metry(videoParams->mColorimetry);
+		_dw_avi_set_color_metry(video->mColorimetry);
 	}
-	if (videoParams->mActiveFormatAspectRatio != 0) {
-		_dw_avi_set_active_format_aspect_ratio(videoParams->mActiveFormatAspectRatio);
-		_dw_avi_set_active_aspect_ratio_valid(1);
-	} else {
-		_dw_avi_set_active_format_aspect_ratio(0);
-		_dw_avi_set_active_aspect_ratio_valid(0);
-	}
+
+	dw_write_mask(FC_AVICONF1, FC_AVICONF1_ACTIVE_ASPECT_RATIO_MASK,
+		video->mActiveFormatAspectRatio);
+	dw_write_mask(FC_AVICONF0, FC_AVICONF0_ACTIVE_FORMAT_PRESENT_MASK,
+		video->mActiveFormatAspectRatio != 0 ? 0x1 : 0x0);
 
 	temp = 0x0;
-	if (videoParams->mEndTopBar != (u16) (-1) ||
-			videoParams->mStartBottomBar != (u16) (-1)) {
-
-		if (videoParams->mEndTopBar != (u16) (-1))
-			endTop = videoParams->mEndTopBar;
-		if (videoParams->mStartBottomBar != (u16) (-1))
-			startBottom = videoParams->mStartBottomBar;
-
-		dw_write(FC_AVIETB0, (u8) (endTop));
-		dw_write(FC_AVIETB1, (u8) (endTop >> 8));
-
-		dw_write(FC_AVISBB0, (u8) (startBottom));
-		dw_write(FC_AVISBB1, (u8) (startBottom >> 8));
-
-		temp = 0x1;
+	if (video->mEndTopBar != -1) {
+		dw_write(FC_AVIETB0, (u8)(video->mEndTopBar));
+		dw_write(FC_AVIETB1, (u8)(video->mEndTopBar >> 8));
+		temp |= 0x1 << 1;
 	}
-	dw_write_mask(FC_AVICONF0,
-		FC_AVICONF0_BAR_INFORMATION_MASK & 0x8, temp);
-
-	temp = 0x0;
-	if (videoParams->mEndLeftBar != (u16) (-1) ||
-			videoParams->mStartRightBar != (u16) (-1)) {
-		if (videoParams->mEndLeftBar != (u16) (-1))
-			endLeft = videoParams->mEndLeftBar;
-
-		if (videoParams->mStartRightBar != (u16) (-1))
-			startRight = videoParams->mStartRightBar;
-
-		dw_write(FC_AVIELB0, (u8) (endLeft));
-		dw_write(FC_AVIELB1, (u8) (endLeft >> 8));
-		dw_write(FC_AVISRB0, (u8) (startRight));
-		dw_write(FC_AVISRB1, (u8) (startRight >> 8));
-		temp = 0x1;
+	if (video->mStartBottomBar != -1) {
+		dw_write(FC_AVISBB0, (u8)(video->mStartBottomBar));
+		dw_write(FC_AVISBB1, (u8)(video->mStartBottomBar >> 8));
+		temp |= 0x1 << 1;
 	}
-	dw_write_mask(FC_AVICONF0,
-		FC_AVICONF0_BAR_INFORMATION_MASK & 0x4, temp);
+	if (video->mEndLeftBar != -1) {
+		dw_write(FC_AVIELB0, (u8)(video->mEndLeftBar));
+		dw_write(FC_AVIELB1, (u8)(video->mEndLeftBar >> 8));
+		temp |= 0x1 << 0;
+	}
+	if (video->mStartRightBar != -1) {
+		dw_write(FC_AVISRB0, (u8)(video->mStartRightBar));
+		dw_write(FC_AVISRB1, (u8)(video->mStartRightBar >> 8));
+		temp |= 0x1 << 0;
+	}
+	dw_write_mask(FC_AVICONF0, FC_AVICONF0_BAR_INFORMATION_MASK, temp);
 
 	temp = (dtd->mPixelRepetitionInput + 1) *
-				(videoParams->mPixelRepetitionFactor + 1) - 1;
+				(video->mPixelRepetitionFactor + 1) - 1;
 	dw_write_mask(FC_PRCONF, FC_PRCONF_OUTPUT_PR_FACTOR_MASK, temp);
-}
-
-u8 dw_avi_get_colori_metry(void)
-{
-	u8 colorimetry = 0;
-	log_trace();
-	colorimetry = (u8)dw_read_mask(FC_AVICONF1, FC_AVICONF1_COLORIMETRY_MASK);
-	if (colorimetry == 3)
-		return (colorimetry + dw_read_mask(FC_AVICONF2,
-					FC_AVICONF2_EXTENDED_COLORIMETRY_MASK));
-	return colorimetry;
-}
-
-void dw_avi_set_colori_metry(u8 metry, u8 ex_metry)
-{
-	if (ex_metry || (metry == DW_METRY_EXTENDED)) {
-		_dw_avi_set_extend_color_metry(ex_metry);
-		_dw_avi_set_color_metry(DW_METRY_EXTENDED);
-	} else {
-		_dw_avi_set_extend_color_metry(0);
-		_dw_avi_set_color_metry(metry);
-	}
-	_dw_gamut_set_enable_tx(0);
-}
-
-void dw_avi_set_scan_info(u8 value)
-{
-	log_trace1(value);
-	dw_write_mask(FC_AVICONF0, FC_AVICONF0_SCAN_INFORMATION_MASK, value);
-}
-
-u8 dw_avi_get_rgb_ycc(void)
-{
-	log_trace();
-	return dw_read_mask(FC_AVICONF0, FC_AVICONF0_RGC_YCC_INDICATION_MASK);
-}
-
-u8 dw_avi_get_video_code(void)
-{
-	log_trace();
-	return dw_read_mask(FC_AVIVID, FC_AVIVID_FC_AVIVID_MASK);
-}
-
-void dw_avi_set_video_code(u8 data)
-{
-	log_trace();
-	return dw_write_mask(FC_AVIVID, FC_AVIVID_FC_AVIVID_MASK, data);
-}
-
-void dw_avi_set_aspect_ratio(u8 value)
-{
-	if (value) {
-		_dw_avi_set_active_format_aspect_ratio(value);
-		_dw_avi_set_active_aspect_ratio_valid(1);
-	} else {
-		_dw_avi_set_active_format_aspect_ratio(0);
-		_dw_avi_set_active_aspect_ratio_valid(0);
-	}
-}
-
-void dw_avi_set_quantization_range(u8 range)
-{
-	log_trace1(range);
-	dw_write_mask(FC_AVICONF2, FC_AVICONF2_QUANTIZATION_RANGE_MASK, range);
-}
-
-void _dw_spd_set_vendor_name(const u8 *data, u8 length)
-{
-	u8 i = 0;
-
-	log_trace();
-	for (i = 0; i < length; i++)
-		dw_write(FC_SPDVENDORNAME0 + (i*4), data[i]);
-}
-
-void _dw_spd_set_product_name(const u8 *data, u8 length)
-{
-	u8 i = 0;
-	log_trace();
-	for (i = 0; i < length; i++)
-		dw_write(FC_SPDPRODUCTNAME0 + (i*4), data[i]);
-}
-
-/*
- * Configure the Vendor Payload to be carried by the InfoFrame
- * @param info array
- * @param length of the array
- * @return 0 when successful and 1 on error
- */
-u8 _dw_vsi_set_vendor_payload(const u8 *data, unsigned short length)
-{
-	const unsigned short size = 24;
-	unsigned i = 0;
-
-	log_trace();
-	if (data == 0) {
-		hdmi_err("invalid parameter\n");
-		return -1;
-	}
-	if (length > size) {
-		length = size;
-		hdmi_err("vendor payload truncated\n");
-	}
-	for (i = 0; i < length; i++)
-		dw_write((FC_VSDPAYLOAD0 + (i*4)), data[i]);
-
-	return 0;
-}
-
-void _dw_vsi_enable(u8 enable)
-{
-	dw_write_mask(FC_PACKET_TX_EN, FC_PACKET_TX_EN_AUT_TX_EN_MASK, enable);
-}
-
-void _dw_packets_auto_send(u8 enable, u8 mask)
-{
-	log_trace2(enable, mask);
-	dw_write_mask(FC_DATAUTO0, (1 << mask), (enable ? 1 : 0));
-}
-
-void _dw_packets_manual_send(u8 mask)
-{
-	log_trace1(mask);
-	dw_write_mask(FC_DATMAN, (1 << mask), 1);
-}
-
-void _dw_packets_disable_all(void)
-{
-	uint32_t value = (uint32_t)(~(BIT(FC_ACP_TX) | BIT(FC_ISRC1_TX) |
-			BIT(FC_ISRC2_TX) | BIT(FC_SPD_TX) | BIT(FC_VSD_TX)));
-
-	log_trace();
-	dw_write(FC_DATAUTO0, value & dw_read(FC_DATAUTO0));
-}
-
-void _dw_packets_metadata_config(void)
-{
-	dw_write_mask(FC_DATAUTO1,
-			FC_DATAUTO1_AUTO_FRAME_INTERPOLATION_MASK, 0x1);
-	dw_write_mask(FC_DATAUTO2,
-			FC_DATAUTO2_AUTO_FRAME_PACKETS_MASK, 0x1);
-	dw_write_mask(FC_DATAUTO2,
-			FC_DATAUTO2_AUTO_LINE_SPACING_MASK, 0x1);
-}
-
-/**
- * Configure Colorimetry packets
- * @param dev Device structure
- * @param video Video information structure
- */
-void _dw_gamut_colorimetry_config(struct dw_video_s *video)
-{
-	u8 gamut_metadata[28] = {0};
-	int gdb_color_space = 0;
-
-	_dw_gamut_set_enable_tx(0);
-
-	if (video->mColorimetry == DW_METRY_EXTENDED) {
-		if (video->mExtColorimetry == DW_METRY_EXT_XV_YCC601) {
-			gdb_color_space = 1;
-		} else if (video->mExtColorimetry == DW_METRY_EXT_XV_YCC709) {
-			gdb_color_space = 2;
-			video_log("xv ycc709\n");
-		} else if (video->mExtColorimetry == DW_METRY_EXT_S_YCC601) {
-			gdb_color_space = 3;
-		} else if (video->mExtColorimetry == DW_METRY_EXT_ADOBE_YCC601) {
-			gdb_color_space = 3;
-		} else if (video->mExtColorimetry == DW_METRY_EXT_ADOBE_RGB) {
-			gdb_color_space = 3;
-		}
-
-		if (video->mColorimetryDataBlock == 0x1) {
-			gamut_metadata[0] = (1 << 7) | gdb_color_space;
-			_dw_gamut_packet_config(gamut_metadata,
-					(sizeof(gamut_metadata) / sizeof(u8)));
-		}
-	}
-}
-
-/**
- * Configure Vendor Specific InfoFrames.
- * @param dev Device structure
- * @param oui Vendor Organisational Unique Identifier 24 bit IEEE
- * Registration Identifier
- * @param payload Vendor Specific Info Payload
- * @param length of the payload array
- * @param autoSend Start send Vendor Specific InfoFrame automatically
- */
-int _dw_packet_vsi_config(u32 oui, const u8 *payload, u8 length, u8 autoSend)
-{
-	log_trace();
-	_dw_packets_auto_send(0, FC_VSD_TX);/* prevent sending half the info. */
-
-	dw_write((FC_VSDIEEEID0), oui);
-	dw_write((FC_VSDIEEEID1), oui >> 8);
-	dw_write((FC_VSDIEEEID2), oui >> 16);
-
-	if (_dw_vsi_set_vendor_payload(payload, length))
-		return false;	/* DEFINE ERROR */
-
-	if (autoSend)
-		_dw_packets_auto_send(autoSend, FC_VSD_TX);
-	else
-		_dw_packets_manual_send(FC_VSD_TX);
-
-	return true;
-}
-
-int _dw_packet_spd_config(fc_spd_info_t *spd_data)
-{
-	const unsigned short pSize = 8;
-	const unsigned short vSize = 16;
-
-	log_trace();
-
-	if (spd_data == NULL) {
-		hdmi_err("Improper argument: spd_data\n");
-		return false;
-	}
-
-	_dw_packets_auto_send(0, FC_SPD_TX);/* prevent sending half the info. */
-
-	if (spd_data->vName == 0) {
-		hdmi_err("invalid parameter\n");
-		return false;
-	}
-	if (spd_data->vLength > vSize) {
-		spd_data->vLength = vSize;
-		hdmi_err("vendor name truncated\n");
-	}
-	if (spd_data->pName == 0) {
-		hdmi_err("invalid parameter\n");
-		return false;
-	}
-	if (spd_data->pLength > pSize) {
-		spd_data->pLength = pSize;
-		video_log("product name truncated\n");
-	}
-
-	_dw_spd_set_vendor_name(spd_data->vName, spd_data->vLength);
-	_dw_spd_set_product_name(spd_data->pName, spd_data->pLength);
-	dw_write(FC_SPDDEVICEINF, spd_data->code);
-
-	if (spd_data->autoSend)
-		_dw_packets_auto_send(spd_data->autoSend, FC_SPD_TX);
-	else
-		_dw_packets_manual_send(FC_SPD_TX);
-
-	return true;
-}
-
-void dw_fc_force_output(int enable)
-{
-	log_trace1(enable);
-	dw_fc_audio_force(0);
-	_dw_fc_video_force((u8)enable);
 }
 
 void dw_gcp_set_avmute(u8 enable)
 {
-	log_trace1(enable);
 	dw_write_mask(FC_GCP, FC_GCP_SET_AVMUTE_MASK, (enable ? 1 : 0));
 	dw_write_mask(FC_GCP, FC_GCP_CLEAR_AVMUTE_MASK, (enable ? 0 : 1));
 }
@@ -1085,20 +782,12 @@ u8 dw_gcp_get_avmute(void)
 
 void dw_drm_packet_clear(dw_fc_drm_pb_t *pb)
 {
-	if (pb) {
-		pb->r_x = 0;
-		pb->r_y = 0;
-		pb->g_x = 0;
-		pb->g_y = 0;
-		pb->b_x = 0;
-		pb->b_y = 0;
-		pb->w_x = 0;
-		pb->w_y = 0;
-		pb->luma_max = 0;
-		pb->luma_min = 0;
-		pb->mcll = 0;
-		pb->mfll = 0;
+	if (!pb) {
+		hdmi_err("check point pb is null\n");
+		return;
 	}
+
+	memset(pb, 0x0, sizeof(dw_fc_drm_pb_t));
 }
 
 int dw_drm_packet_filling_data(dw_fc_drm_pb_t *data)
@@ -1119,14 +808,22 @@ int dw_drm_packet_filling_data(dw_fc_drm_pb_t *data)
 	return 0;
 }
 
-void dw_drm_packet_up(dw_fc_drm_pb_t *pb)
+void dw_drm_packet_config(dw_fc_drm_pb_t *pb)
 {
 	int timeout = 10;
 	u32 status = 0;
 
-	log_trace();
-	/* Configure Dynamic Range and Mastering infoFrame */
 	if (pb != 0) {
+		hdmi_trace("[drm packet]\n");
+		hdmi_trace(" - eotf: %d, metadata: %d\n",
+			pb->eotf & 0x07,  pb->metadata & 0x07);
+		hdmi_trace(" - r_x: %d, r_y: %d\n", pb->r_x, pb->r_y);
+		hdmi_trace(" - g_x: %d, g_y: %d\n", pb->g_x, pb->g_y);
+		hdmi_trace(" - b_x: %d, b_y: %d\n", pb->b_x, pb->b_y);
+		hdmi_trace(" - w_x: %d, w_y: %d\n", pb->w_x, pb->w_y);
+		hdmi_trace(" - luma_max: %d, luma_min: %d, mcll: %d, mfll: %d\n",
+			pb->luma_max, pb->luma_min, pb->mcll, pb->mfll);
+
 		dw_write(FC_DRM_PB0, pb->eotf & 0x07);
 		dw_write(FC_DRM_PB1, pb->metadata & 0x07);
 		dw_write(FC_DRM_PB2, (pb->r_x >> 0) & 0xff);
@@ -1157,117 +854,51 @@ void dw_drm_packet_up(dw_fc_drm_pb_t *pb)
 	dw_write_mask(FC_DRM_HB0, FC_DRM_UP_FC_DRM_HB_MASK, 0x01);
 	dw_write_mask(FC_DRM_HB1, FC_DRM_UP_FC_DRM_HB_MASK, 26);
 	dw_write_mask(FC_PACKET_TX_EN, FC_PACKET_TX_EN_DRM_TX_EN_MASK, 0x1);
+
 	do {
 		udelay(10);
 		status = dw_read_mask(FC_DRM_UP, FC_DRM_UP_DRMPACKETUPDATE_MASK);
 	} while (status && (timeout--));
+
 	dw_write_mask(FC_DRM_UP,  FC_DRM_UP_DRMPACKETUPDATE_MASK, 0x1);
 }
 
-void dw_drm_packet_disabled(void)
+/**
+ * @desc: packets configure is the same as infoframe configure
+ * @return: 0 - config infoframe success
+ *         -1 - not config infoframe
+ */
+int dw_infoframe_packet(void)
 {
-	log_trace();
-	dw_write_mask(FC_PACKET_TX_EN, FC_PACKET_TX_EN_DRM_TX_EN_MASK, 0x0);
-}
-
-/*
-* get vsif data
-* data[0]: hdmi_format filed in vsif
-* data[1]: hdmi_vic or 3d strcture filed in vsif
-*/
-void dw_vsif_get_hdmi_vic(u8 *data)
-{
-	data[0] = dw_read(FC_VSDPAYLOAD0);
-	data[1] = dw_read(FC_VSDPAYLOAD0 + 0x4);
-}
-
-/*
-* set vsif data
-* data[0]: hdmi_format filed in vsif
-* data[1]: hdmi_vic or 3d strcture filed in vsif
-*/
-void dw_vsif_set_hdmi_vic(u8 *data)
-{
-	 dw_write(FC_VSDPAYLOAD0, data[0]);
-	 dw_write(FC_VSDPAYLOAD0 + 0x4, data[1]);
-}
-
-/* packets configure is the same as infoframe configure */
-int dw_infoframe_packet(struct dw_video_s *video, struct dw_product_s *prod)
-{
-	u32 oui = 0;
-	u8 struct_3d = 0;
-	u8 data[4];
-	u8 *vendor_payload = prod->mVendorPayload;
-	u8 payload_length = prod->mVendorPayloadLength;
-
-	log_trace();
+	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
+	struct dw_video_s   *video = &hdmi->video_dev;
 
 	if (video->mHdmi != DW_TMDS_MODE_HDMI) {
 		hdmi_inf("packet not config when dvi mode\n");
-		return true;
+		return -1;
 	}
 
-	if (video->mHdmiVideoFormat == 2) {
-		struct_3d = video->m3dStructure;
-		video_log("3D packets configure\n");
-
-		/* frame packing || tab || sbs */
-		if ((struct_3d == 0) || (struct_3d == 6) || (struct_3d == 8)) {
-			data[0] = video->mHdmiVideoFormat << 5; /* PB4 */
-			data[1] = struct_3d << 4; /* PB5 */
-			data[2] = video->m3dExtData << 4;
-			data[3] = 0;
-			/* HDMI Licensing, LLC */
-			_dw_packet_vsi_config(0x000C03, data, sizeof(data), 1);
-			_dw_vsi_enable(0x1);
-		} else {
-			hdmi_err("3d structure not supported %d\n", struct_3d);
-			return false;
-		}
-	} else if ((video->mHdmiVideoFormat == 0x1) || (video->mHdmiVideoFormat == 0x0)) {
-		if (prod != 0) {
-			fc_spd_info_t spd_data;
-
-			spd_data.vName    = prod->mVendorName;
-			spd_data.vLength  = prod->mVendorNameLength;
-			spd_data.pName    = prod->mProductName;
-			spd_data.pLength  = prod->mProductNameLength;
-			spd_data.code     = prod->mSourceType;
-			spd_data.autoSend = 1;
-
-			oui = prod->mOUI;
-			_dw_packet_spd_config(&spd_data);
-			_dw_packet_vsi_config(oui, vendor_payload,
-					payload_length, 1);
-			_dw_vsi_enable(0x1);
-		} else {
-				video_log("No product info provided: not configured\n");
-		}
-	} else {
-		hdmi_err("unknow video format %d\n", video->mHdmiVideoFormat);
-		_dw_vsi_enable(0x0);
-	}
-
-	_dw_packets_metadata_config();
+	_dw_packet_vsi_config();
 
 	/* default phase 1 = true */
 	dw_write_mask(FC_GCP, FC_GCP_DEFAULT_PHASE_MASK,
 			((video->mPixelPackingDefaultPhase == 1) ? 1 : 0));
 
-	_dw_gamut_config();
+	_dw_packet_avi_config(video);
 
-	_dw_avi_config(video);
+	/* gamut metadata */
+	_dw_packet_gmd_config(video);
 
-	/* * Colorimetry */
-	_dw_gamut_colorimetry_config(video);
-
+	dw_write_mask(FC_PACKET_TX_EN, FC_PACKET_TX_EN_DRM_TX_EN_MASK, 0x0);
 	if (video->mHdr) {
-		video_log("Is HDR video format\n");
-		dw_drm_packet_up(video->pb);
-	} else {
-		dw_drm_packet_disabled();
+		dw_drm_packet_config(video->pb);
+		video_log("dw drm packet for hdr config done\n");
 	}
 
-	return true;
+	dw_write_mask(FC_DATAUTO1, FC_DATAUTO1_AUTO_FRAME_INTERPOLATION_MASK, 0x1);
+	dw_write_mask(FC_DATAUTO2, FC_DATAUTO2_AUTO_FRAME_PACKETS_MASK, 0x1);
+	dw_write_mask(FC_DATAUTO2, FC_DATAUTO2_AUTO_LINE_SPACING_MASK, 0x1);
+
+	hdmi_trace("dw infoframe config done!\n");
+	return 0;
 }

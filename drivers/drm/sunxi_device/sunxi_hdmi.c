@@ -12,7 +12,6 @@
 #include <linux/delay.h>
 #include <linux/version.h>
 
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
 #include <drm/drm_hdcp.h>
 #include <drm/drm_scdc_helper.h>
@@ -24,15 +23,38 @@
 
 #include "sunxi_hdmi.h"
 
-struct sunxi_hdmi_s      *sunxi_hdmi;
+/************************************************
+ * @desc: define sunxi hdmi private marco
+ ************************************************/
+/* define use tcon pad */
+#if (IS_ENABLED(CONFIG_ARCH_SUN8IW16) || \
+	IS_ENABLED(CONFIG_ARCH_SUN8IW20)  || \
+	IS_ENABLED(CONFIG_ARCH_SUN20IW1)  || \
+	IS_ENABLED(CONFIG_ARCH_SUN50IW9))
+#define SUNXI_HDMI20_USE_TCON_PAD
+#endif
 
-static const struct sunxi_hdmi_vic_mode sunxi_hdmi_3d_table[] = {
-	  /* .name */          /* .vic_code */
-	{ "720P@50 FP",  SUNXI_HDMI_VIC_720P_50_3D_FP },
-	{ "720P@60 FP",  SUNXI_HDMI_VIC_720P_60_3D_FP },
-	{ "1080P@24 FP", SUNXI_HDMI_VIC_1080P_24_3D_FP},
+/* define use hdmi phy model */
+#if (IS_ENABLED(CONFIG_ARCH_SUN8IW20))
+	#ifndef SUNXI_HDMI20_PHY_AW
+	#define SUNXI_HDMI20_PHY_AW   /* allwinner phy */
+	#endif
+#elif (IS_ENABLED(CONFIG_ARCH_SUN55IW3))
+	#ifndef SUNXI_HDMI20_PHY_INNO
+	#define SUNXI_HDMI20_PHY_INNO /* innosilicon phy */
+	#endif
+#else
+	#ifndef SUNXI_HDMI20_PHY_SNPS
+	#define SUNXI_HDMI20_PHY_SNPS /* synopsys phy */
+	#endif
+#endif
+
+struct sunxi_hdmi_vic_mode {
+	char name[25];
+	int  vic_code;
 };
 
+struct sunxi_hdmi_s      *sunxi_hdmi;
 
 #if defined(SUNXI_HDMI20_PHY_AW)
 /* allwinner phy ops */
@@ -40,7 +62,7 @@ struct dw_phy_ops_s  phy_ops = {
 	.phy_init   = aw_phy_init,
 	.phy_config = aw_phy_config,
 	.phy_resume = aw_phy_resume,
-	.phy_resume = aw_phy_reset,
+	.phy_reset  = aw_phy_reset,
 	.phy_read   = aw_phy_read,
 	.phy_write  = aw_phy_write,
 };
@@ -54,25 +76,44 @@ struct dw_phy_ops_s   phy_ops = {
 };
 #else
 struct dw_phy_ops_s   phy_ops = {
-	.phy_config = snps_phy_config,
-	.phy_read   = snps_phy_read,
-	.phy_write  = snps_phy_write,
+	.phy_init      = snps_phy_init,
+	.phy_config    = snps_phy_config,
+	.phy_disconfig = snps_phy_disconfig,
+	.phy_read      = snps_phy_read,
+	.phy_write     = snps_phy_write,
 };
 #endif
 
-static int _sunxi_hdmi_check_3d_mode(u32 vic)
+static int _sunxi_hdmi_check_use_hfvsif(u32 vic)
 {
-	int size = ARRAY_SIZE(sunxi_hdmi_3d_table);
-	int i = 0;
-
-	for (i = 0; i < size; i++) {
-		if (vic == sunxi_hdmi_3d_table[i].vic_code) {
-			return 0x1;
-		}
+	switch (vic) {
+	case HDMI_VIC_3840x2160P50:
+	case HDMI_VIC_3840x2160P60:
+	case HDMI_VIC_4096x2160P50:
+	case HDMI_VIC_4096x2160P60:
+		return 1;
+	default:
+		return 0;
 	}
-	return 0x0;
 }
 
+char *sunxi_hdmi_color_format_string(enum disp_csc_type format)
+{
+	char *string[] = {"rgb", "yuv444", "yuv422", "yuv420"};
+
+	return string[format];
+}
+
+char *sunxi_hdmi_color_depth_string(enum disp_data_bits bits)
+{
+	char *string[] = {"8bits", "10bits", "12bits", "16bits"};
+
+	return string[bits];
+}
+
+/*******************************************************************************
+ * sunxi hdmi core register write and read function
+ ******************************************************************************/
 void sunxi_hdmi_ctrl_write(uintptr_t addr, u32 data)
 {
 	writeb((u8)data, (volatile void __iomem *)(sunxi_hdmi->reg_base + addr));
@@ -83,7 +124,19 @@ u32 sunxi_hdmi_ctrl_read(uintptr_t addr)
 	return (u32)readb((volatile void __iomem *)(sunxi_hdmi->reg_base + addr));
 }
 
-#ifndef SUXNI_HDMI_USE_HDMI14
+/*******************************************************************************
+ * sunxi hdmi core scdc write and read function
+ ******************************************************************************/
+void sunxi_hdmi_scdc_write(u8 addr, u8 data)
+{
+	int ret = 0;
+
+	ret = drm_scdc_writeb(sunxi_hdmi->connect->ddc, addr, data);
+	if (ret != 0) {
+		hdmi_wrn("hdmi drm scdc byte write 0x%x = 0x%x failed\n", addr, data);
+	}
+}
+
 u8 sunxi_hdmi_scdc_read(u8 addr)
 {
 	u8 data = 0;
@@ -97,18 +150,9 @@ u8 sunxi_hdmi_scdc_read(u8 addr)
 
 	return data;
 }
-
-void sunxi_hdmi_scdc_write(u8 addr, u8 data)
-{
-	int ret = 0;
-
-	ret = drm_scdc_writeb(sunxi_hdmi->connect->ddc, addr, data);
-	if (ret != 0) {
-		hdmi_wrn("hdmi drm scdc byte write 0x%x = 0x%x failed\n", addr, data);
-	}
-}
-#endif
-
+/*******************************************************************************
+ * sunxi hdmi core phy function
+ ******************************************************************************/
 int sunxi_hdmi_phy_write(u8 addr, u32 data)
 {
 	int ret = 0;
@@ -145,6 +189,236 @@ int sunxi_hdmi_phy_resume(void)
 	return 0;
 }
 
+int sunxi_hdmi_i2cm_xfer(struct i2c_msg *msgs, int num)
+{
+	return dw_i2cm_xfer(msgs, num);
+}
+
+int sunxi_hdmi_edid_parse(u8 *buffer)
+{
+	u8 temp_edid[EDID_BLOCK_SIZE] = {0x0};
+	int edid_ext_cnt = 0, i = 0, ret = 0;
+
+	if (!buffer) {
+		hdmi_err("point buffer is null\n");
+		return -1;
+	}
+
+	memcpy(temp_edid, buffer, EDID_BLOCK_SIZE);
+	ret = dw_edid_parse_info((u8 *)temp_edid);
+	if (ret != 0) {
+		hdmi_err("hdmi edid parse block0 failed\n");
+		return -1;
+	}
+	hdmi_inf("sunxi hdmi edid parse block0 finish\n");
+	edid_ext_cnt = temp_edid[126];
+
+	if (edid_ext_cnt == 0x0) {
+		hdmi_inf("hdmi edid only has block0 and parse finish\n");
+		return 0;
+	}
+
+	for (i = 0; i < edid_ext_cnt; i++) {
+		memcpy(temp_edid, buffer + (EDID_BLOCK_SIZE * (i + 1)), EDID_BLOCK_SIZE);
+		ret = dw_edid_parse_info((u8 *)temp_edid);
+		if (ret != 0) {
+			hdmi_err("hdmi edid parse block%d failed\n", i + 1);
+			continue;
+		}
+		hdmi_inf("sunxi hdmi edid parse block%d finish\n", i + 1);
+	}
+
+	return 0;
+}
+
+/*******************************************************************************
+ * sunxi hdmi core hdcp function
+ ******************************************************************************/
+int sunxi_hdcp1x_get_sink_cap(void)
+{
+	int ret = 0;
+	u8 offset = DRM_HDCP_DDC_BCAPS & 0xff, data = 0x0;
+	struct i2c_msg msgs[2];
+
+	msgs[0].addr  = DRM_HDCP_DDC_ADDR;
+	msgs[0].flags = 0;
+	msgs[0].len   = 0x1;
+	msgs[0].buf   = &offset;
+
+	msgs[1].addr  = DRM_HDCP_DDC_ADDR;
+	msgs[1].flags = I2C_M_RD;
+	msgs[1].len   = 0x1;
+	msgs[1].buf   = &data;
+
+	ret = i2c_transfer(sunxi_hdmi->i2c_adap, msgs, ARRAY_SIZE(msgs));
+	if (ret == ARRAY_SIZE(msgs)) {
+		hdmi_inf("sunxi hdmi get sink support hdcp1x\n");
+		return 1;
+	}
+
+	hdmi_inf("sunxi hdmi get sink unsupport hdcp1x\n");
+	return 0;
+}
+
+int sunxi_hdcp2x_get_sink_cap(void)
+{
+	int ret = 0x0;
+	u8 offset = (HDCP_2_2_HDMI_REG_VER_OFFSET & 0xff), data = 0x0;
+	struct i2c_msg msgs[2];
+
+	msgs[0].addr  = DRM_HDCP_DDC_ADDR;
+	msgs[0].flags = 0;
+	msgs[0].len   = 0x1;
+	msgs[0].buf   = &offset;
+
+	msgs[1].addr  = DRM_HDCP_DDC_ADDR;
+	msgs[1].flags = I2C_M_RD;
+	msgs[1].len   = 0x1;
+	msgs[1].buf   = &data;
+
+	ret = i2c_transfer(sunxi_hdmi->i2c_adap, msgs, ARRAY_SIZE(msgs));
+	if (ret == ARRAY_SIZE(msgs)) {
+		if (data & HDCP_2_2_HDMI_SUPPORT_MASK) {
+			hdmi_inf("sunxi hdmi get sink support hdcp2x\n");
+			return 1;
+		}
+	}
+
+	hdmi_inf("sunxi hdmi get sink unsupport hdcp2x\n");
+	return 0;
+}
+
+int sunxi_hdcp2x_fw_state(void)
+{
+	return dw_hdcp2x_firmware_state();
+}
+
+int sunxi_hdcp2x_fw_loading(const u8 *data, size_t size)
+{
+	return dw_hdcp2x_firmware_update(data, size);
+}
+
+int sunxi_hdcp1x_config(u8 state)
+{
+	if (state) {
+		dw_hdcp_config_init();
+		return dw_hdcp1x_enable();
+	} else
+		return dw_hdcp1x_disable();
+}
+
+int sunxi_hdcp2x_config(u8 state)
+{
+	if (state) {
+		dw_hdcp_config_init();
+		return dw_hdcp2x_enable();
+	} else
+		return dw_hdcp2x_disable();
+}
+
+u8 sunxi_hdcp_get_state(void)
+{
+	int ret = 0;
+
+	ret = dw_hdcp_get_state();
+
+	if (ret == SUNXI_HDCP_ING)
+		return SUNXI_HDCP_ING;
+
+	if (ret == SUNXI_HDCP_SUCCESS)
+		return SUNXI_HDCP_SUCCESS;
+
+	if (ret == SUNXI_HDCP_FAILED)
+		return SUNXI_HDCP_FAILED;
+
+	return SUNXI_HDCP_DISABLE;
+}
+
+/*******************************************************************************
+ * sunxi hdmi core cec function
+ ******************************************************************************/
+void sunxi_cec_msg_dump(u8 *msg, u8 len)
+{
+	char buf[256];
+	int n = 0, i = 0;
+
+	n += sprintf(buf + n, "[msg]: ");
+	for (i = 0; (i < len) && (n < 200); i++)
+		n += sprintf(buf + n, "0x%02x ", *(msg + i));
+
+	cec_log("%s\n", buf);
+}
+
+void sunxi_cec_enable(u8 state)
+{
+	dw_cec_set_enable(state == SUNXI_HDMI_ENABLE ? 0x1 : 0x0);
+}
+
+int sunxi_cec_message_receive(u8 *buf)
+{
+	int size = sizeof(buf);
+
+	return dw_cec_receive_msg(buf, size);
+}
+
+void sunxi_cec_message_send(u8 *buf, u8 len, u8 times)
+{
+	u8 type = SUNXI_CEC_WAIT_NULL;
+
+	switch (times) {
+	case SUNXI_CEC_WAIT_3BIT:
+		type = DW_CEC_WAIT_3BIT;
+		break;
+	case SUNXI_CEC_WAIT_5BIT:
+		type = DW_CEC_WAIT_5BIT;
+		break;
+	case SUNXI_CEC_WAIT_7BIT:
+		type = DW_CEC_WAIT_7BIT;
+		break;
+	default:
+		type = DW_CEC_WAIT_NULL;
+		break;
+	}
+	sunxi_cec_msg_dump(buf, len);
+	dw_cec_send_msg(buf, len, type);
+}
+
+void sunxi_cec_set_logic_addr(u16 addr)
+{
+	dw_cec_set_logical_addr(addr);
+}
+
+u8 sunxi_cec_get_irq_state(void)
+{
+	u8 state = dw_mc_irq_get_state(DW_IRQ_CEC);
+
+	if (!state)
+		return SUNXI_CEC_IRQ_NULL;
+
+	dw_mc_irq_clear_state(DW_IRQ_CEC, state);
+
+	switch (state) {
+	case IH_CEC_STAT0_DONE_MASK:
+	  return SUNXI_CEC_IRQ_DONE;
+	case IH_CEC_STAT0_EOM_MASK:
+	  return SUNXI_CEC_IRQ_EOM;
+	case IH_CEC_STAT0_NACK_MASK:
+	  return SUNXI_CEC_IRQ_NACK;
+	case IH_CEC_STAT0_ARB_LOST_MASK:
+	  return SUNXI_CEC_IRQ_ARB;
+	case IH_CEC_STAT0_ERROR_INITIATOR_MASK:
+	  return SUNXI_CEC_IRQ_ERR_INITIATOR;
+	case IH_CEC_STAT0_ERROR_FOLLOW_MASK:
+	  return SUNXI_CEC_IRQ_ERR_FOLLOW;
+	case IH_CEC_STAT0_WAKEUP_MASK:
+	  return SUNXI_CEC_IRQ_WAKEUP;
+	default:
+	  return SUNXI_CEC_IRQ_NULL;
+	}
+}
+/*******************************************************************************
+ * sunxi hdmi core audio function
+ ******************************************************************************/
 int sunxi_hdmi_audio_set_info(hdmi_audio_t *snd_param)
 {
 	int ret = 0;
@@ -172,19 +446,186 @@ int sunxi_hdmi_audio_set_info(hdmi_audio_t *snd_param)
 	return 0;
 }
 
-int sunxi_hdmi_audio_setup(void)
+int sunxi_hdmi_audio_enable(void)
 {
 	return dw_audio_on();
 }
+/*******************************************************************************
+ * sunxi hdmi core video info function
+ ******************************************************************************/
+int sunxi_hdmi_disp_select_eotf(struct disp_device_config *info)
+{
+	if (IS_ERR(info)) {
+		hdmi_err("hdmi check point info is null\n");
+		return -1;
+	}
 
-struct disp_device_config *sunxi_hdmi_video_get_info(void)
+	if (info->eotf == DISP_EOTF_GAMMA22) {
+		hdmi_trace("hdmi check continue use sdr eotf\n");
+		return 0;
+	} else if (info->eotf == DISP_EOTF_SMPTE2084) {
+		if (dw_edid_check_hdr10()) {
+			hdmi_trace("hdmi check continue use hdr10 eotf\n");
+			return 0;
+		}
+		hdmi_inf("hdmi check sink unsupport hdr10. switch to sdr\n");
+		goto switch_hdr;
+	} else if (info->eotf == DISP_EOTF_ARIB_STD_B67) {
+		if (dw_edid_check_hlg()) {
+			hdmi_trace("hdmi check continue use hlg eotf\n");
+			return 0;
+		}
+		hdmi_inf("hdmi check sink unsupport hlg. switch to sdr\n");
+		goto switch_hdr;
+	}
+
+	hdmi_inf("hdmi check drv unsupport eotf %d. default use sdr\n", info->eotf);
+
+switch_hdr:
+	info->eotf = DISP_EOTF_GAMMA22;
+	return 1;
+}
+
+int sunxi_hdmi_disp_select_space(struct disp_device_config *info, u32 vic_code)
+{
+	if ((info->eotf == DISP_EOTF_SMPTE2084) ||
+			(info->eotf == DISP_EOTF_ARIB_STD_B67)) {
+		info->cs = DISP_BT2020NC;
+		hdmi_trace("hdmi check is hdr or hlg. prefer select BT2020NC space\n");
+		return 0;
+	}
+
+	if (info->eotf == DISP_EOTF_GAMMA22) {
+		switch (vic_code) {
+		case 0:
+		case 1:
+		case 2:
+		case 3:
+		case 6:
+		case 7:
+		case 17:
+		case 18:
+			info->cs = DISP_BT601;
+			hdmi_trace("hdmi check use BT601\n");
+			return 0;
+		default:
+			info->cs = DISP_BT709;
+			hdmi_trace("hdmi check use BT709\n");
+			return 0;
+		}
+	}
+
+	hdmi_inf("hdmi check eotf %d unsupport, default use BT709\n", info->eotf);
+	info->cs = DISP_BT709;
+	return 1;
+}
+
+int sunxi_hdmi_disp_select_format(struct disp_device_config *info, u32 vic_code)
+{
+	int ret = 0;
+
+	/* if this timing only support 420, we need select 420-8bit */
+	ret = dw_edid_check_only_yuv420(vic_code);
+	if (ret) {
+		info->format = DISP_CSC_TYPE_YUV420;
+		info->bits   = DISP_DATA_8BITS;
+		hdmi_inf("hdmi check vic %d only support 420-8bits\n", vic_code);
+		return 0;
+	}
+
+	/* if hdr mode. perfer use yuv422-10bits */
+	if ((info->eotf == DISP_EOTF_SMPTE2084) ||
+			(info->eotf == DISP_EOTF_ARIB_STD_B67)) {
+		info->format = DISP_CSC_TYPE_YUV422;
+		info->bits   = DISP_DATA_10BITS;
+		hdmi_inf("hdmi check is hdr mode. default use yuv422-10bits\n");
+		return 0;
+	}
+
+	/* if current format support, not-change return. */
+	switch (info->format) {
+	case DISP_CSC_TYPE_YUV420:
+		if (dw_edid_check_yuv420_base(vic_code)) {
+			if (info->bits == DISP_DATA_8BITS ||
+					dw_edid_check_yuv420_dc((u8)info->bits))
+				hdmi_trace("hdmi check continue use yuv420-%s\n",
+					sunxi_hdmi_color_depth_string(info->bits));
+				return 0;
+		}
+		break;
+	case DISP_CSC_TYPE_YUV422:
+		if (dw_edid_check_yuv422_base()) {
+			if (info->bits == DISP_DATA_8BITS ||
+					dw_edid_check_yuv422_dc(info->bits)) {
+				hdmi_trace("hdmi check continue use yuv422-%s\n",
+					sunxi_hdmi_color_depth_string(info->bits));
+				return 0;
+			}
+		}
+		break;
+	case DISP_CSC_TYPE_YUV444:
+		if (dw_edid_check_yuv444_base()) {
+			if (info->bits == DISP_DATA_8BITS ||
+					dw_edid_check_yuv444_dc(info->bits)) {
+				hdmi_trace("hdmi check continue use yuv444-%s\n",
+					sunxi_hdmi_color_depth_string(info->bits));
+				return 0;
+			}
+		}
+		break;
+	default:
+		info->format = DISP_CSC_TYPE_RGB;
+		if (info->bits == DISP_DATA_8BITS ||
+				dw_edid_check_rgb_dc(info->bits)) {
+			hdmi_trace("hdmi check continue use rgb-%s\n",
+					sunxi_hdmi_color_depth_string(info->bits));
+			return 0;
+		}
+		break;
+	}
+
+	/* if format unsupport, select perfer format */
+	ret = dw_edid_check_yuv444_base();
+	info->format = (ret == 0x1) ? DISP_CSC_TYPE_YUV444 : DISP_CSC_TYPE_RGB;
+	info->bits = DISP_DATA_8BITS;
+	hdmi_inf("hdmi check switch use %s-8bits\n",
+			sunxi_hdmi_color_format_string(info->format));
+
+	return 1;
+}
+
+int sunxi_hdmi_video_check_tmds_clock(u8 format, u8 bits, u32 pixel_clk)
+{
+	u32 tmds_clk = 0;
+
+	if (format == DISP_CSC_TYPE_YUV422)
+		tmds_clk = pixel_clk;
+	else if (format == DISP_CSC_TYPE_YUV420)
+		tmds_clk = pixel_clk / 2;
+	else {
+		switch (bits) {
+		case DISP_DATA_10BITS:
+			tmds_clk = (pixel_clk * 125 / 100);
+			break;
+		case DISP_DATA_12BITS:
+			tmds_clk = (pixel_clk * 3 / 2);
+			break;
+		default:
+			tmds_clk = pixel_clk;
+			break;
+		}
+	}
+	return dw_edid_check_max_tmds_clk(tmds_clk);
+}
+
+struct disp_device_config *sunxi_hdmi_get_disp_info(void)
 {
 	struct disp_device_config *info = &sunxi_hdmi->disp_info;
 
 	return info;
 }
 
-int sunxi_hdmi_video_set_info(struct disp_device_config *disp_param)
+int sunxi_hdmi_set_disp_info(struct disp_device_config *disp_param)
 {
 	u8 data_bit = 0;
 
@@ -266,8 +707,11 @@ int sunxi_hdmi_video_set_info(struct disp_device_config *disp_param)
 	/* set aspect ratio */
 	dw_video_update_ratio(disp_param->aspect_ratio ? disp_param->aspect_ratio : 0x8);
 
+	dw_video_dump_disp_info();
+
 	/* save current config info */
 	memcpy(&sunxi_hdmi->disp_info, disp_param, sizeof(struct disp_device_config));
+
 	return 0;
 }
 
@@ -276,235 +720,101 @@ void sunxi_hdmi_video_set_pattern(u8 bit, u32 value)
 	dw_fc_video_force_value(bit, value);
 }
 
-int sunxi_hdmi_i2c_xfer(struct i2c_msg *msgs, int num)
+u32 sunxi_hdmi_get_color_capality(u32 vic)
 {
-	return dw_i2cm_xfer(msgs, num);
-}
+	u32 value = 0x0;
 
-#ifdef SUNXI_HDMI20_USE_HDCP
-int sunxi_hdcp_get_sink_cap(void)
-{
-	u8 start = HDCP_2_2_HDMI_REG_VER_OFFSET & 0xff;
-	u8 data = 0x0;
-	int ret = 0x0;
-	struct i2c_msg msgs[] = {
-		{
-			.addr = DRM_HDCP_DDC_ADDR,
-			.flags = 0,
-			.len = 0x1,
-			.buf = &start,
-		},
-		{
-			.addr = DRM_HDCP_DDC_ADDR,
-			.flags = I2C_M_RD,
-			.len = 0x1,
-			.buf = &data
-		}
-	};
+	/* RGB-Bits default support */
+	value |= BIT(SUNXI_COLOR_RGB888_8BITS);
 
-	ret = i2c_transfer(sunxi_hdmi->i2c, msgs, ARRAY_SIZE(msgs));
-	if (ret == ARRAY_SIZE(msgs)) {
-		if (data & HDCP_2_2_HDMI_SUPPORT_MASK)
-			return 1;
+	/* Check RGB DeepColor */
+	if (dw_edid_check_rgb_dc(DISP_DATA_10BITS))
+		value |= BIT(SUNXI_COLOR_RGB888_10BITS);
+	if (dw_edid_check_rgb_dc(DISP_DATA_12BITS))
+		value |= BIT(SUNXI_COLOR_RGB888_12BITS);
+	if (dw_edid_check_rgb_dc(DISP_DATA_16BITS))
+		value |= BIT(SUNXI_COLOR_RGB888_16BITS);
+
+	/* Check YUV444 DeepColor */
+	if (dw_edid_check_yuv444_base()) {
+		value |= BIT(SUNXI_COLOR_YUV444_8BITS);
+		if (dw_edid_check_yuv444_dc(DISP_DATA_10BITS))
+			value |= BIT(SUNXI_COLOR_YUV444_10BITS);
+		if (dw_edid_check_yuv444_dc(DISP_DATA_12BITS))
+			value |= BIT(SUNXI_COLOR_YUV444_12BITS);
+		if (dw_edid_check_yuv444_dc(DISP_DATA_16BITS))
+			value |= BIT(SUNXI_COLOR_YUV444_16BITS);
 	}
 
-	return 0;
-}
-u8 sunxi_hdcp_get_state(void)
-{
-	int ret = 0;
-
-	ret = dw_hdcp_get_state();
-	if (ret == 1)
-		return SUNXI_HDCP_ING;
-	else if (ret == 0)
-		return SUNXI_HDCP_SUCCESS;
-	else if (ret == -1)
-		return SUNXI_HDCP_FAILED;
-	else if (ret == -2)
-		return SUNXI_HDCP_FAILED;
-	else
-		return SUNXI_HDCP_DISABLE;
-}
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_HDCP14)
-int sunxi_hdcp14_set_config(u8 state)
-{
-	if (state) {
-		return dw_hdcp14_config();
-	} else
-		return dw_hdcp14_disconfig();
-}
-#endif
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_HDCP22)
-int sunxi_hdcp22_set_config(u8 state)
-{
-	if (state) {
-		return dw_hdcp22_config();
-	} else
-		return dw_hdcp22_disconfig();
-}
-
-unsigned long *sunxi_hdcp22_get_fw_addr(void)
-{
-	return dw_hdcp22_get_fw_addr();
-}
-
-u32 sunxi_hdcp22_get_fw_size(void)
-{
-	return dw_hdcp22_get_fw_size();
-}
-#endif
-#endif /* SUNXI_HDMI20_USE_HDCP */
-
-#if IS_ENABLED(CONFIG_AW_HDMI20_CEC)
-void sunxi_cec_msg_dump(u8 *msg, u8 len)
-{
-	char buf[256];
-	int n = 0, i = 0;
-
-	n += sprintf(buf + n, "[msg]: ");
-	for (i = 0; (i < len) && (n < 200); i++)
-		n += sprintf(buf + n, "0x%02x ", *(msg + i));
-
-	cec_log("%s\n", buf);
-}
-
-void sunxi_cec_enable(u8 state)
-{
-	dw_cec_set_enable(state == SUNXI_HDMI_ENABLE ? 0x1 : 0x0);
-}
-
-int sunxi_cec_message_receive(u8 *buf)
-{
-	int size = sizeof(buf);
-
-	return dw_cec_receive_msg(buf, size);
-}
-
-void suxni_cec_message_send(u8 *buf, u8 len, u8 times)
-{
-	u8 type = SUNXI_CEC_WAIT_NULL;
-	switch (times) {
-	case SUNXI_CEC_WAIT_3BIT:
-		type = DW_CEC_WAIT_3BIT;
-		break;
-	case SUNXI_CEC_WAIT_5BIT:
-		type = DW_CEC_WAIT_5BIT;
-	case SUNXI_CEC_WAIT_7BIT:
-		type = DW_CEC_WAIT_7BIT;
-	default:
-		type = DW_CEC_WAIT_NULL;
-		break;
-	}
-	sunxi_cec_msg_dump(buf, len);
-	dw_cec_send_msg(buf, len, type);
-}
-
-void sunxi_cec_set_logic_addr(u16 addr)
-{
-	log_trace1(addr);
-	dw_cec_set_logical_addr(addr);
-}
-
-u8 sunxi_cec_get_irq_state(void)
-{
-	u8 state = dw_mc_irq_get_state(DW_IRQ_CEC);
-
-	if (!state)
-		return SUNXI_CEC_IRQ_NULL;
-
-	dw_mc_irq_clear_state(DW_IRQ_CEC, state);
-
-	switch (state) {
-	case IH_CEC_STAT0_DONE_MASK:
-	  return SUNXI_CEC_IRQ_DONE;
-	case IH_CEC_STAT0_EOM_MASK:
-	  return SUNXI_CEC_IRQ_EOM;
-	case IH_CEC_STAT0_NACK_MASK:
-	  return SUNXI_CEC_IRQ_NACK;
-	case IH_CEC_STAT0_ARB_LOST_MASK:
-	  return SUNXI_CEC_IRQ_ARB;
-	case IH_CEC_STAT0_ERROR_INITIATOR_MASK:
-	  return SUNXI_CEC_IRQ_ERR_INITIATOR;
-	case IH_CEC_STAT0_ERROR_FOLLOW_MASK:
-	  return SUNXI_CEC_IRQ_ERR_FOLLOW;
-	case IH_CEC_STAT0_WAKEUP_MASK:
-	  return SUNXI_CEC_IRQ_WAKEUP;
-	default:
-	  return SUNXI_CEC_IRQ_NULL;
-	}
-}
-#endif /* CONFIG_AW_HDMI20_CEC */
-
-int sunxi_edid_parse(u8 *buffer)
-{
-	u8 temp_edid[EDID_BLOCK_SIZE] = {0x0};
-	int edid_ext_cnt = 0, i = 0, ret = 0;
-
-	if (!buffer) {
-		hdmi_err("point buffer is null\n");
-		return -1;
+	/* check yuv422 format and bits */
+	if (dw_edid_check_yuv422_base()) {
+		value |= BIT(SUNXI_COLOR_YUV422_8BITS);
+		if (dw_edid_check_yuv422_dc(DISP_DATA_10BITS))
+			value |= BIT(SUNXI_COLOR_YUV422_10BITS);
+		if (dw_edid_check_yuv422_dc(DISP_DATA_12BITS))
+			value |= BIT(SUNXI_COLOR_YUV422_12BITS);
+		if (dw_edid_check_yuv422_dc(DISP_DATA_16BITS))
+			value |= BIT(SUNXI_COLOR_YUV422_16BITS);
 	}
 
-	memcpy(temp_edid, buffer, EDID_BLOCK_SIZE);
-	ret = dw_edid_parse_info((u8 *)temp_edid);
-	if (ret != 0) {
-		hdmi_err("hdmi edid parse block0 failed\n");
-		return -1;
-	}
-	hdmi_inf("hdmi edid parse block0 finish\n");
-	edid_ext_cnt = temp_edid[126];
-
-	if (edid_ext_cnt == 0x0) {
-		hdmi_inf("hdmi edid only has block0 and parse finish\n");
-		return 0;
+	/* check yuv420 format and bits */
+	if (dw_edid_check_only_yuv420(vic)) {
+		value = BIT(SUNXI_COLOR_YUV420_8BITS);
+		if (dw_edid_check_yuv420_dc(DISP_DATA_10BITS))
+			value |= BIT(SUNXI_COLOR_YUV420_10BITS);
+		if (dw_edid_check_yuv420_dc(DISP_DATA_12BITS))
+			value |= BIT(SUNXI_COLOR_YUV420_12BITS);
+		if (dw_edid_check_yuv420_dc(DISP_DATA_16BITS))
+			value |= BIT(SUNXI_COLOR_YUV420_16BITS);
+		goto exit_update;
 	}
 
-	for (i = 0; i < edid_ext_cnt; i++) {
-		memcpy(temp_edid, buffer + (EDID_BLOCK_SIZE * (i + 1)), EDID_BLOCK_SIZE);
-		ret = dw_edid_parse_info((u8 *)temp_edid);
-		if (ret != 0) {
-			hdmi_err("hdmi edid parse block%d failed\n", i + 1);
-			continue;
-		}
-		hdmi_inf("hdmi edid parse block%d finish\n", i + 1);
+	if (dw_edid_check_yuv420_base(vic)) {
+		value |= BIT(SUNXI_COLOR_YUV420_8BITS);
+		if (dw_edid_check_yuv420_dc(DISP_DATA_10BITS))
+			value |= BIT(SUNXI_COLOR_YUV420_10BITS);
+		if (dw_edid_check_yuv420_dc(DISP_DATA_12BITS))
+			value |= BIT(SUNXI_COLOR_YUV420_12BITS);
+		if (dw_edid_check_yuv420_dc(DISP_DATA_16BITS))
+			value |= BIT(SUNXI_COLOR_YUV420_16BITS);
 	}
 
-	return 0;
+exit_update:
+	hdmi_trace("sunxi hdmi get color capality: 0x%x\n", value);
+	return value;
 }
 
-int sunxi_hdmi_check_use_hdmi20_4k(u32 code)
+void sunxi_hdmi_select_output_packets(u8 flags)
 {
-	switch (code) {
-	case HDMI_VIC_3840x2160P50:
-	case HDMI_VIC_3840x2160P60:
-	case HDMI_VIC_4096x2160P50:
-	case HDMI_VIC_4096x2160P60:
-		return 0x1;
-	default:
-		return 0x0;
-	}
-}
+	int ret = 0, hdmi_vic = 0;
+	u32 dtd_code = dw_video_get_cea_vic();
 
-void sunxi_hdmi_update_prefered_video(void)
-{
-	int ret = 0;
-	u32 dtd_code = dw_video_get_dtd_code();
-
-	ret = _sunxi_hdmi_check_3d_mode(dtd_code);
-	/* check is 3D video code */
-	if (ret != 0) {
-		dw_video_update_vic_format(DW_VIDEO_FORMAT_3D,
-			(dtd_code - HDMI_VIC_3D_OFFSET));
-		hdmi_inf("sunxi hdmi check is 3d video mode\n");
+	/* check is 3d flags */
+	if ((flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING) {
+		dw_video_set_vic_format(DW_VIDEO_FORMAT_3D, dtd_code);
+		dw_video_use_hdmi14_vsif(DW_VIDEO_FORMAT_3D, 0x0);
+		hdmi_inf("sunxi hdmi select vic %d 3d format struct\n", dtd_code);
 		return;
 	}
 
-	ret = sunxi_hdmi_check_use_hdmi20_4k(dtd_code);
+	hdmi_vic = dw_video_cea_to_hdmi_vic(dtd_code);
+	if (hdmi_vic > 0) {
+		dw_video_set_vic_format(DW_VIDEO_FORMAT_HDMI14_4K, hdmi_vic);
+		dw_video_use_hdmi14_vsif(DW_VIDEO_FORMAT_HDMI14_4K, hdmi_vic);
+		hdmi_inf("sunxi hdmi select vic %d to hdmi vic %d\n", dtd_code, hdmi_vic);
+		return;
+	}
 
-	dw_avp_update_perfer_info(ret);
+	dw_video_set_vic_format(DW_VIDEO_FORMAT_NONE, dtd_code);
+	/* select config hdmi20 vsif */
+	ret = _sunxi_hdmi_check_use_hfvsif(dtd_code);
+	if (ret == 0x1)
+		dw_video_use_hdmi20_vsif();
+	else
+		dw_video_use_hdmi14_vsif(DW_VIDEO_FORMAT_NONE, 0x0);
+
+	hdmi_inf("sunxi hdmi select vic %d use %s vsif\n",
+			dtd_code, ret ? "hdmi20" : "hdmi14");
 }
 
 u8 sunxi_hdmi_get_hpd(void)
@@ -512,48 +822,48 @@ u8 sunxi_hdmi_get_hpd(void)
 	return dw_phy_hot_plug_state();
 }
 
-int suxni_hdmi_set_loglevel(u8 level)
+u8 sunxi_hdmi_get_loglevel(void)
 {
-	dw_dev_set_loglevel(level);
-	return 0;
+	return dw_hdmi_get_loglevel();
 }
 
-int sunxi_hdmi_close(void)
+int suxni_hdmi_set_loglevel(u8 level)
 {
-	dw_phy_standby();
-
-	dw_mc_all_clock_disable();
-
-	dw_hdmi_ctrl_reset();
-
+	dw_hdmi_set_loglevel(level);
 	return 0;
 }
 
 /* first disable output, send mute */
 int sunxi_hdmi_disconfig(void)
 {
+	struct disp_device_config *info = &sunxi_hdmi->disp_info;
+
 	/* 1. send avmute */
 	dw_avp_set_mute(0x1);
 
 	/* 2. clear sink scdc info */
-	if (dw_phy_hot_plug_state() && dw_fc_video_get_scramble()) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
-		drm_scdc_set_scrambling(sunxi_hdmi->i2c, 0x0);
-		drm_scdc_set_high_tmds_clock_ratio(sunxi_hdmi->i2c, 0x0);
-#else
-		drm_scdc_set_scrambling(sunxi_hdmi->connect, 0x0);
-		drm_scdc_set_high_tmds_clock_ratio(sunxi_hdmi->connect, 0x0);
-#endif
-	}
+	if (!dw_phy_hot_plug_state())
+		goto disconfig_exit;
 
+	if (dw_fc_video_get_scramble() && dw_edid_check_scdc_support())
+		dw_hdmi_scdc_set_scramble(0);
+
+disconfig_exit:
+	dw_phy_standby();
+
+	dw_mc_all_clock_disable();
+
+	dw_hdmi_ctrl_reset();
+
+	memset(info, 0x0, sizeof(struct disp_device_config));
+
+	hdmi_inf("sunxi hdmi disconfig done\n");
 	return 0;
 }
 
 int sunxi_hdmi_config(void)
 {
 	int ret = 0;
-
-	log_trace();
 
 	ret = dw_avp_config();
 	if (ret != 0) {
@@ -564,7 +874,7 @@ int sunxi_hdmi_config(void)
 	return 0;
 }
 
-int sunxi_hdmi_mode_convert(struct drm_display_mode *mode)
+int sunxi_hdmi_set_disp_mode(struct drm_display_mode *mode)
 {
 	dw_dtd_t video;
 	u32 rate = 0;
@@ -594,6 +904,13 @@ int sunxi_hdmi_mode_convert(struct drm_display_mode *mode)
 	video.mVSyncPulseWidth = mode->vsync_end - mode->vdisplay - video.mVSyncOffset;
 	video.mVSyncPolarity   = (mode->flags & DRM_MODE_FLAG_PVSYNC) ? 0x1 : 0x0;
 
+	if (video.mInterlaced) {
+		video.mVActive     /= 2;
+		video.mVBlanking   /= 2;
+		video.mVSyncOffset /= 2;
+		video.mVSyncPulseWidth /= 2;
+	}
+
 	switch (mode->picture_aspect_ratio) {
 	case HDMI_PICTURE_ASPECT_4_3:
 		video.mHImageSize = 4;
@@ -619,37 +936,11 @@ int sunxi_hdmi_mode_convert(struct drm_display_mode *mode)
 
 	rate = drm_mode_vrefresh(mode);
 
-	dw_video_dtd_filling(&video, rate);
-	sunxi_hdmi_update_prefered_video();
+	dw_video_filling_timing(&video, rate);
+
 	return 0;
 ret_failed:
 	return -1;
-}
-
-void sunxi_hdmi_correct_config(void)
-{
-	dw_avp_correct_config();
-}
-
-int sunxi_hdmi_adap_bind(struct i2c_adapter *i2c_adap)
-{
-	if (!i2c_adap) {
-		hdmi_err("check point i2c_adap is null\n");
-		return -1;
-	}
-
-	sunxi_hdmi->i2c = i2c_adap;
-	dw_i2cm_adap_bind(i2c_adap);
-	return 0;
-}
-
-int sunxi_hdmi_connect_creat(struct drm_connector *data)
-{
-	/* sunxi hdmi connect */
-	sunxi_hdmi->connect = data;
-	/* dw hdmi connect */
-	sunxi_hdmi->dw_hdmi.connect = data;
-	return 0;
 }
 
 int sunxi_hdmi_init(struct sunxi_hdmi_s *hdmi)
@@ -659,11 +950,11 @@ int sunxi_hdmi_init(struct sunxi_hdmi_s *hdmi)
 
 	/* bind phy ops */
 	hdmi->phy_func = &phy_ops;
-	hdmi->blacklist_index = -1;
-
+	hdmi->dw_hdmi.phy_ext = &phy_ops;
 	hdmi->dw_hdmi.dev  = &hdmi->pdev->dev;
 	hdmi->dw_hdmi.addr = hdmi->reg_base;
-	hdmi->dw_hdmi.phy_ext = &phy_ops;
+	hdmi->dw_hdmi.i2c_adap = hdmi->i2c_adap;
+	hdmi->dw_hdmi.connect     = hdmi->connect;
 	ret = dw_hdmi_init(&hdmi->dw_hdmi);
 	if (ret != 0) {
 		hdmi_err("dw dev init failed\n");
@@ -673,14 +964,17 @@ int sunxi_hdmi_init(struct sunxi_hdmi_s *hdmi)
 	return 0;
 }
 
-void sunxi_hdmi_exit(struct sunxi_hdmi_s *hdmi)
+void sunxi_hdmi_exit(void)
 {
 	dw_hdmi_exit();
 
-	SUNXI_KFREE_POINT(hdmi);
+	if (sunxi_hdmi) {
+		kfree(sunxi_hdmi);
+		sunxi_hdmi = NULL;
+	}
 }
 
-ssize_t sunxi_hdmi_dump(char *buf)
+ssize_t sunxi_hdmi_tx_dump(char *buf)
 {
 	int n = 0;
 
@@ -689,3 +983,11 @@ ssize_t sunxi_hdmi_dump(char *buf)
 	return n;
 }
 
+ssize_t sunxi_hdmi_rx_dump(char *buf)
+{
+	int n = 0;
+
+	n += dw_edid_dump(buf + n);
+
+	return n;
+}

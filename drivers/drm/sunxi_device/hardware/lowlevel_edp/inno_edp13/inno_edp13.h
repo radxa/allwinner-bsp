@@ -66,6 +66,15 @@
 #define VOL_SWING_LEVEL_NUM 4
 #define PRE_EMPHASIS_LEVEL_NUM 4
 
+#define SETMASK(width, shift)   ((width?((-1U) >> (32-width)):0)  << (shift))
+#define CLRMASK(width, shift)   (~(SETMASK(width, shift)))
+#define GET_BITS(shift, width, reg)     \
+	(((reg) & SETMASK(width, shift)) >> (shift))
+#define SET_BITS(shift, width, reg, val) \
+	(((reg) & CLRMASK(width, shift)) | (val << (shift)))
+#define CLR_BITS(shift, width, reg) \
+	(((reg) & CLRMASK(width, shift)))
+
 struct training_param {
 	u32 sw_lv;
 	u32 pre_lv;

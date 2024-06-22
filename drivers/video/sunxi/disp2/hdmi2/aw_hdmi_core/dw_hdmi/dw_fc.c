@@ -1308,3 +1308,9 @@ int dw_fc_packet_config(dw_hdmi_dev_t *dev,
 
 	return true;
 }
+
+int dw_fc_iteration_process(dw_hdmi_dev_t *dev)
+{
+	dev_write(dev, FC_INVIDCONF, dev_read(dev, FC_INVIDCONF));
+	return 0;
+}

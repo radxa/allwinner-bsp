@@ -1337,6 +1337,9 @@ static int _aw_core_main_config(void)
 	if (hdcp->use_hdcp && hdcp->hdcp_on)
 		dw_hdcp_main_config(g_dw_dev, hdcp, video);
 #endif
+
+	dw_fc_iteration_process(g_dw_dev);
+
 	return success;
 }
 

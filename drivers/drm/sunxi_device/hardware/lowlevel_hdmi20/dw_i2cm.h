@@ -14,16 +14,23 @@
 
 #include "dw_dev.h"
 
+/**
+ * @desc: dw i2c master send and receive
+ * @msgs: send or receive message buffer
+ * @num: need send or receive message number
+ * @return: actual send or receive message number
+ */
 int dw_i2cm_xfer(struct i2c_msg *msgs, int num);
-
-int dw_i2cm_adap_bind(struct i2c_adapter *adap);
-
+/**
+ * @desc: dw i2c master retry init
+ * @return: 0 - success
+ */
 int dw_i2cm_re_init(void);
-
+/**
+ * @desc: dw i2c master init
+ * @return: 0 - success
+ */
 int dw_i2cm_init(void);
-
-#define DW_I2CM_MODE_STANDARD	(0x0)
-#define DW_I2CM_MODE_FAST		(0x1)
 
 /*****************************************************************************
  *                                                                           *

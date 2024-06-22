@@ -1005,4 +1005,6 @@ u8 dw_fc_audio_get_word_length(dw_hdmi_dev_t *dev);
 
 void dw_fc_audio_set_mute(dw_hdmi_dev_t *dev, u8 mute);
 
+int dw_fc_iteration_process(dw_hdmi_dev_t *dev);
+
 #endif /* _DW_FRAME_COMPOSER_H */

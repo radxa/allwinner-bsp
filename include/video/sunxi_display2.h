@@ -254,6 +254,27 @@ enum disp_tv_mode {
 	DISP_VGA_MOD_1280_720P_60        = 0x5a,
 	DISP_VGA_MOD_1600_900P_60        = 0x5b,
 	DISP_VGA_MOD_MAX_NUM             = 0x5c,
+	/* vesa mode */
+	DISP_VESA_MOD_640_480P_60 = 0x60,
+	DISP_VESA_MOD_800_600P_56 = 0x61,
+	DISP_VESA_MOD_800_600P_60 = 0x62,
+	DISP_VESA_MOD_1024_768P_60 = 0x63,
+	DISP_VESA_MOD_1024_768P_70 = 0x64,
+	DISP_VESA_MOD_1152_864P_75 = 0x65,
+	DISP_VESA_MOD_1280_768P_60 = 0x66,
+	DISP_VESA_MOD_1280_800P_60 = 0x67,
+	DISP_VESA_MOD_1280_960P_60 = 0x68,
+	DISP_VESA_MOD_1280_1024P_60 = 0x69,
+	DISP_VESA_MOD_1360_768P_60 = 0x6a,
+	DISP_VESA_MOD_1366_768P_60 = 0x6b,
+	DISP_VESA_MOD_1400_1050P_60 = 0x6c,
+	DISP_VESA_MOD_1440_900P_60 = 0x6d,
+	DISP_VESA_MOD_1600_900P_60 = 0x6e,
+	DISP_VESA_MOD_1680_1050P_60 = 0x6f,
+	DISP_VESA_MOD_1920_1200P_60 = 0x70,
+	DISP_VESA_MOD_1920_1440P_60 = 0x71,
+	DISP_VESA_MOD_MAX_NUM = 0x72,
+
 	DISP_TV_MODE_NUM,
 };
 
@@ -307,6 +328,14 @@ enum disp_eotf {
 	DISP_EOTF_SMPTE2084 = 0x010, /* HDR10 */
 	DISP_EOTF_SMPTE428_1 = 0x011,
 	DISP_EOTF_ARIB_STD_B67 = 0x012, /* HLG */
+};
+
+/*identify hdr10+, dv, hdr10 when eotf set to 0x10*/
+enum disp_hdr_type {
+	HDR10  = 0,
+	HDR10P = 1,
+	HDRDV  = 2,
+	HDRVIVID = 3,
 };
 /* disp_atw_mode - mode for asynchronous time warp
  *
@@ -595,6 +624,16 @@ struct disp_colorkey {
 	unsigned int blue_match_rule;
 };
 
+/* sync de_top.c enum de_rtwb_mux_type */
+enum disp_capture_port {
+	DISP_CAPTURE_BEFORE_DEP = 0,
+	DISP_CAPTURE_AFTER_DEP  = 1,
+};
+
+struct disp_capture_init_info {
+	enum disp_capture_port port;
+};
+
 struct disp_s_frame {
 	enum disp_pixel_format format;
 	struct disp_rectsz size[3];
@@ -703,6 +742,7 @@ struct disp_device_config {
 	enum disp_dvi_hdmi	        dvi_hdmi;
 	enum disp_color_range		range;
 	enum disp_scan_info			scan;
+	enum disp_hdr_type          hdr_type;
 	unsigned int				aspect_ratio;
 	unsigned int				reserve1;
 };
@@ -850,7 +890,7 @@ struct disp_device_func {
 	int (*get_static_config)(struct disp_device_config *config);
 	int (*set_dynamic_config)(struct disp_device_dynamic_config *config);
 	int (*get_dynamic_config)(struct disp_device_dynamic_config *config);
-
+	int (*set_vsif_config)(void *config, struct disp_device_dynamic_config *scfg);
 	/* for hdmi cec */
 	s32 (*cec_standby_request)(void);
 	s32 (*cec_send_one_touch_play)(void);
