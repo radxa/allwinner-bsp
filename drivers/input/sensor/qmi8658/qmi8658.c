@@ -28,6 +28,7 @@
 #include <linux/ioctl.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
+#include <linux/version.h>
 
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
@@ -809,7 +810,11 @@ static int qmi8658_reg_init(struct i2c_client *client)
 	return res;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int qmi8658_i2c_probe(struct i2c_client *client)
+#else
 static int qmi8658_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	int err = 0;
 	struct qmi8658_data *data;
@@ -887,7 +892,11 @@ exit:
 	return err;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void qmi8658_remove(struct i2c_client *client)
+#else
 static int qmi8658_remove(struct i2c_client *client)
+#endif
 {
 	QMI8658_FUN();
 	if (qmi8658) {
@@ -906,10 +915,18 @@ static int qmi8658_remove(struct i2c_client *client)
 		kfree(qmi8658);
 		qmi8658 = NULL;
 	}
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void qmi8658_i2c_remove(struct i2c_client *client)
+#else
 static int qmi8658_i2c_remove(struct i2c_client *client)
+#endif
 {
 	return qmi8658_remove(client);
 }

@@ -44,6 +44,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 
+#include <linux/version.h>
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 
@@ -739,8 +740,12 @@ static void wq_func_hrtimer(struct work_struct *work)
 	//printk("chongyuzhao report %d - %d - %d\n", x, y, z);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int sc7a20_probe(struct i2c_client *client)
+#else
 static int sc7a20_probe(struct i2c_client *client,
 				   const struct i2c_device_id *id)
+#endif
 {
 	char reg_cali;
 
@@ -819,7 +824,11 @@ static int sc7a20_probe(struct i2c_client *client,
 	return result;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void sc7a20_remove(struct i2c_client *client)
+#else
 static int sc7a20_remove(struct i2c_client *client)
+#endif
 {
 	int result;
 	result = i2c_smbus_write_byte_data(sc7a20_i2c_client, sc7a20_REG_CTRL, sc7a20_CTRL_PWRDN);
@@ -831,7 +840,11 @@ static int sc7a20_remove(struct i2c_client *client)
 	input_unregister_device(sc7a20_idev);
 	i2c_set_clientdata(sc7a20_i2c_client, NULL);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return result;
+#endif
 }
 
 #if IS_ENABLED(CONFIG_PM)

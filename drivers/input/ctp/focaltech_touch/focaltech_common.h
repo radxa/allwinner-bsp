@@ -36,7 +36,7 @@
 /*****************************************************************************
 * Macro definitions using #define
 *****************************************************************************/
-#define FTS_DRIVER_VERSION                  "Focaltech V3.4 20211214"
+#define FTS_DRIVER_VERSION                  "FocalTech V4.1 20230424"
 
 #define BYTE_OFF_0(x)           (u8)((x) & 0xFF)
 #define BYTE_OFF_8(x)           (u8)(((x) >> 8) & 0xFF)
@@ -56,8 +56,7 @@
 
 #define FTS_MAX_CHIP_IDS        8
 
-#define FTS_CHIP_TYPE_MAPPING {{0x21, 0x82, 0x03, 0x82, 0x01, 0x82, 0xA1, 0x00, 0x00}}
-#define FTS_CHIP_ID_MAPPING   {{0x21, {0x820A, 0x820B}}}
+#define FTS_CHIP_TYPE_MAPPING {{0x26, 0x82, 0x05, 0x82, 0x05, 0x82, 0xA5, 0x82, 0xB5}}
 
 
 #define FILE_NAME_LENGTH                    128

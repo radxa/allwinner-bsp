@@ -182,6 +182,19 @@ int mmc_wbclr(struct sunxi_mmc_host *host, void __iomem *addr, u32 bmap, u32 tms
 	return ret;
 }
 
+static void sunxi_mmc_clk_gating_reset(struct sunxi_mmc_host *host)
+{
+	unsigned long iflags;
+	/* reset host */
+	spin_lock_irqsave(&host->lock, iflags);
+	sunxi_mmc_regs_save(host);
+	spin_unlock_irqrestore(&host->lock, iflags);
+	/**if gating/reset protect itself,so no lock use host->lock**/
+	sunxi_mmc_bus_clk_en(host, 0);
+	sunxi_mmc_bus_clk_en(host, 1);
+	sunxi_mmc_regs_restore(host);
+}
+
 static void sunxi_cmd11_timerout_handle(struct work_struct *work)
 {
 	struct sunxi_mmc_host *host;
@@ -865,8 +878,9 @@ static void sunxi_mmc_send_manual_stop(struct sunxi_mmc_host *host,
 
 	ri = mmc_readl(host, REG_RINTR);
 	if (!(ri & SDXC_COMMAND_DONE) || (ri & SDXC_INTERRUPT_ERROR_BIT)) {
-		SM_ERR(mmc_dev(host->mmc),
-			"send  manual stop command failed %x\n", (unsigned int)(ri & SDXC_INTERRUPT_ERROR_BIT));
+		if (!host->execute_tuning_runing)
+			SM_ERR(mmc_dev(host->mmc),
+				"send  manual stop command failed %x\n", (unsigned int)(ri & SDXC_INTERRUPT_ERROR_BIT));
 		if (req->stop)
 			req->stop->resp[0] = -ETIMEDOUT;
 	} else {
@@ -939,7 +953,8 @@ static int sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
 		err_flags &= ~SDXC_START_BIT_ERROR;
 
 	if (host->int_sum & err_flags) {
-		sunxi_mmc_dump_errinfo(host);
+		if (!host->execute_tuning_runing)
+			sunxi_mmc_dump_errinfo(host);
 		if ((((host->ctl_spec_cap & SUNXI_SC_EN_RETRY) && data)\
 			|| ((host->ctl_spec_cap & SUNXI_SC_EN_RETRY_CMD) && !data))
 		     && !sunxi_is_recovery_halt(host->mmc)) {
@@ -1352,22 +1367,18 @@ static irqreturn_t sunxi_mmc_handle_do_bottom_half(void *dev_id)
 	SM_DBG(mmc_dev(mmc), "no request for busy\n");
 
 	if (mrq_stop) {
-		SM_ERR(mmc_dev(mmc), "data error, sending stop command\n");
-		/***reset host***/
-		spin_lock_irqsave(&host->lock, iflags);
-		sunxi_mmc_regs_save(host);
-		spin_unlock_irqrestore(&host->lock, iflags);
-		/**if gating/reset protect itself,so no lock use host->lock**/
-		sunxi_mmc_bus_clk_en(host, 0);
-		sunxi_mmc_bus_clk_en(host, 1);
-		sunxi_mmc_regs_restore(host);
+		if (!host->execute_tuning_runing)
+			SM_ERR(mmc_dev(mmc), "data error, sending stop command\n");
+		/* reset host */
+		sunxi_mmc_clk_gating_reset(host);
 		SM_DBG(mmc_dev(host->mmc),
 			"no device retry:host reset and reg recover ok\n");
 
 		/***use sunxi_mmc_oclk_en  to update clk***/
 		rval = host->sunxi_mmc_oclk_en(host, 1);
-		SM_ERR(mmc_dev(host->mmc),
-		"stop:recover\n");
+		if (!host->execute_tuning_runing)
+			SM_ERR(mmc_dev(host->mmc),
+				"stop:recover\n");
 		if (rval) {
 			SM_ERR(mmc_dev(mmc), "retry:update clk failed %s %d\n",
 					__func__, __LINE__);
@@ -1388,13 +1399,11 @@ static irqreturn_t sunxi_mmc_handle_do_bottom_half(void *dev_id)
 					ctl_spec_cap &
 					CARD_PWR_GPIO_HIGH_ACTIVE) ? 0 : 1);
 
-		/***reset host***/
-		sunxi_mmc_regs_save(host);
-		sunxi_mmc_bus_clk_en(host, 0);
-		sunxi_mmc_bus_clk_en(host, 1);
-		sunxi_mmc_regs_restore(host);
-		SM_INFO(mmc_dev(host->mmc),
-			 "reset:host reset and recover finish\n");
+		/* reset host */
+		sunxi_mmc_clk_gating_reset(host);
+		if (!host->execute_tuning_runing)
+			SM_INFO(mmc_dev(host->mmc),
+				"reset:host reset and recover finish\n");
 		/***update clk***/
 		rval = host->sunxi_mmc_oclk_en(host, 1);
 		if (rval) {
@@ -1426,14 +1435,8 @@ static irqreturn_t sunxi_mmc_handle_do_bottom_half(void *dev_id)
 		/***Recover device state and stop host state machine****/
 		if (data) {
 			SM_ERR(mmc_dev(mmc), "retry:stop\n");
-			/***reset host***/
-			spin_lock_irqsave(&host->lock, iflags);
-			sunxi_mmc_regs_save(host);
-			spin_unlock_irqrestore(&host->lock, iflags);
-			/**if gating/reset protect itself,so no lock use host->lock**/
-			sunxi_mmc_bus_clk_en(host, 0);
-			sunxi_mmc_bus_clk_en(host, 1);
-			sunxi_mmc_regs_restore(host);
+			/* reset host */
+			sunxi_mmc_clk_gating_reset(host);
 			SM_DBG(mmc_dev(host->mmc),
 			"no device retry:host reset and reg recover ok\n");
 
@@ -1453,14 +1456,8 @@ static irqreturn_t sunxi_mmc_handle_do_bottom_half(void *dev_id)
 		/**to do:how to deal with data3 detect better here**/
 		if (!mmc_gpio_get_cd(mmc)) {
 			SM_ERR(mmc_dev(mmc), "retry:no device\n");
-			/***reset host***/
-			spin_lock_irqsave(&host->lock, iflags);
-			sunxi_mmc_regs_save(host);
-			spin_unlock_irqrestore(&host->lock, iflags);
-			/**if gating/reset protect itself,so no lock use host->lock**/
-			sunxi_mmc_bus_clk_en(host, 0);
-			sunxi_mmc_bus_clk_en(host, 1);
-			sunxi_mmc_regs_restore(host);
+			/* reset host */
+			sunxi_mmc_clk_gating_reset(host);
 			SM_DBG(mmc_dev(host->mmc),
 			"no device retry:host reset and reg recover ok\n");
 
@@ -1484,13 +1481,7 @@ static irqreturn_t sunxi_mmc_handle_do_bottom_half(void *dev_id)
 		}
 
 		/* reset host */
-		spin_lock_irqsave(&host->lock, iflags);
-		sunxi_mmc_regs_save(host);
-		spin_unlock_irqrestore(&host->lock, iflags);
-		/* if gating/reset protect itself,so no lock use host->lock */
-		sunxi_mmc_bus_clk_en(host, 0);
-		sunxi_mmc_bus_clk_en(host, 1);
-		sunxi_mmc_regs_restore(host);
+		sunxi_mmc_clk_gating_reset(host);
 		SM_DBG(mmc_dev(host->mmc),
 			"retry:host reset and reg recover ok\n");
 
@@ -2117,6 +2108,312 @@ static int sunxi_mmc_card_busy(struct mmc_host *mmc)
 		 * */
 		return host->sunxi_mmc_dat0_busy(host);
 	}
+}
+
+static int get_best_sdly(struct mmc_host *mmc, int sdly_cnt, u8 win_th, u8 *p)
+{
+	int i, j, max, group;
+	int s[15] = {0}; //start
+	int e[15] = {0}; //end
+	int w[15] = {0}; //window
+	int in_group = 0;
+	u8 best = 0;
+
+	/* get window boundary */
+	i = 0;
+	group = 0; //group
+	in_group = 0;
+	while (i < sdly_cnt) {
+		if (in_group) {
+			if (p[i] == 0) {
+				in_group = 0;
+				group++;
+			} else {
+				e[group] = i;
+				if (i == (sdly_cnt-1)) {
+					in_group = 0;
+					group++;
+				}
+			}
+		} else {
+			if (p[i] == 1) {
+				in_group = 1;
+				s[group] = i;
+				e[group] = i;
+			}
+		}
+
+		i++;
+	};
+
+	/* get window size */
+	for (i = 0; i < group; i++) {
+		if (e[i] >= s[i])
+			w[i] = e[i] - s[i] + 1;
+		else
+			w[i] = 0;
+	}
+
+	if (group)
+		SM_INFO(mmc_dev(mmc), "tuning section: ");
+	for (i = 0; i < group; i++) {
+		SM_INFO(mmc_dev(mmc), "[%d-%d|%d] ", s[i], e[i], w[i]);
+		if (group && (i == (group-1)))
+			SM_INFO(mmc_dev(mmc), "\n");
+	}
+
+	/*
+	* in theory, the first two sample delay sections should include a max or almost max sections.
+	* we check and choose best sample delay from these two sections. it will reduce impact on sample delay
+	* caused by temperature and voltage variation partly.
+	*/
+	/*
+	if (group > 2)
+		group = 2;
+	*/
+
+	/* get max window */
+	j = 0;
+	max = w[0];
+	for (i = 1; i < group; i++) {
+		if (w[i] > max) {
+			j = i;
+			max = w[i];
+		}
+	}
+
+	/*get best point */
+	if (w[j] >= win_th)
+		best = s[j] + (w[j] >> 1);
+	else
+		best = 0xff;
+
+	SM_INFO(mmc_dev(mmc), "tuning result: %d - %d,  best: %d\n", s[j], e[j], best);
+
+	return best;
+}
+
+static int sunxi_mmc_execute_tuning(struct mmc_host *mmc, u32 opcode)
+{
+	static const char tuning_blk_4b[] = {
+		0xff, 0x0f, 0xff, 0x00, 0xff, 0xcc, 0xc3, 0xcc,
+		0xc3, 0x3c, 0xcc, 0xff, 0xfe, 0xff, 0xfe, 0xef,
+		0xff, 0xdf, 0xff, 0xdd, 0xff, 0xfb, 0xff, 0xfb,
+		0xbf, 0xff, 0x7f, 0xff, 0x77, 0xf7, 0xbd, 0xef,
+		0xff, 0xf0, 0xff, 0xf0, 0x0f, 0xfc, 0xcc, 0x3c,
+		0xcc, 0x33, 0xcc, 0xcf, 0xff, 0xef, 0xff, 0xee,
+		0xff, 0xfd, 0xff, 0xfd, 0xdf, 0xff, 0xbf, 0xff,
+		0xbb, 0xff, 0xf7, 0xff, 0xf7, 0x7f, 0x7b, 0xde
+	};
+	static const char tuning_blk_8b[] = {
+		0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00,
+		0xff, 0xff, 0xcc, 0xcc, 0xcc, 0x33, 0xcc, 0xcc,
+		0xcc, 0x33, 0x33, 0xcc, 0xcc, 0xcc, 0xff, 0xff,
+		0xff, 0xee, 0xff, 0xff, 0xff, 0xee, 0xee, 0xff,
+		0xff, 0xff, 0xdd, 0xff, 0xff, 0xff, 0xdd, 0xdd,
+		0xff, 0xff, 0xff, 0xbb, 0xff, 0xff, 0xff, 0xbb,
+		0xbb, 0xff, 0xff, 0xff, 0x77, 0xff, 0xff, 0xff,
+		0x77, 0x77, 0xff, 0x77, 0xbb, 0xdd, 0xee, 0xff,
+		0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0x00,
+		0x00, 0xff, 0xff, 0xcc, 0xcc, 0xcc, 0x33, 0xcc,
+		0xcc, 0xcc, 0x33, 0x33, 0xcc, 0xcc, 0xcc, 0xff,
+		0xff, 0xff, 0xee, 0xff, 0xff, 0xff, 0xee, 0xee,
+		0xff, 0xff, 0xff, 0xdd, 0xff, 0xff, 0xff, 0xdd,
+		0xdd, 0xff, 0xff, 0xff, 0xbb, 0xff, 0xff, 0xff,
+		0xbb, 0xbb, 0xff, 0xff, 0xff, 0x77, 0xff, 0xff,
+		0xff, 0x77, 0x77, 0xff, 0x77, 0xbb, 0xdd, 0xee
+	};
+
+	struct sunxi_mmc_host *host = mmc_priv(mmc);
+	u32 sample_dly = 0;
+	u32 sample_win_th = 12;
+	u32 sdly_cnt = 64;
+	u8 en_retry = 0;
+	u8 en_read_data_timeout = 0;
+	u8 tuning_success = 1;
+	u8 sdly_cfg[64];
+	char *rcv_pattern = (char *)kmalloc(128, GFP_KERNEL|GFP_DMA);
+	char *std_pattern = NULL;
+	int err = 0;
+	u32 best_delay = 0;
+	u32 j;
+	int rval = 0;
+	u32 mode_2x = 0;
+	struct platform_device *pdev = to_platform_device(mmc_dev(mmc));
+
+	if (host->tuning_in_kernel != 1) {
+		SM_ERR(mmc_dev(mmc), "sdc%d :the host don't support tuning in kernel\n", host->phy_index);
+		return 0;
+	}
+
+	if (!rcv_pattern) {
+		SM_ERR(mmc_dev(mmc), "sdc%d malloc tuning pattern buffer failed\n",
+				host->phy_index);
+		return -EIO;
+	}
+
+	/* exit v5p3 and init v4p6x, to change the sample method */
+	mode_2x = mmc_readl(host, REG_SD_NTSR) & SDXC_2X_TIMING_MODE;
+	if (mode_2x) {
+		sunxi_mmc_exit_priv_v5p3x(host, pdev);
+		sunxi_mmc_init_priv_v4p6x(host, pdev, host->phy_index);
+		mmc_writel(host, REG_FTRGL, host->dma_tl ? host->dma_tl : 0x20070008);
+		mmc->ops->set_ios(mmc, &(mmc->ios));
+		SM_INFO(mmc_dev(host->mmc), "change sample method\n");
+	}
+
+	if (host->ctl_spec_cap & SUNXI_SC_EN_RETRY) {
+		host->ctl_spec_cap &= ~SUNXI_SC_EN_RETRY;
+		en_retry = 1;
+	}
+
+	if (host->ctl_spec_cap & SUNXI_MANUAL_READ_DATA_TIMEOUT) {
+		host->ctl_spec_cap &= ~SUNXI_MANUAL_READ_DATA_TIMEOUT;
+		en_read_data_timeout = 1;
+	}
+	host->execute_tuning_runing = 1;
+
+	/*
+	 * The Host Controller needs tuning only in case of SDR104 mode
+	 * and for SDR50 mode. Issue CMD19 repeatedly till get all of the
+	 * sample points or the number of loops reaches 40 times or a
+	 * timeout of 150ms occurs.
+	 */
+
+	SM_INFO(mmc_dev(mmc), "start tuning, tuning clk = %d  opcode=%d\n", mmc->ios.clock, opcode);
+	SM_INFO(mmc_dev(mmc), "----speed mode = %d\n", mmc->ios.timing);
+
+	for (sample_dly = 0; sample_dly < sdly_cnt; sample_dly++) {
+		struct mmc_command cmd = {0};
+		struct mmc_data data = {0};
+		struct mmc_request mrq = {0};
+		struct scatterlist sg;
+
+		if (host->sunxi_mmc_set_samp_dl) {
+			SM_DBG(mmc_dev(mmc), "--reset host--\n");
+			/* reset host */
+			sunxi_mmc_clk_gating_reset(host);
+			SM_DBG(mmc_dev(host->mmc),
+				"tuning:host reset and reg recover ok\n");
+
+			/***use sunxi_mmc_oclk_en  to update clk***/
+			rval = host->sunxi_mmc_oclk_en(host, 1);
+			SM_DBG(mmc_dev(host->mmc),
+			"retry:stop recover\n");
+			if (rval) {
+				SM_ERR(mmc_dev(mmc), "retry:update clk failed %s %d\n",
+					__func__, __LINE__);
+			}
+			host->sunxi_mmc_set_samp_dl(host, sample_dly);
+		} else {
+			SM_ERR(mmc_dev(mmc), "sunxi_mmc_set_samp_dl_raw is null\n");
+			err = -1;
+			goto out;
+		}
+
+		cmd.opcode = opcode;
+		cmd.arg = 0;
+		cmd.flags = MMC_RSP_R1 | MMC_CMD_ADTC;
+		if (opcode == MMC_SEND_TUNING_BLOCK_HS200) {
+			if (mmc->ios.bus_width == MMC_BUS_WIDTH_8) {
+				sg.length = 128;
+				data.blksz = 128;
+				std_pattern = (char *)tuning_blk_8b;
+			} else if (mmc->ios.bus_width == MMC_BUS_WIDTH_4) {
+				sg.length = 64;
+				data.blksz = 64;
+				std_pattern = (char *)tuning_blk_4b;
+			}
+		} else {
+			sg.length = 64;
+			data.blksz = 64;
+			std_pattern = (char *)tuning_blk_4b;
+		}
+		data.blocks = 1;
+		data.flags = MMC_DATA_READ;
+		data.sg = &sg;
+		data.sg_len = 1;
+		sg_init_one(&sg, rcv_pattern, sg.length);
+
+		tuning_success = 1;
+		mrq.cmd = &cmd;
+		mrq.data = &data;
+
+		for (j = 0; j < MMC_TUNING_RETRY_TIMES; j++) {
+			mmc_wait_for_req(mmc, &mrq);
+			/*
+			 * If no error happened in the transmission, compare data with
+			 * the tuning pattern. If there is no error, record the minimal
+			 * and the maximal value of the sampling clock delay to find
+			 * the best sampling point in the sampling window.
+			 */
+			if (cmd.error || data.error || memcmp(rcv_pattern, std_pattern, data.blksz)) {
+				tuning_success = 0;
+				break;
+			}
+		}
+
+		if (tuning_success) {
+			sdly_cfg[sample_dly] = 1;
+		} else {
+			sdly_cfg[sample_dly] = 0;
+		}
+
+	}
+
+	best_delay = get_best_sdly(mmc, sdly_cnt, sample_win_th, sdly_cfg);
+
+	if (best_delay != 0xff) {
+		SM_DBG(mmc_dev(mmc), "--reset host--\n");
+
+		/* reset host */
+		sunxi_mmc_clk_gating_reset(host);
+		SM_DBG(mmc_dev(mmc),
+			"tuning:host reset and reg recover ok\n");
+
+		/***use sunxi_mmc_oclk_en  to update clk***/
+		rval = host->sunxi_mmc_oclk_en(host, 1);
+		SM_DBG(mmc_dev(mmc),
+			"retry:stop recover\n");
+		if (rval) {
+			SM_ERR(mmc_dev(mmc), "retry:update clk failed %s %d\n",
+				__func__, __LINE__);
+		}
+		host->sunxi_mmc_set_samp_dl(host, best_delay);
+		host->kernel_tuning_sample_dly = best_delay;
+		SM_DBG(mmc_dev(mmc), "best_samp_delay = %d\n", best_delay);
+	} else {
+		SM_ERR(mmc_dev(mmc), "get best samp delay error\n");
+	}
+
+	SM_DBG(mmc_dev(mmc), "***reset host***  after tuning\n");
+	/* reset host */
+	sunxi_mmc_clk_gating_reset(host);
+
+	SM_DBG(mmc_dev(mmc),
+		"tuning:host reset and reg recover ok\n");
+	/***use sunxi_mmc_oclk_en  to update clk***/
+	rval = host->sunxi_mmc_oclk_en(host, 1);
+	SM_DBG(mmc_dev(mmc),
+		"no device retry:recover ck\n");
+	if (rval) {
+		SM_ERR(mmc_dev(mmc), "retry:update clk failed %s %d\n",
+			__func__, __LINE__);
+	}
+
+out:
+	if (en_retry) {
+		host->ctl_spec_cap |= SUNXI_SC_EN_RETRY;
+	}
+
+	if (en_read_data_timeout) {
+		host->ctl_spec_cap |= SUNXI_MANUAL_READ_DATA_TIMEOUT;
+	}
+
+	SM_DBG(mmc_dev(mmc), "kernel tuning finish\n");
+	kfree(rcv_pattern);
+	host->execute_tuning_runing = 0;
+	return err;
 }
 
 static void sunxi_mmc_parse_cmd(struct mmc_host *mmc, struct mmc_command *cmd,
@@ -2795,7 +3092,7 @@ static int sunxi_is_recovery_halt(struct mmc_host *mmc)
 static void sunxi_mmc_cqe_disable(struct mmc_host *mmc, bool recovery)
 {
 	struct sunxi_mmc_host *host = mmc_priv(mmc);
-	unsigned long iflags, tick;
+	unsigned long tick;
 	u32 rval;
 	struct cqhci_host *cq_host = mmc->cqe_private;
 	u32 ctl;
@@ -2813,13 +3110,7 @@ static void sunxi_mmc_cqe_disable(struct mmc_host *mmc, bool recovery)
 					__func__, __LINE__);
 
 		/* reset host */
-		spin_lock_irqsave(&host->lock, iflags);
-		sunxi_mmc_regs_save(host);
-		spin_unlock_irqrestore(&host->lock, iflags);
-		/* if gating/reset protect itself,so no lock use host->lock */
-		sunxi_mmc_bus_clk_en(host, 0);
-		sunxi_mmc_bus_clk_en(host, 1);
-		sunxi_mmc_regs_restore(host);
+		sunxi_mmc_clk_gating_reset(host);
 
 		/* Because the cmdq protocol does not ensure that the halt will not block;
 		 * So we have to reset the controller and then HALT to avoid blocking */
@@ -2995,6 +3286,7 @@ static struct mmc_host_ops sunxi_mmc_ops = {
 #endif
 	.start_signal_voltage_switch = sunxi_mmc_signal_voltage_switch,
 	.card_busy = sunxi_mmc_card_busy,
+	.execute_tuning = sunxi_mmc_execute_tuning,
 };
 
 #if defined(MMC_FPGA) && defined(CONFIG_ARCH_SUN8IW10P1)
@@ -3624,6 +3916,13 @@ static int sunxi_mmc_extra_of_parse(struct mmc_host *mmc)
 			"req-page-count used value:%d\n", host->req_page_count);
 	}
 
+	if (of_property_read_bool(np, "execute_tuning_in_kernel")) {
+		host->tuning_in_kernel = 1;
+		host->kernel_tuning_sample_dly = 0;
+		mmc->retune_period = 3600;
+		dev_info(mmc->parent,
+			"execute tuning in kernel, retune_period=%d\n", mmc->retune_period);
+	}
 
 	return 0;
 }

@@ -14,6 +14,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/version.h>
 
 #include <drm/drm_crtc.h>
 #include <drm/drm_panel.h>
@@ -22,6 +23,7 @@
 #include <video/display_timing.h>
 #include <video/of_display_timing.h>
 #include <video/videomode.h>
+#include "panels.h"
 
 #define POWER_MAX 3
 #define GPIO_MAX 3
@@ -36,12 +38,9 @@ struct panel_rgb {
 	unsigned int bus_format;
 	bool data_mirror;
 	struct {
-	//unsigned int prepare;
+		unsigned int power;
 		unsigned int enable;
-		unsigned int disable;
-//		unsigned int unprepare;
 		unsigned int reset;
-//		unsigned int init;
 	} delay;
 
 	struct backlight_device *backlight;
@@ -79,12 +78,11 @@ static int panel_rgb_unprepare(struct drm_panel *panel)
 	struct panel_rgb *rgb = to_panel_rgb(panel);
 	int i;
 
-
 	for (i = GPIO_MAX; i > 0; i--) {
 		if (rgb->enable_gpio[i - 1]) {
 			gpiod_set_value_cansleep(rgb->enable_gpio[i - 1], 0);
 			if (rgb->delay.enable)
-				panel_rgb_sleep(rgb->delay.disable);
+				panel_rgb_sleep(rgb->delay.enable);
 		}
 	}
 
@@ -96,14 +94,14 @@ static int panel_rgb_unprepare(struct drm_panel *panel)
 	for (i = POWER_MAX; i > 0; i--) {
 		if (rgb->supply[i - 1]) {
 			regulator_disable(rgb->supply[i - 1]);
-			msleep(10);
+			if (rgb->delay.power)
+				panel_rgb_sleep(rgb->delay.power);
 		}
 	}
 
 	return 0;
 }
-
-static int panel_rgb_prepare(struct drm_panel *panel)
+int panel_rgb_regulator_enable(struct drm_panel *panel)
 {
 	struct panel_rgb *rgb = to_panel_rgb(panel);
 	int err, i;
@@ -116,10 +114,20 @@ static int panel_rgb_prepare(struct drm_panel *panel)
 					i, err);
 				return err;
 			}
-			msleep(10);
+			if (rgb->delay.power)
+				panel_rgb_sleep(rgb->delay.power);
 		}
 	}
+	return 0;
+}
+EXPORT_SYMBOL(panel_rgb_regulator_enable);
 
+static int panel_rgb_prepare(struct drm_panel *panel)
+{
+	struct panel_rgb *rgb = to_panel_rgb(panel);
+	int i;
+
+	panel_rgb_regulator_enable(panel);
 	for (i = 0; i < GPIO_MAX; i++) {
 		if (rgb->enable_gpio[i]) {
 			gpiod_set_value_cansleep(rgb->enable_gpio[i], 1);
@@ -253,6 +261,9 @@ static int panel_rgb_parse_dt(struct panel_rgb *rgb)
 			ret);
 		return ret;
 	}
+	of_property_read_u32(np, "power-delay-ms", &rgb->delay.power);
+	of_property_read_u32(np, "enable-delay-ms", &rgb->delay.enable);
+	of_property_read_u32(np, "reset-delay-ms", &rgb->delay.reset);
 /*
 	ret = of_property_read_u32(np, "width-mm", &rgb->width);
 	if (ret < 0) {

@@ -59,6 +59,12 @@
 #include "gslX680_3676_855280.h"
 #include "gslX680_5680_d10.h"
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
+#define CONST_TYPE_PREFIX const
+#else
+#define CONST_TYPE_PREFIX
+#endif
+
 struct gslX680_fw_array {
 	char name[64];
 	unsigned int size;
@@ -354,20 +360,20 @@ static int ctp_wakeup(int status, int ms)
 	if (status == 0) {
 
 		if (ms == 0) {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 		} else {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 			msleep(ms);
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 		}
 	}
 	if (status == 1) {
 		if (ms == 0) {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 		} else {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 			msleep(ms);
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 		}
 	}
 	usleep_range(5000, 6000);
@@ -1517,8 +1523,8 @@ static ssize_t gsl_enable_show(struct device *dev,
 	return sprintf(buf, "%d\n", (int)data_save);
 }
 
-static ssize_t runtime_suspend_show(struct class *cls,
-	       struct class_attribute *attr, char *buf)
+static ssize_t runtime_suspend_show(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", (int)data_save);
 }
@@ -1553,8 +1559,8 @@ static ssize_t gsl_enable_store(struct device *dev,
 	return count;
 }
 
-static ssize_t runtime_suspend_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t runtime_suspend_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int error = gsl_enable_store_l(buf);
@@ -1570,14 +1576,14 @@ static ssize_t gsl_idle_enable_show(struct device *dev,
 	return sprintf(buf, "%d\n", (int)idle_data);
 }
 
-static ssize_t tp_idle_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t tp_idle_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", (int)idle_data);
 }
 
-static ssize_t tp_state_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t tp_state_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", _check_chip_state(glsX680_i2c));
 }
@@ -1643,8 +1649,8 @@ static ssize_t gsl_idle_enable_store(struct device *dev,
 	return count;
 }
 
-static ssize_t tp_idle_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t tp_idle_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int error = gsl_idle_enable_store_l(buf);
@@ -1654,14 +1660,14 @@ static ssize_t tp_idle_store(struct class *cls,
 	return count;
 }
 
-static ssize_t screen_width_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t screen_width_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", (int)screen_max_x);
 }
 
-static ssize_t screen_width_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t screen_width_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int error;
@@ -1673,14 +1679,14 @@ static ssize_t screen_width_store(struct class *cls,
 	return count;
 }
 
-static ssize_t screen_height_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t screen_height_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", (int)screen_max_y);
 }
 
-static ssize_t screen_height_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t screen_height_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int error;
@@ -1692,14 +1698,14 @@ static ssize_t screen_height_store(struct class *cls,
 	return count;
 }
 
-static ssize_t screen_revert_x_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t screen_revert_x_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", (int)revert_x_flag);
 }
 
-static ssize_t screen_revert_x_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t screen_revert_x_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int error;
@@ -1711,14 +1717,14 @@ static ssize_t screen_revert_x_store(struct class *cls,
 	return count;
 }
 
-static ssize_t screen_revert_y_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t screen_revert_y_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", (int)revert_y_flag);
 }
 
-static ssize_t screen_revert_y_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t screen_revert_y_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int error;
@@ -1730,14 +1736,14 @@ static ssize_t screen_revert_y_store(struct class *cls,
 	return count;
 }
 
-static ssize_t screen_exchange_xy_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t screen_exchange_xy_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", (int)exchange_x_y_flag);
 }
 
-static ssize_t screen_exchange_xy_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t screen_exchange_xy_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int error;
@@ -1750,8 +1756,8 @@ static ssize_t screen_exchange_xy_store(struct class *cls,
 }
 
 #if GSL_MONITOR_TIMER_ENABLE
-static ssize_t tp_monitor_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t tp_monitor_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	gTestMonitor = 1;
@@ -1808,7 +1814,9 @@ ATTRIBUTE_GROUPS(ctp_class);
 
 static struct class ctp_class = {
 	.name = "ctp",
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(6, 3, 0))
 	.owner = THIS_MODULE,
+#endif
 	.class_groups = ctp_class_groups,
 };
 
@@ -1841,8 +1849,12 @@ static int startup(void)
 	return 1;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int gsl_ts_probe(struct i2c_client *client)
+#else
 static int gsl_ts_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	struct gsl_ts *ts;
 	int rc = 0;
@@ -1882,7 +1894,10 @@ static int gsl_ts_probe(struct i2c_client *client,
 	glsX680_i2c = client;
 	ts->client = client;
 	i2c_set_clientdata(client, ts);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+#else
 	ts->device_id = id->driver_data;
+#endif
 
 	ts->is_suspended = false;
 	ts->is_runtime_suspend	= false;
@@ -1932,7 +1947,10 @@ static int gsl_ts_probe(struct i2c_client *client,
 	gsl_monitor_workqueue = create_singlethread_workqueue("gsl_monitor_workqueue");
 	queue_delayed_work(gsl_monitor_workqueue, &gsl_monitor_work, 1000);
 #endif /* GSL_MONITOR */
-	class_register(&ctp_class);
+	ret = class_register(&ctp_class);
+	if (ret)
+		dev_err(&client->dev, "gsl: class_register err\n");
+
 	return 0;
 
 error_mutex_destroy:
@@ -1942,7 +1960,11 @@ error_mutex_destroy:
 	return rc;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void gsl_ts_remove(struct i2c_client *client)
+#else
 static int gsl_ts_remove(struct i2c_client *client)
+#endif
 {
 	struct gsl_ts *ts = i2c_get_clientdata(client);
 
@@ -1982,7 +2004,11 @@ static int gsl_ts_remove(struct i2c_client *client)
 	kfree(ts->touch_data);
 	kfree(ts);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 static const struct of_device_id gsl_of_match[] = {
 	{.compatible = "allwinner,gslX680"},

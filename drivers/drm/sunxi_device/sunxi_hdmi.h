@@ -17,7 +17,9 @@
 #include <linux/platform_device.h>
 #include <video/drv_hdmi.h>
 
+
 #include "include.h"
+#include "lowlevel_hdmi20/dw_dev.h"
 #include "lowlevel_hdmi20/dw_i2cm.h"
 #include "lowlevel_hdmi20/dw_mc.h"
 #include "lowlevel_hdmi20/dw_avp.h"
@@ -25,15 +27,26 @@
 #include "lowlevel_hdmi20/dw_phy.h"
 #include "lowlevel_hdmi20/dw_edid.h"
 #include "lowlevel_hdmi20/dw_hdcp.h"
-#include "lowlevel_hdmi20/dw_dev.h"
 #include "lowlevel_hdmi20/dw_hdcp22.h"
 #include "lowlevel_hdmi20/dw_cec.h"
 #include "lowlevel_hdmi20/phy_aw.h"
 #include "lowlevel_hdmi20/phy_inno.h"
 #include "lowlevel_hdmi20/phy_snps.h"
+#include "lowlevel_hdmi20/phy_top.h"
 
 #define SUNXI_HDMI_ENABLE   			(0x1)
 #define SUNXI_HDMI_DISABLE  			(0x0)
+
+enum sunxi_hdmi_update_bits {
+	SUNXI_HDMI_UPDATE_FAORMAT = (0),
+	SUNXI_HDMI_UPDATE_BITS    = (1),
+	SUNXI_HDMI_UPDATE_EOTF    = (2),
+	SUNXI_HDMI_UPDATE_SPACE   = (3),
+	SUNXI_HDMI_UPDATE_DVIHDMI = (4),
+	SUNXI_HDMI_UPDATE_RANGE   = (5),
+	SUNXI_HDMI_UPDATE_SCAN    = (6),
+	SUNXI_HDMI_UPDATE_RATIO   = (7),
+};
 
 enum sunxi_hdmi_color_capability {
 	SUNXI_COLOR_RGB888_8BITS    = 0,
@@ -135,19 +148,27 @@ enum HDMI_CEA_VIC {
 
 /******************************************************************
  * @desc: sunxi hdmi level struct
- * funsion hdmi20 hdmi21
  *****************************************************************/
-struct sunxi_hdmi_s {
-	struct platform_device    *pdev;
-	struct drm_connector      *connect;
-	struct i2c_adapter        *i2c_adap;
-
-	uintptr_t reg_base;
-	struct disp_device_config	disp_info;
-
-	struct dw_phy_ops_s    *phy_func;
-	struct dw_hdmi_dev_s    dw_hdmi;
+struct sunxi_hdmi_plat_s {
+	unsigned char version;
+	unsigned char use_top_phy;
+	struct dw_phy_ops_s  phy_func;
 };
+
+struct sunxi_hdmi_s {
+	struct device         *dev;
+	struct drm_connector  *connect;
+	struct i2c_adapter    *i2c_adap;
+
+	u8 smooth_boot;
+	u8 clock_src;
+	uintptr_t reg_base;
+
+	struct sunxi_hdmi_plat_s    *plat_data;
+	struct disp_device_config	disp_info;
+	struct dw_hdmi_dev_s    	dw_hdmi;
+};
+
 /**
  * @desc: sunxi hdmi get color format string
  * @bits: disp define format
@@ -351,6 +372,7 @@ int sunxi_hdmi_audio_enable(void);
 /*******************************************************************************
  * sunxi hdmi core video info function
  ******************************************************************************/
+u8 sunxi_hdmi_get_support_hdr_mode(void);
 /**
  * @desc: sunxi hdmi get useing disp info
  * @return: disp info struct
@@ -427,6 +449,7 @@ int sunxi_hdmi_disconfig(void);
  * @return: 0 - success
  */
 int sunxi_hdmi_config(void);
+int sunxi_hdmi_smooth_config(void);
 /**
  * @desc: sunxi hdmi mode set.
  * @mode: set mode

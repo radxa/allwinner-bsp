@@ -262,7 +262,7 @@ static const struct de_bld_port_mux_mode de352_modes[2][3] = {
 		},
 		{
 			.name = "v0v1u0u2",
-			.mode_id = 3,
+			.mode_id = 2,
 			.channel_cnt = 4,
 			.channel_id[0] = VIDEO_CHANNEL_ID(0),
 			.channel_id[1] = VIDEO_CHANNEL_ID(1),
@@ -288,7 +288,7 @@ static const struct de_bld_port_mux_mode de352_modes[2][3] = {
 		},
 		{
 			.name = "v2u1u3",
-			.mode_id = 3,
+			.mode_id = 2,
 			.channel_cnt = 3,
 			.channel_id[0] = VIDEO_CHANNEL_ID(2),
 			.channel_id[1] = UI_CHANNEL_ID(1),

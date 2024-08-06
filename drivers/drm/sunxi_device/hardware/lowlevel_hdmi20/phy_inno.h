@@ -8,11 +8,8 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef INNO_PHY_H_
 #define INNO_PHY_H_
-
-#include "dw_dev.h"
 
 #define HDMI_PHY_PLL_BASEADDR		0x05530000
 

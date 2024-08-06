@@ -9,6 +9,7 @@
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
 #include <linux/delay.h>
+#include "dw_dev.h"
 #include "dw_mc.h"
 #include "dw_i2cm.h"
 
@@ -70,64 +71,74 @@ static void _dw_i2cm_set_div(void)
 	dw_write(I2CM_SS_SCL_HCNT_0_ADDR, (u8)(temp_hight >> 0));
 }
 
+static u8 _dw_i2cm_state(void)
+{
+	return dw_read(IH_I2CM_STAT0);
+}
+
 int _dw_i2cm_read(unsigned char *buf, unsigned int length)
 {
 	struct dw_i2cm_s *i2cm = dw_get_i2cm();
-	u8 state = 0x0, retry_cnt = 5;
-	int ret = 0;
+	u8 state = 0x0, retry_cnt = 5, read_mode = 1;
+	int ret = 0, i = 0;
 
-	if (IS_ERR(buf)) {
-		hdmi_err("dw i2cm check buf is null\n");
+	if (IS_ERR_OR_NULL(buf)) {
+		shdmi_err(buf);
 		return -1;
 	}
 
 	if (!i2cm->is_regaddr) {
-		hdmi_inf("dw i2c set read register address to 0\n");
 		i2cm->slave_reg = 0x0;
 		i2cm->is_regaddr = true;
 	}
 
 	while (length) {
-		length--;
-		dw_write_mask(I2CM_ADDRESS, I2CM_ADDRESS_ADDRESS_MASK, i2cm->slave_reg++);
-		if (i2cm->is_segment)
-			dw_write(I2CM_OPERATION, I2CM_OPERATION_RD_EXT_MASK);
-		else
-			dw_write(I2CM_OPERATION, I2CM_OPERATION_RD_MASK);
+		read_mode = (length >= 8) ? 8 : 1;
 
-		ret = wait_event_timeout(i2cm_wq, dw_read(IH_I2CM_STAT0),
+		dw_write_mask(I2CM_ADDRESS, I2CM_ADDRESS_ADDRESS_MASK, i2cm->slave_reg);
+
+		if (read_mode == 8)
+			dw_write(I2CM_OPERATION, i2cm->is_segment ?
+				I2CM_OPERATION_RD8_EXT_MASK : I2CM_OPERATION_RD8_MASK);
+		else
+			dw_write(I2CM_OPERATION, i2cm->is_segment ?
+				I2CM_OPERATION_RD_EXT_MASK : I2CM_OPERATION_RD_MASK);
+
+		ret = wait_event_timeout(i2cm_wq, _dw_i2cm_state(),
 				msecs_to_jiffies(DW_I2CM_TIMEOUT));
 		if (ret == 0) {
 			hdmi_err("dw i2cm wait state timeout\n");
 			return -2;
 		}
 
-		state = dw_read(IH_I2CM_STAT0);
+		state = _dw_i2cm_state();
 		dw_write(IH_I2CM_STAT0, state);
 
 		if (state & IH_I2CM_STAT0_I2CMASTERERROR_MASK) {
 			if (retry_cnt) {
-				length++;
-				i2cm->slave_reg--;
 				retry_cnt--;
 				continue;
 			}
 			return -1;
 		}
 
-		retry_cnt = 5;
-		if (state & IH_I2CM_STAT0_I2CMASTERDONE_MASK) {
-			*buf++ = (u8) dw_read(I2CM_DATAI);
-		} else {
+		if (!(state & IH_I2CM_STAT0_I2CMASTERDONE_MASK)) {
 			if (retry_cnt) {
-				length++;
-				i2cm->slave_reg--;
 				retry_cnt--;
 				continue;
 			}
-			hdmi_err("i2c read 0x%x timeout\n", i2cm->slave_reg);
 			return -1;
 		}
+
+		if (read_mode == 8) {
+			for (i = 0; i < 8; i++) {
+				*buf++ = (u8)dw_read(I2CM_READ_BUFF0 + i);
+			}
+		} else
+			*buf++ = (u8)dw_read(I2CM_DATAI);
+
+		length -= read_mode;
+		i2cm->slave_reg += read_mode;
 	}
 	i2cm->is_segment = false;
 
@@ -152,15 +163,16 @@ int _dw_i2cm_write(unsigned char *buf, unsigned int length)
 		dw_write(I2CM_ADDRESS, i2cm->slave_reg++);
 		dw_write(I2CM_OPERATION, I2CM_OPERATION_WR_MASK);
 
-		ret = wait_event_timeout(i2cm_wq, dw_read(IH_I2CM_STAT0),
+		ret = wait_event_timeout(i2cm_wq, _dw_i2cm_state(),
 				msecs_to_jiffies(DW_I2CM_TIMEOUT));
 		if (ret == 0) {
 			hdmi_err("dw i2cm wait state timeout\n");
 			return -2;
 		}
 
-		state = dw_read(IH_I2CM_STAT0);
+		state = _dw_i2cm_state();
 		dw_write(IH_I2CM_STAT0, state);
+
 		if (state & IH_I2CM_STAT0_I2CMASTERERROR_MASK) {
 			hdmi_err("dw i2c write error, retry count: %d\n", retry_cnt);
 			if (retry_cnt) {
@@ -249,4 +261,3 @@ int dw_i2cm_init(void)
 
 	return 0;
 }
-

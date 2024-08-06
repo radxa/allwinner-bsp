@@ -801,19 +801,14 @@ s32 edp_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf,
 {
 	u32 reg_val[4];
 	u32 regval = 0;
-	s32 i;
+	s32 i, j;
 	u32 timeout = 0;
 	s32 ret = 0;
-
-	if ((len > 16) || (len <= 0)) {
-		EDP_ERR("aux read out of len:%d\n", len);
-		return RET_FAIL;
-	}
-
-	memset(buf, 0, 16);
+	u32 block_len = 16;
+	u32 ext = (len % block_len) ? 1 : 0;
 
 	mutex_lock(&edp_hw->aux_lock);
-	if (!retry) {
+	for (j = 0; j < (len / block_len + ext); j++) {
 		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
@@ -826,67 +821,71 @@ s32 edp_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf,
 
 		regval = 0;
 		/* aux read request*/
-		regval |= (len - 1);
-		regval = SET_BITS(8, 20, regval, addr);
+		regval |= (block_len - 1);
+		regval = SET_BITS(8, 20, regval, (addr + (j * block_len)));
 		regval = SET_BITS(28, 4, regval, NATIVE_READ);
 		edp_hw->cur_aux_request = regval;
 		EDP_LOW_DBG("[%s] aux_cmd: 0x%x\n", __func__, regval);
 		writel(regval, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		udelay(1);
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	} else {
-		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	}
 
-	/* wait aux reply event */
-	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_read wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			mutex_unlock(&edp_hw->aux_lock);
-			return RET_AUX_TIMEOUT;
+		/* wait aux reply event */
+		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_read wait AUX_REPLY event timeout, request:0x%x\n",
+					    edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
 		}
-		timeout++;
-	}
 
-	/* wait for AUX_REPLY*/
-	//fixme
-	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
-	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_read wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			ret = RET_AUX_TIMEOUT;
+		/* wait for AUX_REPLY*/
+		//fixme
+		regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
+		while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_read wait AUX_REPLY timeout, request:0x%x\n",
+					    edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
+		}
+
+		regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
+		/* not ensure, need confirm from inno */
+		if (((regval >> 24) & 0xf) == 0xe) {
+			EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n",
+				    edp_hw->cur_aux_request);
+			ret = RET_AUX_NO_STOP;
 			goto CLR_EVENT;
 		}
-		timeout++;
-	}
+		regval &= 0xf0;
+		if ((regval >> 4) == AUX_REPLY_NACK) {
+			EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_NACK, request:0x%x\n",
+				    edp_hw->cur_aux_request);
+			ret = RET_AUX_NACK;
+			goto CLR_EVENT;
+		} else if ((regval >> 4) == AUX_REPLY_DEFER) {
+			EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_DEFER, request:0x%x\n",
+				    edp_hw->cur_aux_request);
+			ret = RET_AUX_DEFER;
+			goto CLR_EVENT;
+		}
 
-	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
-	/* not ensure, need confirm from inno */
-	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NO_STOP;
-		goto CLR_EVENT;
-	}
-	regval &= 0xf0;
-	if ((regval >> 4) == AUX_REPLY_NACK) {
-		EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NACK;
-		goto CLR_EVENT;
-	} else if ((regval >> 4) == AUX_REPLY_DEFER) {
-		EDP_LOW_DBG("edp_aux_read recieve AUX_REPLY_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_DEFER;
-		goto CLR_EVENT;
-	}
+		/* aux read reply*/
+		for (i = 0; i < 4; i++) {
+			reg_val[i] = readl(edp_hw->reg_base + REG_EDP_AUX_DATA0 + i * 0x4);
+			usleep_range(10, 20);
+			EDP_LOW_DBG("[%s] result: reg_val[%d] = 0x%x\n", __func__, i, reg_val[i]);
+		}
 
-	/* aux read reply*/
-	for (i = 0; i < 4; i++) {
-		reg_val[i] = readl(edp_hw->reg_base + REG_EDP_AUX_DATA0 + i * 0x4);
-		usleep_range(10, 20);
-		EDP_LOW_DBG("[%s] result: reg_val[%d] = 0x%x\n", __func__, i, reg_val[i]);
-	}
-
-	for (i = 0; i < len; i++) {
-		buf[i] = GET_BITS((i % 4) * 8, 8, reg_val[i / 4]);
+		for (i = 0; i < block_len; i++) {
+			if ((block_len * j + i) <= len)
+				buf[j * block_len + i] = GET_BITS((i % 4) * 8, 8, reg_val[i / 4]);
+		}
 	}
 
 CLR_EVENT:
@@ -903,18 +902,24 @@ s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf
 	u32 reg_val[4];
 	u32 regval = 0;
 	u32 timeout = 0;
-	s32 i;
+	s32 i, j;
 	s32 ret = 0;
-
-	if ((len > 16) || (len <= 0)) {
-		EDP_ERR("aux read out of len:%d\n", len);
-		return RET_FAIL;
-	}
+	u32 block_len = 16;
+	u32 data_len;
+	u32 ext = (len % block_len) ? 1 : 0;
 
 	memset(reg_val, 0, sizeof(reg_val));
 
 	mutex_lock(&edp_hw->aux_lock);
-	if (!retry) {
+	for (j = 0; j < (len / block_len + ext); j++) {
+		if (len <= 16)
+			data_len = len;
+		else if ((16 * j) < (len - 16))
+			data_len = 16;
+		else
+			/* this is the last one transmit */
+			data_len = len - 16;
+
 		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
@@ -925,11 +930,11 @@ s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf
 		regval |= (1 << 1);
 		writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
 
-		for (i = 0; i < len; i++) {
-			reg_val[i / 4] = SET_BITS((i % 4) * 8, 8, reg_val[i / 4], buf[i]);
+		for (i = 0; i < data_len; i++) {
+			reg_val[i / 4] = SET_BITS((i % 4) * 8, 8, reg_val[i / 4], buf[j * block_len + i]);
 		}
 
-		for (i = 0; i < (1 + ((len - 1) / 4)); i++) {
+		for (i = 0; i < (1 + ((data_len - 1) / 4)); i++) {
 			writel(reg_val[i], edp_hw->reg_base + REG_EDP_AUX_DATA0 + (i * 0x4));
 			usleep_range(10, 20);
 			EDP_LOW_DBG("[%s]: date: reg_val[%d] = 0x%x", __func__, i, reg_val[i]);
@@ -937,8 +942,8 @@ s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf
 
 		/* aux write request*/
 		regval = 0;
-		regval |= (len - 1);
-		regval = SET_BITS(8, 20, regval, addr);
+		regval |= (data_len - 1);
+		regval = SET_BITS(8, 20, regval, (addr + (j * block_len)));
 		regval = SET_BITS(28, 4, regval, NATIVE_WRITE);
 		edp_hw->cur_aux_request = regval;
 		EDP_LOW_DBG("[%s] aux_cmd: 0x%x\n", __func__, regval);
@@ -946,47 +951,50 @@ s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf
 
 		udelay(1);
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	} else {
-		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	}
 
-	/* wait aux reply event */
-	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_write wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			mutex_unlock(&edp_hw->aux_lock);
-			return RET_AUX_TIMEOUT;
+		/* wait aux reply event */
+		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_write wait AUX_REPLY event timeout, request:0x%x\n",
+					    edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
 		}
-		timeout++;
-	}
 
 
-	/* wait for AUX_REPLY*/
-	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_write wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			ret = RET_AUX_TIMEOUT;
+		/* wait for AUX_REPLY*/
+		while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_write wait AUX_REPLY timeout, request:0x%x\n",
+					    edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
+		}
+
+		regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
+		/* not ensure, need confirm from inno */
+		if (((regval >> 24) & 0xf) == 0xe) {
+			EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n",
+				    edp_hw->cur_aux_request);
+			ret = RET_AUX_NO_STOP;
 			goto CLR_EVENT;
 		}
-		timeout++;
-	}
-
-	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
-	/* not ensure, need confirm from inno */
-	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NO_STOP;
-		goto CLR_EVENT;
-	}
-	regval &= 0xf0;
-	if ((regval >> 4) == AUX_REPLY_NACK) {
-		EDP_LOW_DBG("edp_aux_write recieve AUX_NACK, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NACK;
-		goto CLR_EVENT;
-	} else if ((regval >> 4) == AUX_REPLY_DEFER) {
-		EDP_LOW_DBG("edp_aux_write recieve AUX_REPLY_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_DEFER;
-		goto CLR_EVENT;
+		regval &= 0xf0;
+		if ((regval >> 4) == AUX_REPLY_NACK) {
+			EDP_LOW_DBG("edp_aux_write recieve AUX_NACK, request:0x%x\n",
+				    edp_hw->cur_aux_request);
+			ret = RET_AUX_NACK;
+			goto CLR_EVENT;
+		} else if ((regval >> 4) == AUX_REPLY_DEFER) {
+			EDP_LOW_DBG("edp_aux_write recieve AUX_REPLY_DEFER, request:0x%x\n",
+				    edp_hw->cur_aux_request);
+			ret = RET_AUX_DEFER;
+			goto CLR_EVENT;
+		}
 	}
 
 CLR_EVENT:
@@ -1002,19 +1010,14 @@ s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *
 {
 	u32 reg_val[4];
 	u32 regval = 0;
-	s32 i;
+	s32 i, j;
 	u32 timeout = 0;
 	s32 ret = 0;
-
-	if ((len > 16) || (len <= 0)) {
-		EDP_ERR("aux read out of len:%d\n", len);
-		return RET_FAIL;
-	}
-
-	memset(buf, 0, 16);
+	u32 block_len = 16;
+	u32 ext = (len % block_len) ? 1 : 0;
 
 	mutex_lock(&edp_hw->aux_lock);
-	if (!retry) {
+	for (j = 0; j < (len / block_len + ext); j++) {
 		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
@@ -1027,7 +1030,7 @@ s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *
 
 		/* aux read request*/
 		regval = 0;
-		regval |= (len - 1);
+		regval |= (block_len - 1);
 		regval = SET_BITS(8, 20, regval, addr);
 		regval = SET_BITS(28, 4, regval, AUX_I2C_READ);
 		edp_hw->cur_aux_request = regval;
@@ -1035,57 +1038,56 @@ s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *
 		writel(regval, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		udelay(1);
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	} else {
-		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	}
 
-	/* wait aux reply event */
-	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			mutex_unlock(&edp_hw->aux_lock);
-			return RET_AUX_TIMEOUT;
+		/* wait aux reply event */
+		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
 		}
-		timeout++;
-	}
 
-	/* wait for AUX_REPLY*/
-	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			ret = RET_AUX_TIMEOUT;
+		/* wait for AUX_REPLY*/
+		while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
+		}
+
+		regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
+		/* not ensure, need confirm from inno */
+		if (((regval >> 24) & 0xf) == 0xe) {
+			EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
+			ret = RET_AUX_NO_STOP;
 			goto CLR_EVENT;
 		}
-		timeout++;
-	}
+		regval &= 0xf0;
+		if ((regval >> 4) == AUX_REPLY_I2C_NACK) {
+			EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
+			ret = RET_AUX_NACK;
+			goto CLR_EVENT;
+		} else if ((regval >> 4) == AUX_REPLY_I2C_DEFER) {
+			EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
+			ret = RET_AUX_DEFER;
+			goto CLR_EVENT;
+		}
 
-	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
-	/* not ensure, need confirm from inno */
-	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NO_STOP;
-		goto CLR_EVENT;
-	}
-	regval &= 0xf0;
-	if ((regval >> 4) == AUX_REPLY_I2C_NACK) {
-		EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NACK;
-		goto CLR_EVENT;
-	} else if ((regval >> 4) == AUX_REPLY_I2C_DEFER) {
-		EDP_LOW_DBG("edp_aux_i2c_read recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_DEFER;
-		goto CLR_EVENT;
-	}
+		/* aux read reply*/
+		for (i = 0; i < 4; i++) {
+			reg_val[i] = readl(edp_hw->reg_base + REG_EDP_AUX_DATA0 + i * 0x4);
+			usleep_range(10, 20);
+			EDP_LOW_DBG("[%s]: data: reg_val[%d] = 0x%x", __func__, i, reg_val[i]);
+		}
 
-	/* aux read reply*/
-	for (i = 0; i < 4; i++) {
-		reg_val[i] = readl(edp_hw->reg_base + REG_EDP_AUX_DATA0 + i * 0x4);
-		usleep_range(10, 20);
-		EDP_LOW_DBG("[%s]: data: reg_val[%d] = 0x%x", __func__, i, reg_val[i]);
-	}
-
-	for (i = 0; i < len; i++) {
-		buf[i] = GET_BITS((i % 4) * 8, 8, reg_val[i / 4]);
+		for (i = 0; i < block_len; i++) {
+			if ((block_len * j + i) <= len)
+				buf[j * block_len + i] = GET_BITS((i % 4) * 8, 8, reg_val[i / 4]);
+		}
 	}
 
 CLR_EVENT:
@@ -1101,17 +1103,22 @@ s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char 
 {
 	u32 reg_val[4];
 	u32 regval = 0;
-	s32 i;
+	s32 i, j;
 	u32 timeout = 0;
 	s32 ret = 0;
-
-	if ((len > 16) || (len <= 0)) {
-		EDP_ERR("aux read out of len:%d\n", len);
-		return RET_FAIL;
-	}
+	u32 block_len = 16;
+	u32 data_len;
+	u32 ext = (len % block_len) ? 1 : 0;
 
 	mutex_lock(&edp_hw->aux_lock);
-	if (!retry) {
+	for (j = 0; j < (len / block_len + ext); j++) {
+		if (len <= 16)
+			data_len = len;
+		else if ((16 * j) < (len - 16))
+			data_len = 16;
+		else
+			/* this is the last one transmit */
+			data_len = len - 16;
 		writel(0, edp_hw->reg_base + REG_EDP_PHY_AUX);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA0);
 		writel(0, edp_hw->reg_base + REG_EDP_AUX_DATA1);
@@ -1123,8 +1130,8 @@ s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char 
 		writel(regval, edp_hw->reg_base + REG_EDP_HPD_EVENT);
 
 
-		for (i = 0; i < len; i++) {
-			reg_val[i / 4] = SET_BITS(i % 4, 8, reg_val[i / 4], buf[i]);
+		for (i = 0; i < data_len; i++) {
+			reg_val[i / 4] = SET_BITS(i % 4, 8, reg_val[i / 4], buf[j * block_len + i]);
 		}
 
 		for (i = 0; i < 4; i++) {
@@ -1135,7 +1142,7 @@ s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char 
 
 		/* aux write request*/
 		regval = 0;
-		regval |= (len - 1);
+		regval |= (data_len - 1);
 		regval = SET_BITS(8, 20, regval, addr);
 		regval = SET_BITS(28, 4, regval, AUX_I2C_WRITE);
 		edp_hw->cur_aux_request = regval;
@@ -1144,46 +1151,44 @@ s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char 
 
 		udelay(1);
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	} else {
-		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
-	}
 
-	/* wait aux reply event */
-	while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			mutex_unlock(&edp_hw->aux_lock);
-			return RET_AUX_TIMEOUT;
+		/* wait aux reply event */
+		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
 		}
-		timeout++;
-	}
 
-	/* wait for AUX_REPLY*/
-	while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
-		if (timeout >= 50000) {
-			EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
-			ret = RET_AUX_TIMEOUT;
+		/* wait for AUX_REPLY*/
+		while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
+			if (timeout >= 50000) {
+				EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY timeout, request:0x%x\n", edp_hw->cur_aux_request);
+				ret = RET_AUX_TIMEOUT;
+				goto CLR_EVENT;
+			}
+			timeout++;
+		}
+
+		regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
+		/* not ensure, need confirm from inno */
+		if (((regval >> 24) & 0xf) == 0xe) {
+			EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
+			ret = RET_AUX_NO_STOP;
 			goto CLR_EVENT;
 		}
-		timeout++;
-	}
-
-	regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
-	/* not ensure, need confirm from inno */
-	if (((regval >> 24) & 0xf) == 0xe) {
-		EDP_LOW_DBG("edp_aux_read recieve without STOP, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NO_STOP;
-		goto CLR_EVENT;
-	}
-	regval &= 0xf0;
-	if ((regval >> 4) == AUX_REPLY_I2C_NACK) {
-		EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_NACK;
-		goto CLR_EVENT;
-	} else if ((regval >> 4) == AUX_REPLY_I2C_DEFER) {
-		EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
-		ret = RET_AUX_DEFER;
-		goto CLR_EVENT;
+		regval &= 0xf0;
+		if ((regval >> 4) == AUX_REPLY_I2C_NACK) {
+			EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_NACK, request:0x%x\n", edp_hw->cur_aux_request);
+			ret = RET_AUX_NACK;
+			goto CLR_EVENT;
+		} else if ((regval >> 4) == AUX_REPLY_I2C_DEFER) {
+			EDP_LOW_DBG("edp_aux_i2c_write recieve AUX_REPLY_I2C_DEFER, request:0x%x\n", edp_hw->cur_aux_request);
+			ret = RET_AUX_DEFER;
+			goto CLR_EVENT;
+		}
 	}
 
 CLR_EVENT:

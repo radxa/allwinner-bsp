@@ -31,6 +31,7 @@
 #include <linux/errno.h>
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
+#include <linux/version.h>
 #include   <linux/fs.h>
 #include  <asm/uaccess.h>
 #include "../../init-input.h"
@@ -2741,8 +2742,12 @@ static int stk3x1x_sysfs_remove_files(struct kobject *kobj, struct attribute **a
 			return 0;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int stk3x1x_probe(struct i2c_client *client)
+#else
 static int stk3x1x_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 		int err = -ENODEV;
 		struct stk3x1x_data *ps_data;
@@ -2949,7 +2954,11 @@ err_als_input_allocate:
 }
 
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void stk3x1x_remove(struct i2c_client *client)
+#else
 static int stk3x1x_remove(struct i2c_client *client)
+#endif
 {
 	struct stk3x1x_data *ps_data = i2c_get_clientdata(client);
 
@@ -2985,7 +2994,11 @@ static int stk3x1x_remove(struct i2c_client *client)
 	mutex_destroy(&ps_data->io_lock);
 	kfree(ps_data);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+    return;
+#else
     return 0;
+#endif
 }
 
 static const struct i2c_device_id stk_ps_id[] = {

@@ -70,7 +70,6 @@
 #define SDXC_REG_DRV_DL		(0x0140)
 #define SDXC_REG_SAMP_DL	(0x0144)
 #define SDXC_REG_DS_DL		(0x0148)
-#define SDXC_REG_SD_NTSR	(0x005C)
 #define SDXC_REG_SMCV		(0x300)		/* SMHC Version Register */
 #define SDXC_REG_NTDL_HS400	(0x800)
 
@@ -85,7 +84,6 @@
 #define SDXC_SAMP_DL_SW_EN			(1u<<7)
 #define SDXC_DS_DL_SW_EN			(1u<<7)
 
-#define	SDXC_2X_TIMING_MODE			(1U<<31)
 #define SDXC_HS400_NEW_SAMPLE_EN			(1U<<0)
 
 /* mask */
@@ -919,3 +917,11 @@ void sunxi_mmc_init_priv_v5p3x(struct sunxi_mmc_host *host,
 
 }
 EXPORT_SYMBOL_GPL(sunxi_mmc_init_priv_v5p3x);
+
+void sunxi_mmc_exit_priv_v5p3x(struct sunxi_mmc_host *host,
+			       struct platform_device *pdev)
+{
+	devm_kfree(&pdev->dev, host->version_priv_dat);
+	host->version_priv_dat = NULL;
+}
+EXPORT_SYMBOL_GPL(sunxi_mmc_exit_priv_v5p3x);

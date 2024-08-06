@@ -57,12 +57,6 @@
 /* one dma des can transfer data size = 1<<SUNXI_DES_SIZE_SDMMC */
 #define SUNXI_DES_SIZE_SDMMC_V4P1X	(15)
 
-/* reg */
-#define SDXC_REG_SD_NTSR	(0x005C)
-/* bit */
-#define	SDXC_2X_TIMING_MODE			(1U<<31)
-
-
 /* mask */
 #define SDXC_TX_TL_MASK				(0x1f)
 #define SDXC_RX_TL_MASK				(0x001F0000)

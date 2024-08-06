@@ -15,6 +15,7 @@
 #define MIPI_DSI_MODE_NO_EOT_PACKET	(1<<9)
 #define MIPI_DSI_CLOCK_NON_CONTINUOUS	(1<<10)
 #define MIPI_DSI_SLAVE_MODE		(1<<22)
+#define MIPI_DSI_TO_INCELL		(1<<23)
 
 /* lvds */
 #define MEDIA_BUS_FMT_RGB666_1X7X3_SPWG         0x1010

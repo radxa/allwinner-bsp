@@ -1934,16 +1934,16 @@ endif
 ifneq ($(KERNELRELEASE),)
 
 ########### this part for *.mk ############################
-include $(src)/hal/phydm/phydm.mk
+include $(srctree)/$(src)/hal/phydm/phydm.mk
 
 ########### HAL_RTL8822B #################################
 ifeq ($(CONFIG_RTL8822B), y)
-include $(src)/rtl8822b.mk
+include $(srctree)/$(src)/rtl8822b.mk
 endif
 
 ########### HAL_RTL8821C #################################
 ifeq ($(CONFIG_RTL8821C), y)
-include $(src)/rtl8821c.mk
+include $(srctree)/$(src)/rtl8821c.mk
 endif
 
 rtk_core :=	core/rtw_cmd.o \

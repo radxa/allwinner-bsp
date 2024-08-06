@@ -26,10 +26,6 @@ struct de_cdc_handle {
 	struct de_cdc_private *private;
 };
 
-struct de_cdc_para {
-	bool bypass;
-};
-
 struct de_cdc_handle *de_cdc_create(struct module_create_info *info);
 s32 de_cdc_apply_csc(struct de_cdc_handle *hdl,
 	struct de_csc_info *in_info, struct de_csc_info *out_info);

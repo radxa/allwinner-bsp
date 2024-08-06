@@ -19,6 +19,7 @@
 #include <linux/gpio.h>
 #include <linux/phy/phy.h>
 #include <linux/phy/phy-mipi-dphy.h>
+#include <linux/version.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
@@ -32,25 +33,27 @@
 #include "sunxi_device/sunxi_tcon.h"
 #include "sunxi_drm_intf.h"
 #include "sunxi_drm_crtc.h"
+#include "panel/panels.h"
 #define PHY_SINGLE_ENABLE 1
 #define PHY_DUAL_ENABLE 2
-
+#define MIPI_DSI_TO_INCELL (1<<23)
+#define INCELL_SUSPEND_FLAG 9
+#define INCELL_RESUME_FLAG 10
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 #define DSI_DISPLL_CLK
+#endif
+#if IS_ENABLED (CONFIG_DRM_FBDEV_EMULATION)
+void dsi_notify_call_chain(int cmd);
+#endif
 struct dsi_data {
 	int id;
 };
 struct sunxi_drm_dsi {
-	struct drm_connector connector;
-	struct drm_encoder encoder;
-	struct device *tcon_dev;
-	struct drm_device *drm_dev;
+	struct sunxi_drm_device sdrm;
 	struct mipi_dsi_host host;
 	struct drm_display_mode mode;
 	struct disp_dsi_para dsi_para;
-	unsigned int tcon_id;
-	struct drm_panel *panel;
 	bool bound;
-	bool allow_sw_enable;
 	bool sw_enable;
 	bool pending_enable_vblank;
 	struct device *dev;
@@ -62,7 +65,6 @@ struct sunxi_drm_dsi {
 	uintptr_t reg_base;
 	const struct dsi_data *dsi_data;
 
-	u32 dsi_id;
 	u32 enable;
 	irq_handler_t irq_handler;
 	void *irq_data;
@@ -75,7 +77,6 @@ struct sunxi_drm_dsi {
 	struct clk *clk;
 	struct clk *combphy;
 	struct reset_control *rst_bus;
-	unsigned long mode_flags;
 };
 static const struct dsi_data dsi0_data = {
 	.id = 0,
@@ -93,11 +94,6 @@ static const struct of_device_id sunxi_drm_dsi_match[] = {
 
 static void sunxi_dsi_enable_vblank(bool enable, void *data);
 
-static inline struct sunxi_drm_dsi *
-	drm_encoder_to_sunxi_drm_dsi(struct drm_encoder *encoder)
-{
-	return container_of(encoder, struct sunxi_drm_dsi, encoder);
-}
 /*
 static struct sunxi_drm_dsi *dev_to_sunxi_drm_dsi(struct device *dev)
 {
@@ -153,12 +149,16 @@ static inline struct sunxi_drm_dsi *host_to_sunxi_drm_dsi(struct mipi_dsi_host *
 }
 static inline struct sunxi_drm_dsi *encoder_to_sunxi_drm_dsi(struct drm_encoder *encoder)
 {
-	return container_of(encoder, struct sunxi_drm_dsi, encoder);
+	struct sunxi_drm_device *sdrm = container_of(encoder, struct sunxi_drm_device, encoder);
+
+	return container_of(sdrm, struct sunxi_drm_dsi, sdrm);
 }
 
 static inline struct sunxi_drm_dsi *connector_to_sunxi_drm_dsi(struct drm_connector *connector)
 {
-	return container_of(connector, struct sunxi_drm_dsi, connector);
+	struct sunxi_drm_device *sdrm = container_of(connector, struct sunxi_drm_device, connector);
+
+	return container_of(sdrm, struct sunxi_drm_dsi, sdrm);
 }
 
 static int sunxi_drm_dsi_find_slave(struct sunxi_drm_dsi *dsi)
@@ -303,7 +303,7 @@ static int sunxi_dsi_enable_output(struct sunxi_drm_dsi *dsi)
 {
 	struct disp_dsi_para *dsi_para = &dsi->dsi_para;
 
-	sunxi_tcon_dsi_enable_output(dsi->tcon_dev);
+	sunxi_tcon_dsi_enable_output(dsi->sdrm.tcon_dev);
 	dsi_open(&dsi->dsi_lcd, dsi_para);
 	if (dsi->slave)
 		dsi_open(&dsi->slave->dsi_lcd, dsi_para);
@@ -316,7 +316,7 @@ static int sunxi_dsi_disable_output(struct sunxi_drm_dsi *dsi)
 	dsi_close(&dsi->dsi_lcd);
 	if (dsi->slave)
 		dsi_close(&dsi->slave->dsi_lcd);
-	sunxi_tcon_dsi_disable_output(dsi->tcon_dev);
+	sunxi_tcon_dsi_disable_output(dsi->sdrm.tcon_dev);
 
 	return 0;
 }
@@ -326,7 +326,6 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 {
 	int ret, bpp;
 	struct drm_crtc *crtc = encoder->crtc;
-//	struct sunxi_drm_private *drv_private = to_sunxi_drm_private(encoder->dev);
 	int de_hw_id = sunxi_drm_crtc_get_hw_id(crtc);
 	struct drm_crtc_state *crtc_state = crtc->state;
 	struct sunxi_drm_dsi *dsi = encoder_to_sunxi_drm_dsi(encoder);
@@ -344,7 +343,6 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 					bpp, dsi->dsi_para.lanes, &dsi->phy_opts.mipi_dphy);
 	}
 
-	dsi->allow_sw_enable = false;
 	memset(&disp_cfg, 0, sizeof(struct disp_output_config));
 	memcpy(&disp_cfg.dsi_para, &dsi->dsi_para,
 		sizeof(dsi->dsi_para));
@@ -366,7 +364,7 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 	if (dsi->slave || (dsi->dsi_para.mode_flags & MIPI_DSI_SLAVE_MODE))
 		disp_cfg.slave_dsi = true;
 
-	sunxi_tcon_mode_init(dsi->tcon_dev, &disp_cfg);
+	sunxi_tcon_mode_init(dsi->sdrm.tcon_dev, &disp_cfg);
 
 	/* dual dsi use tcon's irq, single dsi use its own irq */
 	if (!disp_cfg.slave_dsi) {
@@ -413,20 +411,16 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 	}
 
 	if (dsi->sw_enable) {
-		if (dsi->phy)
+		if (dsi->phy) {
 			phy_power_on(dsi->phy);
+			if (dsi->displl_ls)
+				clk_prepare_enable(dsi->displl_ls);
+		}
 		if (dsi->slave) {
 			if (dsi->slave->phy)
 				phy_power_on(dsi->slave->phy);
 		}
-
-		/*
-		 * make permission: each panel's prepare just do power&
-		 * gpio operation, to ensure sw enable! We need not to
-		 * configure backlight becase it is control by
-		 * drm_panel_enable/disable automatically!
-		 */
-		drm_panel_prepare(dsi->panel);
+		panel_dsi_regulator_enable(dsi->sdrm.panel);
 	} else {
 		if (dsi->phy) {
 			phy_power_on(dsi->phy);
@@ -447,31 +441,41 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 				phy_configure(dsi->slave->phy, &dsi->phy_opts);
 			}
 		}
-
-		drm_panel_prepare(dsi->panel);
+		drm_panel_prepare(dsi->sdrm.panel);
 		dsi_clk_enable(&dsi->dsi_lcd, &dsi->dsi_para, 1);
 		if (dsi->slave)
 			dsi_clk_enable(&dsi->slave->dsi_lcd, &dsi->dsi_para, 1);
-		drm_panel_enable(dsi->panel);
 
 		ret = sunxi_dsi_enable_output(dsi);
 		if (ret < 0)
 			DRM_DEV_INFO(dsi->dev, "failed to enable dsi ouput\n");
+#if IS_ENABLED (CONFIG_DRM_FBDEV_EMULATION)
+		if (dsi->dsi_para.mode_flags & MIPI_DSI_TO_INCELL)
+			dsi_notify_call_chain(INCELL_RESUME_FLAG);
+#endif
 	}
 	if (dsi->pending_enable_vblank) {
 		sunxi_dsi_enable_vblank(1, dsi);
 		dsi->pending_enable_vblank = false;
 	}
+	drm_panel_enable(dsi->sdrm.panel);
 	DRM_INFO("[DSI] %s finish\n", __FUNCTION__);
 }
 
 void sunxi_drm_dsi_encoder_atomic_disable(struct drm_encoder *encoder,
 					struct drm_atomic_state *state)
 {
-	struct sunxi_drm_dsi *dsi = drm_encoder_to_sunxi_drm_dsi(encoder);
+	struct sunxi_drm_dsi *dsi = encoder_to_sunxi_drm_dsi(encoder);
 
-	drm_panel_disable(dsi->panel);
-	drm_panel_unprepare(dsi->panel);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	dsi->sdrm.panel->prepare_prev_first = false;
+#endif
+#if IS_ENABLED (CONFIG_DRM_FBDEV_EMULATION)
+	if (dsi->dsi_para.mode_flags & MIPI_DSI_TO_INCELL)
+		dsi_notify_call_chain(INCELL_SUSPEND_FLAG);
+#endif
+	drm_panel_disable(dsi->sdrm.panel);
+	drm_panel_unprepare(dsi->sdrm.panel);
 
 	if (dsi->phy) {
 		phy_power_off(dsi->phy);
@@ -489,7 +493,7 @@ void sunxi_drm_dsi_encoder_atomic_disable(struct drm_encoder *encoder,
 	if (dsi->slave)
 		sunxi_lcd_pin_set_state(dsi->slave->dev, "sleep");
 	sunxi_dsi_disable_output(dsi);
-	sunxi_tcon_mode_exit(dsi->tcon_dev);
+	sunxi_tcon_mode_exit(dsi->sdrm.tcon_dev);
 
 	if (!(dsi->slave || (dsi->dsi_para.mode_flags & MIPI_DSI_SLAVE_MODE)))
 		devm_free_irq(dsi->dev, dsi->irq_no, dsi);
@@ -507,10 +511,19 @@ static bool sunxi_dsi_fifo_check(void *data)
 	return status ? true : false;
 }
 
+int sunxi_dsi_get_current_line(void *data)
+{
+	struct sunxi_drm_dsi *dsi = (struct sunxi_drm_dsi *)data;
+	if (dsi->slave || (dsi->dsi_para.mode_flags & MIPI_DSI_SLAVE_MODE))
+		return sunxi_tcon_get_current_line(dsi->sdrm.tcon_dev);
+	else
+		return dsi_get_cur_line(&dsi->dsi_lcd);
+}
+
 static bool sunxi_dsi_is_sync_time_enough(void *data)
 {
 	struct sunxi_drm_dsi *dsi = (struct sunxi_drm_dsi *)data;
-	return sunxi_tcon_is_sync_time_enough(dsi->tcon_dev);
+	return sunxi_tcon_is_sync_time_enough(dsi->sdrm.tcon_dev);
 }
 
 static void sunxi_dsi_enable_vblank(bool enable, void *data)
@@ -522,7 +535,7 @@ static void sunxi_dsi_enable_vblank(bool enable, void *data)
 	}
 
 	if (dsi->slave || (dsi->dsi_para.mode_flags & MIPI_DSI_SLAVE_MODE))
-		sunxi_tcon_enable_vblank(dsi->tcon_dev, enable);
+		sunxi_tcon_enable_vblank(dsi->sdrm.tcon_dev, enable);
 	else
 		dsi_enable_vblank(&dsi->dsi_lcd, enable);
 }
@@ -537,11 +550,16 @@ int sunxi_drm_dsi_encoder_atomic_check(struct drm_encoder *encoder,
 	/* FIXME:TODO: color_fmt/clolor_depth update by actual configuration */
 //	scrtc_state->color_fmt = DISP_CSC_TYPE_RGB;
 //	scrtc_state->color_depth = DISP_DATA_8BITS;
-	scrtc_state->tcon_id = dsi->tcon_id;
+	scrtc_state->tcon_id = dsi->sdrm.tcon_id;
 	scrtc_state->enable_vblank = sunxi_dsi_enable_vblank;
 	scrtc_state->check_status = sunxi_dsi_fifo_check;
 	scrtc_state->is_sync_time_enough = sunxi_dsi_is_sync_time_enough;
+	scrtc_state->get_cur_line = sunxi_dsi_get_current_line;
 	scrtc_state->output_dev_data = dsi;
+	if (conn_state->crtc) {
+		dsi->sw_enable = sunxi_drm_check_if_need_sw_enable(conn_state->connector);
+		scrtc_state->sw_enable = dsi->sw_enable;
+	}
 	DRM_DEBUG_DRIVER("%s finish\n", __FUNCTION__);
 	return 0;
 }
@@ -561,8 +579,8 @@ static int sunxi_drm_dsi_encoder_loader_protect(struct drm_encoder *encoder,
 {
 	struct sunxi_drm_dsi *dsi = encoder_to_dsi(encoder);
 
-	if (dsi->panel)
-		drm_panel_loader_protect(dsi->panel, on);
+	if (dsi->sdrm.panel)
+		drm_panel_loader_protect(dsi->sdrm.panel, on);
 
 	return sunxi_drm_dsi_loader_protect(dsi, on);
 }
@@ -612,7 +630,7 @@ static int sunxi_dsi_connector_get_modes(struct drm_connector *connector)
 {
 	struct sunxi_drm_dsi *dsi = connector_to_sunxi_drm_dsi(connector);
 
-	return drm_panel_get_modes(dsi->panel, connector);
+	return drm_panel_get_modes(dsi->sdrm.panel, connector);
 }
 
 static const struct drm_connector_helper_funcs
@@ -622,11 +640,10 @@ static const struct drm_connector_helper_funcs
 
 static int sunxi_drm_dsi_bind(struct device *dev, struct device *master, void *data)
 {
-	const int lcd_type = 1;
 	struct sunxi_drm_dsi *dsi = dev_get_drvdata(dev);
+	struct sunxi_drm_device *sdrm = &dsi->sdrm;
 	struct drm_device *drm = (struct drm_device *)data;
 	struct device *tcon_lcd_dev = NULL;
-	struct sunxi_drm_private *drv_private = to_sunxi_drm_private(drm);
 	int ret, tcon_id;
 
 	DRM_INFO("[DSI]%s start\n", __FUNCTION__);
@@ -637,7 +654,7 @@ static int sunxi_drm_dsi_bind(struct device *dev, struct device *master, void *d
 	if (dsi->slave) {
 		dsi->slave->master = dsi;
 		dsi->dsi_para.dual_dsi = 1;
-		DRM_INFO("[DSI]dsi%d slave is ok\n", dsi->dsi_id);
+		DRM_INFO("[DSI]dsi%d slave is ok\n", dsi->sdrm.hw_id);
 	}
 	if (dsi->master)
 		return 0;
@@ -650,45 +667,42 @@ static int sunxi_drm_dsi_bind(struct device *dev, struct device *master, void *d
 	}
 	tcon_id = sunxi_tcon_of_get_id(tcon_lcd_dev);
 
-	dsi->tcon_dev = tcon_lcd_dev;
-	dsi->tcon_id = tcon_id;
-	dsi->drm_dev = drm;
+	sdrm->tcon_dev = tcon_lcd_dev;
+	sdrm->tcon_id = tcon_id;
+	sdrm->drm_dev = drm;
 
-	if (!dsi->panel) {
+	if (!dsi->sdrm.panel) {
 		DRM_ERROR("[DSI]Failed to find panel\n");
 		return -EPROBE_DEFER;
 	}
 
-	drm_encoder_helper_add(&dsi->encoder, &sunxi_dsi_encoder_helper_funcs);
-	ret = drm_simple_encoder_init(drm, &dsi->encoder, DRM_MODE_ENCODER_DSI);
+	drm_encoder_helper_add(&sdrm->encoder, &sunxi_dsi_encoder_helper_funcs);
+	ret = drm_simple_encoder_init(drm, &sdrm->encoder, DRM_MODE_ENCODER_DSI);
 	if (ret) {
 		DRM_ERROR("Couldn't initialise the encoder for tcon %d\n", tcon_id);
 		goto ERR_GROUP;
 	}
 
-	dsi->encoder.possible_crtcs =
+	sdrm->encoder.possible_crtcs =
 			drm_of_find_possible_crtcs(drm, tcon_lcd_dev->of_node);
 
-	drm_connector_helper_add(&dsi->connector,
+	drm_connector_helper_add(&sdrm->connector,
 			&sunxi_dsi_connector_helper_funcs);
 
-//	dsi->connector.polled = DRM_CONNECTOR_POLL_HPD;
-	ret = drm_connector_init(drm, &dsi->connector,
+//	sdrm->connector.polled = DRM_CONNECTOR_POLL_HPD;
+	ret = drm_connector_init(drm, &sdrm->connector,
 			&sunxi_dsi_connector_funcs,
 			DRM_MODE_CONNECTOR_DSI);
 	if (ret) {
-		drm_encoder_cleanup(&dsi->encoder);
+		drm_encoder_cleanup(&sdrm->encoder);
 		DRM_ERROR("Couldn't initialise the connector for tcon %d\n", tcon_id);
 		goto ERR_GROUP;
 	}
-//	drm_dsi_connector_init_property(drm, &dsi->connector);
+//	drm_dsi_connector_init_property(drm, &sdrm->connector);
 
-	drm_connector_attach_encoder(&dsi->connector, &dsi->encoder);
+	drm_connector_attach_encoder(&sdrm->connector, &sdrm->encoder);
 //	tcon_dev->cfg.private_data = dsi;
 
-	dsi->allow_sw_enable = true;
-	dsi->sw_enable = dsi->allow_sw_enable && drv_private->sw_enable &&
-			    (drv_private->boot.device_type == lcd_type);
 	dsi->bound = true;
 
 	return 0;
@@ -701,8 +715,8 @@ static void sunxi_drm_dsi_unbind(struct device *dev, struct device *master,
 {
 	struct sunxi_drm_dsi *dsi = dev_get_drvdata(dev);
 
-	drm_connector_cleanup(&dsi->connector);
-	drm_encoder_cleanup(&dsi->encoder);
+	drm_connector_cleanup(&dsi->sdrm.connector);
+	drm_encoder_cleanup(&dsi->sdrm.encoder);
 
 	dsi->bound = false;
 	if (dsi->slave)
@@ -720,10 +734,11 @@ static int sunxi_drm_dsi_host_attach(struct mipi_dsi_host *host,
 {
 	struct sunxi_drm_dsi *dsi = host_to_sunxi_drm_dsi(host);
 	struct drm_panel *panel = of_drm_find_panel(device->dev.of_node);
+	int ret;
 
 	DRM_INFO("[DSI]%s start\n", __FUNCTION__);
 
-	dsi->panel = panel;
+	dsi->sdrm.panel = panel;
 	dsi->dsi_para.dsi_div = 6;
 	dsi->dsi_para.lanes = device->lanes;
 	dsi->dsi_para.channel = device->channel;
@@ -731,6 +746,12 @@ static int sunxi_drm_dsi_host_attach(struct mipi_dsi_host *host,
 	dsi->dsi_para.mode_flags = device->mode_flags;
 	dsi->dsi_para.hs_rate = device->hs_rate;
 	dsi->dsi_para.lp_rate = device->lp_rate;
+
+	ret = component_add(dsi->dev, &sunxi_drm_dsi_component_ops);
+	if (ret) {
+		DRM_ERROR("[DSI]%s component_add fail\n", __FUNCTION__);
+		return ret;
+	}
 
 	DRM_INFO("[DSI]%s finish\n", __FUNCTION__);
 	return 0;
@@ -740,7 +761,7 @@ static int sunxi_drm_dsi_host_detach(struct mipi_dsi_host *host,
 				struct mipi_dsi_device *device)
 {
 	struct sunxi_drm_dsi *dsi = host_to_sunxi_drm_dsi(host);
-	dsi->panel = NULL;
+	dsi->sdrm.panel = NULL;
 	dsi->dsi_para.lanes = 0;
 	dsi->dsi_para.channel = 0;
 	dsi->dsi_para.format = 0;
@@ -897,13 +918,18 @@ static int sunxi_drm_dsi_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	dsi->dsi_id = dsi->dsi_data->id;
+	dsi->sdrm.hw_id = dsi->dsi_data->id;
 	dsi->phy = devm_phy_get(dev, "combophy");
 	if (IS_ERR_OR_NULL(dsi->phy))
-		DRM_INFO("dsi%d's combophy not setting, maybe not used!\n", dsi->dsi_id);
+		DRM_INFO("dsi%d's combophy not setting, maybe not used!\n", dsi->sdrm.hw_id);
 
 	dsi->host.ops = &sunxi_drm_dsi_host_ops;
 	dsi->host.dev = dev;
+	dsi->dev = dev;
+	dsi->dsi_lcd.dsi_index = dsi->sdrm.hw_id;
+	dsi_set_reg_base(&dsi->dsi_lcd, dsi->reg_base);
+	dev_set_drvdata(dev, dsi);
+	platform_set_drvdata(pdev, dsi);
 
 	ret = mipi_dsi_host_register(&dsi->host);
 	if (ret) {
@@ -911,16 +937,11 @@ static int sunxi_drm_dsi_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	dsi->dev = dev;
-
-	dsi->dsi_lcd.dsi_index = dsi->dsi_id;
-	dsi_set_reg_base(&dsi->dsi_lcd, dsi->reg_base);
-	dev_set_drvdata(dev, dsi);
-	platform_set_drvdata(pdev, dsi);
-
 	DRM_INFO("[DSI]%s ok\n", __FUNCTION__);
 
-	return component_add(&pdev->dev, &sunxi_drm_dsi_component_ops);
+	return 0;
+
+//	return component_add(&pdev->dev, &sunxi_drm_dsi_component_ops);
 }
 
 static int sunxi_drm_dsi_remove(struct platform_device *pdev)

@@ -31,42 +31,12 @@ struct de_snr_handle {
 	struct de_snr_private *private;
 };
 
-enum snr_buffer_flags {
-	DISP_BF_NORMAL     = 0, /* non-stereo */
-	DISP_BF_STEREO_TB  = 1 << 0, /* stereo top-bottom */
-	DISP_BF_STEREO_FP  = 1 << 1, /* stereo frame packing */
-	DISP_BF_STEREO_SSH = 1 << 2, /* stereo side by side half */
-	DISP_BF_STEREO_SSF = 1 << 3, /* stereo side by side full */
-	DISP_BF_STEREO_LI  = 1 << 4, /* stereo line interlace */
-	/*
-	 * 2d plus depth to convert into 3d,
-	 * left and right image using the same frame buffer
-	 */
-	DISP_BF_STEREO_2D_DEPTH  = 1 << 5,
-};
-
-/* date info deliver from userspace by set_blob_property */
-struct de_snr_para {
-	bool b_trd_out;
-	bool bypass;
-	unsigned char en;
-	unsigned char demo_en;
-	int demo_x;
-	int demo_y;
-	unsigned int demo_width;
-	unsigned int demo_height;
-	unsigned char y_strength;
-	unsigned char u_strength;
-	unsigned char v_strength;
-	unsigned char th_ver_line;
-	unsigned char th_hor_line;
-	enum snr_buffer_flags   flags;
-};
-
+bool de_snr_is_enabled(struct de_snr_handle *hdl);
 s32 de_snr_set_para(struct de_snr_handle *hdl, struct display_channel_state *state, struct de_snr_para *snr_para);
+s32 de_snr_set_size(struct de_snr_handle *hdl, u32 width, u32 height);
 struct de_snr_handle *de_snr_create(struct module_create_info *info);
 void de_snr_update_regs(struct de_snr_handle *hdl);
 s32 de_snr_enable(struct de_snr_handle *hdl, u32 snr_enable);
-s32 de_snr_dump_state(struct de_snr_handle *hdl);
+s32 de_snr_dump_state(struct drm_printer *p, struct de_snr_handle *hdl);
 
 #endif /*End of file*/

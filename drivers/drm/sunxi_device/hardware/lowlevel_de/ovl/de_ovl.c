@@ -164,12 +164,13 @@ static int de_ovl_v_set_coarse(struct ovl_v_reg *reg,
 }
 
 static int de_ovl_v_set_lay_layout(struct ovl_v_reg *reg, unsigned int x0, unsigned int y0,
-					int format, struct drm_framebuffer *fb, unsigned int layer_id)
+					int format, struct drm_framebuffer *fb, unsigned int layer_id, bool swap)
 {
 	u32 bpp[3] = {0, 0, 0};
 	u32 x[3] = {x0, 0, 0};
 	u32 y[3] = {y0, 0, 0};
 	u64 addr[3] = {0, 0, 0};
+	u64 tmp;
 	unsigned int *pitch = fb->pitches;
 	u64 addr_tmp = 0;
 	const struct drm_format_info *format_info = NULL;
@@ -192,19 +193,19 @@ static int de_ovl_v_set_lay_layout(struct ovl_v_reg *reg, unsigned int x0, unsig
 		bpp[0] = 32;
 	} else if (format <= DE_FORMAT_YUV422_I_VYUY) {
 		bpp[0] = 16;
-	} else if (format == DE_FORMAT_YUV422_P) {
+	} else if (format == DE_FORMAT_YUV422_P || format == DE_FORMAT_YVU422_P) {
 		bpp[0] = 8;
 		bpp[1] = 8;
 		bpp[2] = 8;
 		x[2] = x[1] = x[0] / 2;
 		y[2] = y[1] = y[0];
-	} else if (format == DE_FORMAT_YUV420_P) {
+	} else if (format == DE_FORMAT_YUV420_P || format == DE_FORMAT_YVU420_P) {
 		bpp[0] = 8;
 		bpp[1] = 8;
 		bpp[2] = 8;
 		x[2] = x[1] = x[0] / 2;
 		y[2] = y[1] = y[0] / 2;
-	} else if (format == DE_FORMAT_YUV411_P) {
+	} else if (format == DE_FORMAT_YUV411_P || format == DE_FORMAT_YVU411_P) {
 		bpp[0] = 8;
 		bpp[1] = 8;
 		bpp[2] = 8;
@@ -261,6 +262,11 @@ static int de_ovl_v_set_lay_layout(struct ovl_v_reg *reg, unsigned int x0, unsig
 		}
 	}
 #endif
+	if (swap) {
+		tmp = addr[1];
+		addr[1] = addr[2];
+		addr[2] = tmp;
+	}
 	reg->lay[layer_id].pitch0.dwval = pitch[0];
 	reg->lay[layer_id].pitch1.dwval = pitch[1];
 	reg->lay[layer_id].pitch2.dwval = pitch[2];
@@ -306,6 +312,7 @@ static int de_ovl_v_set_lay_layout(struct ovl_v_reg *reg, unsigned int x0, unsig
 static u32 de_ovl_convert_fmt(enum de_pixel_format format,
 	u32 *fmt, u32 *vi_ui_sel)
 {
+	u32 swap = 0;
 	switch (format) {
 	case DE_FORMAT_YUV422_I_VYUY:
 		*vi_ui_sel = 0x0;
@@ -331,6 +338,9 @@ static u32 de_ovl_convert_fmt(enum de_pixel_format format,
 		*vi_ui_sel = 0x0;
 		*fmt = 0x5;
 		break;
+	case DE_FORMAT_YVU422_P:
+		swap = 1;
+		fallthrough;
 	case DE_FORMAT_YUV422_P:
 		*vi_ui_sel = 0x0;
 		*fmt = 0x6;
@@ -343,6 +353,9 @@ static u32 de_ovl_convert_fmt(enum de_pixel_format format,
 		*vi_ui_sel = 0x0;
 		*fmt = 0x9;
 		break;
+	case DE_FORMAT_YVU420_P:
+		swap = 1;
+		fallthrough;
 	case DE_FORMAT_YUV420_P:
 		*vi_ui_sel = 0x0;
 		*fmt = 0xA;
@@ -355,6 +368,9 @@ static u32 de_ovl_convert_fmt(enum de_pixel_format format,
 		*vi_ui_sel = 0x0;
 		*fmt = 0xD;
 		break;
+	case DE_FORMAT_YVU411_P:
+		swap = 1;
+		fallthrough;
 	case DE_FORMAT_YUV411_P:
 		*vi_ui_sel = 0x0;
 		*fmt = 0xE;
@@ -396,7 +412,7 @@ static u32 de_ovl_convert_fmt(enum de_pixel_format format,
 		*fmt = format;
 		break;
 	}
-	return 0;
+	return swap;
 }
 
 static int de_ovl_disable_lay(struct de_ovl_handle *handle, u32 layer_id)
@@ -429,10 +445,14 @@ static int de_ovl_v_apply_lay(struct de_ovl_handle *handle, const struct display
 	struct drm_framebuffer *fb;
 	int fmt;
 	bool ignore_pixel_alpha;
+	u32 swap;
 
 	for (i = 0; i < priv->dsc->layer_cnt; ++i) {
 		if (!cfg->layer_en[i]) {
 			de_ovl_disable_lay(handle, i);
+
+			priv->debug.w[i] = 0;
+			priv->debug.h[i] = 0;
 			continue;
 		}
 		if (i == 0) {
@@ -461,7 +481,7 @@ static int de_ovl_v_apply_lay(struct de_ovl_handle *handle, const struct display
 		}
 		fmt = drm_to_de_format(fb->format->format);
 
-		de_ovl_convert_fmt(fmt, &format, &vi_ui_sel);
+		swap = de_ovl_convert_fmt(fmt, &format, &vi_ui_sel);
 		if (i == 0 && state->fake_layer0)
 			dwval = 0;
 		else
@@ -476,6 +496,7 @@ static int de_ovl_v_apply_lay(struct de_ovl_handle *handle, const struct display
 
 		priv->debug.w[i] = width;
 		priv->debug.h[i] = height;
+
 		dwval = ((width ? (width - 1) : 0) & 0x1FFF)
 			| (((height ? (height - 1) : 0) << 16) & 0x1FFF0000);
 		reg->lay[i].mbsize.dwval = dwval;
@@ -487,7 +508,7 @@ static int de_ovl_v_apply_lay(struct de_ovl_handle *handle, const struct display
 		if (state->color[i])
 			reg->fcolor[i].dwval = state->color[i];
 
-		de_ovl_v_set_lay_layout(reg, x, y, fmt, fb, i);
+		de_ovl_v_set_lay_layout(reg, x, y, fmt, fb, i, swap);
 		ovl_set_block_dirty(priv, ((i < 2) ?
 			OVL_V_REG_BLK_LAY_0_1 : OVL_V_REG_BLK_LAY_2_3), 1);
 	}
@@ -596,6 +617,9 @@ static int de_ovl_u_apply_lay(struct de_ovl_handle *handle, struct display_chann
 	for (i = 0; i < priv->dsc->layer_cnt; ++i) {
 		if (!cfg->layer_en[i]) {
 			de_ovl_disable_lay(handle, i);
+
+			priv->debug.w[i] = 0;
+			priv->debug.h[i] = 0;
 			continue;
 		}
 		if (i == 0) {
@@ -637,6 +661,9 @@ static int de_ovl_u_apply_lay(struct de_ovl_handle *handle, struct display_chann
 		dwval |= ((cfg->lay_premul[i] & 0x3) << 16);
 		dwval |= ((alpha << 24) & 0xFF000000);
 		reg->lay[i].ctl.dwval = dwval;
+
+		priv->debug.w[i] = width;
+		priv->debug.h[i] = height;
 
 		dwval = ((width ? (width - 1) : 0) & 0x1FFF)
 			| (height ? (((height - 1) & 0x1FFF) << 16) : 0);

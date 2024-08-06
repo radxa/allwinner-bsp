@@ -23,7 +23,6 @@ source "$(BSP_TOP)drivers/input/ctp/ilitek_tddi/Kconfig"
 source "$(BSP_TOP)drivers/input/ctp/focaltech_touch/Kconfig"
 source "$(BSP_TOP)drivers/input/ctp/tlsc6x/Kconfig"
 source "$(BSP_TOP)drivers/input/ctp/gt82x/Kconfig"
-endif #touch input device support
-
 source "$(BSP_TOP)drivers/input/ctp/nvt36xxx/Kconfig"
 
+endif #touch input device support

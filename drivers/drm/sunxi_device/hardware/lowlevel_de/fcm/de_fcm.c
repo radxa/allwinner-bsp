@@ -32,6 +32,8 @@
 
 #define FCM_PARA_NUM (12)
 #define FCM_SUM_NUM (28)
+#define FCM_MODE_CNT	10
+
 enum { FCM_PARA_REG_BLK = 0,
        FCM_ANGLE_REG_BLK,
        FCM_HUE_REG_BLK,
@@ -41,13 +43,24 @@ enum { FCM_PARA_REG_BLK = 0,
        FCM_REG_BLK_NUM,
 };
 
+struct fcm_debug_info {
+	bool enable;
+	bool csc_enable;
+};
+
 struct de_fcm_private {
+	struct fcm_debug_info debug;
 	struct de_reg_mem_info reg_mem_info;
 	struct de_reg_mem_info reg_shadow;
 	u32 reg_blk_num;
 	struct de_reg_block reg_blks[FCM_REG_BLK_NUM];
 	struct de_reg_block shadow_blks[FCM_REG_BLK_NUM];
+	struct fcm_hardware_data lut[FCM_MODE_CNT];
+	bool lut_init[FCM_MODE_CNT];
+	int cur_lut;
 	struct mutex lock;
+	struct de_csc_handle *icsc;
+	struct de_csc_handle *ocsc;
 
 	int (*de_fcm_set_csc)(struct de_fcm_handle *hdl,
 					   struct de_csc_info *in_info, struct de_csc_info *out_info);
@@ -55,20 +68,14 @@ struct de_fcm_private {
 	s32 (*de_fcm_set_window)(struct de_fcm_handle *hdl, u32 demo_enable,
 				u32 x, u32 y, u32 w, u32 h);
 	s32 (*de_fcm_set_size)(struct de_fcm_handle *hdl, u32 width, u32 height);
-	s32 (*de_fcm_dump_state)(struct drm_printer *p, struct de_fcm_handle *hdl);
-	int (*de_fcm_apply_lut) (struct de_fcm_handle *hdl, fcm_hardware_data_t *data, unsigned int update);
 };
 
 struct de_fcm_handle *de35x_fcm_create(struct module_create_info *info);
-static enum enhance_init_state g_init_state;
 //static struct de_fcm_private fcm_priv[DE_NUM][VI_CHN_NUM];
 
 struct de_fcm_handle *de_fcm_create(struct module_create_info *info)
 {
-	if (info->de_version == 0x350)
-		return de35x_fcm_create(info);
-	else
-		return NULL;
+	return de35x_fcm_create(info);
 }
 
 s32 de_fcm_set_size(struct de_fcm_handle *hdl, u32 width, u32 height)
@@ -99,18 +106,20 @@ s32 de_fcm_enable(struct de_fcm_handle *hdl, u32 en)
 
 s32 de_fcm_dump_state(struct drm_printer *p, struct de_fcm_handle *hdl)
 {
-	if (hdl->private->de_fcm_dump_state)
-		return hdl->private->de_fcm_dump_state(p, hdl);
-	else
-		return 0;
-}
+	struct de_fcm_private *priv = hdl->private;
+	struct fcm_debug_info *debug = &priv->debug;
+	unsigned long base = (unsigned long)hdl->private->reg_blks[0].reg_addr;
+	unsigned long de_base = (unsigned long)hdl->cinfo.de_reg_base;
 
-s32 de_fcm_apply_lut(struct de_fcm_handle *hdl, fcm_hardware_data_t *data, unsigned int update)
-{
-	if (hdl->private->de_fcm_apply_lut)
-		return hdl->private->de_fcm_apply_lut(hdl, data, update);
-	else
-		return 0;
+	drm_printf(p, "\n\tfcm@%8x: %sable csc: %sable\n", (unsigned int)(base - de_base), debug->enable ? "en" : "dis",
+				debug->csc_enable ? "en" : "dis");
+	if (priv->icsc) {
+		de_csc_dump_state(p, priv->icsc);
+	}
+	if (priv->ocsc) {
+		de_csc_dump_state(p, priv->ocsc);
+	}
+	return 0;
 }
 
 int de_fcm_set_csc(struct de_fcm_handle *hdl, struct de_csc_info *in_info, struct de_csc_info *out_info)
@@ -148,7 +157,6 @@ void de_fcm_update_regs(struct de_fcm_handle *hdl)
 
 		if (shadow_block->dirty) {
 			memcpy(block->vir_addr, shadow_block->vir_addr, shadow_block->size);
-			DRM_DEBUG_DRIVER("[SUNXI-DE] %s %d blk_id:%d\n", __FUNCTION__, __LINE__, blk_id);
 			fcm_set_block_dirty(priv, blk_id, 1);
 			shadow_block->dirty = 0;
 		}
@@ -166,7 +174,6 @@ static inline struct fcm_reg *de35x_get_fcm_shadow_reg(struct de_fcm_private *pr
 {
 	return (struct fcm_reg *)(priv->shadow_blks[FCM_PARA_REG_BLK].vir_addr);
 }
-
 
 s32 de35x_fcm_set_size(struct de_fcm_handle *hdl, u32 width, u32 height)
 {
@@ -189,9 +196,6 @@ s32 de35x_fcm_set_window(struct de_fcm_handle *hdl, u32 demo_enable,
 	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
 	u32 fcm_en;
 
-	/* if (g_init_state >= ENHANCE_TIGERLCD_ON) { */
-		/* return 0; */
-	/* } */
 	mutex_lock(&priv->lock);
 	fcm_en = reg->ctl.bits.fcm_en;
 	reg->ctl.bits.window_en = fcm_en ? demo_enable : 0;
@@ -211,12 +215,32 @@ s32 de35x_fcm_enable(struct de_fcm_handle *hdl, u32 en)
 {
 	struct de_fcm_private *priv = hdl->private;
 	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
+	struct fcm_debug_info *debug = &priv->debug;
+	struct fcm_info *info;
 
-	mutex_lock(&priv->lock);
-	reg->ctl.bits.fcm_en = en;
-	de_fcm_request_update(priv, FCM_PARA_REG_BLK, 1);
-	mutex_unlock(&priv->lock);
+	/* disable or enable only after lut is init */
+	if (!en || (priv->lut_init[priv->cur_lut] && en)) {
+		mutex_lock(&priv->lock);
+		debug->enable = en;
+		reg->ctl.bits.fcm_en = en;
+		de_fcm_request_update(priv, FCM_PARA_REG_BLK, 1);
+		/* reconfig the last lut */
+		mutex_unlock(&priv->lock);
+		if (en) {
+			info = kmalloc(sizeof(*info), GFP_KERNEL | __GFP_ZERO);
+			if (!info) {
+				DRM_ERROR("pq para alloc fail\n");
+				return -ENOMEM;
+			}
 
+			info->cmd = PQ_WRITE_AND_UPDATE;
+			memcpy(&info->fcm_data, &priv->lut[priv->cur_lut], sizeof(priv->lut[priv->cur_lut]));
+			de_fcm_lut_proc(hdl, info);
+			kfree(info);
+		}
+	}
+
+	DRM_DEBUG_DRIVER("%s %d\n", __func__, !!reg->ctl.bits.fcm_en);
 	return 0;
 }
 
@@ -226,16 +250,6 @@ s32 de35x_fcm_init(struct de_fcm_handle *hdl)
 	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
 
 	mutex_lock(&priv->lock);
-	if (g_init_state == ENHANCE_TIGERLCD_ON) {
-		/* sram need refresh, normal reg refreshed by system*/
-		de_fcm_request_update(priv, FCM_ANGLE_REG_BLK, 1);
-		de_fcm_request_update(priv, FCM_HUE_REG_BLK, 1);
-		de_fcm_request_update(priv, FCM_SAT_REG_BLK, 1);
-		de_fcm_request_update(priv, FCM_LUM_REG_BLK, 1);
-		mutex_unlock(&priv->lock);
-		return 0;
-	}
-	//reg->ctl.dwval = 0x80000001;
 	reg->ctl.dwval = 0x0;
 	de_fcm_request_update(priv, FCM_PARA_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
@@ -305,33 +319,34 @@ static void fcm_set_csc_coeff(struct fcm_reg *reg,
 	reg->csc1_c23.dwval = ocsc_coeff[11];
 }
 
+//fcm request rgb input, icsc conver input to rgb, ocsc convert back to input csc_info
 int de35x_fcm_set_csc(struct de_fcm_handle *hdl, struct de_csc_info *in_info, struct de_csc_info *out_info)
 {
 	struct de_csc_info icsc_out, ocsc_in;
-	u32 *icsc_coeff, *ocsc_coeff;
+	u32 icsc_coeff[16], ocsc_coeff[16];
 	struct de_fcm_private *priv = hdl->private;
 	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
+	struct fcm_debug_info *debug = &priv->debug;
+	if (!debug->enable) {
+		de_csc_apply(priv->icsc, NULL, NULL, NULL, 0, 0);
+		de_csc_apply(priv->ocsc, NULL, NULL, NULL, 0, 0);
+		return 0;
+	}
 
 	mutex_lock(&priv->lock);
 	icsc_out.eotf = in_info->eotf;
-	memcpy((void *)&ocsc_in, out_info, sizeof(ocsc_in));
-
 	if (in_info->px_fmt_space == DE_FORMAT_SPACE_RGB) {
 		icsc_out.px_fmt_space = DE_FORMAT_SPACE_RGB;
 		icsc_out.color_space = in_info->color_space;
 		icsc_out.color_range = in_info->color_range;
-		ocsc_in.color_range = DE_COLOR_RANGE_0_255;
-		ocsc_in.px_fmt_space = DE_FORMAT_SPACE_RGB;
 	} else if (in_info->px_fmt_space == DE_FORMAT_SPACE_YUV) {
 		icsc_out.px_fmt_space = DE_FORMAT_SPACE_RGB;
 		icsc_out.color_range = DE_COLOR_RANGE_0_255;
 		if ((in_info->color_space != DE_COLOR_SPACE_BT2020NC)
-				&& (in_info->color_space != DE_COLOR_SPACE_BT2020C))
-					icsc_out.color_space = DE_COLOR_SPACE_BT709;
+			    && (in_info->color_space != DE_COLOR_SPACE_BT2020C))
+			icsc_out.color_space = DE_COLOR_SPACE_BT709;
 		else
-				icsc_out.color_space = in_info->color_space;
-		ocsc_in.color_range = DE_COLOR_RANGE_0_255;
-		ocsc_in.px_fmt_space = DE_FORMAT_SPACE_RGB;
+			icsc_out.color_space = in_info->color_space;
 	} else {
 			DRM_ERROR("px_fmt_space %d no support",
 					in_info->px_fmt_space);
@@ -339,8 +354,14 @@ int de35x_fcm_set_csc(struct de_fcm_handle *hdl, struct de_csc_info *in_info, st
 			return -1;
 	}
 
-	de_csc_coeff_calc(in_info, &icsc_out, &icsc_coeff);
-	de_csc_coeff_calc(&ocsc_in, out_info, &ocsc_coeff);
+	memcpy((void *)&ocsc_in, out_info, sizeof(ocsc_in));
+	ocsc_in.color_range = DE_COLOR_RANGE_0_255;
+	ocsc_in.px_fmt_space = DE_FORMAT_SPACE_RGB;
+
+	de_csc_apply(priv->icsc, in_info, &icsc_out, icsc_coeff, 0, 1);
+	de_csc_apply(priv->ocsc, &ocsc_in, out_info, ocsc_coeff, 0, 1);
+//	de_csc_coeff_calc(in_info, &icsc_out, &icsc_coeff);
+//	de_csc_coeff_calc(&ocsc_in, out_info, &ocsc_coeff);
 	fcm_set_csc_coeff(reg, icsc_coeff, ocsc_coeff);
 	de_fcm_request_update(priv, FCM_CSC_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
@@ -430,11 +451,38 @@ static void de_fcm_set_lum_lut(struct fcm_reg *reg, unsigned int *h, unsigned in
 	}
 }
 
-int de35x_fcm_apply_lut(struct de_fcm_handle *hdl, fcm_hardware_data_t *data, unsigned int update)
+bool de_fcm_is_enabled(struct de_fcm_handle *hdl)
 {
 	struct de_fcm_private *priv = hdl->private;
 	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
+	return !!reg->ctl.bits.fcm_en;
+}
 
+s32 de_fcm_lut_proc(struct de_fcm_handle *hdl, struct fcm_info *info)
+{
+	fcm_hardware_data_t *data = &info->fcm_data;
+	struct de_fcm_private *priv = hdl->private;
+	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
+	struct fcm_debug_info *debug = &priv->debug;
+	bool update = info->cmd == PQ_WRITE_AND_UPDATE;
+
+	if (data->lut_id > FCM_MODE_CNT) {
+		DRM_ERROR("invalid lut id %d\n", data->lut_id);
+		return -1;
+	}
+
+	if (info->cmd == PQ_READ) {
+		if (!priv->lut_init[data->lut_id]) {
+			DRM_ERROR("lut %d not init\n", data->lut_id);
+			return -1;
+		}
+		memcpy(data, &priv->lut[data->lut_id], sizeof(*data));
+		return 0;
+	}
+
+	priv->cur_lut = data->lut_id;
+	priv->lut_init[data->lut_id] = true;
+	memcpy(&priv->lut[data->lut_id], data, sizeof(*data));
 	mutex_lock(&priv->lock);
 	de_fcm_set_hue_lut(reg, data->hbh_hue, data->sbh_hue, data->ybh_hue);
 	de_fcm_set_sat_lut(reg, data->hbh_sat, data->sbh_sat, data->ybh_sat);
@@ -445,48 +493,18 @@ int de35x_fcm_apply_lut(struct de_fcm_handle *hdl, fcm_hardware_data_t *data, un
 	memcpy(reg->angle_lum_lut, data->angle_lum, sizeof(s32) * 13);
 
 	if (update) {
+		debug->enable = true;
+		debug->csc_enable = true;
 		reg->ctl.bits.fcm_en = 1;
 		reg->csc_ctl.dwval = 1;
-		g_init_state = ENHANCE_TIGERLCD_ON;
 		de_fcm_request_update(priv, FCM_PARA_REG_BLK, 1);
 		de_fcm_request_update(priv, FCM_ANGLE_REG_BLK, 1);
 		de_fcm_request_update(priv, FCM_HUE_REG_BLK, 1);
 		de_fcm_request_update(priv, FCM_SAT_REG_BLK, 1);
 		de_fcm_request_update(priv, FCM_LUM_REG_BLK, 1);
 		de_fcm_request_update(priv, FCM_CSC_REG_BLK, 1);
-	} else {
-		de_fcm_request_update(priv, FCM_PARA_REG_BLK, 0);
-		de_fcm_request_update(priv, FCM_ANGLE_REG_BLK, 0);
-		de_fcm_request_update(priv, FCM_HUE_REG_BLK, 0);
-		de_fcm_request_update(priv, FCM_SAT_REG_BLK, 0);
-		de_fcm_request_update(priv, FCM_LUM_REG_BLK, 0);
-		de_fcm_request_update(priv, FCM_CSC_REG_BLK, 0);
 	}
 	mutex_unlock(&priv->lock);
-	return 0;
-}
-
-int de_fcm_get_lut(struct de_fcm_handle *hdl, fcm_hardware_data_t *data)
-{
-	struct de_fcm_private *priv = hdl->private;
-	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
-
-	memcpy(data->hbh_hue, reg->hbh_hue_lut, sizeof(s32) * 28);
-	memcpy(data->sbh_hue, reg->sbh_hue_lut, sizeof(s32) * 28);
-	memcpy(data->ybh_hue, reg->vbh_hue_lut, sizeof(s32) * 28);
-
-	memcpy(data->angle_hue, reg->angle_hue_lut, sizeof(s32) * 28);
-	memcpy(data->angle_sat, reg->angle_sat_lut, sizeof(s32) * 13);
-	memcpy(data->angle_lum, reg->angle_lum_lut, sizeof(s32) * 13);
-
-	memcpy(data->hbh_sat, reg->hbh_sat_lut, sizeof(s32) * 364);
-	memcpy(data->sbh_sat, reg->sbh_sat_lut, sizeof(s32) * 364);
-	memcpy(data->ybh_sat, reg->vbh_sat_lut, sizeof(s32) * 364);
-
-	memcpy(data->hbh_lum, reg->hbh_lum_lut, sizeof(s32) * 364);
-	memcpy(data->sbh_lum, reg->sbh_lum_lut, sizeof(s32) * 364);
-	memcpy(data->ybh_lum, reg->vbh_lum_lut, sizeof(s32) * 364);
-
 	return 0;
 }
 
@@ -500,6 +518,8 @@ struct de_fcm_handle *de35x_fcm_create(struct module_create_info *info)
 	struct de_fcm_private *priv;
 	u8 __iomem *reg_base;
 	const struct de_fcm_desc *desc;
+	struct csc_extra_create_info excsc;
+	struct module_create_info csc;
 
 	desc = get_fcm_desc(info);
 	if (!desc)
@@ -523,6 +543,15 @@ struct de_fcm_handle *de35x_fcm_create(struct module_create_info *info)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	memcpy(&csc, info, sizeof(*info));
+	excsc.type = FCM_CSC;
+	excsc.extra_id = 0;
+	csc.extra = &excsc;
+	hdl->private->icsc = de_csc_create(&csc);
+	WARN_ON(!hdl->private->icsc);
+	excsc.extra_id = 1;
+	hdl->private->ocsc = de_csc_create(&csc);
+	WARN_ON(!hdl->private->ocsc);
 
 	block = &(priv->reg_blks[FCM_PARA_REG_BLK]);
 	block->phy_addr = reg_mem_info->phy_addr;
@@ -610,8 +639,6 @@ struct de_fcm_handle *de35x_fcm_create(struct module_create_info *info)
 	block->vir_addr = reg_shadow->vir_addr + 0x3000;
 	block->size = 0x80;
 
-	g_init_state = ENHANCE_INVALID;
-
 	mutex_init(&priv->lock);
 
 	de35x_fcm_init(hdl);
@@ -620,7 +647,6 @@ struct de_fcm_handle *de35x_fcm_create(struct module_create_info *info)
 	hdl->private->de_fcm_enable = de35x_fcm_enable;
 	hdl->private->de_fcm_set_window = de35x_fcm_set_window;
 	hdl->private->de_fcm_set_size = de35x_fcm_set_size;
-	hdl->private->de_fcm_apply_lut = de35x_fcm_apply_lut;
 
 	return hdl;
 }

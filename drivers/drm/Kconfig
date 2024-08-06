@@ -68,7 +68,7 @@ config AW_DRM_DSI
 	help
 		If you want lcd-dsi output for drm driver, select it.
 
-menuconfig AW_DRM_HDMI_TX
+config AW_DRM_HDMI_TX
 	tristate "Support Hdmi Output"
 	depends on AW_DRM
 	select DRM_DISPLAY_HDCP_HELPER
@@ -77,14 +77,14 @@ menuconfig AW_DRM_HDMI_TX
 	help
 		If you want hdmi output for drm driver, select it.
 
-menuconfig AW_DRM_HDMI14
+config AW_DRM_HDMI14
 	bool "Support HDMI1.4 Output"
 	depends on AW_DRM_HDMI_TX
 	default n
 	help
 		If you want hdmi1.4 output for drm driver, select it.
 
-menuconfig AW_DRM_HDMI20
+config AW_DRM_HDMI20
 	bool "Support HDMI2.0 Output"
 	depends on AW_DRM_HDMI_TX
 	default y
@@ -129,6 +129,7 @@ config AW_DRM_TRILINEAR_EDP14
 	depends on AW_DRM_EDP
     select AW_DRM_EDP_CONTROLLER_USED
     select AW_DRM_DP_HDCP
+    select AW_CADENCE_COMBOPHY
 	default n
 	help
 		If you want trilinear edp 1.4 as edp controller, select it.

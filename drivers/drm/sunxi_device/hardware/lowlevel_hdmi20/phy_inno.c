@@ -8,10 +8,10 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #include <sunxi-sid.h>
 #include <linux/delay.h>
 
+#include "dw_dev.h"
 #include "dw_phy.h"
 #include "dw_mc.h"
 #include "phy_inno.h"
@@ -184,7 +184,7 @@ static struct inno_phy_mpll_s *_inno_phy_get_mpll_params(void)
 clk_cfg:
 	for (index = 0; phy_mpll[index].tmds_clk != 0; index++) {
 		if (ref_clk == phy_mpll[index].tmds_clk) {
-			phy_log("inno phy mpll use table[%d]\n", index);
+			hdmi_trace("inno phy mpll use table[%d]\n", index);
 			return &(phy_mpll[index]);
 		}
 	}
@@ -242,7 +242,7 @@ static void _inno_turn_ldo_ctrl(u8 state)
 		phy_base->hdmi_phy_dr2_1.bits.ch0_LDO_cur = state;
 		phy_base->hdmi_phy_dr2_1.bits.ch1_LDO_cur = state;
 		phy_base->hdmi_phy_dr2_1.bits.ch2_LDO_cur = state;
-		phy_log("inno phy turn %s LDO when phy version %d\n",
+		hdmi_trace("inno phy turn %s LDO when phy version %d\n",
 			state ? "on" : "off", phy_dev.version);
 	}
 }
@@ -316,7 +316,7 @@ void _inno_phy_config_4k60(void)
 		phy_base->hdmi_phy_dr6_1.bits.ch2terres_ndiv = 0x28;
 		phy_base->hdmi_phy_dr6_2.bits.ch1terres_ndiv = 0x28;
 		phy_base->hdmi_phy_dr6_3.bits.ch0terres_ndiv = 0x28;
-		phy_log("inno phy config clkterres ndiv when phy version 0\n");
+		hdmi_trace("inno phy config clkterres ndiv when phy version 0\n");
 	}
 
 	/* config resistance 100 */
@@ -365,11 +365,11 @@ static int _inno_phy_mpll_config(void)
 
 	if (config->tmds_clk == 594000) {
 		_inno_phy_config_4k60();
-		phy_log("inno phy individual config 4k60\n");
+		hdmi_trace("inno phy individual config 4k60\n");
 	} else if (config->tmds_clk == 297000) {
 		if (phy_dev.version == INNO_PHY_VERSION_1) {
 			_inno_phy_config_4k30();
-			phy_log("inno phy individual config 4k30 when phy version 1\n");
+			hdmi_trace("inno phy individual config 4k30 when phy version 1\n");
 		}
 	}
 
@@ -425,31 +425,31 @@ static int _inno_phy_mpll_config(void)
 	return 0;
 }
 
-static int _inno_phy_get_rxsense_lock(void)
+static u8 _inno_phy_get_rxsense_lock(void)
 {
 	if (phy_base->hdmi_phy_rxsen_esd_1.bits.ch0_rxsense_de_sta == 0x0)
-		return false;
+		return 0x0;
 	if (phy_base->hdmi_phy_rxsen_esd_1.bits.ch1_rxsense_de_sta == 0x0)
-		return false;
+		return 0x0;
 	if (phy_base->hdmi_phy_rxsen_esd_1.bits.ch2_rxsense_de_sta == 0x0)
-		return false;
+		return 0x0;
 	if (phy_base->hdmi_phy_rxsen_esd_1.bits.clk_rxsense_de_sta == 0x0)
-		return false;
+		return 0x0;
 
-	return true;
+	return 0x1;
 }
 
 /**
  * @Desc: get inno phy pre pll and post pll lock status
 */
-static inline int _inno_phy_get_pll_lock(void)
+static u8 _inno_phy_get_pll_lock(void)
 {
 	if (phy_base->hdmi_phy_pll2_1.bits.prepll_lock_state == 0x0)
-		return false;
+		return 0x0;
 	if (phy_base->hdmi_phy_pll3_3.bits.postpll_lock_state == 0x0)
-		return false;
+		return 0x0;
 
-	return true;
+	return 0x1;
 }
 
 static void _inno_phy_cfg_cur_bias(u32 data)
@@ -608,16 +608,18 @@ static void _inno_phy_reset(void)
 	_inno_phy_analog_reset();
 
 	_inno_phy_digital_reset();
-	phy_log("inno phy reset done\n");
+	hdmi_trace("inno phy reset done\n");
 }
 
 int inno_phy_write(u8 addr, void *data)
 {
 	u8 *value = (u8 *)data;
-	if (!value) {
-		hdmi_err("check write point value is null\n");
+
+	if (IS_ERR_OR_NULL(value)) {
+		shdmi_err(value);
 		return -1;
 	}
+
 	*((u8 *)((void *)phy_base + addr)) = *value;
 	return 0;
 }
@@ -638,7 +640,9 @@ int inno_phy_init(void)
 	int ret = 0, i = 0;
 	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
 	u32 *tmp_buf;
+	struct device_node *hdmi_node = hdmi->dev->of_node;
 
+	hdmi_trace("inno phy init\n");
 	phy_base = (struct __inno_phy_reg_t *)(hdmi->addr + INNO_PHY_REG_OFFSET);
 
 	inno_phy_set_version();
@@ -649,7 +653,7 @@ int inno_phy_init(void)
 	}
 
 	/* parse dts */
-	ret = of_property_count_elems_of_size(hdmi->dev->of_node, "inno_phy", sizeof(u32));
+	ret = of_property_count_elems_of_size(hdmi_node, "inno_phy", sizeof(u32));
 	if (ret <= 0) {
 		hdmi_inf("inno phy not get table from dts, use default\n");
 		goto reset;
@@ -664,7 +668,7 @@ int inno_phy_init(void)
 		goto reset;
 	}
 
-	ret = of_property_read_u32_array(hdmi->dev->of_node,
+	ret = of_property_read_u32_array(hdmi_node,
 			"inno_phy", tmp_buf, phy_dev.elec_size);
 	if (ret < 0) {
 		hdmi_err("inno phy get dts table value failed\n");
@@ -702,7 +706,7 @@ int inno_phy_config(void)
 	ret = dw_phy_wait_lock();
 	hdmi_inf("dw phy wait pll: %s\n", ret == 1 ? "lock" : "unlock");
 
-	return ret;
+	return (ret == 1) ? 0 : -1;
 }
 
 ssize_t inno_phy_dump(char *buf)

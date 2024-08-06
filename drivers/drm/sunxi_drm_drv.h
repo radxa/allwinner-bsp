@@ -14,40 +14,41 @@
 #define _SUNXI_DRM_DRV_H_
 
 #include <drm/drm_drv.h>
+#include <drm/drm_connector.h>
+#include <drm/drm_encoder.h>
 
-#define BOOT_OUTPUT_MAX			2
 #define OVL_MAX				4
 #define OVL_REMAIN			(OVL_MAX - 1)
+
+struct sunxi_drm_pri;
+struct drm_connector;
 
 struct sunxi_logo_info {
 	unsigned int phy_addr;
 	unsigned int width;
 	unsigned int height;
 	unsigned int bpp;
-	unsigned int stride;
+/*	unsigned int stride;
 	unsigned int crop_l;
 	unsigned int crop_t;
 	unsigned int crop_r;
-	unsigned int crop_b;
+	unsigned int crop_b;*/
 };
 
-struct display_boot_info {
-	unsigned int de_id;
+struct sunxi_drm_device {
+	struct drm_connector connector;
+	struct drm_encoder encoder;
+	struct drm_device *drm_dev;
+	struct drm_panel *panel;
+	struct drm_bridge *bridge;
+	struct device *tcon_dev;
 	unsigned int tcon_id;
-	bool sw_enable;
-	unsigned int device_type;
-	unsigned int mode;
-	unsigned int format;
-	unsigned int bits;
-	unsigned int colorspace;
-	unsigned int eotf;
-	struct sunxi_logo_info logo;
+	unsigned int hw_id;
 };
 
 struct sunxi_drm_private {
 	struct drm_device base;
-	bool sw_enable;
-	struct display_boot_info boot/*[BOOT_OUTPUT_MAX]*/;
+//	struct display_boot_info boot[BOOT_OUTPUT_MAX];
 	struct drm_property *prop_blend_mode[OVL_REMAIN];
 	struct drm_property *prop_alpha[OVL_REMAIN];
 	struct drm_property *prop_src_x[OVL_REMAIN], *prop_src_y[OVL_REMAIN];
@@ -58,13 +59,22 @@ struct sunxi_drm_private {
 	struct drm_property *prop_color[OVL_MAX];
 	struct drm_property *prop_layer_id;
 	struct drm_property *prop_frontend_data;
+	struct drm_property *prop_backend_data;
 	struct drm_property *prop_eotf;
 	struct drm_property *prop_color_space;
 	struct drm_property *prop_color_format;
 	struct drm_property *prop_color_depth;
 	struct drm_property *prop_color_range;
+	struct sunxi_drm_pri *priv;
 };
 
 #define to_sunxi_drm_private(drm) container_of(drm, struct sunxi_drm_private, base)
+
+bool sunxi_drm_check_if_need_sw_enable(struct drm_connector *connector);
+bool sunxi_drm_check_device_boot_enabled(struct drm_device *dev,
+			unsigned int connector_type, unsigned int connector_id);
+int sunxi_drm_get_logo_info(struct drm_device *dev, struct sunxi_logo_info *logo,
+			    unsigned int *scn_w, unsigned int *scn_h);
+void sunxi_drm_signal_sw_enable_done(struct drm_crtc *crtc);
 
 #endif

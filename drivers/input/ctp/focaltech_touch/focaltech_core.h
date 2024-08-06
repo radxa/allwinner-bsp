@@ -34,6 +34,8 @@
 * Included header files
 *****************************************************************************/
 #include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/device.h>
 #include <linux/i2c.h>
 #include <linux/spi/spi.h>
@@ -66,11 +68,17 @@
 /*****************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
+#define FTS_DRIVER_NAME                     "fts_ts"
+
 #define FTS_MAX_POINTS_SUPPORT              10 /* constant value, can't be changed */
 #define FTS_MAX_KEYS                        4
 #define FTS_KEY_DIM                         10
 #define FTS_COORDS_ARR_SIZE                 4
 #define FTS_ONE_TCH_LEN                     6
+#define FTS_ONE_TCH_LEN_V2                  8
+#define FTS_TOUCH_DATA_LEN_V2  (FTS_MAX_POINTS_SUPPORT * FTS_ONE_TCH_LEN_V2 + 4)
+
+
 #define FTS_TOUCH_DATA_LEN  (FTS_MAX_POINTS_SUPPORT * FTS_ONE_TCH_LEN + 2)
 
 #define FTS_GESTURE_POINTS_MAX              6
@@ -78,6 +86,8 @@
 
 #define FTS_SIZE_PEN                        15
 #define FTS_SIZE_DEFAULT                    15
+#define FTS_SIZE_DEFAULT_V2                 21
+
 
 #define FTS_MAX_ID                          0x0A
 #define FTS_TOUCH_OFF_E_XH                  0
@@ -86,11 +96,13 @@
 #define FTS_TOUCH_OFF_YL                    3
 #define FTS_TOUCH_OFF_PRE                   4
 #define FTS_TOUCH_OFF_AREA                  5
+#define FTS_TOUCH_OFF_MINOR                 6
+
 #define FTS_TOUCH_E_NUM                     1
 #define FTS_X_MIN_DISPLAY_DEFAULT           0
 #define FTS_Y_MIN_DISPLAY_DEFAULT           0
-#define FTS_X_MAX_DISPLAY_DEFAULT           720
-#define FTS_Y_MAX_DISPLAY_DEFAULT           1280
+#define FTS_X_MAX_DISPLAY_DEFAULT           (720 - 1)
+#define FTS_Y_MAX_DISPLAY_DEFAULT           (1280 - 1)
 
 #define FTS_TOUCH_DOWN                      0
 #define FTS_TOUCH_UP                        1
@@ -98,15 +110,47 @@
 #define EVENT_DOWN(flag)                    ((FTS_TOUCH_DOWN == flag) || (FTS_TOUCH_CONTACT == flag))
 #define EVENT_UP(flag)                      (FTS_TOUCH_UP == flag)
 
-#define FTS_MAX_COMPATIBLE_TYPE             4
+#define FTS_MAX_COMPATIBLE_TYPE             8
 #define FTS_MAX_COMMMAND_LENGTH             16
 
 #define FTS_MAX_TOUCH_BUF                   4096
+#define FTS_MAX_BUS_BUF                     4096
+
 
 
 /*****************************************************************************
 *  Alternative mode (When something goes wrong, the modules may be able to solve the problem.)
 *****************************************************************************/
+/*
+ * For commnication error in PM(deep sleep) state
+ */
+#define FTS_PATCH_COMERR_PM                 0
+#define FTS_TIMEOUT_COMERR_PM               700
+
+/*
+ * For high resolution
+ * Set FTS_TOUCH_HIRES_EN to 1 to support high resolution reporting of touch finger.
+ * Set FTS_PEN_HIRES_EN to 1 to support high resolution reporting of stylus pen.
+ *
+ * FTS_XXX_HIRES_X, a multiple relative to the original resolution
+ * FTS_HI_RES_X_MAX, const value, can't be modified
+ */
+#define FTS_TOUCH_HIRES_EN                  0
+#define FTS_TOUCH_HIRES_X                   10
+
+#define FTS_PEN_HIRES_EN                    1
+#define FTS_PEN_HIRES_X                     10
+
+
+#define FTS_HI_RES_X_MAX                    16
+
+
+#define GTP_SWAP(x, y) \
+do {\
+    typeof(x) z = x;\
+    x = y;\
+    y = z;\
+} while (0)
 
 
 /*****************************************************************************
@@ -134,6 +178,9 @@ struct fts_ts_platform_data {
     u32 x_min;
     u32 y_min;
     u32 max_touch_number;
+    u32 revert_x;
+    u32 revert_y;
+    u32 swap_x2y;
 };
 
 struct ts_event {
@@ -143,6 +190,7 @@ struct ts_event {
     int flag;   /* touch event flag: 0 -- down; 1-- up; 2 -- contact */
     int id;     /*touch ID */
     int area;
+    int minor;
 };
 
 struct pen_event {
@@ -172,7 +220,7 @@ struct fts_ts_data {
     struct work_struct fwupg_work;
     struct delayed_work esdcheck_work;
     struct delayed_work prc_work;
-    struct task_struct *thread_tpd;
+    struct work_struct resume_work;
     wait_queue_head_t ts_waitqueue;
     struct ftxxxx_proc proc;
     struct ftxxxx_proc proc_ta;
@@ -184,6 +232,10 @@ struct fts_ts_data {
     int log_level;
     int fw_is_running;      /* confirm fw is running when using spi:default 0 */
     int dummy_byte;
+#if IS_ENABLED(CONFIG_PM) && FTS_PATCH_COMERR_PM
+    struct completion pm_completion;
+    bool pm_suspend;
+#endif
     bool suspended;
     bool fw_loading;
     bool irq_disabled;
@@ -215,26 +267,39 @@ struct fts_ts_data {
     u8 *bus_tx_buf;
     u8 *bus_rx_buf;
     int bus_type;
+    int bus_ver;
     struct regulator *vdd;
-    struct pinctrl          *pinctrl;
-    struct pinctrl_state    *spi_default;
-    struct pinctrl_state    *spi_active;
+    struct regulator *vcc_i2c;
+#if FTS_PINCTRL_EN
+    struct pinctrl *pinctrl;
+    struct pinctrl_state *pins_active;
+    struct pinctrl_state *pins_suspend;
+    struct pinctrl_state *pins_release;
+#endif
+
+    struct notifier_block fb_notif;
 };
+
 
 enum _FTS_BUS_TYPE {
     BUS_TYPE_NONE,
     BUS_TYPE_I2C,
     BUS_TYPE_SPI,
-    BUS_TYPE_SPI_V2,
+};
+
+enum _FTS_BUS_VER {
+    BUS_VER_DEFAULT = 1,
+    BUS_VER_V2,
 };
 
 enum _FTS_TOUCH_ETYPE {
     TOUCH_DEFAULT = 0x00,
-    TOUCH_EVENT_NUM = 0x02,
+    TOUCH_PROTOCOL_v2 = 0x02,
     TOUCH_EXTRA_MSG = 0x08,
     TOUCH_PEN = 0x0B,
     TOUCH_GESTURE = 0x80,
     TOUCH_FW_INIT = 0x81,
+    TOUCH_DEFAULT_HI_RES = 0x82,
     TOUCH_IGNORE = 0xFE,
     TOUCH_ERROR = 0xFF,
 };
@@ -254,14 +319,17 @@ enum _FTS_GESTURE_BMODE {
 *****************************************************************************/
 extern struct fts_ts_data *fts_data;
 
+
 /* communication interface */
 int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen);
 int fts_read_reg(u8 addr, u8 *value);
 int fts_write(u8 *writebuf, u32 writelen);
 int fts_write_reg(u8 addr, u8 value);
+int fts_bus_configure(struct fts_ts_data *ts_data, u8 *buf, u32 size);
+int fts_bus_transfer_direct(u8 *writebuf, u32 writelen, u8 *readbuf, u32 readlen);
 void fts_hid2std(void);
-int fts_bus_init(struct fts_ts_data *ts_data);
-int fts_bus_exit(struct fts_ts_data *ts_data);
+int fts_ts_probe_entry(struct fts_ts_data *ts_data);
+int fts_ts_remove_entry(struct fts_ts_data *ts_data);
 
 /* Gesture functions */
 int fts_gesture_init(struct fts_ts_data *ts_data);
@@ -286,8 +354,12 @@ void fts_esdcheck_switch(struct fts_ts_data *ts_data, bool enable);
 void fts_esdcheck_proc_busy(struct fts_ts_data *ts_data, bool proc_debug);
 void fts_esdcheck_suspend(struct fts_ts_data *ts_data);
 void fts_esdcheck_resume(struct fts_ts_data *ts_data);
+bool fts_esd_is_disable(void);
+
 
 /* Host test */
+int fts_test_init(struct fts_ts_data *ts_data);
+int fts_test_exit(struct fts_ts_data *ts_data);
 
 /* Point Report Check*/
 int fts_point_report_check_init(struct fts_ts_data *ts_data);
@@ -297,8 +369,12 @@ void fts_prc_queue_work(struct fts_ts_data *ts_data);
 /* FW upgrade */
 int fts_fwupg_init(struct fts_ts_data *ts_data);
 int fts_fwupg_exit(struct fts_ts_data *ts_data);
+int fts_fw_recovery(void);
 int fts_upgrade_bin(char *fw_name, bool force);
 int fts_enter_test_environment(bool test_state);
+int fts_enter_gesture_fw(void);
+int fts_enter_normal_fw(void);
+
 
 /* Other */
 int fts_reset_proc(int hdelayms);
@@ -313,13 +389,5 @@ int fts_ex_mode_recovery(struct fts_ts_data *ts_data);
 void fts_irq_disable(void);
 void fts_irq_enable(void);
 
-#if FTS_PSENSOR_EN
-int fts_proximity_init(void);
-int fts_proximity_exit(void);
-int fts_proximity_readdata(struct fts_ts_data *ts_data);
-int fts_proximity_suspend(void);
-int fts_proximity_resume(void);
-int fts_proximity_recovery(struct fts_ts_data *ts_data);
-#endif
 
 #endif /* __LINUX_FOCALTECH_CORE_H__ */

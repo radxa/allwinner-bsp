@@ -1,28 +1,24 @@
-ctp {
-		compatible = "allwinner,ft5x_ts";
+&twi2 {
+	clock-frequency = <400000>;
+	pinctrl-0 = <&twi2_pins_default>;
+	pinctrl-1 = <&twi2_pins_sleep>;
+	pinctrl-names = "default", "sleep";
+	/* For stability and backwards compatibility, we recommend setting ‘twi_drv_used’ to 1 */
+	twi_drv_used = <1>;
+	twi-supply = <&reg_bldo2>;
+	status = "okay";
+	focaltech@38{
+		compatible = "focaltech,fts";
 		reg = <0x38>;
-		device_type = "ctp";
 		status = "okay";
-		ctp_name = "ft5x_ts";
-		ctp_twi_id = <0x0>;
-		ctp_twi_addr = <0x38>;
-		ctp_screen_max_x = <1200>;
-		ctp_screen_max_y = <2000>;
-		ctp_revert_x_flag = <0>;
-		ctp_revert_y_flag = <0>;
-
-		ctp_exchange_x_y_flag = <0x0>;
-		ctp_int_port = <&pio PH 9 GPIO_ACTIVE_LOW>;
-		ctp_wakeup = <&pio PH 10 GPIO_ACTIVE_LOW>;
-		ctp-supply = <&reg_cldo2>;
-		ctp_power_ldo_vol = <3300>;
+		focaltech,irq-gpio = <&pio PD 18 GPIO_ACTIVE_LOW>;
+		focaltech,reset-gpio = <&pio PD 19 GPIO_ACTIVE_LOW>;
+		focaltech,max-touch-number = <10>;
+		focaltech,display-coords =  <0 0 1200 2000>;
+		focaltech,swap-x2y = <0>;
+		focaltech,revert_x = <0>;
+		focaltech,revert_y = <0>;
+		vcc_i2c-supply = <&reg_dldo2>;
 	};
+};
 
-lcd:
-    lcd_dclk_freq       = <162>;
-    lcd_hbp             = <20>;
-	lcd_ht              = <1232>;
-	lcd_hspw            = <8>;
-	lcd_vbp             = <40>;
-	lcd_vt              = <2195>; 
-	lcd_vspw            = <8>;

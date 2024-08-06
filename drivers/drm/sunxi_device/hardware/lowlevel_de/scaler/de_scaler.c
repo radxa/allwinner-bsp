@@ -114,6 +114,7 @@ struct de_scaler_private {
 	struct de_reg_mem_info reg_mem_info;
 	struct scaler_debug_info debug;
 	u32 reg_blk_num;
+	bool pq_init;
 	const struct de_scaler_dsc *dsc;
 	union {
 		struct de_reg_block gsu_reg_blks[GSU_REG_BLK_NUM];
@@ -327,6 +328,7 @@ s32 de_scaler_calc_lay_scale_para(struct de_scaler_handle *hdl,
 		if (cfg->snr_en) {
 			scale_mode = 1;
 			if (cfg->px_fmt == DE_FORMAT_YUV420_P ||
+			    cfg->px_fmt == DE_FORMAT_YVU420_P ||
 			    cfg->px_fmt == DE_FORMAT_YUV420_SP_UVUV ||
 			    cfg->px_fmt == DE_FORMAT_YUV420_SP_VUVU ||
 			    cfg->px_fmt ==
@@ -1226,12 +1228,81 @@ void dump_scaler_state(struct drm_printer *p, struct de_scaler_handle *hdl, cons
 	struct scaler_debug_info *debug = &hdl->private->debug;
 	unsigned long base = (unsigned long)hdl->private->reg_blks[0].reg_addr;
 	unsigned long de_base = (unsigned long)hdl->cinfo.de_reg_base;
+	struct de_scaler_private *priv = hdl->private;
+	struct asu_reg *reg = get_asu_reg(priv);
 
 	drm_printf(p, "\n\tscaler@%8x: %sable\n", (unsigned int)(base - de_base), debug->enable ? "en" : "dis");
-	if (debug->enable)
+	if (debug->enable) {
 		drm_printf(p, "\t\t%4dx%4d ==> %4dx%4d\n", debug->in_w, debug->in_h, debug->out_w, debug->out_h);
-	else
+		if (priv->dsc->type == DE_SCALER_TYPE_ASU)
+			drm_printf(p, "\t\t asu_pq %sable\n", reg->peaking_en.bits.peaking_en ? "en" : "dis");
+	} else
 		drm_printf(p, "\n");
+}
+
+bool de_scaler_pq_is_enabled(struct de_scaler_handle *hdl)
+{
+	struct de_scaler_private *priv = hdl->private;
+	struct asu_reg *reg = get_asu_reg(priv);
+
+	if (priv->dsc->type != DE_SCALER_TYPE_ASU)
+		return false;
+	return !!(reg->peaking_en.bits.peaking_en);
+}
+
+s32 de_scaler_asu_pq_enable(struct de_scaler_handle *hdl, u32 en)
+{
+	struct de_scaler_private *priv = hdl->private;
+	struct asu_reg *reg = get_asu_reg(priv);
+	if (priv->dsc->type != DE_SCALER_TYPE_ASU) {
+		DRM_ERROR("scaler %d is not asu\n", hdl->cinfo.id);
+		return -1;
+	} else {
+		/* restore all pq config */
+		if (priv->pq_init && en)
+			reg->peaking_en.bits.peaking_en = 1;
+		else
+			reg->peaking_en.bits.peaking_en = 0;
+
+		DRM_DEBUG_DRIVER("%s %d\n", __func__, !!reg->peaking_en.bits.peaking_en);
+		scaler_set_block_dirty(priv, ASU_REG_BLK_PEAKING, 1);
+	}
+	return 0;
+}
+
+s32 de_scaler_apply_asu_pq_config(struct de_scaler_handle *hdl, asu_module_param_t *para)
+{
+	struct de_scaler_private *priv = hdl->private;
+	struct asu_reg *reg = get_asu_reg(priv);
+	if (priv->dsc->type != DE_SCALER_TYPE_ASU) {
+		DRM_ERROR("scaler %d is not asu\n", hdl->cinfo.id);
+		return -1;
+	} else {
+		if (para->cmd == PQ_READ) {
+			para->value[0] = reg->peaking_en.bits.peaking_en;
+			para->value[1] = reg->peaking_en.bits.local_clamp_en;
+			para->value[2] = reg->peaking_en.bits.cpeaking_en;
+			para->value[3] = reg->peaking_stren.bits.peaking_strength;
+			para->value[4] = reg->peaking_limit.bits.peaking_range_limit;
+			para->value[5] = reg->peaking_para.bits.th_strong_edge;
+			para->value[6] = reg->peaking_para.bits.peak_weights_strength;
+			para->value[7] = reg->peaking_stren.bits.cpeaking_strength;
+			para->value[8] = reg->peaking_limit.bits.cpeaking_range_limit;
+		} else {
+			reg->peaking_en.bits.peaking_en              = para->value[0];
+			reg->peaking_en.bits.local_clamp_en          = para->value[1];
+			reg->peaking_en.bits.cpeaking_en             = para->value[2];
+			reg->peaking_stren.bits.peaking_strength     = para->value[3];
+			reg->peaking_limit.bits.peaking_range_limit  = para->value[4];
+			reg->peaking_para.bits.th_strong_edge        = para->value[5];
+			reg->peaking_para.bits.peak_weights_strength = para->value[6];
+			reg->peaking_stren.bits.cpeaking_strength    = para->value[7];
+			reg->peaking_limit.bits.cpeaking_range_limit = para->value[8];
+			priv->pq_init = true;
+			scaler_set_block_dirty(priv, ASU_REG_BLK_PEAKING, 1);
+		}
+	}
+	return 0;
 }
 
 s32 de_scaler_apply(struct de_scaler_handle *hdl, const struct de_scaler_apply_cfg *cfg)
@@ -1652,6 +1723,7 @@ struct de_scaler_handle *de_scaler_create(const struct module_create_info *info)
 			block->vir_addr = reg_mem_info->vir_addr + 0x600;
 			block->size = 32 * 4;
 			block->reg_addr = reg_base + 0x600;
+			hdl->is_asu = true;
 
 			priv->reg_blk_num = ASU_REG_BLK_NUM;
 

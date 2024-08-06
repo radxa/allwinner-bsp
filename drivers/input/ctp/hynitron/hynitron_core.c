@@ -1547,15 +1547,14 @@ static int hyn_parse_dt(struct device *dev,
 	// "hynitron,reset-gpio", 0); pdata->irq_gpio =
 	// of_get_named_gpio(dev->of_node, "hynitron,irq-gpio", 0);
 
-	pdata->reset_gpio = of_get_named_gpio_flags(
-		np, "hynitron,reset-gpio", 0, &pdata->reset_gpio_flags);
+	pdata->reset_gpio = of_get_named_gpio(
+		np, "hynitron,reset-gpio", 0);
 	if (pdata->reset_gpio < 0) {
 		HYN_ERROR("DTS Unable to get reset_gpio");
 		return -1;
 	}
 
-	pdata->irq_gpio = of_get_named_gpio_flags(np, "hynitron,irq-gpio", 0,
-						  &pdata->irq_gpio_flags);
+	pdata->irq_gpio = of_get_named_gpio(np, "hynitron,irq-gpio", 0);
 	if (pdata->irq_gpio < 0) {
 		HYN_ERROR("DTS Unable to get irq_gpio");
 		return -1;
@@ -1844,8 +1843,13 @@ static struct early_suspend hyn_early_suspend = {
  * Output:
  * Return:
  ***********************************************************************/
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int hyn_probe(struct i2c_client *client)
+#else
 static int hyn_probe(struct i2c_client *client,
-		     const struct i2c_device_id *id) {
+		     const struct i2c_device_id *id)
+#endif
+{
 	int ret = -1;
 	struct hynitron_ts_data *ts_data = NULL;
 	HYN_FUNC_ENTER();
@@ -2007,7 +2011,12 @@ err_end:
  *  Output:
  *  Return:
  *****************************************************************************/
-static int hyn_remove(struct i2c_client *client) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void hyn_remove(struct i2c_client *client)
+#else
+static int hyn_remove(struct i2c_client *client)
+#endif
+{
 	HYN_FUNC_ENTER();
 
 #if ANDROID_TOOL_SURPORT
@@ -2028,7 +2037,11 @@ static int hyn_remove(struct i2c_client *client) {
 
 	HYN_FUNC_EXIT();
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
 static int hyn_detect(struct i2c_client *client, struct i2c_board_info *info) {

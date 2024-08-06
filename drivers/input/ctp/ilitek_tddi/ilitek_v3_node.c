@@ -3513,9 +3513,8 @@ static long ilitek_node_ioctl(struct file *filp, unsigned int cmd, unsigned long
 			}
 			ILI_INFO("[WRITE]:addr = 0x%06x, write = 0x%08x, len = %d byte\n", addr, write_data, write_len);
 		}
-
-		break;
 #endif
+		break;
 	case ILITEK_IOCTL_INTERFACE_GET:
 #if (TDDI_INTERFACE == BUS_I2C)
 		szBuf[0] = 0x0;
@@ -3544,6 +3543,7 @@ static long ilitek_node_ioctl(struct file *filp, unsigned int cmd, unsigned long
 			atomic_set(&ilits->ice_stat, DISABLE);
 			ilits->pll_clk_wakeup = true;
 		}
+		break;
 	default:
 		ret = -ENOTTY;
 		break;

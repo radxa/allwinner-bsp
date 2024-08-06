@@ -45,6 +45,7 @@ enum {
 struct de_scaler_handle {
 	struct module_create_info cinfo;
 	unsigned int linebuff_share_ids;
+	bool is_asu;
 	unsigned int block_num;
 	struct de_reg_block **block;
 	struct de_scaler_private *private;
@@ -72,6 +73,10 @@ struct de_scaler_apply_cfg {
 	struct de_rect_s c_win;
 	struct de_scale_para ovl_cpara;
 };
+
+bool de_scaler_pq_is_enabled(struct de_scaler_handle *hdl);
+s32 de_scaler_apply_asu_pq_config(struct de_scaler_handle *hdl, asu_module_param_t *para);
+s32 de_scaler_asu_pq_enable(struct de_scaler_handle *hdl, u32 en);
 
 s32 de_scaler_calc_lay_scale_para(struct de_scaler_handle *hdl,
 			       const struct de_scaler_cal_lay_cfg *cfg,

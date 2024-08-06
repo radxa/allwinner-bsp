@@ -109,13 +109,11 @@ static int sunxi_ctp_startup(enum input_sensor_type *ctp_type)
 	if (ret)
 		pr_err("get ctp_power_ldo_vol is fail, %d\n", ret);
 
-	data->ctp_power_io.gpio = of_get_named_gpio_flags(np, "ctp_power_io", 0,
-				(enum of_gpio_flags *)(&(data->ctp_power_io)));
+	data->ctp_power_io.gpio = of_get_named_gpio(np, "ctp_power_io", 0);
 	if (!gpio_is_valid(data->ctp_power_io.gpio))
 		pr_err("%s: ctp_power_io is invalid.\n", __func__);
 
-	data->wakeup_gpio.gpio = of_get_named_gpio_flags(np, "ctp_wakeup", 0,
-				(enum of_gpio_flags *)(&(data->wakeup_gpio)));
+	data->wakeup_gpio.gpio = of_get_named_gpio(np, "ctp_wakeup", 0);
 	if (!gpio_is_valid(data->wakeup_gpio.gpio))
 		pr_err("%s: wakeup_gpio is invalid.\n", __func__);
 
@@ -142,8 +140,7 @@ static int sunxi_ctp_startup(enum input_sensor_type *ctp_type)
 	if (ret)
 		pr_err("get ctp_exchange_x_y_flag is fail, %d\n", ret);
 
-	data->irq_gpio.gpio = of_get_named_gpio_flags(np, "ctp_int_port", 0,
-				(enum of_gpio_flags *)(&(data->irq_gpio)));
+	data->irq_gpio.gpio = of_get_named_gpio(np, "ctp_int_port", 0);
 	if (!gpio_is_valid(data->irq_gpio.gpio))
 		pr_err("%s: irq_gpio is invalid.\n", __func__);
 	else
@@ -710,8 +707,7 @@ static int sunxi_motor_startup(enum input_sensor_type *motor_type)
 	}
 #endif
 
-	data->motor_gpio.gpio = of_get_named_gpio_flags(np, "motor_shake", 0,
-				(enum of_gpio_flags *)(&(data->motor_gpio)));
+	data->motor_gpio.gpio = of_get_named_gpio(np, "motor_shake", 0);
 	if (!gpio_is_valid(data->motor_gpio.gpio))
 		pr_err("%s: motor_shake is invalid\n", __func__);
 
@@ -920,9 +916,9 @@ int input_set_power_enable(enum input_sensor_type *input_type, u32 enable)
 		}
 	} else if (gpio_is_valid(power_io)) {
 		if (enable)
-			__gpio_set_value(power_io, 1);
+			gpio_set_value(power_io, 1);
 		else
-			__gpio_set_value(power_io, 0);
+			gpio_set_value(power_io, 0);
 	}
 
 	return 0;

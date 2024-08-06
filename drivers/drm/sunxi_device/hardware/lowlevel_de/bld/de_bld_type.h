@@ -215,8 +215,8 @@ struct bld_reg {
 	union bld_premul_ctl_reg premul_ctl;
 	union bld_bg_color_reg bg_color;
 	union bld_size_reg out_size;
-	union bld_blend_ctl_reg blend_ctl[5];
-	u32 res1[3];
+	union bld_blend_ctl_reg blend_ctl[6];
+	u32 res1[2];
 	union bld_colorkey_ctl_reg colorkey_ctl;
 	union bld_colorkey_cfg0_reg colorkey_cfg0;
 	union bld_colorkey_cfg1_reg colorkey_cfg1;

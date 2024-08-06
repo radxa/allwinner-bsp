@@ -21,4 +21,7 @@
 
 void sunxi_mmc_init_priv_v5p3x(struct sunxi_mmc_host *host,
 			       struct platform_device *pdev, int phy_index);
+void sunxi_mmc_exit_priv_v5p3x(struct sunxi_mmc_host *host,
+			       struct platform_device *pdev);
+
 #endif

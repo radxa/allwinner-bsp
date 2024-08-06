@@ -25,7 +25,7 @@
 *
 * Abstract: i2c communication with TP
 *
-* Version: v1.0
+* Version: v2.0
 *
 * Revision History:
 *
@@ -34,13 +34,13 @@
 /*****************************************************************************
 * Included header files
 *****************************************************************************/
+#include <linux/version.h>
 #include "focaltech_core.h"
 
 /*****************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
 #define I2C_RETRY_NUMBER                    3
-#define I2C_BUF_LENGTH                      4096
 
 /*****************************************************************************
 * Private enumerations, structures and unions using typedef
@@ -49,10 +49,6 @@
 /*****************************************************************************
 * Static variables
 *****************************************************************************/
-#ifdef CONFIG_MTK_I2C_EXTENSION
-u8 *g_dma_buff_va = NULL;
-dma_addr_t g_dma_buff_pa = 0;
-#endif
 
 /*****************************************************************************
 * Global variable or extern global variabls/functions
@@ -65,105 +61,6 @@ dma_addr_t g_dma_buff_pa = 0;
 /*****************************************************************************
 * functions body
 *****************************************************************************/
-#ifdef CONFIG_MTK_I2C_EXTENSION
-static void fts_i2c_msg_dma_alloct(void)
-{
-    FTS_FUNC_ENTER();
-    if (NULL == g_dma_buff_va) {
-        fts_data->dev->coherent_dma_mask = DMA_BIT_MASK(32);
-        g_dma_buff_va = (u8 *)dma_alloc_coherent(fts_data->dev,
-                        I2C_BUF_LENGTH, &g_dma_buff_pa, GFP_KERNEL);
-        if (!g_dma_buff_va) {
-            FTS_ERROR("Allocate I2C DMA Buffer fail");
-        }
-    }
-    FTS_FUNC_EXIT();
-}
-
-static void fts_i2c_msg_dma_release(void)
-{
-    FTS_FUNC_ENTER();
-    if (g_dma_buff_va) {
-        dma_free_coherent(NULL, I2C_BUF_LENGTH, g_dma_buff_va, g_dma_buff_pa);
-        g_dma_buff_va = NULL;
-        g_dma_buff_pa = 0;
-    }
-    FTS_FUNC_EXIT();
-}
-
-int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
-{
-    int ret = 0;
-    int i = 0;
-    struct fts_ts_data *ts_data = fts_data;
-    struct i2c_client *client = NULL;
-
-    /* must have data when read */
-    if (!ts_data || !ts_data->client || !data || !datalen
-        || (datalen > I2C_BUF_LENGTH) || (cmdlen > I2C_BUF_LENGTH)) {
-        FTS_ERROR("fts_data/client/cmdlen(%d)/data/datalen(%d) is invalid",
-                  cmdlen, datalen);
-        return -EINVAL;
-    }
-    client = ts_data->client;
-
-    mutex_lock(&ts_data->bus_lock);
-    memcpy(g_dma_buff_va, cmd, cmdlen);
-    client->addr = ((client->addr & I2C_MASK_FLAG) | I2C_DMA_FLAG);
-    if (cmd && (cmdlen > 0)) {
-        for (i = 0; i < I2C_RETRY_NUMBER; i++) {
-            ret = i2c_master_send(client, (u8 *)g_dma_buff_pa, cmdlen);
-            if (ret != cmdlen) {
-                FTS_ERROR("[IIC]: i2c_master_send fail,ret=%d", ret);
-            } else
-                break;
-        }
-    }
-
-    for (i = 0; i < I2C_RETRY_NUMBER; i++) {
-        ret = i2c_master_recv(client, (u8 *)g_dma_buff_pa, datalen);
-        if (ret != datalen) {
-            FTS_ERROR("i2c_master_recv fail,ret=%d", ret);
-        } else
-            break;
-    }
-    client->addr = client->addr & I2C_MASK_FLAG & (~I2C_DMA_FLAG);
-    memcpy(data, g_dma_buff_va, datalen);
-
-    mutex_unlock(&ts_data->bus_lock);
-    return ret;
-}
-
-int fts_write(u8 *writebuf, u32 writelen)
-{
-    int ret = 0;
-    int i = 0;
-    struct fts_ts_data *ts_data = fts_data;
-    struct i2c_client *client = NULL;
-
-    if (!ts_data || !ts_data->client || !writebuf || !writelen
-        || (writelen > I2C_BUF_LENGTH)) {
-        FTS_ERROR("fts_data/client/data/datalen(%d) is invalid", writelen);
-        return -EINVAL;
-    }
-    client = ts_data->client;
-
-    mutex_lock(&ts_data->bus_lock);
-    memcpy(g_dma_buff_va, writebuf, writelen);
-    client->addr = ((client->addr & I2C_MASK_FLAG) | I2C_DMA_FLAG);
-    for (i = 0; i < I2C_RETRY_NUMBER; i++) {
-        ret = i2c_master_send(client, (u8 *)g_dma_buff_pa, writelen);
-        if (ret != writelen) {
-            FTS_ERROR("i2c_master_send fail,ret=%d", ret);
-        } else
-            break;
-    }
-    client->addr = client->addr & I2C_MASK_FLAG & (~I2C_DMA_FLAG);
-    mutex_unlock(&ts_data->bus_lock);
-
-    return ret;
-}
-#else
 int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
 {
     int ret = 0;
@@ -175,7 +72,7 @@ int fts_read(u8 *cmd, u32 cmdlen, u8 *data, u32 datalen)
 
     /* must have data when read */
     if (!ts_data || !ts_data->client || !data || !datalen
-        || (datalen > I2C_BUF_LENGTH) || (cmdlen > I2C_BUF_LENGTH)) {
+        || (datalen > FTS_MAX_BUS_BUF) || (cmdlen > FTS_MAX_BUS_BUF)) {
         FTS_ERROR("fts_data/client/cmdlen(%d)/data/datalen(%d) is invalid",
                   cmdlen, datalen);
         return -EINVAL;
@@ -223,7 +120,7 @@ int fts_write(u8 *writebuf, u32 writelen)
     struct i2c_msg msgs;
 
     if (!ts_data || !ts_data->client || !writebuf || !writelen
-        || (writelen > I2C_BUF_LENGTH)) {
+        || (writelen > FTS_MAX_BUS_BUF)) {
         FTS_ERROR("fts_data/client/data/datalen(%d) is invalid", writelen);
         return -EINVAL;
     }
@@ -246,7 +143,6 @@ int fts_write(u8 *writebuf, u32 writelen)
     mutex_unlock(&ts_data->bus_lock);
     return ret;
 }
-#endif
 
 int fts_read_reg(u8 addr, u8 *value)
 {
@@ -262,44 +158,159 @@ int fts_write_reg(u8 addr, u8 value)
     return fts_write(buf, sizeof(buf));
 }
 
-int fts_bus_init(struct fts_ts_data *ts_data)
+int fts_bus_transfer_direct(u8 *writebuf, u32 writelen, u8 *readbuf, u32 readlen)
+{
+    return 0;
+}
+
+int fts_bus_configure(struct fts_ts_data *ts_data, u8 *buf, u32 size)
 {
     FTS_FUNC_ENTER();
-#ifdef CONFIG_MTK_I2C_EXTENSION
-    fts_i2c_msg_dma_alloct();
-#endif
-
-    ts_data->bus_tx_buf = kzalloc(I2C_BUF_LENGTH, GFP_KERNEL);
-    if (NULL == ts_data->bus_tx_buf) {
-        FTS_ERROR("failed to allocate memory for bus_tx_buf");
-        return -ENOMEM;
-    }
-
-    ts_data->bus_rx_buf = kzalloc(I2C_BUF_LENGTH, GFP_KERNEL);
-    if (NULL == ts_data->bus_rx_buf) {
-        FTS_ERROR("failed to allocate memory for bus_rx_buf");
-        return -ENOMEM;
+    if (ts_data->client && buf && size && (buf[0] != ts_data->client->addr)) {
+        ts_data->client->addr = buf[0];
+        FTS_INFO("Change i2c addr 0x%x to 0x%x", (ts_data->client->addr << 1), (buf[0] << 1));
     }
     FTS_FUNC_EXIT();
     return 0;
 }
 
-int fts_bus_exit(struct fts_ts_data *ts_data)
-{
-    FTS_FUNC_ENTER();
-#ifdef CONFIG_MTK_I2C_EXTENSION
-    fts_i2c_msg_dma_release();
+/*****************************************************************************
+* TP Driver
+*****************************************************************************/
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int fts_ts_probe(struct i2c_client *client)
+#else
+static int fts_ts_probe(struct i2c_client *client, const struct i2c_device_id *id)
 #endif
+{
+    int ret = 0;
+    struct fts_ts_data *ts_data = NULL;
 
-    if (ts_data && ts_data->bus_tx_buf) {
-        kfree(ts_data->bus_tx_buf);
-        ts_data->bus_tx_buf = NULL;
+    FTS_INFO("Touch Screen(I2C BUS) driver prboe...");
+    if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
+        FTS_ERROR("I2C not supported");
+        return -ENODEV;
     }
 
-    if (ts_data && ts_data->bus_rx_buf) {
-        kfree(ts_data->bus_rx_buf);
-        ts_data->bus_rx_buf = NULL;
+    /* malloc memory for global struct variable */
+    ts_data = (struct fts_ts_data *)kzalloc(sizeof(*ts_data), GFP_KERNEL);
+    if (!ts_data) {
+        FTS_ERROR("allocate memory for fts_data fail");
+        return -ENOMEM;
     }
-    FTS_FUNC_EXIT();
+
+    ts_data->client = client;
+    ts_data->dev = &client->dev;
+    ts_data->log_level = 1;
+    ts_data->fw_is_running = 0;
+    ts_data->bus_type = BUS_TYPE_I2C;
+    ts_data->bus_ver = BUS_VER_DEFAULT;
+    i2c_set_clientdata(client, ts_data);
+
+    ret = fts_ts_probe_entry(ts_data);
+    if (ret) {
+        FTS_ERROR("Touch Screen(I2C BUS) driver probe fail");
+        i2c_set_clientdata(client, NULL);
+        kfree_safe(ts_data);
+        return ret;
+    }
+
+    FTS_INFO("Touch Screen(I2C BUS) driver prboe successfully");
     return 0;
 }
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void fts_ts_remove(struct i2c_client *client)
+#else
+static int fts_ts_remove(struct i2c_client *client)
+#endif
+{
+    struct fts_ts_data *ts_data = i2c_get_clientdata(client);
+    FTS_INFO("Touch Screen(I2C BUS) driver remove...");
+    if (ts_data) {
+        fts_ts_remove_entry(ts_data);
+        i2c_set_clientdata(client, NULL);
+        kfree_safe(ts_data);
+    }
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+    return;
+#else
+    return 0;
+#endif
+}
+
+#if IS_ENABLED(CONFIG_PM) && FTS_PATCH_COMERR_PM
+static int fts_pm_suspend(struct device *dev)
+{
+    struct fts_ts_data *ts_data = dev_get_drvdata(dev);
+
+    FTS_INFO("system enters into pm_suspend");
+    ts_data->pm_suspend = true;
+    reinit_completion(&ts_data->pm_completion);
+    return 0;
+}
+
+static int fts_pm_resume(struct device *dev)
+{
+    struct fts_ts_data *ts_data = dev_get_drvdata(dev);
+
+    FTS_INFO("system resumes from pm_suspend");
+    ts_data->pm_suspend = false;
+    complete(&ts_data->pm_completion);
+    return 0;
+}
+
+static const struct dev_pm_ops fts_dev_pm_ops = {
+    .suspend = fts_pm_suspend,
+    .resume = fts_pm_resume,
+};
+#endif
+
+static const struct i2c_device_id fts_ts_id[] = {
+    {FTS_DRIVER_NAME, 0},
+    {},
+};
+static const struct of_device_id fts_dt_match[] = {
+    {.compatible = "focaltech,fts", },
+    {},
+};
+MODULE_DEVICE_TABLE(of, fts_dt_match);
+
+static struct i2c_driver fts_ts_i2c_driver = {
+    .probe = fts_ts_probe,
+    .remove = fts_ts_remove,
+    .driver = {
+        .name = FTS_DRIVER_NAME,
+        .owner = THIS_MODULE,
+#if IS_ENABLED(CONFIG_PM) && FTS_PATCH_COMERR_PM
+        .pm = &fts_dev_pm_ops,
+#endif
+        .of_match_table = of_match_ptr(fts_dt_match),
+    },
+    .id_table = fts_ts_id,
+};
+
+static int __init fts_ts_i2c_init(void)
+{
+    int ret = 0;
+
+    FTS_FUNC_ENTER();
+    ret = i2c_add_driver(&fts_ts_i2c_driver);
+    if ( ret != 0 ) {
+        FTS_ERROR("Focaltech touch screen driver(I2C) init failed!");
+    }
+    FTS_FUNC_EXIT();
+    return ret;
+}
+
+static void __exit fts_ts_i2c_exit(void)
+{
+    i2c_del_driver(&fts_ts_i2c_driver);
+}
+
+module_init(fts_ts_i2c_init);
+module_exit(fts_ts_i2c_exit);
+
+MODULE_AUTHOR("FocalTech Driver Team");
+MODULE_DESCRIPTION("FocalTech Touchscreen Driver(I2C)");
+MODULE_LICENSE("GPL v2");

@@ -30,6 +30,18 @@ static struct de_csc_desc de350_cscs[] = {
 		.reg_offset = CHN_CCSC_OFFSET,
 	},
 	{
+		.name = "vch0_fcm_icsc",
+		.cid.channel_id = 0,
+		.cid.csc_id = 0,
+		.type = FCM_CSC,
+	},
+	{
+		.name = "vch0_fcm_ocsc",
+		.cid.channel_id = 0,
+		.cid.csc_id = 1,
+		.type = FCM_CSC,
+	},
+	{
 		.name = "vch1_csc",
 		.cid.channel_id = 1,
 		.cid.csc_id = 1,
@@ -42,6 +54,18 @@ static struct de_csc_desc de350_cscs[] = {
 		.cid.csc_id = 1,
 		.type = CHANNEL_CSC,
 		.reg_offset = CHN_CCSC_OFFSET,
+	},
+	{
+		.name = "vch2_fcm_icsc",
+		.cid.channel_id = 2,
+		.cid.csc_id = 0,
+		.type = FCM_CSC,
+	},
+	{
+		.name = "vch2_fcm_ocsc",
+		.cid.channel_id = 2,
+		.cid.csc_id = 1,
+		.type = FCM_CSC,
 	},
 	{
 		.name = "uch0_csc",
@@ -230,6 +254,18 @@ static struct de_csc_desc de352_cscs[] = {
 		.reg_offset = CHN_CCSC_OFFSET,
 	},
 	{
+		.name = "vch0_fcm_icsc",
+		.cid.channel_id = 0,
+		.cid.csc_id = 0,
+		.type = FCM_CSC,
+	},
+	{
+		.name = "vch0_fcm_ocsc",
+		.cid.channel_id = 0,
+		.cid.csc_id = 1,
+		.type = FCM_CSC,
+	},
+	{
 		.name = "vch1_csc",
 		.cid.channel_id = 1,
 		.cid.csc_id = 1,
@@ -242,6 +278,18 @@ static struct de_csc_desc de352_cscs[] = {
 		.cid.csc_id = 1,
 		.type = CHANNEL_CSC,
 		.reg_offset = CHN_CCSC_OFFSET,
+	},
+	{
+		.name = "vch2_fcm_icsc",
+		.cid.channel_id = 2,
+		.cid.csc_id = 0,
+		.type = FCM_CSC,
+	},
+	{
+		.name = "vch2_fcm_ocsc",
+		.cid.channel_id = 2,
+		.cid.csc_id = 1,
+		.type = FCM_CSC,
 	},
 	{
 		.name = "uch0_csc",
@@ -306,11 +354,11 @@ const struct de_csc_desc *get_csc_desc(struct module_create_info *info)
 		if (de_version[i]->version == info->de_version) {
 			for (j = 0; j < de_version[i]->csc_cnt; j++) {
 				if (ex->type == de_version[i]->csc[j].type) {
-					if (ex->type == CHANNEL_CSC) {
+					if (ex->type == CHANNEL_CSC || ex->type == FCM_CSC) {
 						if (de_version[i]->csc[j].cid.channel_id == info->id &&
 						    de_version[i]->csc[j].cid.csc_id == ex->extra_id)
 							return &de_version[i]->csc[j];
-					} else if (ex->type == de_version[i]->csc[j].type) {
+					} else {
 						if (de_version[i]->csc[j].did.device_id == info->id)
 							return &de_version[i]->csc[j];
 					}
@@ -320,4 +368,3 @@ const struct de_csc_desc *get_csc_desc(struct module_create_info *info)
 	}
 	return NULL;
 }
-

@@ -1,1 +1,0 @@
-focaltech_touch-objs += focaltech_upgrade_ft3427.o

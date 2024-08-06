@@ -58,7 +58,6 @@
 #define SDXC_REG_DRV_DL		(0x0140)
 #define SDXC_REG_SAMP_DL	(0x0144)
 #define SDXC_REG_DS_DL		(0x0148)
-#define SDXC_REG_SD_NTSR	(0x005C)
 
 /* bit */
 #define SDXC_HS400_MD_EN				(1U<<31)
@@ -69,8 +68,6 @@
 #define SDXC_CMD_DRV_PH_SEL			(1U<<16)
 #define SDXC_SAMP_DL_SW_EN			(1u<<7)
 #define SDXC_DS_DL_SW_EN			(1u<<7)
-
-#define	SDXC_2X_TIMING_MODE			(1U<<31)
 
 /* mask */
 #define SDXC_CRC_DET_PARA_MASK		(0xf)

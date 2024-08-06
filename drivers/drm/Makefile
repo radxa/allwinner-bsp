@@ -7,6 +7,7 @@ ccflags-y += -I$(srctree)/$(obj)/lib/inc/
 
 # base
 sunxidrm-y += sunxi_drm_drv.o sunxi_drm_crtc.o sunxi_drm_intf.o
+sunxidrm-y += sunxi_drm_debug.o kernel_panic_printf.o
 
 #fbdev
 sunxidrm-$(CONFIG_DRM_FBDEV_EMULATION) += sunxi_fbdev_core.o sunxi_fbdev_platform.o

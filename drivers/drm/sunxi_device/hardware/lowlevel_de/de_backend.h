@@ -35,10 +35,13 @@ struct de_backend_apply_cfg {
 	unsigned int brightness, contrast, saturation, hue;
 	struct de_csc_info in_csc;
 	struct de_csc_info out_csc;
+	enum de_data_bits bits;
 	bool csc_dirty;
 };
 
-int de_backend_apply(struct de_backend_handle *hdl, struct de_backend_apply_cfg *cfg);
+int de_backend_disable(struct de_backend_handle *hdl);
+int de_backend_get_pqd_config(struct de_backend_handle *hdl, struct de_backend_data *data);
+int de_backend_apply(struct de_backend_handle *hdl, struct de_backend_data *data, struct de_backend_apply_cfg *cfg);
 struct de_backend_handle *de_backend_create(struct module_create_info *cinfo);
 u32 de_backend_check_crc_status_with_clear(struct de_backend_handle *hdl, u32 mask);
 int de_backend_dump_state(struct drm_printer *p, struct de_backend_handle *hdl);

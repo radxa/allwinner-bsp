@@ -19,6 +19,7 @@
 #include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <linux/delay.h>
+#include <linux/version.h>
 
 /*********************************************************************/
 /* own header files */
@@ -203,13 +204,24 @@ exit_err_clean:
  * @return zero
  * @retval zero
  */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+static void bmi323_spi_remove(struct spi_device *client)
+#else
 static int bmi323_spi_remove(struct spi_device *client)
+#endif
 {
 	int err = 0;
 
 	err = bmi3_remove(&client->dev);
+	if (err)
+		printk("bmi323_spi_remove ret %d", err);
+
 	bmi323_spi_client = NULL;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+	return;
+#else
 	return err;
+#endif
 }
 
 /*!

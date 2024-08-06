@@ -25,6 +25,7 @@
 #endif
 #include "sunxi_fbdev.h"
 #include "sunxi_drm_crtc.h"
+#include <drm/drm_fourcc.h>
 
 struct fb_hw_info {
 	struct fb_create_info create_info;
@@ -41,39 +42,19 @@ static void fb_free_reserve_mem(struct work_struct *work)
 	fb_debug_inf("%s finish\n", __FUNCTION__);
 }
 
-static void get_output_size(struct drm_device *dev, int hw_id, unsigned int *width, unsigned int *height)
+static int fb_layer_config_init(struct fb_hw_info *info, unsigned int w, unsigned int h)
 {
-	struct drm_crtc *crtc = drm_crtc_from_index(dev, hw_id);
-	struct drm_crtc_state *state;
-
-	*width = *height = 0;
-	if (!crtc) {
-		DRM_ERROR("%s, crtc %d not find\n", __func__, hw_id);
-		return;
-	}
-	state = crtc->state;
-	*width = state->adjusted_mode.hdisplay;
-	*height = state->adjusted_mode.vdisplay;
-}
-
-static int fb_layer_config_init(struct fb_hw_info *info, struct fb_output_map *map)
-{
-	unsigned int hw_output_width = 0;
-	unsigned int hw_output_height = 0;
-
 	memset(&info->state, 0, sizeof(info->state));
-	get_output_size(info->create_info.drm,
-			  map->hw_display, &hw_output_width, &hw_output_height);
 	info->state.base.crtc_x = 0;//TODO add ADAPTIVE_STRETCH
 	info->state.base.crtc_y = 0;
-	info->state.base.crtc_w = hw_output_width;
-	info->state.base.crtc_h = hw_output_height;
+	info->state.base.crtc_w = w;
+	info->state.base.crtc_h = h;
 	info->state.base.src_x = (0LL) << 16;
 	info->state.base.src_y = (0LL) << 16;
 	info->state.base.src_w = ((long long)info->create_info.width) << 16;
 	info->state.base.src_h = ((long long)info->create_info.height) << 16;
 	info->state.base.alpha = 0xffff;
-	info->state.base.pixel_blend_mode = DRM_MODE_BLEND_COVERAGE;
+	info->state.base.pixel_blend_mode = DRM_MODE_BLEND_PIXEL_NONE;
 	info->state.base.rotation = DRM_MODE_ROTATE_0;
 	info->state.base.normalized_zpos = 0;/* force minimum zpos */
 	info->state.base.visible = true;
@@ -91,14 +72,23 @@ int platform_get_private_size(void)
 int platform_update_fb_output(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var)
 {
 	struct drm_device *drm = hw_info->create_info.drm;
-	unsigned int de = hw_info->create_info.map[0].hw_display;
-	unsigned int channel = hw_info->create_info.map[0].hw_channel;
+	unsigned int de = hw_info->create_info.map.hw_display;
+	unsigned int channel = hw_info->create_info.map.hw_channel;
+	struct fbdev_config cfg;
 
+	cfg.dev = drm;
+	cfg.de_id = de;
+	cfg.channel_id = channel;
+	cfg.force = var->reserved[0] == FB_ACTIVATE_FORCE;
+	cfg.fake_state = &hw_info->state;
+	cfg.out_plane = &hw_info->state.base.plane;
+	cfg.out_crtc = &hw_info->state.base.crtc;
 	hw_info->state.base.src_y = ((long long)var->yoffset) << 16;
+
 	/* TODO: if dual output, use two thread to call sunxi_fbdev_plane_update,
 	 *	and block until two thread finish
 	 */
-	sunxi_fbdev_plane_update(drm, de, channel, &hw_info->state);
+	sunxi_fbdev_plane_update(&cfg);
 	return 0;
 }
 
@@ -183,10 +173,12 @@ int platform_fb_set_blank(struct fb_hw_info *hw_info, bool is_blank)
 	return 0;
 }
 
-int platform_fb_init_finish(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var)
+int platform_fb_init_finish(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var,
+				struct display_channel_state *out_state)
 {
 	platform_update_fb_output(hw_info, var);
 	schedule_work(&hw_info->free_wq);
+	memcpy(out_state, &hw_info->state, sizeof(*out_state));
 	return 0;
 }
 
@@ -202,9 +194,11 @@ static int fb_fmt2_drm_fmt(enum fb_format fmt)
 
 int platform_fb_memory_alloc(struct fb_hw_info *hw_info, void **vir_addr, unsigned long *device_addr, unsigned int w, unsigned int h, int fmt)
 {
-	int ret;
 	u64 addr;
+	int size;
+	void *tmp;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	int ret;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0)
 	struct iosys_map map;
 #else
@@ -248,6 +242,15 @@ int platform_fb_memory_alloc(struct fb_hw_info *hw_info, void **vir_addr, unsign
 #endif
 	hw_info->state.base.fb = hw_info->buffer->fb;
 	*device_addr = (unsigned long)addr;
+
+	if (hw_info->create_info.logo_offset &&
+		  w == hw_info->create_info.width) {
+		size = drm_format_info(fb_fmt2_drm_fmt(fmt))->depth / 8;/* be careful legacy deprecated api */
+		size *= hw_info->create_info.width * hw_info->create_info.height;
+		tmp = fb_map_kernel_cache(hw_info->create_info.logo_offset, size);
+		memcpy(*vir_addr, tmp, size);
+		Fb_unmap_kernel(tmp);
+	}
 	return 0;
 }
 
@@ -272,7 +275,7 @@ int platform_fb_init(struct fb_create_info *create, struct fb_hw_info *info, voi
 {
 	int ret;
 	memcpy(&info->create_info, create, sizeof(*create));
-	fb_layer_config_init(info, &create->map[0]);
+	fb_layer_config_init(info, create->scn_width, create->scn_height);
 	ret = drm_client_init(create->drm, &info->client, "sunxi_fbdev", NULL);
 	if (ret) {
 		DRM_ERROR("Failed to register client: %d\n", ret);

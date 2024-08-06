@@ -33,6 +33,12 @@
 #define GTP_PEN_BUTTON1		BTN_STYLUS
 #define GTP_PEN_BUTTON2		BTN_STYLUS2
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
+#define CONST_TYPE_PREFIX const
+#else
+#define CONST_TYPE_PREFIX
+#endif
+
 static const char *goodix_ts_name = "goodix-ts";
 static const char *goodix_input_phys = "input/ts";
 struct i2c_client *i2c_connect_client;
@@ -790,13 +796,13 @@ void gtp_reset_guitar(struct i2c_client *client, s32 ms)
 		return;
 	}
 
-	__gpio_set_value(ts->pdata->rst_gpio, 0);
+	gpio_set_value(ts->pdata->rst_gpio, 0);
 	msleep(5);
 	msleep(20);
 	gpio_direction_output(ts->pdata->irq_gpio, 0);
 	msleep(2);
 
-	__gpio_set_value(ts->pdata->rst_gpio, 1);
+	gpio_set_value(ts->pdata->rst_gpio, 1);
 	msleep(5);
 	msleep(6);
 
@@ -807,13 +813,13 @@ void gtp_reset_guitar(struct i2c_client *client, s32 ms)
 	msleep(20);
 	gpio_direction_output(ts->pdata->irq_gpio, 0);
 	//msleep(5);
-	//__gpio_set_value(ts->pdata->rst_gpio, 0);
+	//gpio_set_value(ts->pdata->rst_gpio, 0);
 	//usleep_range(ms * 1000, ms * 1000 + 100);	/*  T2: > 10ms */
 	//gtp_int_output(ts, client->addr == 0x14);
 
 	msleep(2);
 	//usleep_range(2000, 3000);		/*  T3: > 100us (2ms)*/
-	//__gpio_set_value(ts->pdata->rst_gpio, 1);
+	//gpio_set_value(ts->pdata->rst_gpio, 1);
 	gpio_direction_output(ts->pdata->rst_gpio, 1);
 
 	msleep(6);
@@ -1400,15 +1406,15 @@ static ssize_t gtp_reset_store(struct device *dev,
 }
 static DEVICE_ATTR(reset, 0220, NULL, gtp_reset_store);
 
-static ssize_t tp_idle_show(struct class *cls,
-	       struct class_attribute *attr, char *buf)
+static ssize_t tp_idle_show(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	struct goodix_ts_data *data = i2c_get_clientdata(i2c_connect_client);
 	return sprintf(buf, "%d\n", data->tp_idle_status);
 }
 
-static ssize_t tp_idle_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t tp_idle_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	struct goodix_ts_data *data = i2c_get_clientdata(i2c_connect_client);
@@ -1437,7 +1443,9 @@ ATTRIBUTE_GROUPS(ctp_class);
 
 static struct class ctp_class = {
 	.name = "ctp",
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(6, 3, 0))
 	.owner = THIS_MODULE,
+#endif
 	.class_groups = ctp_class_groups,
 };
 
@@ -1891,11 +1899,11 @@ static int gtp_parse_dt(struct device *dev,
 			 pdata->key_map[2], pdata->key_map[3]);
 	}
 
-	pdata->irq_gpio = of_get_named_gpio_flags(np, "irq-gpios", 0, (enum of_gpio_flags *)(&(pdata->irq_gpio)));
+	pdata->irq_gpio = of_get_named_gpio(np, "irq-gpios", 0);
 	if (!gpio_is_valid(pdata->irq_gpio))
 		dev_err(dev, "No valid irq gpio");
 
-	pdata->rst_gpio = of_get_named_gpio_flags(np, "reset-gpios", 0, (enum of_gpio_flags *)(&(pdata->rst_gpio)));
+	pdata->rst_gpio = of_get_named_gpio(np, "reset-gpios", 0);
 	if (!gpio_is_valid(pdata->rst_gpio))
 		dev_err(dev, "No valid rst gpio");
 
@@ -2002,7 +2010,7 @@ static int gtp_power_off(struct goodix_ts_data *ts)
 	}
 
 	if (gpio_is_valid(ts->pdata->rst_gpio)) {
-		__gpio_set_value(ts->pdata->rst_gpio, 0);
+		gpio_set_value(ts->pdata->rst_gpio, 0);
 	}
 
 	return ret;
@@ -2061,7 +2069,11 @@ static void gtp_shutdown(struct i2c_client *client)
 	return;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int gtp_probe(struct i2c_client *client)
+#else
 static int gtp_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	int ret = -1;
 	struct goodix_ts_data *ts;
@@ -2257,7 +2269,11 @@ exit_free_client_data:
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void gtp_drv_remove(struct i2c_client *client)
+#else
 static int gtp_drv_remove(struct i2c_client *client)
+#endif
 {
 	struct goodix_ts_data *ts = i2c_get_clientdata(client);
 
@@ -2304,7 +2320,11 @@ static int gtp_drv_remove(struct i2c_client *client)
 	devm_kfree(&client->dev, ts->pdata);
 	devm_kfree(&client->dev, ts);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
 static void gtp_suspend(struct goodix_ts_data *ts)

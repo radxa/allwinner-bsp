@@ -8439,7 +8439,7 @@ static int8_t perform_accel_foc(const struct bmi3_accel_foc_g_value *accel_g_val
     uint16_t reg_status = 0;
 
     /* Array of structure to store accelerometer data */
-    struct bmi3_sensor_data accel_value[128] = { { 0 } };
+    struct bmi3_sensor_data accel_value[64] = { { 0 } };
 
     /* Structure to store accelerometer data temporarily */
     struct bmi3_foc_temp_value temp = { 0, 0, 0 };

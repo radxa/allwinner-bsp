@@ -227,7 +227,8 @@ struct alsps_init_info ps_init_info = {
 *  Output:
 *  Return:
 *****************************************************************************/
-static int fts_ps_operate(void *self, uint32_t command, void *buff_in, int size_in, void *buff_out, int size_out, int *actualout)
+static int fts_ps_operate(void *self, uint32_t command, void *buff_in, int size_in, void *buff_out, int size_out,
+                          int *actualout)
 {
     int err = 0;
     int value;

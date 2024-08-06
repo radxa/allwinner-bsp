@@ -36,6 +36,7 @@
 #include <asm/uaccess.h>
 #include <linux/device.h>
 #include <linux/gpio.h>
+#include <linux/version.h>
 
 
 #include <linux/hrtimer.h>
@@ -798,7 +799,13 @@ static struct miscdevice MMC5603X_device = {
     .fops = &MMC5603X_fops,
 };
 #endif
+
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int MMC5603X_probe(struct i2c_client *client)
+#else
 static int MMC5603X_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	int res = 0;
 	struct MMC5603X_data *dev;
@@ -875,7 +882,11 @@ out:
 	return res;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void MMC5603X_remove(struct i2c_client *client)
+#else
 static int MMC5603X_remove(struct i2c_client *client)
+#endif
 {
 	struct MMC5603X_data *dev_priv = dev_get_drvdata(&client->dev);
 
@@ -893,7 +904,11 @@ static int MMC5603X_remove(struct i2c_client *client)
 	misc_deregister(&MMC5603X_device);
 #endif
 	input_sensor_free(&(mag_config.input_type));
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
 static int MMC5603X_suspend(struct device *dev)

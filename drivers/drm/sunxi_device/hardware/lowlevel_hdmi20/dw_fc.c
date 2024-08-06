@@ -9,6 +9,8 @@
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
 #include <linux/delay.h>
+
+#include "dw_dev.h"
 #include "dw_avp.h"
 #include "dw_fc.h"
 
@@ -152,20 +154,20 @@ static u8 _audio_sw_check_channel_en(struct dw_audio_s *params, u8 channel)
 	switch (channel) {
 	case 0:
 	case 1:
-		audio_log("channal %d is enable\n", channel);
+		hdmi_trace("channal %d is enable\n", channel);
 		return 1;
 	case 2:
-		audio_log("channal %d is enable\n", channel);
+		hdmi_trace("channal %d is enable\n", channel);
 		return params->mChannelAllocation & BIT(0);
 	case 3:
-		audio_log("channal %d is enable\n", channel);
+		hdmi_trace("channal %d is enable\n", channel);
 		return (params->mChannelAllocation & BIT(1)) >> 1;
 	case 4:
 		if (((params->mChannelAllocation > 0x03) &&
 			(params->mChannelAllocation < 0x14)) ||
 			((params->mChannelAllocation > 0x17) &&
 			(params->mChannelAllocation < 0x20))) {
-			audio_log("channal %d is enable\n", channel);
+			hdmi_trace("channal %d is enable\n", channel);
 			return 1;
 		} else {
 			return 0;
@@ -175,7 +177,7 @@ static u8 _audio_sw_check_channel_en(struct dw_audio_s *params, u8 channel)
 			(params->mChannelAllocation < 0x14)) ||
 			((params->mChannelAllocation > 0x1C) &&
 			(params->mChannelAllocation < 0x20))) {
-			audio_log("channal %d is enable\n", channel);
+			hdmi_trace("channal %d is enable\n", channel);
 			return 1;
 		} else {
 			return 0;
@@ -183,13 +185,13 @@ static u8 _audio_sw_check_channel_en(struct dw_audio_s *params, u8 channel)
 	case 6:
 		if ((params->mChannelAllocation > 0x0B) &&
 			(params->mChannelAllocation < 0x20)) {
-			audio_log("channal %d is enable\n", channel);
+			hdmi_trace("channal %d is enable\n", channel);
 			return 1;
 		} else {
 			return 0;
 		}
 	case 7:
-		audio_log("channal %d is enable\n", channel);
+		hdmi_trace("channal %d is enable\n", channel);
 		return (params->mChannelAllocation & BIT(4)) >> 4;
 	default:
 		return 0;
@@ -250,10 +252,10 @@ void dw_fc_audio_packet_config(struct dw_audio_s *audio)
 	dw_write_mask(FC_AUDICONF3, FC_AUDICONF3_DM_INH_MASK,
 			(audio->mDownMixInhibitFlag ? 1 : 0));
 
-	audio_log("[audio packet]\n");
-	audio_log(" - channel count = %d\n", channel_count);
-	audio_log(" - channel allocation = %d\n", audio->mChannelAllocation);
-	audio_log(" - level shift = %d\n", audio->mLevelShiftValue);
+	hdmi_trace("[audio packet]\n");
+	hdmi_trace(" - channel count = %d\n", channel_count);
+	hdmi_trace(" - channel allocation = %d\n", audio->mChannelAllocation);
+	hdmi_trace(" - level shift = %d\n", audio->mLevelShiftValue);
 
 	if ((audio->mCodingType == DW_AUD_CODING_ONE_BIT_AUDIO) ||
 			(audio->mCodingType == DW_AUD_CODING_DST)) {
@@ -279,14 +281,14 @@ void dw_fc_audio_packet_config(struct dw_audio_s *audio)
 		/* otherwise refer to stream header (0) */
 		fs_value = 0;
 	}
-	audio_log(" - freq number = %d\n", fs_value);
+	hdmi_trace(" - freq number = %d\n", fs_value);
 	dw_write_mask(FC_AUDICONF1, FC_AUDICONF1_SF_MASK, fs_value);
 
 	dw_write_mask(FC_AUDICONF0, FC_AUDICONF0_CT_MASK, 0x0);
 
 	dw_write_mask(FC_AUDICONF1, FC_AUDICONF1_SS_MASK, 0x0);
 
-	audio_log("dw audio packet config done!\n");
+	hdmi_trace("dw audio packet config done!\n");
 }
 
 void dw_fc_audio_sample_config(struct dw_audio_s *audio)
@@ -366,7 +368,7 @@ void dw_fc_audio_sample_config(struct dw_audio_s *audio)
 	data = _audio_sw_get_iec_word_length(audio);
 	dw_write_mask(FC_AUDSCHNL8, FC_AUDSCHNL8_OIEC_WORDLENGTH_MASK, data);
 
-	audio_log("dw audio sample config done!\n");
+	hdmi_trace("dw audio sample config done!\n");
 }
 
 u32 dw_fc_audio_get_sample_freq(void)
@@ -473,6 +475,12 @@ u8 dw_fc_video_get_vsync_polarity(void)
 	return dw_read_mask(FC_INVIDCONF, FC_INVIDCONF_VSYNC_IN_POLARITY_MASK);
 }
 
+void dw_fc_set_tmds_mode(dw_tmds_mode_t mode)
+{
+	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_DVI_MODEZ_MASK,
+			mode == 0 ? 0x0 : 0x1);
+}
+
 int dw_fc_video_config(struct dw_video_s *video)
 {
 	const dw_dtd_t *dtd = &video->mDtd;
@@ -480,7 +488,7 @@ int dw_fc_video_config(struct dw_video_s *video)
 	u16 vactive = dtd->mVActive;
 	u16 hactive = dtd->mHActive;
 	u16 hblank  = dtd->mHBlanking;
-	u16 hsync = dtd->mHSyncPulseWidth;
+	u16 hsync   = dtd->mHSyncPulseWidth;
 	u16 hsync_delay = dtd->mHSyncOffset;
 	u16 i = 0;
 
@@ -492,7 +500,7 @@ int dw_fc_video_config(struct dw_video_s *video)
 	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_DE_IN_POLARITY_MASK, 0x1);
 
 	/* 1: HDMI; 0: DVI */
-	dw_write_mask(FC_INVIDCONF, FC_INVIDCONF_DVI_MODEZ_MASK, video->mHdmi);
+	dw_fc_set_tmds_mode(video->mHdmi);
 
 	if ((video->mHdmiVideoFormat == DW_VIDEO_FORMAT_3D) &&
 				(video->m3dStructure == HDMI_3D_STRUCTURE_FRAME_PACKING)) {
@@ -780,14 +788,14 @@ u8 dw_gcp_get_avmute(void)
 	return dw_read_mask(FC_GCP, FC_GCP_SET_AVMUTE_MASK);
 }
 
-void dw_drm_packet_clear(dw_fc_drm_pb_t *pb)
+void dw_drm_packet_clear(dw_fc_drm_pb_t *data)
 {
-	if (!pb) {
-		hdmi_err("check point pb is null\n");
+	if (IS_ERR_OR_NULL(data)) {
+		shdmi_err(data);
 		return;
 	}
 
-	memset(pb, 0x0, sizeof(dw_fc_drm_pb_t));
+	memset(data, 0x0, sizeof(dw_fc_drm_pb_t));
 }
 
 int dw_drm_packet_filling_data(dw_fc_drm_pb_t *data)
@@ -805,6 +813,7 @@ int dw_drm_packet_filling_data(dw_fc_drm_pb_t *data)
 	data->mcll     = 0x03e8;
 	data->mfll     = 0x0190;
 
+	hdmi_trace("dw drm data filling done\n");
 	return 0;
 }
 
@@ -892,7 +901,7 @@ int dw_infoframe_packet(void)
 	dw_write_mask(FC_PACKET_TX_EN, FC_PACKET_TX_EN_DRM_TX_EN_MASK, 0x0);
 	if (video->mHdr) {
 		dw_drm_packet_config(video->pb);
-		video_log("dw drm packet for hdr config done\n");
+		hdmi_trace("dw drm packet for hdr config done\n");
 	}
 
 	dw_write_mask(FC_DATAUTO1, FC_DATAUTO1_AUTO_FRAME_INTERPOLATION_MASK, 0x1);

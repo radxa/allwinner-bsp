@@ -695,7 +695,21 @@ static struct platform_driver panfrost_driver = {
 		.of_match_table = dt_match,
 	},
 };
-module_platform_driver(panfrost_driver);
+
+static int __init panfrost_driver_init(void)
+{
+	return platform_driver_register(&panfrost_driver);
+}
+
+static void __exit panfrost_driver_exit(void)
+{
+	platform_driver_unregister(&panfrost_driver);
+}
+
+
+//module_platform_driver(panfrost_driver);
+late_initcall(panfrost_driver_init);
+module_exit(panfrost_driver_exit);
 
 MODULE_AUTHOR("Panfrost Project Developers");
 MODULE_DESCRIPTION("Panfrost DRM Driver");

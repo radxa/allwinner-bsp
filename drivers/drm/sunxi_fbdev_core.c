@@ -23,34 +23,54 @@ struct fb_dmabuf_export {
 	__u32 flags;
 };
 
+struct dsi_notify {
+	struct work_struct dsi_work;
+	int blank;
+};
+struct dsi_notify __dsi_notify;
 struct fb_info *__fb_info;
 int fb_debug_val;
 static struct fb_create_info create_info;
 
-int fb_core_init(struct fb_create_info *create);
+int fb_core_init(struct fb_create_info *create, struct display_channel_state *out_state);
 int fb_core_exit(struct fb_create_info *create);
 
-static int tmp_init(struct drm_device *drm, struct fb_create_info *info)
+static int fb_config_init(struct drm_device *drm, struct fb_create_info *info)
 {
+	struct sunxi_logo_info logo;
+	unsigned int w, h;
+
+	sunxi_drm_get_logo_info(drm, &logo, &w, &h);
+	if (logo.phy_addr) {
+		info->format = logo.bpp == 32 ?
+				  ARGB8888 : RGB888;
+		info->width = logo.width;
+		info->height = logo.height;
+		info->logo_offset = logo.phy_addr;
+	} else {
+		info->format = ARGB8888;
+		info->width = logo.width;
+		info->height = logo.height;
+		info->logo_offset = 0;
+	}
+	info->scn_width = w;
+	info->scn_height = h;
 	info->drm = drm;
-	info->format = ARGB8888;
-	info->width = 160;
-	info->height = 90;
-	info->map[0].hw_display = 0;
-	info->map[0].hw_channel = 1;
-	info->mode[0] = FULL_STRETCH;
+	info->map.hw_display = 0;
+	info->map.hw_channel = 0;
+	info->mode = FULL_STRETCH;
 	info->fb_output_cnt = 1;
 	return 0;
 }
 
-int sunxi_fbdev_init(struct drm_device *drm)
+int sunxi_fbdev_init(struct drm_device *drm, struct display_channel_state *out_state)
 {
 	int ret;
 
-	ret = tmp_init(drm, &create_info);
+	ret = fb_config_init(drm, &create_info);
 	if (ret)
 		goto OUT;
-	ret = fb_core_init(&create_info);
+	ret = fb_core_init(&create_info, out_state);
 OUT:
 	return ret;
 }
@@ -276,8 +296,29 @@ static int fb_init_fix(struct fb_fix_screeninfo *fix, unsigned long device_addr,
 	fix->visual = FB_VISUAL_TRUECOLOR;
 	return 0;
 }
+static void dsi_notify_tp_work(struct work_struct *work)
+{
+	struct fb_event event;
+	struct dsi_notify *tmp_work = container_of(work, struct dsi_notify, dsi_work);
 
-int fb_core_init(struct fb_create_info *create)
+	if (!__fb_info)
+		return;
+	event.info = __fb_info;
+	event.data = &tmp_work->blank;
+	fb_notifier_call_chain(FB_EVENT_BLANK, &event);
+}
+void dsi_notify_call_chain(int cmd)
+{
+	__dsi_notify.blank = cmd;
+	schedule_work(&__dsi_notify.dsi_work);
+}
+
+struct fb_info *sunxi_get_fb_info(int fb_id)
+{
+	return __fb_info;
+}
+
+int fb_core_init(struct fb_create_info *create, struct display_channel_state *out_state)
 {
 	int ret;
 	void *virtual_addr;
@@ -286,6 +327,7 @@ int fb_core_init(struct fb_create_info *create)
 	unsigned int height = create->height;
 	unsigned int width = create->width;
 
+	INIT_WORK(&__dsi_notify.dsi_work, dsi_notify_tp_work);
 	info = framebuffer_alloc(platform_get_private_size(), create->drm->dev);
 	if (!info) {
 		fb_debug_inf("framebuffer_alloc fail\n");
@@ -310,7 +352,7 @@ int fb_core_init(struct fb_create_info *create)
 	info->flags = 0;
 
 	register_framebuffer(info);
-	platform_fb_init_finish(info->par, &info->var);
+	platform_fb_init_finish(info->par, &info->var, out_state);
 	__fb_info = info;
 	fb_debug_inf("fb vir 0x%p phy 0x%8lx\n", virtual_addr, device_addr);
 	return 0;

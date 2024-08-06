@@ -38,6 +38,8 @@
 #include <linux/pm.h>
 #endif
 
+#include <linux/version.h>
+
 #define FOR_TSLIB_TEST
 #define TEST_I2C_TRANSFER
 
@@ -334,20 +336,20 @@ static int ctp_wakeup(int status, int ms)
 	pr_debug("***CTP*** %s:status:%d, ms = %d\n", __func__, status, ms);
 	if (status == 0) {
 		if (ms == 0)
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 		else {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 			msleep(ms);
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 		}
 	}
 	if (status == 1) {
 		if (ms == 0)
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 		else {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 			msleep(ms);
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 		}
 	}
 	usleep_range(5000, 6000);
@@ -716,8 +718,12 @@ static void goodix_init_events(struct work_struct *work)
 		pr_info("goodix_probe: request irq failed\n");
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int goodix_ts_probe(struct i2c_client *client)
+#else
 static int goodix_ts_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	struct goodix_ts_data *ts;
 	int ret = 0;
@@ -845,7 +851,11 @@ err_check_functionality_failed:
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void goodix_ts_remove(struct i2c_client *client)
+#else
 static int goodix_ts_remove(struct i2c_client *client)
+#endif
 {
 	struct goodix_ts_data *ts = i2c_get_clientdata(client);
 
@@ -869,7 +879,11 @@ static int goodix_ts_remove(struct i2c_client *client)
 	i2c_set_clientdata(ts->client, NULL);
 	kfree(ts);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id goodix_ts_id[] = {

@@ -51,14 +51,18 @@ struct fb_create_info {
 	enum fb_format format;
 	u32 width;
 	u32 height;
+	u32 scn_width;
+	u32 scn_height;
+	unsigned long logo_offset;
 	/*TODO support an fb map to two device */
-	struct fb_output_map map[BOOT_OUTPUT_MAX];
-	enum fb_output_mode mode[BOOT_OUTPUT_MAX];
+	struct fb_output_map map;
+	enum fb_output_mode mode;
 	unsigned int fb_output_cnt;
 };
 
 /* platform */
 struct fb_hw_info;
+struct display_channel_state;
 
 int platform_get_private_size(void);
 int platform_update_fb_output(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var);
@@ -68,7 +72,8 @@ int platform_fb_memory_alloc(struct fb_hw_info *hw_info, void **vir_addr, unsign
 int platform_fb_memory_free(struct fb_hw_info *hw_info);
 int platform_fb_pan_display_post_proc(struct fb_hw_info *hw_info);
 int platform_fb_set_blank(struct fb_hw_info *hw_info, bool is_blank);
-int platform_fb_init_finish(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var);
+int platform_fb_init_finish(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var,
+			    struct display_channel_state *out_state);
 
 int platform_fb_init(struct fb_create_info *create, struct fb_hw_info *info, void **pseudo_palette);
 int platform_fb_exit(void);

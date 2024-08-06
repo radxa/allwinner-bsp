@@ -8,11 +8,8 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _DW_FRAME_COMPOSER_H
 #define _DW_FRAME_COMPOSER_H
-
-#include "dw_dev.h"
 
 typedef struct fc_spd_info {
     const u8 *vName;

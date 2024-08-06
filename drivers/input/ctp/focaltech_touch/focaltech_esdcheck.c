@@ -55,7 +55,8 @@ struct fts_esdcheck_st {
     u8      suspend             : 1;
     u8      proc_debug          : 1;    /* apk or adb use */
     u8      intr                : 1;    /* 1- Interrupt trigger */
-    u8      unused              : 4;
+    u8      esd_is_disable      : 1;
+    u8      unused              : 3;
     u8      intr_cnt;
     u8      flow_work_hold_cnt;         /* Flow Work Cnt(reg0x91) keep a same value for x times. >=5 times is ESD, need reset */
     u8      flow_work_cnt_last;         /* Save Flow Work Cnt(reg0x91) value */
@@ -63,6 +64,7 @@ struct fts_esdcheck_st {
     u32     nack_cnt;
     u32     dataerror_cnt;
 };
+
 
 /*****************************************************************************
 * Static variables
@@ -313,12 +315,14 @@ void fts_esdcheck_switch(struct fts_ts_data *ts_data, bool enable)
                 fts_esdcheck_data.flow_work_cnt_last = 0;
                 fts_esdcheck_data.intr = 0;
                 fts_esdcheck_data.intr_cnt = 0;
+                fts_esdcheck_data.esd_is_disable = 0;
                 queue_delayed_work(ts_data->ts_workqueue,
                                    &ts_data->esdcheck_work,
                                    msecs_to_jiffies(ESDCHECK_WAIT_TIME));
             } else {
                 FTS_DEBUG("ESD check stop");
                 cancel_delayed_work_sync(&ts_data->esdcheck_work);
+                fts_esdcheck_data.esd_is_disable = 1;
             }
         }
         FTS_FUNC_EXIT();
@@ -414,6 +418,11 @@ static int fts_create_esd_sysfs(struct device *dev)
         return ret;
     }
     return 0;
+}
+
+bool fts_esd_is_disable(void)
+{
+    return fts_esdcheck_data.esd_is_disable;
 }
 
 int fts_esdcheck_init(struct fts_ts_data *ts_data)

@@ -70,6 +70,12 @@
 #define _FT7250AB           0x7250B824
 #define _FT7130             0x71300825
 #define _FT8205             0x82050826
+#define _FT2389             0x23890827
+#define _FT8057             0x80570828
+#define _FT8057S            0x80570C28
+#define _FT8725             0x87250829
+#define _FT8206             0x8206082A
+
 
 
 
@@ -117,6 +123,7 @@
 #define _FT3528             0x35280481
 #define _FT5536             0x55360481
 #define _FT3418             0x34180481
+#define _FT5536G            0x5536A481
 
 #define _FT5446U            0x5446D083
 #define _FT5456U            0x5456D083
@@ -162,10 +169,13 @@
 
 #define _FT3519             0x35190489
 #define _FT3519T            0x3519E489
+#define _FT3519U            0x3519D489
 #define _FT3419             0x34190489
 #define _FT5536U_003        0x5536D489
 #define _FT5426G            0x5426A489
 #define _FT3437_N03         0x34370489
+#define _FT7411             0x74110489
+#define _FT7511U            0x7511D489
 
 #define _FT3680             0x3680008A
 #define _FT368A             0x368A008A
@@ -175,6 +185,19 @@
 #define _FT3169             0x3169008B
 #define _FT3269             0x3269008B
 
+#define _FT3658S            0x3658C48C
+
+#define _FT3A81             0x3A81048D
+#define _FT3D81             0x3D81048D
+
+#define _FT5B36U            0x5B36D48E
+
+#define _FT3682             0x3682008F
+#define _FT3C82             0x3C82008F
+
+#define _FT3683G            0x56720090
+
+
 
 
 /*************************************************/
@@ -182,7 +205,7 @@
 /*
  * choose your ic chip type of focaltech
  */
-#define FTS_CHIP_TYPE   _FT8201AB
+#define FTS_CHIP_TYPE   _FT8205
 
 /******************* Enables *********************/
 /*********** 1 to enable, 0 to disable ***********/
@@ -203,13 +226,13 @@
  * Report Pressure in multitouch
  * 1:enable(default),0:disable
 */
-#define FTS_REPORT_PRESSURE_EN                  1
+#define FTS_REPORT_PRESSURE_EN                  0
 
 /*
  * Stylus PEN enable
  * 1:enable(default),0:disable
 */
-#define FTS_PEN_EN                              0
+#define FTS_PEN_EN                              1
 
 /*
  * Gesture function enable
@@ -223,19 +246,24 @@
  */
 #define FTS_ESDCHECK_EN                         0
 
-
 /*
- * Proximity sensor
+ * Pinctrl enable
  * default: disable
  */
-#define FTS_PSENSOR_EN                          0
+#define FTS_PINCTRL_EN                          0
 
 /*
  * Customer power enable
  * enable it when customer need control TP power
  * default: disable
  */
-#define FTS_POWER_SOURCE_CUST_EN                1
+#define FTS_POWER_SOURCE_CUST_EN                0
+
+/*
+ * Proximity sensor(Only for MTK platform)
+ * default: disable
+ */
+#define FTS_PSENSOR_EN                          0
 
 /****************************************************/
 
@@ -283,31 +311,19 @@
  * define your own fw_file, the sample one to be replaced is invalid
  * NOTE: if FTS_GET_MODULE_NUM > 1, it's the fw corresponding with FTS_VENDOR_ID
  */
-#if defined(CONFIG_SPRODUCT_TOUCHPANEL_FT3427_HK_7INCH)
-#define FTS_UPGRADE_FW_FILE                     "include/firmware/fw_sample_hk_7inch.h"
-#else
-#define FTS_UPGRADE_FW_FILE                     "include/firmware/fw_sample.h"
-#endif
+#define FTS_UPGRADE_FW_FILE                     "include/firmware/fw_sample.i"
 
 /*
  * if FTS_GET_MODULE_NUM >= 2, fw corrsponding with FTS_VENDOR_ID2
  * define your own fw_file, the sample one is invalid
  */
-#if defined(CONFIG_SPRODUCT_TOUCHPANEL_FT3427_HK_7INCH)
-#define FTS_UPGRADE_FW2_FILE                    "include/firmware/fw_sample_hk_7inch.h"
-#else 
-#define FTS_UPGRADE_FW2_FILE                    "include/firmware/fw_sample.h"
-#endif
+#define FTS_UPGRADE_FW2_FILE                    "include/firmware/fw_sample.i"
 
 /*
  * if FTS_GET_MODULE_NUM >= 3, fw corrsponding with FTS_VENDOR_ID3
  * define your own fw_file, the sample one is invalid
  */
- #if defined(CONFIG_SPRODUCT_TOUCHPANEL_FT3427_HK_7INCH)
-#define FTS_UPGRADE_FW3_FILE                    "include/firmware/fw_sample_hk_7inch.h"
-#else 
-#define FTS_UPGRADE_FW3_FILE                    "include/firmware/fw_sample.h"
-#endif
+#define FTS_UPGRADE_FW3_FILE                    "include/firmware/fw_sample.i"
 
 /*********************************************************/
 

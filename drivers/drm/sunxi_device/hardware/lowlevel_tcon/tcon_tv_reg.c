@@ -113,13 +113,21 @@ s32 tcon_tv_close(struct sunxi_tcon_tv *tcon)
 s32 tcon_tv_cfg(struct sunxi_tcon_tv *tcon, struct disp_video_timings *timing)
 {
 	u32 start_delay;
-
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+	if (timing->vic == 39) {
+		tcon->reg->tcon_tv_basic1.bits.vic39 = 0x1;
+		tcon->reg->tcon_tv_basic1.bits.vt = timing->ver_total_time;
+	} else
+		tcon->reg->tcon_tv_basic1.bits.vt = (timing->ver_total_time * 2);
+#else
 	tcon->reg->tcon_tv_basic0.bits.x = timing->x_res - 1;
 	tcon->reg->tcon_tv_basic0.bits.y =
 	    timing->y_res / (timing->b_interlace + 1) - 1;
 	tcon->reg->tcon_tv_basic1.bits.ls_xo = timing->x_res - 1;
 	tcon->reg->tcon_tv_basic1.bits.ls_yo = timing->y_res
 	    / (timing->b_interlace + 1) + timing->vactive_space - 1;
+#endif
+
 	tcon->reg->tcon_tv_basic2.bits.xo = timing->x_res - 1;
 	tcon->reg->tcon_tv_basic2.bits.yo = timing->y_res
 	    / (timing->b_interlace + 1) + timing->vactive_space - 1;
@@ -187,6 +195,18 @@ s32 tcon_tv_hdmi_color_remap(struct sunxi_tcon_tv *tcon, u32 onoff)
 		tcon->reg->tcon_ceu_ctl.bits.ceu_en = 1;
 	else
 		tcon->reg->tcon_ceu_ctl.bits.ceu_en = 0;
+
+	return 0;
+}
+
+s32 tcon_tv_set_pixel_mode(struct sunxi_tcon_tv *tcon, unsigned int pixel_mode)
+{
+	if (pixel_mode == 1)
+		tcon->reg->tcon_gctl.bits.pixel_mode = 0;
+	else if (pixel_mode == 2)
+		tcon->reg->tcon_gctl.bits.pixel_mode = 1;
+	else if (pixel_mode == 4)
+		tcon->reg->tcon_gctl.bits.pixel_mode = 2;
 
 	return 0;
 }

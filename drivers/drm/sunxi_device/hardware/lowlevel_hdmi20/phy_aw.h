@@ -8,13 +8,8 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef AW_PHY_H_
 #define AW_PHY_H_
-
-#include "dw_dev.h"
-#include "dw_avp.h"
-#include "dw_mc.h"
 
 #define AW_PHY_TIMEOUT	1000
 #define PHY_REG_OFFSET	0x10000

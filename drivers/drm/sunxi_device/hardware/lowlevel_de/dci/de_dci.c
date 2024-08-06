@@ -83,10 +83,7 @@ struct de_dci_private {
 
 struct de_dci_handle *de_dci_create(struct module_create_info *info)
 {
-	if (info->de_version == 0x350)
-		return de35x_dci_create(info);
-	else
-		return NULL;
+	return de35x_dci_create(info);
 }
 
 s32 de_dci_enable(struct de_dci_handle *hdl, u32 enable)

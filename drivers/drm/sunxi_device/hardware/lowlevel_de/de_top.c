@@ -10,6 +10,7 @@
  * warranty of any kind, whether express or implied.
  */
 #include <linux/mm.h>
+#include <linux/delay.h>
 #include "de_top.h"
 #include "sunxi-sid.h"
 
@@ -99,6 +100,7 @@ struct de_top_desc {
 	u32 port2chn_mux_offset;
 	u32 channel_clk_offset;
 	u32 reserve_ctl_offset;
+	u32 busy_offset;
 	/* compatible ops */
 	enum de_irq_state (*query_state_with_clear)(struct de_top_handle *hdl,
 			    u32 disp, enum de_irq_state irq_state);
@@ -195,6 +197,7 @@ static struct de_top_desc de350 = {
 	.rtwb_timing_shift = 5,
 	.rtwb_self_wb_start_shift = 4,
 	.port2chn_mux_offset = DE_PORT2CHN_MUX_OFFSET_V1,
+	.busy_offset = RTMX_GLB_STS_OFFSET,
 	.query_state_with_clear = de_top_query_state_with_clear_v3xx,
 	.display_config = de_top_display_config_v2,
 	.check_finish = de_top_check_display_rcq_update_finish_with_clear,
@@ -227,6 +230,7 @@ static struct de_top_desc de355 = {
 	.port2chn_mux_offset = DE_PORT2CHN_MUX_OFFSET_V2,
 	.channel_clk_offset = DE_GATING_CTL_OFFSET,
 	.reserve_ctl_offset = DE_RESERVE_CTL_OFFSET,
+	.busy_offset = RTMX_GLB_STS_OFFSET,
 	.query_state_with_clear = de_top_query_state_with_clear_v3xx,
 	.display_config = de_top_display_config_v2,
 	.check_finish = de_top_check_display_rcq_update_finish_with_clear,
@@ -258,6 +262,7 @@ static struct de_top_desc de352 = {
 	.port2chn_mux_offset = DE_PORT2CHN_MUX_OFFSET_V2,
 	.channel_clk_offset = DE_GATING_CTL_OFFSET,
 	.reserve_ctl_offset = DE_RESERVE_CTL_OFFSET,
+	.busy_offset = RTMX_GLB_STS_OFFSET,
 	.query_state_with_clear = de_top_query_state_with_clear_v3xx,
 	.display_config = de_top_display_config_v2,
 	.check_finish = de_top_check_display_rcq_update_finish_with_clear,
@@ -485,7 +490,12 @@ static int de_top_set_rtmx_enable(struct de_top_handle *hdl, u32 disp, u8 en)
 		if (disp == 0)
 			writel(0x6000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, disp, 0x4));
 	} else if (hdl->private->dsc->version == 0x352) {
-		writel(0x2000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, disp, 0x4));
+		/*
+		 * sun60iw2 all linebufs have 0x3000, and the maximum size of a single de is 0x2000.
+		 * here, de0 is configured as 0x2000, and de1 default is 0x800.
+		 */
+		if (disp == 0)
+			writel(0x2000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, disp, 0x4));
 	}
 /*
 	if (hdl->private->dsc->reserve_ctl_offset) {
@@ -807,7 +817,31 @@ int de_top_set_rcq_update(struct de_top_handle *hdl, u32 disp, bool update)
 	u32 offset = hdl->private->dsc->rcq_ctl_offset;
 	u8 __iomem *de_base = hdl->cinfo.de_reg_base;
 	u8 __iomem *reg_base = de_base + DE_REG_OFFSET(offset, disp, 0x40);
-	writel(update ? 1 : 0, reg_base);
+	u32 offset2 = DE_REG_OFFSET(hdl->private->dsc->busy_offset, disp, 0x40);
+	u8 __iomem *reg_base2 = de_base + offset2;
+	bool busy;
+	unsigned long flag;
+	int i = 0;
+
+	/* skip busy check if calling from crash dump in interrupt or platform no need busy check */
+	if (!hdl->private->dsc->busy_offset || in_interrupt()) {
+		writel(update ? 1 : 0, reg_base);
+		return 0;
+	}
+
+	do {
+		local_irq_save(flag);
+		busy = !!(readl(reg_base2) & 0x10);
+		if (busy) {
+			writel(update ? 1 : 0, reg_base);
+			local_irq_restore(flag);
+			break;
+		}
+		local_irq_restore(flag);
+		usleep_range(5, 10);
+		i++;
+	} while (i < 10000);
+
 	return 0;
 }
 

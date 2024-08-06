@@ -48,7 +48,7 @@
 #define __SUNXI_MMC_H__
 
 #define DRIVER_NAME "sunxi-mmc"
-#define DRIVER_RIVISION "v5.39 2024-02-22 13:48"
+#define DRIVER_RIVISION "v5.39 2024-02-22 13:48 -- v5.48 2024-07-17 16:19"
 #define DRIVER_VERSION "SD/MMC/SDIO Host Controller Driver(" DRIVER_RIVISION ")"
 
 #if defined CONFIG_AW_FPGA_S4 || defined CONFIG_AW_FPGA_V7
@@ -79,6 +79,7 @@
 #define SDXC_REG_BBCR	(0x4C)	/* SMC BIU Byte Count Register */
 #define SDXC_REG_DBGC	(0x50)	/* SMC Debug Enable Register */
 #define SDXC_REG_A12A	(0x58)	/* auto cmd12 arg */
+#define SDXC_REG_SD_NTSR	(0x005C)	/* new timing set reg */
 #define SDXC_REG_HWRST	(0x78)	/* SMC Card Hardware Reset for Register */
 #define SDXC_REG_DMAC	(0x80)	/* SMC IDMAC Control Register */
 #define SDXC_REG_DLBA	(0x84)	/* SMC IDMAC Descriptor List Base Addre */
@@ -221,6 +222,9 @@
 #define SDXC_SEND_CCSD			BIT(8)
 #define SDXC_SEND_AUTO_STOPCCSD		BIT(9)
 #define SDXC_CEATA_DEV_IRQ_ENABLE	BIT(10)
+
+/* new timing set reg */
+#define	SDXC_2X_TIMING_MODE			(1U<<31)
 
 /* IDMA controller bus mod bit field */
 #define SDXC_IDMAC_SOFT_RESET		BIT(0)
@@ -560,6 +564,14 @@ struct sunxi_mmc_host {
 #if defined(CONFIG_ARCH_SUN55IW3)
 	unsigned int mmc_get_soc_ver;
 #endif
+
+#define MMC_TUNING_RETRY_TIMES		20
+	u32 kernel_tuning_sample_dly;
+	u8 tuning_in_kernel;
+	u32 execute_tuning_runing;
+	void (*sunxi_mmc_set_samp_dl)(struct sunxi_mmc_host *host,
+					int sunxi_samp_dl);
+
 };
 
 /* the struct as the the kernel version changes,which copy form core/slot-gpio.c */

@@ -69,10 +69,7 @@ struct de_cdc_private {
 
 struct de_cdc_handle *de_cdc_create(struct module_create_info *info)
 {
-	if (info->de_version == 0x350 || info->de_version == 0x352)
-		return de35x_cdc_create(info);
-	else
-		return NULL;
+	return de35x_cdc_create(info);
 
 }
 

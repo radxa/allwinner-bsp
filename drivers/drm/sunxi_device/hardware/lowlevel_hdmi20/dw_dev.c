@@ -9,8 +9,8 @@
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/version.h>
+#include <linux/io.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
 #include <drm/drm_scdc_helper.h>
@@ -19,13 +19,13 @@
 #include <drm/display/drm_scdc_helper.h>
 #endif
 
+#include "dw_dev.h"
 #include "dw_edid.h"
 #include "dw_hdcp.h"
 #include "dw_hdcp22.h"
 #include "dw_i2cm.h"
 #include "dw_phy.h"
 #include "dw_avp.h"
-#include "dw_dev.h"
 
 static struct dw_hdmi_dev_s *hdmi;
 
@@ -91,15 +91,17 @@ void dw_write_mask(u32 addr, u8 mask, u8 data)
 
 u8 dw_hdmi_get_loglevel(void)
 {
-	if (IS_ERR(hdmi))
+	if (IS_ERR_OR_NULL(hdmi))
 		return 0;
+
 	return hdmi->log_level;
 }
 
 void dw_hdmi_set_loglevel(u8 level)
 {
-	if (IS_ERR(hdmi))
+	if (IS_ERR_OR_NULL(hdmi))
 		return;
+
 	hdmi->log_level = level;
 }
 
@@ -130,45 +132,33 @@ int dw_hdmi_ctrl_reset(void)
 
 int dw_hdmi_ctrl_update(void)
 {
-	dw_tmds_mode_t hdmi_on = 0;
-
 	struct dw_video_s *video  = &hdmi->video_dev;
 
-	hdmi_on = video->mHdmi;
-	hdmi->hdmi_on    = (hdmi_on == DW_TMDS_MODE_HDMI) ? 1 : 0;
-	hdmi->audio_on   = (hdmi_on == DW_TMDS_MODE_HDMI) ? 1 : 0;
-	hdmi->pixel_clk  = dw_video_get_pixel_clk();
-	hdmi->color_bits = video->mColorResolution;
+	hdmi->hdmi_on      = (video->mHdmi == DW_TMDS_MODE_HDMI) ? 1 : 0;
+	hdmi->audio_on     = (video->mHdmi == DW_TMDS_MODE_HDMI) ? 1 : 0;
+	hdmi->pixel_clk    = dw_video_get_pixel_clk();
+	hdmi->color_bits   = video->mColorResolution;
 	hdmi->pixel_repeat = video->mDtd.mPixelRepetitionInput;
 
-	if (video->mEncodingIn == DW_COLOR_FORMAT_YCC422)
-		hdmi->color_bits = 8;
-
-	switch (video->mColorResolution) {
-	case DW_COLOR_DEPTH_8:
-		hdmi->tmds_clk = hdmi->pixel_clk;
-		break;
-	case DW_COLOR_DEPTH_10:
-		if (video->mEncodingOut != DW_COLOR_FORMAT_YCC422)
-			hdmi->tmds_clk = hdmi->pixel_clk * 125 / 100;
-		else
-			hdmi->tmds_clk = hdmi->pixel_clk;
-		break;
-	case DW_COLOR_DEPTH_12:
-		if (video->mEncodingOut != DW_COLOR_FORMAT_YCC422)
-			hdmi->tmds_clk = hdmi->pixel_clk * 3 / 2;
-		else
-			hdmi->tmds_clk = hdmi->pixel_clk;
-		break;
-	default:
-		hdmi_err("unvalid color depth. default use 8bit depth\n");
-		hdmi->tmds_clk = hdmi->pixel_clk;
-		break;
+	if (video->mEncodingIn == DW_COLOR_FORMAT_YCC422) {
+		hdmi->color_bits  = 8;
+		hdmi->tmds_clk    = hdmi->pixel_clk;
+		return 0;
 	}
 
-	if (video->mEncodingIn == DW_COLOR_FORMAT_YCC420) {
-		hdmi->pixel_clk = hdmi->pixel_clk / 2;
-		hdmi->tmds_clk /= 2;
+	if (video->mEncodingIn == DW_COLOR_FORMAT_YCC420)
+		hdmi->pixel_clk /= 2;
+
+	switch (video->mColorResolution) {
+	case DW_COLOR_DEPTH_10:
+		hdmi->tmds_clk = hdmi->pixel_clk * 125 / 100;
+		break;
+	case DW_COLOR_DEPTH_12:
+		hdmi->tmds_clk = hdmi->pixel_clk * 3 / 2;
+		break;
+	default:
+		hdmi->tmds_clk = hdmi->pixel_clk;
+		break;
 	}
 
 	return 0;
@@ -177,19 +167,25 @@ int dw_hdmi_ctrl_update(void)
 int dw_hdmi_scdc_set_scramble(u8 setup)
 {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
-	drm_scdc_set_scrambling(hdmi->i2c_adap, setup);
-	drm_scdc_set_high_tmds_clock_ratio(hdmi->i2c_adap, setup);
+	struct i2c_adapter   *dev = hdmi->i2c_adap;
 #else
-	drm_scdc_set_scrambling(hdmi->connect, setup);
-	drm_scdc_set_high_tmds_clock_ratio(hdmi->connect, setup);
+	struct drm_connector *dev = hdmi->connect;
 #endif
+
+	if (IS_ERR_OR_NULL(dev)) {
+		shdmi_err(dev);
+		return -1;
+	}
+
+	drm_scdc_set_scrambling(dev, setup);
+	drm_scdc_set_high_tmds_clock_ratio(dev, setup);
 	return 0;
 }
 
 int dw_hdmi_init(struct dw_hdmi_dev_s *data)
 {
-	if (!data) {
-		hdmi_err("check point data is null\n");
+	if (IS_ERR_OR_NULL(data)) {
+		shdmi_err(data);
 		return -1;
 	}
 
@@ -222,19 +218,18 @@ ssize_t dw_hdmi_dump(char *buf)
 {
 	ssize_t n = 0;
 
+	n += sprintf(buf + n, "\n========= [hdmi dw] =========\n");
 	n += sprintf(buf + n, "[dw ctrl]\n");
-	n += sprintf(buf + n, " - tmds_clk: [%dKHz], pixel_clk: [%dKHz], repet: [%d], bits: [%d]\n",
-		hdmi->tmds_clk, hdmi->pixel_clk,
-		hdmi->pixel_repeat, hdmi->color_bits);
+	n += sprintf(buf + n, " - tmds clock  : %dKHz\n", hdmi->tmds_clk);
+	n += sprintf(buf + n, " - pixel clock : %dKHz\n", hdmi->pixel_clk);
+	n += sprintf(buf + n, " - pixel repet : %d\n", hdmi->pixel_repeat);
+	n += sprintf(buf + n, " - color depth : %d-bits\n", hdmi->color_bits);
 
 	n += dw_phy_dump(buf + n);
 
 	n += dw_avp_dump(buf + n);
 
 	n += dw_hdcp_dump(buf + n);
-
-	if (hdmi->phy_ext->phy_dump)
-		n += hdmi->phy_ext->phy_dump(buf + n);
 
 	return n;
 }

@@ -156,6 +156,12 @@ void edp_hw_set_reg_base(struct sunxi_edp_hw_desc *edp_hw, void __iomem *base)
 	edp_hw->reg_base = base;
 }
 
+void edp_hw_set_top_base(struct sunxi_edp_hw_desc *edp_hw, void __iomem *base)
+{
+
+	edp_hw->top_base = base;
+}
+
 /*
  * -1: state_not_change
  *  0: change_to_plugout
@@ -416,6 +422,16 @@ bool edp_source_support_hardware_hdcp2x(struct sunxi_edp_hw_desc *edp_hw)
 		return false;
 }
 
+bool edp_source_support_enhance_frame(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->support_enhance_frame)
+		return ops->support_enhance_frame(edp_hw);
+	else
+		return false;
+}
+
 s32 edp_hw_query_max_pixclk(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core,
 			      struct disp_video_timings *tmgs)
 {
@@ -541,6 +557,7 @@ static void edp_phy_set_training_para(struct edp_tx_core *edp_core)
 		dp_opts->pre[i] = lane_para->lane_pre[i];
 	}
 	dp_opts->set_voltages = 1;
+	dp_opts->lanes = lane_para->lane_cnt;;
 
 	if (edp_core->combo_phy)
 		phy_configure(edp_core->combo_phy, &phy_opts);
@@ -585,19 +602,47 @@ bool edp_sink_support_tps3(struct sunxi_edp_hw_desc *edp_hw)
 		return false;
 }
 
+s32 edp_hw_lane_remap(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, u32 remap_id)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->lane_remap)
+		return ops->lane_remap(edp_hw, lane_id, remap_id);
+	else
+		return RET_OK;
+}
+
+s32 edp_hw_lane_invert(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, bool invert)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->lane_invert)
+		return ops->lane_invert(edp_hw, lane_id, invert);
+	else
+		return RET_OK;
+}
 
 void edp_hw_set_lane_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
-
-	u64 bit_rate = edp_core->lane_para.bit_rate;
-	u32 lane_cnt = edp_core->lane_para.lane_cnt;
+	struct edp_lane_para *lane_para = &edp_core->lane_para;
+	u64 bit_rate = lane_para->bit_rate;
+	u32 lane_cnt = lane_para->lane_cnt;
+	u32 i = 0;
 
 	if (ops->set_lane_rate)
 		ops->set_lane_rate(edp_hw, bit_rate);
 
 	if (ops->set_lane_cnt)
 		ops->set_lane_cnt(edp_hw, lane_cnt);
+
+	/* set lane remap */
+	for (i = 0 ; i < lane_cnt; i++)
+		edp_hw_lane_remap(edp_hw, i, lane_para->lane_remap[i]);
+
+	/* set lane invert */
+	for (i = 0 ; i < lane_cnt; i++)
+		edp_hw_lane_invert(edp_hw, i, lane_para->lane_invert[i]);
 }
 
 void edp_lane_training_para_reset(struct edp_lane_para *lane_para)
@@ -647,11 +692,18 @@ void edp_hw_set_training_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_co
 s32 edp_dpcd_set_lane_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
 {
 	char tmp_tx_buf[16];
+	char tmp_rx_buf[16];
 	s32 ret = RET_FAIL;
 
 	memset(tmp_tx_buf, 0, sizeof(tmp_tx_buf));
+	memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
+	ret = edp_hw_aux_read(edp_hw, DPCD_0101H, 1, &tmp_rx_buf[0]);
+	if (ret)
+		return ret;
+
 	tmp_tx_buf[0] = edp_core->lane_para.bit_rate / 10000000 / 27;
-	tmp_tx_buf[1] = edp_core->lane_para.lane_cnt;
+	tmp_tx_buf[1] = (tmp_rx_buf[0] & ~(DPCD_LANE_CNT_MASK)) |
+				edp_core->lane_para.lane_cnt;
 
 	ret = edp_hw_aux_write(edp_hw, DPCD_0100H, 2,  &tmp_tx_buf[0]);
 
@@ -1097,6 +1149,9 @@ s32 edp_main_link_setup(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *ed
 		return ret;
 	ret = edp_training_pattern_clear(edp_hw, edp_core);
 
+	if (ops->scrambling_enable)
+		ops->scrambling_enable(edp_hw, true);
+
 	return ret;
 }
 
@@ -1390,6 +1445,30 @@ s32 edp_hw_assr_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 	return ret;
 }
 
+s32 edp_hw_enhance_frame_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
+{
+	s32 ret = RET_OK;
+	char tmp_rx_buf[16];
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->enhance_frame_enable)
+		ops->enhance_frame_enable(edp_hw, enable);
+
+	memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
+	ret = edp_hw_aux_read(edp_hw, DPCD_0101H, 1, &tmp_rx_buf[0]);
+	if (ret)
+		return ret;
+
+	if (enable)
+		tmp_rx_buf[0] |= DPCD_ENHANCE_FRAME_ENABLE_MASK;
+	else
+		tmp_rx_buf[0] &= ~DPCD_ENHANCE_FRAME_ENABLE_MASK;
+
+	ret = edp_hw_aux_write(edp_hw, DPCD_0101H, 1,  &tmp_rx_buf[0]);
+
+	return ret;
+}
+
 bool edp_hw_check_controller_error(struct sunxi_edp_hw_desc *edp_hw)
 {
 	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
@@ -1426,6 +1505,16 @@ s32 edp_hw_get_color_fmt(struct sunxi_edp_hw_desc *edp_hw)
 		return ops->get_color_format(edp_hw);
 	else
 		return RET_OK;
+}
+
+u32 edp_hw_get_pixel_mode(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops->get_pixel_mode)
+		return ops->get_pixel_mode(edp_hw);
+	else
+		return 1;
 }
 
 u32 edp_hw_get_pixclk(struct sunxi_edp_hw_desc *edp_hw)
@@ -1527,26 +1616,6 @@ s32 edp_hw_get_audio_data_width(struct sunxi_edp_hw_desc *edp_hw)
 	if (ops->get_audio_data_width)
 		return ops->get_audio_data_width(edp_hw);
 
-	else
-		return RET_OK;
-}
-
-s32 edp_hw_lane_remap(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, u32 remap_id)
-{
-	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
-
-	if (ops->lane_remap)
-		return ops->lane_remap(edp_hw, lane_id, remap_id);
-	else
-		return RET_OK;
-}
-
-s32 edp_hw_lane_invert(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, bool invert)
-{
-	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
-
-	if (ops->lane_invert)
-		return ops->lane_invert(edp_hw, lane_id, invert);
 	else
 		return RET_OK;
 }

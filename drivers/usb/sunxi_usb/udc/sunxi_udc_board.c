@@ -55,7 +55,7 @@ u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 		if (sunxi_udc_io->clk_hosc) {
 			ret = clk_prepare_enable(sunxi_udc_io->clk_hosc);
 			if (ret) {
-				DMSG_PANIC("[udc]: enable clk_hosc err, return %d\n", ret);
+				DMSG_ERR("[udc]: enable clk_hosc err, return %d\n", ret);
 				return ret;
 			}
 		}
@@ -65,7 +65,7 @@ u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 		if (sunxi_udc_io->clk_bus_otg) {
 			ret = clk_prepare_enable(sunxi_udc_io->clk_bus_otg);
 			if (ret) {
-				DMSG_PANIC("[udc]: enable clk_bus_otg err, return %d\n", ret);
+				DMSG_ERR("[udc]: enable clk_bus_otg err, return %d\n", ret);
 				return ret;
 			}
 		}
@@ -75,7 +75,7 @@ u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 		if (sunxi_udc_io->clk_phy) {
 			ret = clk_prepare_enable(sunxi_udc_io->clk_phy);
 			if (ret) {
-				DMSG_PANIC("[udc]: enable clk_phy err, return %d\n", ret);
+				DMSG_ERR("[udc]: enable clk_phy err, return %d\n", ret);
 				return ret;
 			}
 		}
@@ -85,7 +85,7 @@ u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 		if (sunxi_udc_io->reset_otg) {
 			ret = reset_control_deassert(sunxi_udc_io->reset_otg);
 			if (ret) {
-				DMSG_PANIC("[udc]: reset otg err, return %d\n", ret);
+				DMSG_ERR("[udc]: reset otg err, return %d\n", ret);
 				return ret;
 			}
 		}
@@ -93,7 +93,7 @@ u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 		if (sunxi_udc_io->reset_phy) {
 			ret = reset_control_deassert(sunxi_udc_io->reset_phy);
 			if (ret) {
-				DMSG_PANIC("[udc]: reset phy err, return %d\n", ret);
+				DMSG_ERR("[udc]: reset phy err, return %d\n", ret);
 				return ret;
 			}
 		}
@@ -301,7 +301,7 @@ __s32 sunxi_udc_io_init(__u32 usbc_no, sunxi_udc_io_t *sunxi_udc_io)
 	USBC_init(&sunxi_udc_io->usbc);
 	sunxi_udc_io->usb_bsp_hdle = USBC_open_otg(usbc_no);
 	if (sunxi_udc_io->usb_bsp_hdle == NULL) {
-		DMSG_PANIC("ERR: sunxi_udc_init: USBC_open_otg failed\n");
+		DMSG_ERR("ERR: sunxi_udc_init: USBC_open_otg failed\n");
 		return -1;
 	}
 

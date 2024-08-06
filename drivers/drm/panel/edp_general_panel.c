@@ -39,7 +39,6 @@ struct general_panel {
 	struct gpio_desc *enable_gpio[GPIO_MAX];
 	struct gpio_desc *reset_gpio;
 	enum drm_panel_orientation orientation;
-	bool non_edid_modes;
 };
 
 static inline struct general_panel *to_general_panel(struct drm_panel *panel)
@@ -113,7 +112,9 @@ static int general_panel_get_modes(struct drm_panel *panel,
 	struct edid *edid = NULL;
 	int mode_num = 0;
 
-	if (edp_panel->non_edid_modes) {
+	if ((edp_panel->video_mode.hactive != 0) &&
+	    (edp_panel->video_mode.vactive != 0) &&
+	    (edp_panel->video_mode.pixelclock != 0)) {
 		mode = drm_mode_create(connector->dev);
 		if (!mode)
 			return 0;
@@ -122,26 +123,14 @@ static int general_panel_get_modes(struct drm_panel *panel,
 		mode->type |= DRM_MODE_TYPE_USERDEF;
 		drm_mode_probed_add(connector, mode);
 		mode_num++;
-	} else {
-		if (connector->edid_blob_ptr)
-			edid = drm_edid_duplicate(connector->edid_blob_ptr->data);
-		else
-			DRM_ERROR("edid for connector not update yet!\n");
-
-		mode_num += drm_add_edid_modes(connector, edid);
-
-		if (!mode_num) {
-			mode = drm_mode_create(connector->dev);
-			if (!mode)
-				return 0;
-
-			DRM_ERROR("parse mode from edid fail, try to parse mode from dts!\n");
-			drm_display_mode_from_videomode(&edp_panel->video_mode, mode);
-			mode->type |= DRM_MODE_TYPE_USERDEF;
-			drm_mode_probed_add(connector, mode);
-			mode_num++;
-		}
 	}
+
+	if (connector->edid_blob_ptr)
+		edid = drm_edid_duplicate(connector->edid_blob_ptr->data);
+	else
+		DRM_ERROR("edid for connector not update yet!\n");
+
+	mode_num += drm_add_edid_modes(connector, edid);
 
 	drm_connector_set_panel_orientation(connector, edp_panel->orientation);
 
@@ -166,11 +155,6 @@ static int general_panel_parse_dt(struct general_panel *edp_panel)
 	if (ret < 0) {
 		edp_panel->orientation = DRM_MODE_PANEL_ORIENTATION_NORMAL;
 	}
-
-	if (of_find_property(np, "non-edid-modes", NULL))
-		edp_panel->non_edid_modes = true;
-	else
-		edp_panel->non_edid_modes = false;
 
 	ret = of_get_display_timing(np, "panel-timing", &timing);
 	if (ret < 0) {

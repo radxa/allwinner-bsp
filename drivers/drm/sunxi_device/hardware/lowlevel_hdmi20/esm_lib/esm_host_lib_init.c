@@ -411,11 +411,6 @@ static ESM_STATUS esm_init_mem(esm_instance_t *esm, unsigned int image,
 	if (esm == 0)
 		return ESM_HL_NO_INSTANCE;
 
-	hdcp_log("code_phys_addr:0x%x data_phys_addr:0x%x data_size:%d\n",
-						esm->driver->code_base,
-						esm->driver->data_base,
-						esm->driver->data_size);
-
 	/* CODE: Write the physical address of the code memory to the ESM. */
 	if (esm->driver->hpi_write(esm->driver->instance,
 			ESM_REG_HP_FW_BASE0(HPI_HOST_OFF),
@@ -713,7 +708,7 @@ ESM_STATUS ESM_Initialize(esm_instance_t *esm,
 	unsigned int image, uint32_t image_size, uint32_t flags,
 	esm_host_driver_t *driver, esm_config_t *config)
 {
-	hdcp_log("image:%x image_size:%x\n", image, image_size);
+
 	if (esm == 0)
 		return ESM_HL_NO_INSTANCE;
 

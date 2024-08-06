@@ -83,7 +83,6 @@
 
 #define SDXC_REG_EDSD		(0x010C)
 #define SDXC_REG_CSDC		(0x0054)
-#define SDXC_REG_SD_NTSR	(0x005C)
 #define SDXC_REG_THLD		(0x0100)
 #define SDXC_REG_DRV_DL		(0x0140)
 #define SDXC_REG_SAMP_DL	(0x0144)

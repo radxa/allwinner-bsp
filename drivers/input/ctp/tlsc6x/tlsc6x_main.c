@@ -42,6 +42,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/types.h>
 
+#include <linux/version.h>
 #include <linux/fb.h>
 #if defined(CONFIG_ADF)
 #include <linux/notifier.h>
@@ -703,19 +704,15 @@ static struct tlsc6x_platform_data *tlsc6x_parse_dt(struct device *dev)
 		return NULL;
 	}
 
-	pdata->reset_gpio_number = of_get_named_gpio_flags(np, "reset-gpio",
-							   0,
-							   &pdata->
-							   reset_gpio_flags);
+	pdata->reset_gpio_number = of_get_named_gpio(np, "reset-gpio",
+							   0);
 	if (pdata->reset_gpio_number < 0) {
 		dev_err(dev, "fail to get reset_gpio_number\n");
 		goto fail;
 	}
 
-	pdata->irq_gpio_number = of_get_named_gpio_flags(np, "irq-gpio",
-							 0,
-							 &pdata->
-							 irq_gpio_flags);
+	pdata->irq_gpio_number = of_get_named_gpio(np, "irq-gpio",
+							 0);
 	if (pdata->irq_gpio_number < 0) {
 		dev_err(dev, "fail to get irq_gpio_number\n");
 		goto fail;
@@ -1835,8 +1832,12 @@ int i2c_correspond(void)
 		return 0;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int tlsc6x_probe(struct i2c_client *client)
+#else
 static int tlsc6x_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	int ret = -1;
 	int err = 0;
@@ -2065,7 +2066,11 @@ exit_alloc_data_failed:if (pdata != NULL) {
 exit_alloc_platform_data_failed:return err;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void tlsc6x_remove(struct i2c_client *client)
+#else
 static int tlsc6x_remove(struct i2c_client *client)
+#endif
 {
 	struct tlsc6x_data *drvdata = i2c_get_clientdata(client);
 
@@ -2080,7 +2085,7 @@ static int tlsc6x_remove(struct i2c_client *client)
 #endif
 
 	if (drvdata == NULL) {
-		return 0;
+		goto ret;
 	}
 #if defined(CONFIG_ADF)
 	fb_unregister_client(&g_tp_drvdata->fb_notif);
@@ -2100,7 +2105,12 @@ static int tlsc6x_remove(struct i2c_client *client)
 	drvdata = NULL;
 	i2c_set_clientdata(client, drvdata);
 
+ret:
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id tlsc6x_id[] = { {TS_NAME, 0}, {} };
@@ -2112,12 +2122,15 @@ static const struct of_device_id tlsc6x_of_match[] = { {.compatible =
 };
 
 MODULE_DEVICE_TABLE(of, tlsc6x_of_match);
-static struct i2c_driver tlsc6x_driver = {.probe = tlsc6x_probe, .remove =
-	    tlsc6x_remove, .id_table = tlsc6x_id, .driver = {.name =
-							   TS_NAME, .owner =
-							   THIS_MODULE, .
-							   of_match_table =
-							   tlsc6x_of_match,},
+static struct i2c_driver tlsc6x_driver = {
+	.probe = tlsc6x_probe,
+	.remove = tlsc6x_remove,
+	.id_table = tlsc6x_id,
+	.driver = {
+		.name = TS_NAME,
+		.owner = THIS_MODULE,
+		.of_match_table = tlsc6x_of_match,
+	},
 };
 
 static int __init tlsc6x_init(void)

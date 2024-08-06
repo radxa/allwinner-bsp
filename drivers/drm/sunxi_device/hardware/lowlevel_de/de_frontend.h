@@ -21,16 +21,9 @@
 #include "dci/de_dci.h"
 #include "fcm/de_fcm.h"
 
-#define BYPASS_CDC_MASK		(1 << 0)
-#define BYPASS_CCSC_MASK	(1 << 1)
-#define BYPASS_FCM_MASK		(1 << 2)
-#define BYPASS_DCI_MASK		(1 << 3)
-#define BYPASS_SNR_MASK		(1 << 4)
-#define BYPASS_SHARP_MASK	(1 << 5)
-#define BYPASS_ALL_MASK		(1 << 28)
-
 struct de_frontend_handle {
 	struct module_create_info cinfo;
+	bool routine_job;
 	unsigned int block_num;
 	struct de_reg_block **block;
 	struct de_frontend_private *private;
@@ -52,35 +45,24 @@ struct de_frontend_apply_cfg {
 	enum de_format_space px_fmt_space;
 	enum de_color_space color_space;
 	enum de_eotf eotf;
-	struct de_rect_s ovl_out_win;
-	struct de_rect_s scn_win;
+	struct de_rect_s ovl_out_win;/* scaler in size, after ovl down fetch size */
+	struct de_rect_s scn_win;/* scaler out size, bld input size */
 	bool rgb_out;
 
 	struct de_frontend_output_cfg de_out_cfg;
 };
 
-struct de_frontend_data {
-	u32 demo_en;
-	struct de_snr_para snr_para;
-	struct de_dci_para dci_para;
-	struct de_fcm_para fcm_para;
-	struct de_cdc_para cdc_para;
-	struct de_csc_para csc1_para;
-	struct de_csc_para csc2_para;
-	struct de_sharp_para sharp_para;
-};
-
-
 void de_frontend_update_regs(struct de_frontend_handle *hdl);
 
 void de_frontend_init(struct de_frontend_handle *hdl);
-s32 de_frontend_enable(struct de_frontend_handle *hdl, u32 en);
+s32 de_frontend_disable(struct de_frontend_handle *hdl);
 s32 de_frontend_apply(struct de_frontend_handle *hdl, struct display_channel_state *cstate,
 					 struct de_frontend_apply_cfg *frontend_cfg);
 void de_frontend_process_late(struct de_frontend_handle *hdl);
 s32 de_frontend_dump_state(struct drm_printer *p, struct de_frontend_handle *hdl);
 
 struct de_frontend_handle *de_frontend_create(struct module_create_info *cinfo);
-int de_frontend_parse_snr_en(struct display_channel_state *cstate);
+bool de_frontend_apply_snr(struct de_frontend_handle *hdl, struct display_channel_state *state, unsigned int ovl_w, unsigned int ovl_h);
+int de_frontend_get_pqd_config(struct de_frontend_handle *hdl, struct display_channel_state *cstate);
 
 #endif

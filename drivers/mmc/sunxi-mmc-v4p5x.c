@@ -59,7 +59,6 @@
 #define SDXC_REG_SAMP_DL	(0x0144)
 #define SDXC_REG_DS_DL		(0x0148)
 #define SDXC_REG_EMCE		(0x64)		/*  SMHC EMCE Control Register */
-#define SDXC_REG_SD_NTSR	(0x005C)
 #define SDXC_REG_SMCV		(0x300)		/* SMHC Version Register */
 
 /* use only for version after or equel 4.9 */
@@ -80,7 +79,6 @@
 #define SDXC_SAMP_DL_SW_EN			(1u<<7)
 #define SDXC_DS_DL_SW_EN			(1u<<7)
 
-#define	SDXC_2X_TIMING_MODE			(1U<<31)
 #define SDXC_HS400_NEW_SAMPLE_EN		(1U<<0)
 
 #define SDXC_SFC_BP					BIT(0)
@@ -291,6 +289,9 @@ static void sunxi_mmc_set_clk_dly(struct sunxi_mmc_host *host, int clk,
 		break;
 	case MMC_TIMING_UHS_SDR50:
 	case MMC_TIMING_UHS_SDR104:
+		dat_drv_ph = 1;
+		speed_mod = SM3_HS200_SDR104;
+		break;
 	case MMC_TIMING_MMC_HS200:
 		speed_mod = SM3_HS200_SDR104;
 		break;
@@ -335,55 +336,60 @@ static void sunxi_mmc_set_clk_dly(struct sunxi_mmc_host *host, int clk,
 	raw_sm_def = &mmc_clk_dly[speed_mod].raw_tm_sm_def[frq_index / 4];
 	m_str = mmc_clk_dly[speed_mod].mod_str;
 
-	rval = of_property_read_u32(np, raw_sm_str, raw_sm);
-	if (rval) {
-		SM_INFO(mmc_dev(host->mmc), "failed to get %s used default\n",
-			 m_str);
+	if (host->tuning_in_kernel) {
+		sam_dly = host->kernel_tuning_sample_dly;
+		SM_INFO(mmc_dev(host->mmc), "used kernel tuning, delay = %d\n", sam_dly);
 	} else {
-		u32 sm_shift = (frq_index % 4) * 8;
-
-		rval = ((*raw_sm) >> sm_shift) & 0xff;
-		if (rval != 0xff) {
-			if (timing == MMC_TIMING_MMC_HS400) {
-				u32 raw_sm_hs200 = 0;
-				u32 hs400_cmd_dly = 0;
-				s32 ret = sunxi_mmc_get_hs400_cmd_dly(host, clk,  &hs400_cmd_dly);
-
-				ds_dly = rval;
-				if (ret != 0) {
-					raw_sm_hs200 =
-					    mmc_clk_dly[SM3_HS200_SDR104].raw_tm_sm[frq_index / 4];
-					sam_dly = ((raw_sm_hs200) >> sm_shift) & 0xff;
-				} else {
-					sam_dly = hs400_cmd_dly;
-					/* sam_dly = 57; */
-					/* printk("forec 57 sample dly\n"); */
-				}
-			} else {
-				sam_dly = rval;
-			}
-			SM_DBG(mmc_dev(host->mmc),
-				"Get speed mode %s clk dly %s ok\n", m_str,
-				raw_sm_str);
+		rval = of_property_read_u32(np, raw_sm_str, raw_sm);
+		if (rval) {
+			SM_INFO(mmc_dev(host->mmc), "failed to get %s used default\n",
+				 m_str);
 		} else {
 			u32 sm_shift = (frq_index % 4) * 8;
 
-			SM_DBG(mmc_dev(host->mmc), "%s use default value\n",
-				m_str);
-			rval = ((*raw_sm_def) >> sm_shift) & 0xff;
-			if (timing == MMC_TIMING_MMC_HS400) {
-				u32 raw_sm_hs200 = 0;
+			rval = ((*raw_sm) >> sm_shift) & 0xff;
+			if (rval != 0xff) {
+				if (timing == MMC_TIMING_MMC_HS400) {
+					u32 raw_sm_hs200 = 0;
+					u32 hs400_cmd_dly = 0;
+					s32 ret = sunxi_mmc_get_hs400_cmd_dly(host, clk,  &hs400_cmd_dly);
 
-				ds_dly = rval;
-				raw_sm_hs200 =
-				    mmc_clk_dly[SM3_HS200_SDR104].
-				    raw_tm_sm_def[frq_index / 4];
-				sam_dly = ((raw_sm_hs200) >> sm_shift) & 0xff;
+					ds_dly = rval;
+					if (ret != 0) {
+						raw_sm_hs200 =
+						    mmc_clk_dly[SM3_HS200_SDR104].raw_tm_sm[frq_index / 4];
+						sam_dly = ((raw_sm_hs200) >> sm_shift) & 0xff;
+					} else {
+						sam_dly = hs400_cmd_dly;
+						/* sam_dly = 57; */
+						/* printk("forec 57 sample dly\n"); */
+					}
+				} else {
+					sam_dly = rval;
+				}
+				SM_DBG(mmc_dev(host->mmc),
+					"Get speed mode %s clk dly %s ok\n", m_str,
+					raw_sm_str);
 			} else {
-				sam_dly = rval;
-			}
-		}
+				u32 sm_shift = (frq_index % 4) * 8;
 
+				SM_DBG(mmc_dev(host->mmc), "%s use default value\n",
+					m_str);
+				rval = ((*raw_sm_def) >> sm_shift) & 0xff;
+				if (timing == MMC_TIMING_MMC_HS400) {
+					u32 raw_sm_hs200 = 0;
+
+					ds_dly = rval;
+					raw_sm_hs200 =
+					    mmc_clk_dly[SM3_HS200_SDR104].
+					    raw_tm_sm_def[frq_index / 4];
+					sam_dly = ((raw_sm_hs200) >> sm_shift) & 0xff;
+				} else {
+					sam_dly = rval;
+				}
+			}
+
+		}
 	}
 
 	SM_DBG(mmc_dev(host->mmc), "Try set %s clk dly	ok\n", m_str);
@@ -544,7 +550,7 @@ static int __sunxi_mmc_do_oclk_onoff(struct sunxi_mmc_host *host, u32 oclk_en,
 
 	if (oclk_en)
 		rval |= SDXC_CARD_CLOCK_ON;
-	if (pwr_save)
+	if (pwr_save && host->voltage_switching == 0)
 		rval |= SDXC_LOW_POWER_ON;
 	if (ignore_dat0)
 		rval |= SDXC_MASK_DATA0;
@@ -554,7 +560,12 @@ static int __sunxi_mmc_do_oclk_onoff(struct sunxi_mmc_host *host, u32 oclk_en,
 	SM_DBG(mmc_dev(host->mmc), "%s REG_CLKCR:%x\n", __func__,
 		mmc_readl(host, REG_CLKCR));
 
-	rval = SDXC_START | SDXC_UPCLK_ONLY | SDXC_WAIT_PRE_OVER;
+	if (host->voltage_switching == 1) {
+		rval = SDXC_START | SDXC_UPCLK_ONLY | SDXC_WAIT_PRE_OVER | SDXC_VOLTAGE_SWITCH;
+	} else {
+		rval = SDXC_START | SDXC_UPCLK_ONLY | SDXC_WAIT_PRE_OVER;
+	}
+
 	mmc_writel(host, REG_CMDR, rval);
 
 	ret = mmc_wbclr(host, host->reg_base + SDXC_REG_CMDR, SDXC_START, 250);
@@ -824,7 +835,9 @@ static void sunxi_mmc_thld_ctl_for_sdmmc_v4p5x(struct sunxi_mmc_host *host,
 	    /*((SDXC_FIFO_DETH<<2)-bsz) >= (rdtl) */
 	    && ((SDXC_FIFO_DETH << 2) >= (rdtl + bsz))
 	    && ((ios->timing == MMC_TIMING_MMC_HS200)
-	       || (ios->timing == MMC_TIMING_MMC_HS400))) {
+		   || (ios->timing == MMC_TIMING_MMC_HS400)
+	       || (ios->timing == MMC_TIMING_UHS_SDR50)
+	       || (ios->timing == MMC_TIMING_UHS_SDR104))) {
 		rval = mmc_readl(host, REG_THLD);
 		rval &= ~SDXC_CARD_RD_THLD_MASK;
 		rval |= data->blksz << SDXC_CARD_RD_THLD_SIZE_SHIFT;
@@ -836,7 +849,7 @@ static void sunxi_mmc_thld_ctl_for_sdmmc_v4p5x(struct sunxi_mmc_host *host,
 		mmc_writel(host, REG_THLD, rval);
 	}
 
-	SM_DBG(mmc_dev(host->mmc), "--SDXC_REG_THLD: 0x%08x\n",
+	SM_DBG(mmc_dev(host->mmc), "SDXC_REG_THLD: 0x%08x\n",
 		mmc_readl(host, REG_THLD));
 
 }
@@ -909,8 +922,9 @@ void sunxi_mmc_set_samp_dl_raw(struct sunxi_mmc_host *host,
 	rval |= SDXC_SAMP_DL_SW_EN;
 	mmc_writel(host, REG_SAMP_DL, rval);
 
-	SM_INFO(mmc_dev(host->mmc), "RETRY: REG_SAMP_DL: 0x%08x\n",
-		 mmc_readl(host, REG_SAMP_DL));
+	if (!(host->tuning_in_kernel && host->execute_tuning_runing))
+		SM_INFO(mmc_dev(host->mmc), "RETRY: REG_SAMP_DL: 0x%08x\n",
+									mmc_readl(host, REG_SAMP_DL));
 }
 
 /* #define SUNXI_RETRY_TEST 1 */
@@ -1214,5 +1228,6 @@ void sunxi_mmc_init_priv_v4p6x(struct sunxi_mmc_host *host,
 
 
 	host->sunxi_mmc_oclk_en = sunxi_mmc_oclk_onoff;
+	host->sunxi_mmc_set_samp_dl = sunxi_mmc_set_samp_dl_raw;
 }
 EXPORT_SYMBOL_GPL(sunxi_mmc_init_priv_v4p6x);

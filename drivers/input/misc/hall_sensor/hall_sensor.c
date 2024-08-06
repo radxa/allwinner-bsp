@@ -240,7 +240,8 @@ static int __init switch_init(void)
 		pr_err("%s: hall is not used\n", __func__);
 		goto devicetree_get_item_err;
 	}
-	int_number = of_get_named_gpio_flags(np, "hall_int_port", 0, (enum of_gpio_flags *)&irq_gpio);
+
+	int_number = of_get_named_gpio(np, "hall_int_port", 0);
 	if (!gpio_is_valid(int_number)) {
 		pr_err("%s: hall_int_port is invalid. \n", __func__);
 		goto devicetree_get_item_err;

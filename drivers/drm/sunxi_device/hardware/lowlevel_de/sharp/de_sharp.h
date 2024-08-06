@@ -25,10 +25,7 @@ struct de_sharp_handle {
 	struct de_sharp_private *private;
 };
 
-struct de_sharp_para {
-	bool bypass;
-};
-
+bool de_sharp_is_enabled(struct de_sharp_handle *hdl);
 struct de_sharp_handle *de_sharp_create(struct module_create_info *info);
 s32 de_sharp_set_size(struct de_sharp_handle *hdl, u32 width, u32 height);
 s32 de_sharp_set_window(struct de_sharp_handle *hdl,
@@ -36,5 +33,6 @@ s32 de_sharp_set_window(struct de_sharp_handle *hdl,
 s32 de_sharp_enable(struct de_sharp_handle *hdl, u32 en);
 void de_sharp_update_regs(struct de_sharp_handle *hdl);
 s32 de_sharp_dump_state(struct drm_printer *p, struct de_sharp_handle *hdl);
+int de_sharp_pq_proc(struct de_sharp_handle *hdl, sharp_de35x_t *para);
 
 #endif /* #ifndef _DE_CDC_H_ */

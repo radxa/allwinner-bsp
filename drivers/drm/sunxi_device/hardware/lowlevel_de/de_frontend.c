@@ -18,6 +18,7 @@
 #include "de_channel.h"
 #include "de_base.h"
 #include "de_frontend.h"
+#include "../scaler/de_scaler.h"
 
 /*
  *             +-  ovl0 -+
@@ -47,31 +48,46 @@
  *
  * note:
  * SNR is also considered as part of frontend.
+ * asu in scaler is also with pq proc, and also be handled in frontend.
+ *
+ *
+ * how do de_frontend work ?
+ * 1. pqd will update struct display_channel_state -> frontend_blob through ioctl without exactly update to hw
+ * 2. if channel is update, de_frontend_apply() will be called at every frame update (pqd data may be update to hw here by using dirty flag)
+ * 3. de_frontend_process_late() will be called when new frame update finish to do some routine for pq module.
+ * 4. pq module itself should guarantee pqd api and module apply api simultaneously work well.
+ * 5. to avoid race between pq module registers, most pq module use sw shawdow register protect by mutex, and will be update to rcq buffer at de_xxx_update_regs before flush
+ * 6. de_frontend_inner_info.module_dirty should not be set directly, but compare to prvious config to decide if if is actally dirty.
+ *
+ *
  */
 
-#define DEMO_SPEED 200
 #define MIN_OVL_WIDTH  32
 #define MIN_OVL_HEIGHT 32
 #define MIN_BLD_WIDTH 32
 #define MIN_BLD_HEIGHT 4
 
+#define clear_mask(mask, module)		((mask) &= ~(module))
+#define set_mask(mask, module)			((mask) |= (module))
+
 struct de_frontend_inner_info {
 	u32 layer_en_cnt;
-	u32 ovl_width;
+	u32 ovl_width; /* scaler in size, after ovl down fetch size */
 	u32 ovl_height;
-	u32 bld_width;
+	u32 bld_width; /* scaler out size, bld input size */
 	u32 bld_height;
 	u32 fb_width;
 	u32 fb_height;
 	u32 crop_x;
 	u32 crop_y;
-	unsigned int size_width;
+	unsigned int size_width;/* de disp out size */
 	unsigned int size_height;
 
 	u32 format;
 	bool demo_window_en;
 
-	u32 bypass;
+	u32 enable;
+	u32 module_dirty;
 	enum de_format_space chn_fmt;
 };
 
@@ -84,324 +100,27 @@ struct de_frontend_private {
 	struct de_fcm_handle *fcm;
 	struct de_csc_handle *csc1;
 	struct de_csc_handle *csc2;
+	struct de_scaler_handle *asu;
+	u32 default_enable;
 
 	/* front process info from kms procedure */
 	struct de_frontend_inner_info *inner_info;
-
-	struct work_struct frontend_work;
-	bool has_frontend_work;
 };
 
-
-ssize_t de_frontend_data_size(void)
+static int de_frontend_check_and_reconfig(struct de_frontend_handle *hdl, struct display_channel_state *cstate,
+		  struct de_frontend_apply_cfg *frontend_cfg)
 {
-	return sizeof(struct de_frontend_data);
-}
-
-/* scaler need snr_en para, we have to deliver it by this way, ensure
- * frontend_data is only used in this file */
-int de_frontend_parse_snr_en(struct display_channel_state *cstate)
-{
-	struct de_frontend_data *frontend_data;
-
-	if (cstate->frontend_blob) {
-		frontend_data = (struct de_frontend_data *)cstate->frontend_blob->data;
-		return frontend_data->snr_para.en;
-	} else
-		return 0;
-}
-
-void de_frontend_process_late(struct de_frontend_handle *hdl)
-{
-	/* frontend work may spend much time on lut/pdfs's calculation,
-	 * so use system_long_wq to deal with it
-	 */
-	if (hdl->private->has_frontend_work)
-		queue_work(system_long_wq, &hdl->private->frontend_work);
-}
-
-s32 de_frontend_apply_csc(struct de_frontend_handle *hdl,
-	struct de_frontend_apply_cfg *frontend_cfg)
-{
-	struct de_csc_info icsc_info;
-	struct de_csc_info ocsc_info;
-
-	icsc_info.px_fmt_space = frontend_cfg->px_fmt_space;
-	icsc_info.color_space = frontend_cfg->color_space;
-	icsc_info.color_range = frontend_cfg->color_range;
-	icsc_info.eotf = frontend_cfg->eotf;
-	icsc_info.width = frontend_cfg->ovl_out_win.width;
-	icsc_info.height = frontend_cfg->ovl_out_win.height;
-
-
-
-	if (hdl->private->cdc) {
-		ocsc_info.px_fmt_space = frontend_cfg->px_fmt_space;
-		ocsc_info.color_range = frontend_cfg->color_range;
-		ocsc_info.color_space = frontend_cfg->de_out_cfg.color_space;
-		ocsc_info.eotf = frontend_cfg->de_out_cfg.eotf;
-		ocsc_info.width = frontend_cfg->ovl_out_win.width;
-		ocsc_info.height = frontend_cfg->ovl_out_win.height;
-		de_cdc_apply_csc(hdl->private->cdc, &icsc_info, &ocsc_info);
-		//update icsc_info by cdc's result
-		memcpy((void *)&icsc_info, (void *)&ocsc_info,
-			sizeof(icsc_info));
-	}
-
-	if (hdl->private->fcm)
-		de_fcm_set_csc(hdl->private->fcm, &icsc_info, &ocsc_info);
-
-	//hyx
-	//add deband csc
-	//de_deband_set_outinfo may put after channel_apply or in rtmx_start
-
-	ocsc_info.px_fmt_space = frontend_cfg->de_out_cfg.px_fmt_space;
-	if (frontend_cfg->rgb_out)
-		ocsc_info.px_fmt_space = DE_FORMAT_SPACE_RGB;
-	ocsc_info.color_range = frontend_cfg->de_out_cfg.color_range;
-	ocsc_info.color_space = frontend_cfg->de_out_cfg.color_space;
-	ocsc_info.eotf = frontend_cfg->de_out_cfg.eotf;
-	if (hdl->private->csc1)
-		de_csc_apply(hdl->private->csc1, &icsc_info, &ocsc_info, 1);
-
-//TODO
-//	if (hdl->private->csc2)
-//		de_csc_apply(hdl->private->csc2, &icsc_info, &ocsc_info, 1);
-
-	return 0;
-}
-
-s32 de_frontend_apply_dci(struct de_frontend_handle *hdl, enum de_color_range cr)
-{
-	if (hdl->private->dci)
-		de_dci_set_color_range(hdl->private->dci, cr);
-
-	return 0;
-}
-
-s32 de_frontend_apply_snr(struct de_frontend_handle *hdl, struct display_channel_state *state)
-{
-	struct de_frontend_data *frontend_data;
-
-	if (hdl->private->snr) {
-		if (state->frontend_blob) {
-			frontend_data = (struct de_frontend_data *)state->frontend_blob->data;
-			de_snr_set_para(hdl->private->snr, state, &frontend_data->snr_para);
-		} else {
-			de_snr_enable(hdl->private->snr, 0);
-		}
-	}
-
-	return 0;
-}
-
-s32 de_frontend_enable(struct de_frontend_handle *hdl, u32 en)
-{
-
-	if (hdl->private->cdc)
-		de_cdc_enable(hdl->private->cdc, en);
-
-	if (hdl->private->csc1)
-		de_csc_enable(hdl->private->csc1, en);
-//TODO
-//	if (hdl->private->csc2)
-//		de_csc_enable(hdl->private->csc2, en);
-
-	if (hdl->private->fcm)
-		de_fcm_enable(hdl->private->fcm, en);
-
-	if (hdl->private->dci)
-		de_dci_enable(hdl->private->dci, en);
-
-	if (hdl->private->snr)
-		de_snr_enable(hdl->private->snr, en);
-
-	if (hdl->private->sharp)
-		de_sharp_enable(hdl->private->sharp, en);
-
-	return 0;
-}
-
-static s32 de_frontend_bypass(struct de_frontend_handle *hdl, u32 bypass)
-{
-	if (hdl->private->cdc && (bypass & BYPASS_CDC_MASK))
-		de_cdc_enable(hdl->private->cdc, 0);
-
-	if (hdl->private->csc1 && (bypass & BYPASS_CCSC_MASK))
-		de_csc_enable(hdl->private->csc1, 0);
-
-//TODO
-//	if (hdl->private->csc2 && (bypass & BYPASS_CCSC_MASK))
-//		de_csc_enable(hdl->private->csc2, 0);
-
-	if (hdl->private->fcm && (bypass & BYPASS_FCM_MASK))
-		de_fcm_enable(hdl->private->fcm, 0);
-
-	if (hdl->private->dci && (bypass & BYPASS_DCI_MASK))
-		de_dci_enable(hdl->private->dci, 0);
-
-	if (hdl->private->snr && (bypass & BYPASS_SNR_MASK))
-		de_snr_enable(hdl->private->snr, 0);
-
-	if (hdl->private->sharp && (bypass & BYPASS_SHARP_MASK))
-		de_sharp_enable(hdl->private->sharp, 0);
-
-	return 0;
-}
-
-static s32 de_frontend_set_size(struct de_frontend_handle *hdl, struct de_frontend_inner_info *info)
-{
-	static u32 percent;
-	static u32 opposite;
-	enum de_format_space chn_fmt;
-	u32 tmp_x, tmp_y, tmp2_x, tmp2_y, tmp3_x, tmp3_y;
-	u32 tmp_w, tmp_h, tmp2_w, tmp2_h, tmp3_w, tmp3_h;
-	u32 size_width, size_height;
-	u32 size2_width, size2_height;
-	u32 size3_width, size3_height;
-	u32 demo_enable;
-
-	demo_enable = info->demo_window_en;
-	size_width = info->bld_width;
-	size_height = info->bld_height;
-	size2_width = info->ovl_width;
-	size2_height = info->ovl_height;
-	size3_width = info->size_width;
-	size3_height = info->size_height;
-	chn_fmt = info->chn_fmt;
-
-	tmp_x = 0;
-	tmp_y = 0;
-	tmp2_x = 0;
-	tmp2_y = 0;
-	tmp3_x = 0;
-	tmp3_y = 0;
-
-	DRM_DEBUG_DRIVER("demo_enable=%d, size=%d,%d, size2=%d,%d\n", demo_enable,
-		   size_width, size_height, size2_width, size2_height);
-	/* demo mode: rgb half, yuv scroll */
-	if (demo_enable) {
-		if (chn_fmt == DE_FORMAT_SPACE_YUV) {
-			if (!opposite)
-				percent >= DEMO_SPEED ? opposite = 1 : percent++;
-			else
-				percent <= 0 ? opposite = 0 : percent--;
-
-			if (size_width > size_height) {
-				tmp_w = percent ?  (size_width * percent / DEMO_SPEED) : 1;
-				tmp_h = size_height;
-				/* ovl window follow bld window */
-				tmp2_w = percent ?  (size2_width * percent / DEMO_SPEED) : 1;
-				tmp2_h = size2_height;
-				/* screen window */
-				tmp3_w = percent ?  (size3_width * percent / DEMO_SPEED) : 1;
-				tmp3_h = size3_height;
-			} else {
-				tmp_w = size_width;
-				tmp_h = percent ?  (size_height * percent / DEMO_SPEED) : 1;
-				/* ovl window follow bld window */
-				tmp2_w = size2_width;
-				tmp2_h = percent ?  (size2_height * percent / DEMO_SPEED) : 1;
-				/* screen window */
-				tmp3_w = size3_width;
-				tmp3_h = percent ?  (size3_height * percent / DEMO_SPEED) : 1;
-			}
-		} else {
-			if (size_width > size_height) {
-				tmp_w = size_width >> 1;
-				tmp_h = size_height;
-				/* ovl window follow bld window */
-				tmp2_w = size2_width >> 1;
-				tmp2_h = size2_height;
-				/* screen window */
-				tmp3_w = size3_width >> 1;
-				tmp3_h = size3_height;
-			} else {
-				tmp_w = size_width;
-				tmp_h = size_height >> 1;
-				/* ovl window follow bld window */
-				tmp2_w = size2_width;
-				tmp2_h = size2_height >> 1;
-				/* screen window */
-				tmp3_w = size3_width;
-				tmp3_h = size3_height >> 1;
-			}
-		}
-	} else {
-		tmp_w = size_width;
-		tmp_h = size_height;
-		tmp2_w = size2_width;
-		tmp2_h = size2_height;
-		tmp3_w = size3_width;
-		tmp3_h = size3_height;
-	}
-
-
-	if (hdl->private->dci && !(info->bypass & (BYPASS_DCI_MASK | BYPASS_ALL_MASK))) {
-		if (info->format >= DE_FORMAT_YUV444_I_AYUV)
-			de_dci_enable(hdl->private->dci, 1);
-		else
-			de_dci_enable(hdl->private->dci, 0);
-		de_dci_set_size(hdl->private->dci, size_width, size_height);
-		de_dci_set_window(hdl->private->dci, demo_enable, tmp_x, tmp_y, tmp_w, tmp_h);
-	}
-
-	if (hdl->private->fcm && !(info->bypass & (BYPASS_FCM_MASK | BYPASS_ALL_MASK))) {
-		// fcm is disable defult
-		//de_fcm_enable(hdl->private->fcm, 1);
-		de_fcm_set_size(hdl->private->fcm, size_width, size_height);
-		de_fcm_set_window(hdl->private->fcm, demo_enable, tmp_x, tmp_y, tmp_w, tmp_h);
-	}
-
-	if (hdl->private->sharp && !(info->bypass & (BYPASS_SHARP_MASK| BYPASS_ALL_MASK))) {
-		if (info->format >= DE_FORMAT_YUV444_I_AYUV)
-			de_sharp_enable(hdl->private->sharp, 1);
-		else
-			de_sharp_enable(hdl->private->sharp, 0);
-		de_sharp_set_size(hdl->private->sharp, size_width, size_height);
-		de_sharp_set_window(hdl->private->sharp, demo_enable, tmp_x, tmp_y, tmp_w, tmp_h);
-	}
-
-	return 0;
-
-	/* move to backend */
-//	/* asu peaking */
-//	if (g_cfg->peaking_exist[disp][chn]) {
-//		de_vsu_set_peaking_window(disp, chn, demo_enable, tmp_win);
-//	}
-//
-//
-//	/* process dep */
-//	if (chn == 0) {
-//		/* gamma */
-//		if (de_feat_is_support_gamma(disp)) {
-//			de_gamma_set_size(disp, size3_width, size3_height);
-//			de_gamma_set_window(disp, demo_enable, tmp_win3);
-//		}
-//		/* dither */
-//		if (de_feat_is_support_dither(disp)) {
-//			de_dither_set_size(disp, size3_width, size3_height);
-//		}
-//		/* deband */
-//		if (de_feat_is_support_deband(disp)) {
-//			de_deband_set_size(disp, size3_width, size3_height);
-//			de_deband_set_window(disp, demo_enable, tmp_win3);
-//		}
-//	}
-//
-//	return 0;
-}
-
-
-s32 de_frontend_apply_size_and_bypass(struct de_frontend_handle *hdl, struct display_channel_state *cstate,
-		 struct de_frontend_apply_cfg *frontend_cfg)
-{
-	struct de_frontend_data *frontednd_data;
 	struct de_frontend_inner_info *new_inner_info = kzalloc(sizeof(*new_inner_info), GFP_KERNEL);
+	struct de_frontend_inner_info *inner_info = hdl->private->inner_info;
 	struct drm_framebuffer *fb = cstate->base.fb;
-	struct de_frontend_private *priv = hdl->private;
-	u32 dirty = 0;
 
+	if (!new_inner_info) {
+		DRM_ERROR("%s no mem\n", __func__);
+		return -ENOMEM;
+	}
+
+	/* generate our new base info */
+	/* do not touch new_inner_info module dirty flag start */
 	new_inner_info->layer_en_cnt = frontend_cfg->layer_en_cnt;
 	new_inner_info->ovl_width = frontend_cfg->ovl_out_win.width;
 	new_inner_info->ovl_height = frontend_cfg->ovl_out_win.height;
@@ -416,91 +135,240 @@ s32 de_frontend_apply_size_and_bypass(struct de_frontend_handle *hdl, struct dis
 	new_inner_info->format = drm_to_de_format(fb->format->format);
 	new_inner_info->chn_fmt = frontend_cfg->px_fmt_space;
 
-	/*check bypass or not*/
-	if (cstate->frontend_blob) {
-		frontednd_data = (struct de_frontend_data *)cstate->frontend_blob->data;
+	/* use out last config to decide if enable  */
+	set_mask(new_inner_info->enable, hdl->private->default_enable);
 
-		new_inner_info->demo_window_en = frontednd_data->demo_en;
-
-		if (frontednd_data->snr_para.bypass)
-			new_inner_info->bypass |= BYPASS_SNR_MASK;
-		if (frontednd_data->dci_para.bypass)
-			new_inner_info->bypass |= BYPASS_DCI_MASK;
-		if (frontednd_data->cdc_para.bypass)
-			new_inner_info->bypass |= BYPASS_CDC_MASK;
-		if (frontednd_data->csc1_para.bypass)
-			new_inner_info->bypass |= BYPASS_CCSC_MASK;
-//TODO
-//		if (frontednd_data->csc2_para.bypass)
-//			new_inner_info->bypass |= BYPASS_CCSC_MASK;
-		if (frontednd_data->fcm_para.bypass)
-			new_inner_info->bypass |= BYPASS_FCM_MASK;
-		if (frontednd_data->sharp_para.bypass)
-			new_inner_info->bypass |= BYPASS_SHARP_MASK;
+	/* mark disable if hw can not support */
+	if ((frontend_cfg->ovl_out_win.width < MIN_OVL_WIDTH) ||
+	    (frontend_cfg->ovl_out_win.height < MIN_OVL_HEIGHT) ||
+	    (frontend_cfg->scn_win.width < MIN_BLD_WIDTH) ||
+	    (frontend_cfg->scn_win.height < MIN_BLD_HEIGHT)) {
+		clear_mask(new_inner_info->enable, PQ_ALL_DIRTY);
 	}
 
-	/* if exceed hardware limit, bypass all frontend module */
-	if ((new_inner_info->ovl_width < MIN_OVL_WIDTH) ||
-	    (new_inner_info->ovl_height < MIN_OVL_HEIGHT) ||
-	    (new_inner_info->bld_width < MIN_BLD_WIDTH) ||
-	    (new_inner_info->bld_height < MIN_BLD_HEIGHT)) {
-		new_inner_info->bypass |= BYPASS_ALL_MASK;
+	if (new_inner_info->format < DE_FORMAT_YUV444_I_AYUV) {
+		if (hdl->private->dci) {
+			clear_mask(new_inner_info->enable, DCI_DIRTY);
+		}
+
+		if (hdl->private->sharp) {
+			clear_mask(new_inner_info->enable, SHARP_DIRTY);
+		}
+	}
+	/*do not touch new_inner_info module_dirty flag end*/
+
+	/* setup module dirty flag base on difference */
+	if (new_inner_info->enable != inner_info->enable) {
+		new_inner_info->module_dirty |= new_inner_info->enable ^ inner_info->enable;
+		DRM_DEBUG_DRIVER("old enable %x new enable%x now dirty %x %x\n", inner_info->enable, new_inner_info->enable, new_inner_info->module_dirty,
+				new_inner_info->enable ^ inner_info->enable);
 	}
 
-	//check dirty or not, judge if need update
-	if (new_inner_info->layer_en_cnt != priv->inner_info->layer_en_cnt)
-		dirty++;
-
-	if ((new_inner_info->ovl_width != priv->inner_info->ovl_width) ||
-	    (new_inner_info->ovl_height != priv->inner_info->ovl_height) ||
-	    (new_inner_info->bld_width != priv->inner_info->bld_width) ||
-	    (new_inner_info->bld_height != priv->inner_info->bld_height) ||
-	    (new_inner_info->crop_x != priv->inner_info->crop_x) ||
-	    (new_inner_info->crop_y != priv->inner_info->crop_y) ||
-	    (new_inner_info->fb_width != priv->inner_info->fb_width) ||
-	    (new_inner_info->fb_height != priv->inner_info->fb_height))
-		dirty++;
-
-	if (new_inner_info->demo_window_en != priv->inner_info->demo_window_en)
-		dirty++;
-
-	if (new_inner_info->bypass != priv->inner_info->bypass)
-		dirty++;
-
-	if (dirty) {
-		de_frontend_set_size(hdl, new_inner_info);
+	/* module which concerned about scaler output size */
+	if (new_inner_info->bld_width != inner_info->bld_width ||
+		  new_inner_info->bld_height != inner_info->bld_height) {
+		set_mask(new_inner_info->module_dirty, DCI_DIRTY);
+		set_mask(new_inner_info->module_dirty, FCM_DIRTY);
+		set_mask(new_inner_info->module_dirty, SHARP_DIRTY);
 	}
 
-	/*bypass mask: size layer user module-by-module */
-	/* layer and size are the hardware limit, frontend should disable
-	 when hardware exceed occre.
-	 */
-	if (new_inner_info->bypass != priv->inner_info->bypass) {
-		if (new_inner_info->bypass & BYPASS_ALL_MASK)
-			de_frontend_enable(hdl, 0);
-		else if (new_inner_info->bypass)
-			de_frontend_bypass(hdl, new_inner_info->bypass);
-	}
+	/* module which concerned about ovl output size */
+/*	if (new_inner_info->ovl_width != inner_info->ovl_width ||
+		  new_inner_info->ovl_height != inner_info->ovl_height) {
+	}*/
 
-	memcpy(priv->inner_info, new_inner_info, sizeof(*new_inner_info));
-
+	DRM_DEBUG_DRIVER("pq dirty %x enable %x\n", new_inner_info->module_dirty, new_inner_info->enable);
+	memcpy(inner_info, new_inner_info, sizeof(*new_inner_info));
 	kfree(new_inner_info);
 	return 0;
 }
 
-s32 de_frontend_apply_lut(struct de_frontend_handle *hdl, struct display_channel_state *cstate)
+static s32 de_frontend_apply_csc(struct de_frontend_handle *hdl,
+	struct de_frontend_apply_cfg *frontend_cfg)
 {
-	struct de_frontend_data *frontednd_data;
+	struct de_csc_info icsc_info;
+	struct de_csc_info ocsc_info;
 
-	/*check bypass or not*/
-	if (cstate->frontend_blob) {
-		frontednd_data = (struct de_frontend_data *)cstate->frontend_blob->data;
+	icsc_info.px_fmt_space = frontend_cfg->px_fmt_space;
+	icsc_info.color_space = frontend_cfg->color_space;
+	icsc_info.color_range = frontend_cfg->color_range;
+	icsc_info.eotf = frontend_cfg->eotf;
+	icsc_info.width = frontend_cfg->ovl_out_win.width;
+	icsc_info.height = frontend_cfg->ovl_out_win.height;
 
-		if (hdl->private->fcm && frontednd_data->fcm_para.lut_need_update)
-			de_fcm_apply_lut(hdl->private->fcm, &frontednd_data->fcm_para.fcm_lut_data, 1);
+	if (hdl->private->cdc) {
+		ocsc_info.px_fmt_space = frontend_cfg->px_fmt_space;
+		ocsc_info.color_range = frontend_cfg->color_range;
+		ocsc_info.color_space = frontend_cfg->de_out_cfg.color_space;
+		ocsc_info.eotf = frontend_cfg->de_out_cfg.eotf;
+		ocsc_info.width = frontend_cfg->ovl_out_win.width;
+		ocsc_info.height = frontend_cfg->ovl_out_win.height;
+		de_cdc_apply_csc(hdl->private->cdc, &icsc_info, &ocsc_info);
+		//update icsc_info by cdc's result
+		memcpy((void *)&icsc_info, (void *)&ocsc_info,
+			sizeof(icsc_info));
+	}
+
+	ocsc_info.px_fmt_space = frontend_cfg->de_out_cfg.px_fmt_space;
+	if (frontend_cfg->rgb_out)
+		ocsc_info.px_fmt_space = DE_FORMAT_SPACE_RGB;
+	ocsc_info.color_range = frontend_cfg->de_out_cfg.color_range;
+	ocsc_info.color_space = frontend_cfg->de_out_cfg.color_space;
+	ocsc_info.eotf = frontend_cfg->de_out_cfg.eotf;
+	if (hdl->private->csc1)
+		de_csc_apply(hdl->private->csc1, &icsc_info, &ocsc_info, NULL, 1, 1);
+
+//TODO
+//	if (hdl->private->csc2)
+//		de_csc_apply(hdl->private->csc2, &icsc_info, &ocsc_info, 1);
+
+	return 0;
+}
+
+//TODO not test yet
+//A733 support dlc, dci 's new version
+static s32 de_frontend_apply_dci(struct de_frontend_handle *hdl, enum de_color_range cr)
+{
+	if (hdl->private->dci)
+		de_dci_set_color_range(hdl->private->dci, cr);
+	return 0;
+}
+
+static s32 de_frontend_apply_asu(struct de_frontend_handle *hdl, struct display_channel_state *state)
+{
+	struct de_frontend_data *frontend_data;
+	struct de_frontend_inner_info *info = hdl->private->inner_info;
+	if (hdl->private->asu) {
+		if (state->frontend_blob) {
+			frontend_data = (struct de_frontend_data *)state->frontend_blob->data;
+			if (frontend_data->dirty & ASU_DIRTY) {
+				DRM_DEBUG_DRIVER("%s dirty%x\n", __func__, frontend_data->asu_para.dirty);
+				de_scaler_apply_asu_pq_config(hdl->private->asu, &frontend_data->asu_para.pqd);
+				frontend_data->dirty &= ~ASU_DIRTY;
+				frontend_data->asu_para.dirty &= ~PQD_DIRTY_MASK;
+
+				/* update default enable and enable to avoid reset by de_frontend_apply in next frame */
+				if (frontend_data->asu_para.pqd.cmd != PQ_READ) {
+					if (de_scaler_pq_is_enabled(hdl->private->asu)) {
+						DRM_DEBUG_DRIVER("pqd %s set enable\n", __func__);
+						set_mask(hdl->private->default_enable, ASU_DIRTY);
+						set_mask(info->enable, ASU_DIRTY);
+					} else {
+						DRM_DEBUG_DRIVER("pqd %s set disable\n", __func__);
+						clear_mask(hdl->private->default_enable, ASU_DIRTY);
+						clear_mask(info->enable, ASU_DIRTY);
+					}
+				}
+			}
+		}
+		if (info->module_dirty & ASU_DIRTY)
+			de_scaler_asu_pq_enable(hdl->private->asu, info->enable & ASU_DIRTY);
 	}
 
 	return 0;
+}
+
+static s32 de_frontend_apply_fcm(struct de_frontend_handle *hdl, struct display_channel_state *cstate, struct de_frontend_apply_cfg *frontend_cfg)
+{
+	struct de_frontend_data *frontend_data;
+	struct de_frontend_inner_info *info = hdl->private->inner_info;
+	struct de_csc_info csc_info;
+	csc_info.px_fmt_space = frontend_cfg->px_fmt_space;
+	csc_info.color_space = frontend_cfg->color_space;
+	csc_info.color_range = frontend_cfg->color_range;
+	csc_info.eotf = frontend_cfg->eotf;
+	csc_info.width = frontend_cfg->ovl_out_win.width;
+	csc_info.height = frontend_cfg->ovl_out_win.height;
+
+	if (hdl->private->fcm) {
+		if (cstate->frontend_blob) {
+			frontend_data = (struct de_frontend_data *)cstate->frontend_blob->data;
+			if (frontend_data->dirty & FCM_DIRTY &&
+				  frontend_data->fcm_para.dirty & PQD_DIRTY_MASK) {
+				DRM_DEBUG_DRIVER("%s dirty%x\n", __func__, frontend_data->fcm_para.dirty);
+				de_fcm_lut_proc(hdl->private->fcm, &frontend_data->fcm_para.pqd);
+				de_fcm_set_csc(hdl->private->fcm, &csc_info, &csc_info);
+				de_fcm_set_size(hdl->private->fcm, info->bld_width, info->bld_height);
+				frontend_data->fcm_para.dirty &= ~PQD_DIRTY_MASK;
+				frontend_data->dirty &= ~FCM_DIRTY;
+
+				/* update default enable and enable to avoid reset by de_frontend_apply in next frame */
+				if (frontend_data->fcm_para.pqd.cmd != PQ_READ) {
+					if (de_fcm_is_enabled(hdl->private->fcm)) {
+						DRM_DEBUG_DRIVER("pqd %s set enable\n", __func__);
+						set_mask(hdl->private->default_enable, FCM_DIRTY);
+						set_mask(info->enable, FCM_DIRTY);
+					} else {
+						DRM_DEBUG_DRIVER("pqd %s set disable\n", __func__);
+						clear_mask(hdl->private->default_enable, FCM_DIRTY);
+						clear_mask(info->enable, FCM_DIRTY);
+					}
+				}
+
+			}
+		}
+
+		if (info->module_dirty & FCM_DIRTY) {
+			/* fcm csc shoulde not modify anything  */
+			de_fcm_set_csc(hdl->private->fcm, &csc_info, &csc_info);
+			de_fcm_enable(hdl->private->fcm, info->enable & FCM_DIRTY);
+			de_fcm_set_size(hdl->private->fcm, info->bld_width, info->bld_height);
+		}
+	}
+
+	return 0;
+}
+
+static s32 de_frontend_apply_sharp(struct de_frontend_handle *hdl, struct display_channel_state *cstate)
+{
+	struct de_frontend_data *frontend_data;
+	struct de_frontend_inner_info *info = hdl->private->inner_info;
+
+	/*check bypass or not*/
+	if (cstate->frontend_blob) {
+		frontend_data = (struct de_frontend_data *)cstate->frontend_blob->data;
+		if (hdl->private->sharp && frontend_data->dirty & SHARP_DIRTY &&
+			  frontend_data->sharp_para.dirty & PQD_DIRTY_MASK) {
+			DRM_DEBUG_DRIVER("%s dirty%x\n", __func__, frontend_data->sharp_para.dirty);
+			de_sharp_pq_proc(hdl->private->sharp, &frontend_data->sharp_para.pqd);
+			frontend_data->sharp_para.dirty &= ~PQD_DIRTY_MASK;
+			frontend_data->dirty &= ~SHARP_DIRTY;
+			/* update default enable and enable to avoid reset by de_frontend_apply in next frame */
+			if (frontend_data->sharp_para.pqd.cmd != PQ_READ) {
+				if (de_sharp_is_enabled(hdl->private->sharp)) {
+					DRM_DEBUG_DRIVER("pqd %s set enable\n", __func__);
+					set_mask(hdl->private->default_enable, SHARP_DIRTY);
+					set_mask(info->enable, SHARP_DIRTY);
+				} else {
+					DRM_DEBUG_DRIVER("pqd %s set disable\n", __func__);
+					clear_mask(hdl->private->default_enable, SHARP_DIRTY);
+					clear_mask(info->enable, SHARP_DIRTY);
+				}
+			}
+
+		}
+	}
+
+	if (hdl->private->sharp && info->module_dirty & SHARP_DIRTY) {
+		de_sharp_set_size(hdl->private->sharp, info->bld_width, info->bld_height);
+		de_sharp_enable(hdl->private->sharp, info->enable & SHARP_DIRTY);
+	}
+	return 0;
+}
+
+static inline bool de_frontend_is_need_update_work(struct de_frontend_handle *hdl)
+{
+	return (hdl->private->dci || hdl->private->cdc);
+}
+
+void de_frontend_process_late(struct de_frontend_handle *hdl)
+{
+	/* don't forget de_frontend_is_need_update_work when new work add */
+	if (hdl->private->dci)
+		de_dci_update_local_param(hdl->private->dci);
+
+	if (hdl->private->cdc)
+		de_cdc_update_local_param(hdl->private->cdc);
 }
 
 s32 de_frontend_dump_state(struct drm_printer *p, struct de_frontend_handle *hdl)
@@ -517,6 +385,9 @@ s32 de_frontend_dump_state(struct drm_printer *p, struct de_frontend_handle *hdl
 	if (hdl->private->sharp)
 		de_sharp_dump_state(p, hdl->private->sharp);
 
+	if (hdl->private->snr)
+		de_snr_dump_state(p, hdl->private->snr);
+
 	if (hdl->private->csc1)
 		de_csc_dump_state(p, hdl->private->csc1);
 
@@ -527,32 +398,151 @@ s32 de_frontend_dump_state(struct drm_printer *p, struct de_frontend_handle *hdl
 	return 0;
 }
 
+bool de_frontend_apply_snr(struct de_frontend_handle *hdl, struct display_channel_state *state, unsigned int ovl_w, unsigned int ovl_h)
+{
+	bool enable;
+	struct de_frontend_data *frontend_data;
+
+	if (!hdl->private->snr)
+		return false;
+
+	if (state->frontend_blob) {
+		frontend_data = (struct de_frontend_data *)state->frontend_blob->data;
+		if (frontend_data->dirty & SNR_DIRTY) {
+			de_snr_set_para(hdl->private->snr, state, &frontend_data->snr_para);
+			frontend_data->dirty &= ~SNR_DIRTY;
+			frontend_data->snr_para.dirty = 0;
+			/* update default enable and enable to avoid reset by de_frontend_apply in next frame */
+			if (frontend_data->snr_para.pqd.cmd != PQ_READ) {
+				if (de_snr_is_enabled(hdl->private->snr)) {
+					set_mask(hdl->private->default_enable, PQ_SNR);
+				} else {
+					clear_mask(hdl->private->default_enable, PQ_SNR);
+				}
+			}
+		}
+	}
+
+	enable = hdl->private->default_enable & PQ_SNR;
+	if (enable) {
+		de_snr_set_size(hdl->private->snr, ovl_w, ovl_h);
+		de_snr_enable(hdl->private->snr, 1);
+	}
+	return enable;
+}
+
+s32 de_frontend_disable(struct de_frontend_handle *hdl)
+{
+	struct de_frontend_inner_info *inner_info = hdl->private->inner_info;
+
+	/* reset for next enable dirty check */
+	memset(inner_info, 0, sizeof(*inner_info));
+
+	if (hdl->private->cdc)
+		de_cdc_enable(hdl->private->cdc, 0);
+
+	if (hdl->private->csc1)
+		de_csc_enable(hdl->private->csc1, 0);
+//TODO
+//	if (hdl->private->csc2)
+//		de_csc_enable(hdl->private->csc2, en);
+
+	if (hdl->private->fcm)
+		de_fcm_enable(hdl->private->fcm, 0);
+
+	if (hdl->private->dci)
+		de_dci_enable(hdl->private->dci, 0);
+
+	if (hdl->private->snr)
+		de_snr_enable(hdl->private->snr, 0);
+
+	if (hdl->private->sharp)
+		de_sharp_enable(hdl->private->sharp, 0);
+
+	return 0;
+}
+
+int de_frontend_get_pqd_config(struct de_frontend_handle *hdl, struct display_channel_state *cstate)
+{
+	struct de_frontend_data *frontend_data = NULL;
+	if (cstate->frontend_blob) {
+		frontend_data = (struct de_frontend_data *)cstate->frontend_blob->data;
+	} else {
+		DRM_ERROR("blob null %s\n", __func__);
+		return -EINVAL;
+	}
+
+	/* pqd actually only needs single config as read result, but we have several frontend, which has no diference between them.
+	 * it's ok to read multiple times.
+	 */
+	if (hdl->private->fcm && frontend_data->dirty & FCM_DIRTY) {
+		if ((frontend_data->fcm_para.dirty & ~PQD_DIRTY_MASK) ||
+			  (!(frontend_data->fcm_para.dirty & PQD_DIRTY_MASK)) ||
+			  (frontend_data->fcm_para.pqd.cmd != PQ_READ)) {
+			DRM_ERROR("%s fcm invalid dirty flag, only support pqd read\n", __func__);
+			return -EINVAL;
+		}
+		de_fcm_lut_proc(hdl->private->fcm, &frontend_data->fcm_para.pqd);
+		frontend_data->fcm_para.dirty &= ~PQD_DIRTY_MASK;
+		frontend_data->dirty &= ~FCM_DIRTY;
+	}
+
+	if (hdl->private->sharp && frontend_data->dirty & SHARP_DIRTY) {
+		if ((frontend_data->sharp_para.dirty & ~PQD_DIRTY_MASK) ||
+			  (!(frontend_data->sharp_para.dirty & PQD_DIRTY_MASK)) ||
+			  (frontend_data->sharp_para.pqd.cmd != PQ_READ)) {
+			DRM_ERROR("%s sharp invalid dirty flag, only support pqd read\n", __func__);
+			return -EINVAL;
+		}
+		de_sharp_pq_proc(hdl->private->sharp, &frontend_data->sharp_para.pqd);
+		frontend_data->sharp_para.dirty &= ~PQD_DIRTY_MASK;
+		frontend_data->dirty &= ~SHARP_DIRTY;
+	}
+
+	if (hdl->private->asu && frontend_data->dirty & ASU_DIRTY) {
+		if ((frontend_data->asu_para.dirty & ~PQD_DIRTY_MASK) ||
+			  (!(frontend_data->asu_para.dirty & PQD_DIRTY_MASK)) ||
+			  (frontend_data->asu_para.pqd.cmd != PQ_READ)) {
+			DRM_ERROR("%s asu invalid dirty flag, only support pqd read\n", __func__);
+			return -EINVAL;
+		}
+		de_scaler_apply_asu_pq_config(hdl->private->asu, &frontend_data->asu_para.pqd);
+		frontend_data->asu_para.dirty &= ~PQD_DIRTY_MASK;
+		frontend_data->dirty &= ~ASU_DIRTY;
+	}
+
+	if (hdl->private->snr && frontend_data->dirty & SNR_DIRTY) {
+		if ((frontend_data->snr_para.dirty & ~PQD_DIRTY_MASK) ||
+			  (!(frontend_data->snr_para.dirty & PQD_DIRTY_MASK)) ||
+			  (frontend_data->snr_para.pqd.cmd != PQ_READ)) {
+			DRM_ERROR("%s snr invalid dirty flag, only support pqd read\n", __func__);
+			return -EINVAL;
+		}
+		de_snr_set_para(hdl->private->snr, cstate, &frontend_data->snr_para);
+		frontend_data->snr_para.dirty &= ~PQD_DIRTY_MASK;
+		frontend_data->dirty &= ~SNR_DIRTY;
+	}
+
+	return 0;
+}
+
 s32 de_frontend_apply(struct de_frontend_handle *hdl, struct display_channel_state *cstate,
 		 struct de_frontend_apply_cfg *frontend_cfg)
 {
+	de_frontend_check_and_reconfig(hdl, cstate, frontend_cfg);
 
-	/* fake code for blob test */
-	/*
-	struct de_frontend_data *frontend_data;
+	de_frontend_apply_fcm(hdl, cstate, frontend_cfg);
 
-	if (cstate->frontend_blob) {
-		frontend_data = (struct de_frontend_data *)cstate->frontend_blob->data;
-		frontend_data->fcm_para = xxx;
-		frontend_data->cdc_para = xxx;
-		...
-	*/
+	de_frontend_apply_sharp(hdl, cstate);
 
-	if (hdl->private->snr)
-		de_frontend_apply_snr(hdl, cstate);
+	de_frontend_apply_asu(hdl, cstate);
 
-	if (hdl->private->dci)
-		de_frontend_apply_dci(hdl, frontend_cfg->color_range);
+//	scaler need snr info, de_frontend_apply is called after scaler, so separate snr apply
+//	de_frontend_apply_snr(hdl, cstate);
+
+	de_frontend_apply_dci(hdl, frontend_cfg->color_range);
 
 	de_frontend_apply_csc(hdl, frontend_cfg);
-
-	de_frontend_apply_size_and_bypass(hdl, cstate, frontend_cfg);
-
-	de_frontend_apply_lut(hdl, cstate);
 
 	return 0;
 }
@@ -571,17 +561,8 @@ void de_frontend_update_regs(struct de_frontend_handle *hdl)
 	if (hdl->private->sharp)
 		de_sharp_update_regs(hdl->private->sharp);
 
-}
-
-static void de_frontend_calculate_update_local_param_work(struct work_struct *work)
-{
-	struct de_frontend_private *priv = container_of(work, struct de_frontend_private, frontend_work);
-
-	if (priv->dci)
-		de_dci_update_local_param(priv->dci);
-
-	if (priv->cdc)
-		de_cdc_update_local_param(priv->cdc);
+	if (hdl->private->snr)
+		de_snr_update_regs(hdl->private->snr);
 }
 
 struct de_frontend_handle *de_frontend_create(struct module_create_info *cinfo)
@@ -597,8 +578,11 @@ struct de_frontend_handle *de_frontend_create(struct module_create_info *cinfo)
 	hdl = kmalloc(sizeof(*hdl), GFP_KERNEL | __GFP_ZERO);
 	hdl->private = kmalloc(sizeof(*hdl->private), GFP_KERNEL | __GFP_ZERO);
 	hdl->private->inner_info = kmalloc(sizeof(*hdl->private->inner_info), GFP_KERNEL | __GFP_ZERO);
+	set_mask(hdl->private->default_enable, PQ_ALL_DIRTY);
 	memcpy(&hdl->cinfo, cinfo, sizeof(*cinfo));
 
+	hdl->private->asu = cinfo->extra;
+	info.extra = NULL;
 	hdl->private->snr = de_snr_create(&info);
 	hdl->private->sharp = de_sharp_create(&info);
 	hdl->private->cdc = de_cdc_create(&info);
@@ -682,8 +666,6 @@ struct de_frontend_handle *de_frontend_create(struct module_create_info *cinfo)
 		}
 	}
 
-	INIT_WORK(&hdl->private->frontend_work, de_frontend_calculate_update_local_param_work);
-	hdl->private->has_frontend_work = true;
-
+	hdl->routine_job = de_frontend_is_need_update_work(hdl);
 	return hdl;
 }

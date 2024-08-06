@@ -11,8 +11,6 @@
 #ifndef _DW_MC_H_
 #define _DW_MC_H_
 
-#include "dw_dev.h"
-
 typedef enum irq_sources {
 	DW_IRQ_AUDIO_PACKET = 1,
 	DW_IRQ_OTHER_PACKET,
@@ -51,7 +49,7 @@ void dw_mc_reset_audio_i2s(void);
 /**
  * @desc: main control reset tmds clock
  */
-void dw_mc_reset_tmds_clock(u8 bit);
+void dw_mc_reset_tmds_clock(void);
 
 /**
  * @desc: main control set phy

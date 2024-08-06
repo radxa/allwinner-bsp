@@ -14,4 +14,4 @@ obj-$(CONFIG_AW_INPUT_CTP)    += ilitek_tddi/
 obj-$(CONFIG_AW_INPUT_CTP)    += focaltech_touch/
 obj-$(CONFIG_AW_INPUT_CTP)    += tlsc6x/
 obj-$(CONFIG_AW_INPUT_CTP)    += gt82x/
-obj-y    += nvt36xxx/
+obj-$(CONFIG_AW_INPUT_CTP)    += nvt36xxx/

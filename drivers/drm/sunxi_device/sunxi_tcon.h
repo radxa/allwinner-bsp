@@ -37,6 +37,7 @@ struct disp_output_config {
 	bool slave_dsi;
 	bool displl_clk;
 	unsigned int tcon_lcd_div;
+	unsigned int pixel_mode;
 	struct disp_dsi_para dsi_para;
 	struct disp_lvds_para lvds_para;
 	struct disp_rgb_para rgb_para;
@@ -65,6 +66,7 @@ enum tcon_builin_pattern {
 	PATTERN_GRIDDING,
 };
 
+int sunxi_tcon_get_current_line(struct device *tcon_dev);
 bool sunxi_tcon_is_sync_time_enough(struct device *tcon_dev);
 bool sunxi_tcon_check_fifo_status(struct device *tcon_dev);
 int sunxi_tcon_dsi_enable_output(struct device *tcon_dev);
@@ -77,6 +79,8 @@ int sunxi_tcon_show_pattern(struct device *tcon_dev, int pattern);
 int sunxi_tcon_pattern_get(struct device *tcon_dev);
 int sunxi_tcon_of_get_id(struct device *tcon_dev);
 void sunxi_tcon_enable_vblank(struct device *tcon_dev, bool enable);
+int sunxi_tcon_hdmi_open(struct device *dev, u8 src);
+int sunxi_tcon_hdmi_close(struct device *dev);
 int sunxi_tcon_mode_init(struct device *tcon_dev, struct disp_output_config *disp_cfg);
 int sunxi_tcon_mode_exit(struct device *tcon_dev);
 

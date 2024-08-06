@@ -19,6 +19,7 @@
 #include <drm/display/drm_hdcp.h>
 #endif
 
+#include "dw_dev.h"
 #include "dw_mc.h"
 #include "dw_fc.h"
 #include "dw_i2cm.h"
@@ -78,6 +79,8 @@ int dw_hdcp_set_enable_type(int type)
 		hdcp->enable_type = 0x0;
 	else
 		hdcp->enable_type = BIT(type);
+
+	hdmi_inf("dw hdcp set type: %d\n", hdcp->enable_type);
 	return hdcp->enable_type;
 }
 
@@ -616,8 +619,7 @@ int dw_hdcp_get_state(void)
 
 	if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP22))
 		ret = dw_hdcp2x_get_encrypt_state();
-
-	if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP14))
+	else if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP14))
 		ret = _dw_hdcp1x_get_encrypt_state();
 
 	return ret;
@@ -672,28 +674,29 @@ ssize_t dw_hdcp_dump(char *buf)
 {
 	ssize_t n = 0;
 
-	n += sprintf(buf + n, "[dw hdcp]:\n");
-
-	if (!_dw_hdcp_get_enable_type()) {
-		n += sprintf(buf + n, " - hdcp not enable\n");
+	if (_dw_hdcp_get_enable_type() == 0x0)
 		return n;
-	}
 
-	n += sprintf(buf + n, " - tmds mode: [%s], data path: [%s], hdcp clock:[%s]\n",
-		dw_read_mask(A_HDCPCFG0, A_HDCPCFG0_HDMIDVI_MASK) ? "hdmi" : "dvi",
-		_dw_hdcp_get_data_path() ? "hdcp2x" : "hdcp1x",
-		dw_mc_get_hdcp_clk() ? "disable" : "enable");
+	n += sprintf(buf + n, "[dw hdcp]:\n");
+	n += sprintf(buf + n, " - tmds mode     : [%s]\n",
+			dw_read_mask(A_HDCPCFG0, A_HDCPCFG0_HDMIDVI_MASK) ? "hdmi" : "dvi");
+	n += sprintf(buf + n, " - data path     : [%s]\n",
+			_dw_hdcp_get_data_path() ? "hdcp2x" : "hdcp1x");
+	n += sprintf(buf + n, " - hdcp clock    : [%s]\n",
+			dw_mc_get_hdcp_clk() ? "disable" : "enable");
 
 	if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP14)) {
-		n += sprintf(buf + n, " - [hdcp14]\n");
-		n += sprintf(buf + n, "    - [auth] config: [%s], status: [%s]\n",
-			hdcp->hdcp1x_auth_done ? "done" : "not-done",
-			hdcp->hdcp1x_auth_state == HDCP_ENGAGED ? "success" : "failed");
-		n += sprintf(buf + n, "    - [encry] sw: [%s], hw:[%s]\n",
-			hdcp->hdcp1x_encrying ? "enable" : "disable",
-			dw_read_mask(A_HDCPCFG1,
-				A_HDCPCFG1_ENCRYPTIONDISABLE_MASK) ? "disable" : "enable");
-		n += sprintf(buf + n, "    - rx bksv: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n",
+		n += sprintf(buf + n, " - [dw hdcp1x]\n");
+		n += sprintf(buf + n, "\t- auth config: %s\n",
+				hdcp->hdcp1x_auth_done ? "done" : "not-done");
+		n += sprintf(buf + n, "\t- auth state : %s\n",
+				hdcp->hdcp1x_auth_state == HDCP_ENGAGED ? "success" : "failed");
+		n += sprintf(buf + n, "\t- hw encrying: %s\n",
+				hdcp->hdcp1x_encrying ? "enable" : "disable");
+		n += sprintf(buf + n, "\t- sw encrying: %s\n",
+				dw_read_mask(A_HDCPCFG1,
+					A_HDCPCFG1_ENCRYPTIONDISABLE_MASK) ? "disable" : "enable");
+		n += sprintf(buf + n, "\t- rx bksv: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n",
 			dw_read_mask(HDCPREG_BKSV0, HDCPREG_BKSV0_HDCPREG_BKSV0_MASK),
 			dw_read_mask(HDCPREG_BKSV1, HDCPREG_BKSV1_HDCPREG_BKSV1_MASK),
 			dw_read_mask(HDCPREG_BKSV2, HDCPREG_BKSV2_HDCPREG_BKSV2_MASK),
@@ -702,7 +705,6 @@ ssize_t dw_hdcp_dump(char *buf)
 	}
 
 	if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP22)) {
-		n += sprintf(buf + n, " - [hdcp22]\n");
 		n += dw_hdcp2x_dump(buf + n);
 	}
 

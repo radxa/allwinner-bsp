@@ -8,11 +8,8 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _DW_AVP_H_
 #define _DW_AVP_H_
-
-#include "dw_dev.h"
 
 /*******************************************************************************
  * dw audio config function
@@ -117,7 +114,7 @@ int dw_video_update_color_metry(u8 metry, u8 ext_metry);
  * @eotf: set eotf value
  * @return: 0 - success
  */
-int dw_video_update_hdr_eotf(u8 hdr, u8 eotf);
+int dw_video_update_hdr_eotf(u8 eotf);
 /**
  * @desc: dw video software update tmds mode
  * @mode: tmds mode. hdmi or dvi

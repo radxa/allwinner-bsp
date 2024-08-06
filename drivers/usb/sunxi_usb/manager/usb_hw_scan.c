@@ -304,8 +304,8 @@ get_property_notify:
 			det_vbus_state = info->det_vbus_old_state;
 		}
 	} else {
-		DMSG_PANIC("ERR: get_detect_vbus_state, ");
-		DMSG_PANIC("usb det mode isn't supported\n");
+		DMSG_ERR("ERR: get_detect_vbus_state, ");
+		DMSG_ERR("usb det mode isn't supported\n");
 	}
 
 	return det_vbus_state;
@@ -328,7 +328,7 @@ static u32 get_dp_dm_status(struct usb_scan_info *info)
 	} else if (ret2 == 0x11) {
 		if (get_usb_role() == SW_USB_ROLE_DEVICE) {
 			ret = 0x11;
-			DMSG_PANIC("ERR: dp/dm status is continuous(0x11)\n");
+			DMSG_ERR("ERR: dp/dm status is continuous(0x11)\n");
 		}
 	} else {
 		ret = ret2;
@@ -369,8 +369,8 @@ static void do_vbus0_id0(struct usb_scan_info *info)
 				break;
 			hw_insmod_usb_host();
 		} else {
-			DMSG_PANIC("ERR: do_vbus0_id0, ");
-			DMSG_PANIC("usb det mode isn't supported, role=%d\n",
+			DMSG_ERR("ERR: do_vbus0_id0, ");
+			DMSG_ERR("usb det mode isn't supported, role=%d\n",
 				role);
 		}
 		break;
@@ -389,7 +389,7 @@ static void do_vbus0_id0(struct usb_scan_info *info)
 		break;
 
 	default:
-		DMSG_PANIC("ERR: unknown usb role(%d)\n", role);
+		DMSG_ERR("ERR: unknown usb role(%d)\n", role);
 	}
 }
 
@@ -420,7 +420,7 @@ static void do_vbus0_id1(struct usb_scan_info *info)
 		hw_rmmod_usb_device();
 		break;
 	default:
-		DMSG_PANIC("ERR: unknown usb role(%d)\n", role);
+		DMSG_ERR("ERR: unknown usb role(%d)\n", role);
 	}
 }
 
@@ -454,8 +454,8 @@ static void do_vbus1_id0(struct usb_scan_info *info)
 				break;
 			hw_insmod_usb_host();
 		} else {
-			DMSG_PANIC("ERR: do_vbus1_id0, ");
-			DMSG_PANIC("usb det mode isn't supported, role=%d\n",
+			DMSG_ERR("ERR: do_vbus1_id0, ");
+			DMSG_ERR("usb det mode isn't supported, role=%d\n",
 				role);
 		}
 		break;
@@ -476,13 +476,13 @@ static void do_vbus1_id0(struct usb_scan_info *info)
 				break;
 			hw_rmmod_usb_device();
 		} else {
-			DMSG_PANIC("ERR: do_vbus1_id0, ");
-			DMSG_PANIC("usb det mode isn't supported, role=%d\n",
+			DMSG_ERR("ERR: do_vbus1_id0, ");
+			DMSG_ERR("usb det mode isn't supported, role=%d\n",
 				role);
 		}
 		break;
 	default:
-		DMSG_PANIC("ERR: unknown usb role(%d)\n", role);
+		DMSG_ERR("ERR: unknown usb role(%d)\n", role);
 	}
 }
 
@@ -521,8 +521,8 @@ static void do_vbus1_id1(struct usb_scan_info *info)
 				break;
 			hw_insmod_usb_device();
 		} else {
-			DMSG_PANIC("ERR: do_vbus1_id1, ");
-			DMSG_PANIC("usb det mode isn't supported, role=%d\n",
+			DMSG_ERR("ERR: do_vbus1_id1, ");
+			DMSG_ERR("usb det mode isn't supported, role=%d\n",
 				role);
 		}
 #else
@@ -543,8 +543,8 @@ static void do_vbus1_id1(struct usb_scan_info *info)
 				break;
 			hw_rmmod_usb_host();
 		} else {
-			DMSG_PANIC("ERR: do_vbus1_id1, ");
-			DMSG_PANIC("usb det mode isn't supported, role=%d\n",
+			DMSG_ERR("ERR: do_vbus1_id1, ");
+			DMSG_ERR("usb det mode isn't supported, role=%d\n",
 				role);
 		}
 		break;
@@ -552,7 +552,7 @@ static void do_vbus1_id1(struct usb_scan_info *info)
 		/* nothing to do */
 		break;
 	default:
-		DMSG_PANIC("ERR: unknown usb role(%d)\n", role);
+		DMSG_ERR("ERR: unknown usb role(%d)\n", role);
 	}
 }
 
@@ -624,8 +624,8 @@ static void vbus_id_hw_scan(struct usb_scan_info *info)
 		do_vbus1_id1(info);
 		break;
 	default:
-		DMSG_PANIC("ERR: vbus_id_hw_scan: ");
-		DMSG_PANIC("unknown vbus_id_state(0x%x)\n",
+		DMSG_ERR("ERR: vbus_id_hw_scan: ");
+		DMSG_ERR("unknown vbus_id_state(0x%x)\n",
 			vbus_id_state);
 	}
 }
@@ -653,8 +653,8 @@ static void vbus_pmu_hw_scan(struct usb_scan_info *info)
 		do_vbus1_id1(info);
 		break;
 	default:
-		DMSG_PANIC("ERR: vbus_pmu_hw_scan: ");
-		DMSG_PANIC("unknown vbus_id_state(0x%x)\n",
+		DMSG_ERR("ERR: vbus_pmu_hw_scan: ");
+		DMSG_ERR("unknown vbus_id_state(0x%x)\n",
 			vbus_id_state);
 	}
 }
@@ -705,7 +705,7 @@ __s32 usb_hw_scan_init(struct usb_cfg *cfg)
 			if (port_info->det_vbus_type == USB_DET_VBUS_TYPE_GPIO
 				&& port_info->id_type == USB_ID_TYPE_GPIO) {
 				if ((port_info->id.valid == 0) || (port_info->det_vbus.valid == 0)) {
-					DMSG_PANIC("ERR: usb detect tpye is vbus/id, but id(%d)/vbus(%d) is invalid\n",
+					DMSG_ERR("ERR: usb detect tpye is vbus/id, but id(%d)/vbus(%d) is invalid\n",
 						port_info->id.valid,
 						port_info->det_vbus.valid);
 					ret = -1;
@@ -734,7 +734,7 @@ __s32 usb_hw_scan_init(struct usb_cfg *cfg)
 						port_info->id.gpio_set.gpio,
 						"otg_id");
 				if (ret != 0) {
-					DMSG_PANIC("ERR: id gpio_request failed\n");
+					DMSG_ERR("ERR: id gpio_request failed\n");
 					ret = -1;
 					port_info->id.valid = 0;
 					port_info->det_vbus.valid = 0;
@@ -754,7 +754,7 @@ __s32 usb_hw_scan_init(struct usb_cfg *cfg)
 					&& need_det_vbus_req_gpio) {
 				ret = gpio_request(port_info->det_vbus.gpio_set.gpio, "otg_det");
 				if (ret != 0) {
-					DMSG_PANIC("ERR: det_vbus gpio_request failed\n");
+					DMSG_ERR("ERR: det_vbus gpio_request failed\n");
 					ret = -1;
 					port_info->det_vbus.valid = 0;
 					goto failed;
@@ -771,7 +771,7 @@ __s32 usb_hw_scan_init(struct usb_cfg *cfg)
 						port_info->id.gpio_set.gpio,
 						"otg_id");
 				if (ret != 0) {
-					DMSG_PANIC("ERR: id gpio_request failed\n");
+					DMSG_ERR("ERR: id gpio_request failed\n");
 					ret = -1;
 					port_info->id.valid = 0;
 					port_info->det_vbus.valid = 0;
@@ -794,7 +794,7 @@ __s32 usb_hw_scan_init(struct usb_cfg *cfg)
 #endif
 		break;
 	default:
-		DMSG_PANIC("ERR: unknown port_type(%d)\n", cfg->port.port_type);
+		DMSG_ERR("ERR: unknown port_type(%d)\n", cfg->port.port_type);
 		ret = -1;
 		goto failed;
 	}

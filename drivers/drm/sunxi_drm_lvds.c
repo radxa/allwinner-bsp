@@ -21,6 +21,7 @@
 #include <linux/phy/phy.h>
 #include <linux/phy/phy-mipi-dphy.h>
 #include <linux/media-bus-format.h>
+#include <linux/version.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
@@ -34,6 +35,7 @@
 #include "sunxi_device/sunxi_tcon.h"
 #include "sunxi_drm_intf.h"
 #include "sunxi_drm_crtc.h"
+#include "panel/panels.h"
 #define PHY_ENABLE 1
 
 #if IS_ENABLED(CONFIG_ARCH_SUN55IW6)
@@ -43,17 +45,10 @@ struct lvds_data {
 	int id;
 };
 struct sunxi_drm_lvds {
-	struct drm_connector connector;
-	struct drm_encoder encoder;
-	struct device *tcon_dev;
-	struct drm_device *drm_dev;
+	struct sunxi_drm_device sdrm;
 	struct drm_display_mode mode;
 	struct disp_lvds_para lvds_para;
-	unsigned int tcon_id;
-	struct drm_panel *panel;
-	struct drm_bridge *bridge;
 	bool bound;
-	bool allow_sw_enable;
 	bool sw_enable;
 	struct device *dev;
 	struct phy *phy0;
@@ -61,7 +56,6 @@ struct sunxi_drm_lvds {
 	union phy_configure_opts phy_opts;
 
 	const struct lvds_data *lvds_data;
-	u32 lvds_id;
 
 	struct reset_control *rst_bus;
 	struct clk *pclk;
@@ -81,11 +75,6 @@ static const struct of_device_id sunxi_drm_lvds_match[] = {
 	{ .compatible = "allwinner,lvds1", .data = &lvds1_data },
 	{},
 };
-static inline struct sunxi_drm_lvds *
-	drm_encoder_to_sunxi_drm_lvds(struct drm_encoder *encoder)
-{
-	return container_of(encoder, struct sunxi_drm_lvds, encoder);
-}
 
 static struct device *drm_lvds_of_get_tcon(struct device *lvds_dev)
 {
@@ -128,12 +117,16 @@ LVDS_PUT:
 
 static inline struct sunxi_drm_lvds *encoder_to_sunxi_drm_lvds(struct drm_encoder *encoder)
 {
-	return container_of(encoder, struct sunxi_drm_lvds, encoder);
+	struct sunxi_drm_device *sdrm = container_of(encoder, struct sunxi_drm_device, encoder);
+
+	return container_of(sdrm, struct sunxi_drm_lvds, sdrm);
 }
 
 static inline struct sunxi_drm_lvds *connector_to_sunxi_drm_lvds(struct drm_connector *connector)
 {
-	return container_of(connector, struct sunxi_drm_lvds, connector);
+	struct sunxi_drm_device *sdrm = container_of(connector, struct sunxi_drm_device, connector);
+
+	return container_of(sdrm, struct sunxi_drm_lvds, sdrm);
 }
 
 static int sunxi_lvds_clk_config_enable(struct sunxi_drm_lvds *lvds,
@@ -228,7 +221,7 @@ void sunxi_drm_lvds_encoder_atomic_enable(struct drm_encoder *encoder,
 #else
 	disp_cfg.displl_clk = false;
 #endif
-	sunxi_tcon_mode_init(lvds->tcon_dev, &disp_cfg);
+	sunxi_tcon_mode_init(lvds->sdrm.tcon_dev, &disp_cfg);
 
 	pclk_clk_rate = lvds->lvds_para.timings.pixel_clk * disp_cfg.tcon_lcd_div;
 	ret = sunxi_lvds_clk_config_enable(lvds, &lvds->lvds_para);
@@ -240,12 +233,15 @@ void sunxi_drm_lvds_encoder_atomic_enable(struct drm_encoder *encoder,
 	sunxi_lcd_pin_set_state(lvds->dev, "active");
 
 	if (lvds->sw_enable) {
-		if (lvds->phy0)
+		if (lvds->phy0) {
 			phy_power_on(lvds->phy0);
+			if (lvds->pclk)
+				clk_prepare_enable(lvds->pclk);
+		}
 		if (lvds->phy1)
 			phy_power_on(lvds->phy1);
 
-		drm_panel_prepare(lvds->panel);
+		panel_lvds_regulator_enable(lvds->sdrm.panel);
 	} else {
 		if (lvds->phy0) {
 			phy_power_on(lvds->phy0);
@@ -259,15 +255,13 @@ void sunxi_drm_lvds_encoder_atomic_enable(struct drm_encoder *encoder,
 			phy_power_on(lvds->phy1);
 			phy_set_mode_ext(lvds->phy1, PHY_MODE_LVDS, PHY_ENABLE);
 		}
-		drm_panel_prepare(lvds->panel);
-		drm_panel_enable(lvds->panel);
-
-		ret = sunxi_lvds_enable_output(lvds->tcon_dev);
+		drm_panel_prepare(lvds->sdrm.panel);
+		ret = sunxi_lvds_enable_output(lvds->sdrm.tcon_dev);
 		if (ret < 0)
 			DRM_DEV_INFO(lvds->dev, "failed to enable lvds ouput\n");
 	}
+	drm_panel_enable(lvds->sdrm.panel);
 
-	lvds->allow_sw_enable = false;
 	DRM_INFO("[LVDS] %s finish\n", __FUNCTION__);
 
 	return;
@@ -276,10 +270,13 @@ void sunxi_drm_lvds_encoder_atomic_enable(struct drm_encoder *encoder,
 void sunxi_drm_lvds_encoder_atomic_disable(struct drm_encoder *encoder,
 					struct drm_atomic_state *state)
 {
-	struct sunxi_drm_lvds *lvds = drm_encoder_to_sunxi_drm_lvds(encoder);
+	struct sunxi_drm_lvds *lvds = encoder_to_sunxi_drm_lvds(encoder);
 
-	drm_panel_disable(lvds->panel);
-	drm_panel_unprepare(lvds->panel);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	lvds->sdrm.panel->prepare_prev_first = false;
+#endif
+	drm_panel_disable(lvds->sdrm.panel);
+	drm_panel_unprepare(lvds->sdrm.panel);
 
 	if (lvds->phy0)
 		phy_power_off(lvds->phy0);
@@ -290,28 +287,34 @@ void sunxi_drm_lvds_encoder_atomic_disable(struct drm_encoder *encoder,
 	sunxi_lvds_clk_config_disable(lvds);
 
 	sunxi_lcd_pin_set_state(lvds->dev, "sleep");
-	sunxi_lvds_disable_output(lvds->tcon_dev);
-	sunxi_tcon_mode_exit(lvds->tcon_dev);
+	sunxi_lvds_disable_output(lvds->sdrm.tcon_dev);
+	sunxi_tcon_mode_exit(lvds->sdrm.tcon_dev);
 	DRM_DEBUG_DRIVER("%s finish\n", __FUNCTION__);
 }
 
 static bool sunxi_lvds_fifo_check(void *data)
 {
 	struct sunxi_drm_lvds *lvds = (struct sunxi_drm_lvds *)data;
-	return sunxi_tcon_check_fifo_status(lvds->tcon_dev);
+	return sunxi_tcon_check_fifo_status(lvds->sdrm.tcon_dev);
+}
+
+int sunxi_lvds_get_current_line(void *data)
+{
+	struct sunxi_drm_lvds *lvds = (struct sunxi_drm_lvds *)data;
+	return sunxi_tcon_get_current_line(lvds->sdrm.tcon_dev);
 }
 
 static bool sunxi_lvds_is_sync_time_enough(void *data)
 {
 	struct sunxi_drm_lvds *lvds = (struct sunxi_drm_lvds *)data;
-	return sunxi_tcon_is_sync_time_enough(lvds->tcon_dev);
+	return sunxi_tcon_is_sync_time_enough(lvds->sdrm.tcon_dev);
 }
 
 static void sunxi_lvds_enable_vblank(bool enable, void *data)
 {
 	struct sunxi_drm_lvds *lvds = (struct sunxi_drm_lvds *)data;
 
-	sunxi_tcon_enable_vblank(lvds->tcon_dev, enable);
+	sunxi_tcon_enable_vblank(lvds->sdrm.tcon_dev, enable);
 }
 
 int sunxi_drm_lvds_encoder_atomic_check(struct drm_encoder *encoder,
@@ -324,11 +327,17 @@ int sunxi_drm_lvds_encoder_atomic_check(struct drm_encoder *encoder,
 	/* FIXME:TODO: color_fmt/clolor_depth update by actual configuration */
 //	scrtc_state->color_fmt = DISP_CSC_TYPE_RGB;
 //	scrtc_state->color_depth = DISP_DATA_8BITS;
-	scrtc_state->tcon_id = lvds->tcon_id;
+	scrtc_state->tcon_id = lvds->sdrm.tcon_id;
 	scrtc_state->enable_vblank = sunxi_lvds_enable_vblank;
 	scrtc_state->is_sync_time_enough = sunxi_lvds_is_sync_time_enough;
+	scrtc_state->get_cur_line = sunxi_lvds_get_current_line;
 	scrtc_state->check_status = sunxi_lvds_fifo_check;
 	scrtc_state->output_dev_data = lvds;
+
+	if (conn_state->crtc) {
+		lvds->sw_enable = sunxi_drm_check_if_need_sw_enable(conn_state->connector);
+		scrtc_state->sw_enable = lvds->sw_enable;
+	}
 	DRM_DEBUG_DRIVER("%s finish\n", __FUNCTION__);
 	return 0;
 }
@@ -339,7 +348,7 @@ static void sunxi_drm_lvds_encoder_mode_set(struct drm_encoder *encoder,
 {
 	struct sunxi_drm_lvds *lvds = encoder_to_sunxi_drm_lvds(encoder);
 	struct disp_lvds_para *lvds_para = &lvds->lvds_para;
-	struct drm_connector *connector = &lvds->connector;
+	struct drm_connector *connector = &lvds->sdrm.connector;
 	struct drm_display_info *info = &connector->display_info;
 	u32 bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG;
 
@@ -414,7 +423,7 @@ static int sunxi_lvds_connector_get_modes(struct drm_connector *connector)
 	struct sunxi_drm_lvds *lvds = connector_to_sunxi_drm_lvds(connector);
 
 	DRM_INFO("[LVDS]%s start\n", __FUNCTION__);
-	return drm_panel_get_modes(lvds->panel, connector);
+	return drm_panel_get_modes(lvds->sdrm.panel, connector);
 }
 
 static const struct drm_connector_helper_funcs sunxi_lvds_connector_helper_funcs = {
@@ -426,12 +435,13 @@ s32 sunxi_lvds_parse_dt(struct device *dev)
 	s32 ret = -1;
 	s32 value = 0;
 	struct sunxi_drm_lvds *lvds = dev_get_drvdata(dev);
+	struct sunxi_drm_device *sdrm = &lvds->sdrm;
 	struct disp_lvds_para *lvds_para = &lvds->lvds_para;
 
-	if (!lvds->lvds_id) {
+	if (!sdrm->hw_id) {
 		lvds->phy0 = devm_phy_get(dev, "combophy0");
 		if (IS_ERR_OR_NULL(lvds->phy0)) {
-			DRM_INFO("lvds%d's combophy0 not setting, maybe not used!\n", lvds->lvds_id);
+			DRM_INFO("lvds%d's combophy0 not setting, maybe not used!\n", sdrm->hw_id);
 			lvds->phy0 = NULL;
 		}
 	}
@@ -441,10 +451,10 @@ s32 sunxi_lvds_parse_dt(struct device *dev)
 		lvds_para->dual_lvds = value;
 	}
 
-	if (lvds_para->dual_lvds && !lvds->lvds_id) {
+	if (lvds_para->dual_lvds && !sdrm->hw_id) {
 		lvds->phy1 = devm_phy_get(dev, "combophy1");
 		if (IS_ERR_OR_NULL(lvds->phy1)) {
-			DRM_INFO("lvds%d's combophy1 not setting, maybe not used!\n", lvds->lvds_id);
+			DRM_INFO("lvds%d's combophy1 not setting, maybe not used!\n", sdrm->hw_id);
 			lvds->phy1 = NULL;
 		}
 	}
@@ -463,11 +473,10 @@ s32 sunxi_lvds_parse_dt(struct device *dev)
 }
 static int sunxi_drm_lvds_bind(struct device *dev, struct device *master, void *data)
 {
-	const int lcd_type = 1;
 	struct drm_device *drm = (struct drm_device *)data;
 	struct device *tcon_lcd_dev = NULL;
-	struct sunxi_drm_private *drv_private = to_sunxi_drm_private(drm);
 	struct sunxi_drm_lvds *lvds = dev_get_drvdata(dev);
+	struct sunxi_drm_device *sdrm = &lvds->sdrm;
 	int ret, tcon_id;
 
 	DRM_INFO("[LVDS]%s start\n", __FUNCTION__);
@@ -476,7 +485,7 @@ static int sunxi_drm_lvds_bind(struct device *dev, struct device *master, void *
 		DRM_ERROR("sunxi_tcon_parse_dts failed\n");
 	}
 	ret = drm_of_find_panel_or_bridge(dev->of_node, 1, -1,
-			&lvds->panel, &lvds->bridge);
+			&lvds->sdrm.panel, &lvds->sdrm.bridge);
 	if (ret) {
 		DRM_DEV_ERROR(dev, "Failed to find panel or bridge: %d\n", ret);
 		return ret;
@@ -489,47 +498,44 @@ static int sunxi_drm_lvds_bind(struct device *dev, struct device *master, void *
 	}
 	tcon_id = sunxi_tcon_of_get_id(tcon_lcd_dev);
 
-	lvds->tcon_dev = tcon_lcd_dev;
-	lvds->tcon_id = tcon_id;
-	lvds->drm_dev = drm;
+	sdrm->tcon_dev = tcon_lcd_dev;
+	sdrm->tcon_id = tcon_id;
+	sdrm->drm_dev = drm;
 
-	drm_encoder_helper_add(&lvds->encoder, &sunxi_lvds_encoder_helper_funcs);
-	ret = drm_simple_encoder_init(drm, &lvds->encoder, DRM_MODE_ENCODER_LVDS);
+	drm_encoder_helper_add(&sdrm->encoder, &sunxi_lvds_encoder_helper_funcs);
+	ret = drm_simple_encoder_init(drm, &sdrm->encoder, DRM_MODE_ENCODER_LVDS);
 	if (ret) {
 		DRM_ERROR("Couldn't initialise the encoder for tcon %d\n", tcon_id);
 		return ret;
 	}
 
-	lvds->encoder.possible_crtcs =
+	sdrm->encoder.possible_crtcs =
 			drm_of_find_possible_crtcs(drm, tcon_lcd_dev->of_node);
-	if (lvds->panel) {
-		drm_connector_helper_add(&lvds->connector,
+	if (sdrm->panel) {
+		drm_connector_helper_add(&sdrm->connector,
 				&sunxi_lvds_connector_helper_funcs);
 
-		ret = drm_connector_init(drm, &lvds->connector,
+		ret = drm_connector_init(drm, &sdrm->connector,
 				&sunxi_lvds_connector_funcs,
 				DRM_MODE_CONNECTOR_LVDS);
 		if (ret) {
-			drm_encoder_cleanup(&lvds->encoder);
+			drm_encoder_cleanup(&sdrm->encoder);
 			DRM_ERROR("[LVDS]Couldn't initialise the connector for tcon %d\n", tcon_id);
 			return ret;
 		}
 
-		drm_connector_attach_encoder(&lvds->connector, &lvds->encoder);
+		drm_connector_attach_encoder(&sdrm->connector, &sdrm->encoder);
 	//	tcon_dev->cfg.private_data = lvds;
 	} else {
-		ret = drm_bridge_attach(&lvds->encoder, lvds->bridge, NULL, 0);
+		ret = drm_bridge_attach(&sdrm->encoder, sdrm->bridge, NULL, 0);
 		if (ret) {
-			drm_encoder_cleanup(&lvds->encoder);
+			drm_encoder_cleanup(&sdrm->encoder);
 			DRM_ERROR("[LVDS]failed to attach bridge %d\n", ret);
 			return ret;
 		}
 	}
 
-	lvds->allow_sw_enable = true;
 	lvds->bound = true;
-	lvds->sw_enable = lvds->allow_sw_enable && drv_private->sw_enable &&
-			    (drv_private->boot.device_type == lcd_type);
 	DRM_INFO("[LVDS]%s ok\n", __FUNCTION__);
 
 	return 0;
@@ -540,8 +546,8 @@ static void sunxi_drm_lvds_unbind(struct device *dev, struct device *master,
 {
 	struct sunxi_drm_lvds *lvds = dev_get_drvdata(dev);
 
-	drm_connector_cleanup(&lvds->connector);
-	drm_encoder_cleanup(&lvds->encoder);
+	drm_connector_cleanup(&lvds->sdrm.connector);
+	drm_encoder_cleanup(&lvds->sdrm.encoder);
 	lvds->bound = false;
 }
 
@@ -566,7 +572,7 @@ static int sunxi_drm_lvds_probe(struct platform_device *pdev)
 		DRM_ERROR("sunxi_drm_lvds fail to get match data\n");
 		return -ENODEV;
 	}
-	lvds->lvds_id = lvds->lvds_data->id;
+	lvds->sdrm.hw_id = lvds->lvds_data->id;
 	lvds->dev = dev;
 
 	dev_set_drvdata(dev, lvds);

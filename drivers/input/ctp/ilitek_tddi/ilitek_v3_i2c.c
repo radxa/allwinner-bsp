@@ -15,11 +15,10 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
+
+#include <linux/version.h>
 #include "ilitek_v3.h"
 
 struct touch_bus_info {
@@ -326,7 +325,11 @@ int ili_core_spi_setup(int num)
 	return 0;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int ilitek_i2c_probe(struct i2c_client *i2c)
+#else
 static int ilitek_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
+#endif
 {
 	struct touch_bus_info *info =
 		container_of(to_i2c_driver(i2c->dev.driver),
@@ -450,10 +453,18 @@ static int ilitek_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
 	return info->hwif->plat_probe();
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void ilitek_i2c_remove(struct i2c_client *i2c)
+#else
 static int ilitek_i2c_remove(struct i2c_client *i2c)
+#endif
 {
 	ILI_INFO();
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id tp_i2c_id[] = {

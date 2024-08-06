@@ -1667,7 +1667,7 @@ in INT_STATUS_INT1/2. */
 #define BMI3_ACC_FOC_8G_REF                          UINT16_C(4096)
 #define BMI3_ACC_FOC_16G_REF                         UINT16_C(2048)
 
-#define BMI3_FOC_SAMPLE_LIMIT                        UINT8_C(128)
+#define BMI3_FOC_SAMPLE_LIMIT                        UINT8_C(64)
 
 #define BMI3_MAX_NOISE_LIMIT(RANGE_VALUE)            (RANGE_VALUE + UINT16_C(2050))
 #define BMI3_MIN_NOISE_LIMIT(RANGE_VALUE)            (RANGE_VALUE - UINT16_C(2050))

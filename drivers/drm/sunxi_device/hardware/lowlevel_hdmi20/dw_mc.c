@@ -8,7 +8,7 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
+#include "dw_dev.h"
 #include "dw_mc.h"
 
 typedef struct irq_vector {
@@ -86,9 +86,9 @@ void dw_mc_reset_audio_i2s(void)
 	dw_write_mask(MC_SWRSTZREQ, MC_SWRSTZREQ_II2SSWRST_REQ_MASK, 0x0);
 }
 
-void dw_mc_reset_tmds_clock(u8 bit)
+void dw_mc_reset_tmds_clock(void)
 {
-	dw_write_mask(MC_SWRSTZREQ, MC_SWRSTZREQ_TMDSSWRST_REQ_MASK, bit);
+	dw_write_mask(MC_SWRSTZREQ, MC_SWRSTZREQ_TMDSSWRST_REQ_MASK, 0x1);
 }
 
 void dw_mc_reset_phy(u8 bit)
@@ -173,7 +173,7 @@ int dw_mc_irq_unmute_source(irq_sources_t irq_source)
 
 	for (i = 0; irq_vec[i].source != 0; i++) {
 		if (irq_vec[i].source == irq_source) {
-			video_log("irq write unmute: irq[%d] mask[%d]\n",
+			hdmi_trace("irq write unmute: irq[%d] mask[%d]\n",
 							irq_source, 0x0);
 			dw_write(irq_vec[i].mute_reg,  0x00);
 			return true;
@@ -192,7 +192,6 @@ void dw_mc_set_main_irq(u8 state)
 void dw_mc_irq_mask_all(void)
 {
 	hdmi_trace("dw hdmi mc mask all irq\n");
-	dw_mc_set_main_irq(0x0);
 	dw_mc_irq_mute_source(DW_IRQ_AUDIO_PACKET);
 	dw_mc_irq_mute_source(DW_IRQ_OTHER_PACKET);
 	dw_mc_irq_mute_source(DW_IRQ_PACKETS_OVERFLOW);
@@ -202,4 +201,5 @@ void dw_mc_irq_mask_all(void)
 	dw_mc_irq_mute_source(DW_IRQ_VIDEO_PACKETIZER);
 	dw_mc_irq_mute_source(DW_IRQ_I2C_PHY);
 	dw_mc_irq_mute_source(DW_IRQ_AUDIO_DMA);
+	dw_mc_set_main_irq(0x1);
 }

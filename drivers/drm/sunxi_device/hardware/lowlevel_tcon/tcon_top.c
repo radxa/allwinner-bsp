@@ -120,6 +120,10 @@ s32 tcon1_edp_clk_enable(u32 sel, u32 en)
 	if (sel >= TCON_DEVICE_MAX)
 		return -1;
 
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+		tcon_top[(sel > 2) ? 1 : 0]->tcon_tv_setup.bits.tv1_clk_src = en;
+		tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.tv1_clk_gate = en;
+#else
 	if (en) {
 		tcon_top[0]->tcon_tv_setup.bits.tv1_clk_src = TV_CLK_F_TVE;
 		tcon_top[0]->tcon_clk_gate.bits.tv1_clk_gate = TV_CLK_F_TVE;
@@ -129,22 +133,27 @@ s32 tcon1_edp_clk_enable(u32 sel, u32 en)
 		tcon_top[0]->tcon_clk_gate.bits.tv1_clk_gate = 0;
 		//tcon_top[0]->tcon_clk_gate.bits.hdmi_src = 0;
 	}
+#endif
 
 	return 0;
 }
 
 /**
- * tcon1_hdmi_clk_enable - enable tcon clk output to hdmi
+ * tcon_top_hdmi_set_gate - enable tcon clk output to hdmi
  * @sel: The index of tcon selected for hdmi source
  * @en: Enable or not for tcon
  *
  * Returns 0.
  */
-s32 tcon1_hdmi_clk_enable(u32 sel, u32 en)
+s32 tcon_top_hdmi_set_gate(u32 sel, u32 en)
 {
 	if (sel >= TCON_DEVICE_MAX)
 		return -1;
 
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+	tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.sun60i_bits.tv0_clk_gate  = en;
+	tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.sun60i_bits.tv0_hdmi_gate = en;
+#else
 	if (sel == 2)
 		tcon_top[0]->tcon_clk_gate.bits.tv0_clk_gate = en;
 
@@ -156,7 +165,15 @@ s32 tcon1_hdmi_clk_enable(u32 sel, u32 en)
 			tcon_top[0]->tcon_clk_gate.bits.hdmi_src = 0;
 		}
 	}
+#endif
+	return 0;
+}
 
+s32 tcon_top_hdmi_set_clk_src(u32 sel, u32 src)
+{
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+	tcon_top[sel > 2 ? 1 : 0]->tcon_tv_setup.sun60i_bits.tv0_hdmiphy_ccu_sel = src;
+#endif
 	return 0;
 }
 

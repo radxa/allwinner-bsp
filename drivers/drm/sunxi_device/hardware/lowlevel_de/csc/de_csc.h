@@ -28,6 +28,7 @@ enum de_csc_type {
 	DEVICE_CSC,
 	GAMMA_CSC,
 	SMBL_CSC,
+	FCM_CSC,
 };
 
 struct csc_extra_create_info {
@@ -54,10 +55,6 @@ struct de_csc_info {
 
 struct de_csc_handle *de_csc_create(struct module_create_info *info);
 
-struct de_csc_para {
-	bool bypass;
-};
-
 struct bcsh_info {
 	bool enable;
 	unsigned int brightness;
@@ -68,7 +65,7 @@ struct bcsh_info {
 
 struct de_csc_handle *de_csc_create(struct module_create_info *info);
 s32 de_csc_apply(struct de_csc_handle *hdl, struct de_csc_info *in_info,
-		    struct de_csc_info *out_info, bool en);
+		    struct de_csc_info *out_info, int *csc_coeff, bool apply, bool en);
 int de_dcsc_apply(struct de_csc_handle *hdl, const struct de_csc_info *in_info,
 		    const struct de_csc_info *out_info,
 		    const struct bcsh_info *bcsh, int *csc_coeff, bool apply);

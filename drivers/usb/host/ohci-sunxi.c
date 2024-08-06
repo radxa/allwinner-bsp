@@ -79,13 +79,13 @@ static ssize_t ohci_enable_show(struct device *dev,
 	struct sunxi_hci_hcd *sunxi_ohci = NULL;
 
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: Argment is invalid\n");
+		DMSG_ERR("ERR: Argment is invalid\n");
 		return 0;
 	}
 
 	sunxi_ohci = dev->platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: sw_ohci is null\n");
+		DMSG_ERR("ERR: sw_ohci is null\n");
 		return 0;
 	}
 
@@ -102,13 +102,13 @@ static ssize_t ohci_enable_store(struct device *dev,
 	int err;
 
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: Argment is invalid\n");
+		DMSG_ERR("ERR: Argment is invalid\n");
 		return 0;
 	}
 
 	sunxi_ohci = dev->platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: sw_ohci is null\n");
+		DMSG_ERR("ERR: sw_ohci is null\n");
 		return 0;
 	}
 
@@ -207,19 +207,19 @@ static int sunxi_insmod_ohci(struct platform_device *pdev)
 	struct device *dev = NULL;
 
 	if (pdev == NULL) {
-		DMSG_PANIC("ERR: Argment is invaild\n");
+		DMSG_ERR("ERR: Argment is invaild\n");
 		return -1;
 	}
 
 	/* if usb is disabled, can not probe */
 	if (usb_disabled()) {
-		DMSG_PANIC("ERR: usb hcd is disabled\n");
+		DMSG_ERR("ERR: usb hcd is disabled\n");
 		return -ENODEV;
 	}
 
 	sunxi_ohci = pdev->dev.platform_data;
 	if (!sunxi_ohci) {
-		DMSG_PANIC("ERR: sunxi_ohci is null\n");
+		DMSG_ERR("ERR: sunxi_ohci is null\n");
 		ret = -ENOMEM;
 		goto ERR1;
 	}
@@ -250,7 +250,7 @@ static int sunxi_insmod_ohci(struct platform_device *pdev)
 	/* creat a usb_hcd for the ohci controller */
 	hcd = usb_create_hcd(&sunxi_ohci_hc_driver, &pdev->dev, ohci_name);
 	if (!hcd) {
-		DMSG_PANIC("ERR: usb_ohci_create_hcd failed\n");
+		DMSG_ERR("ERR: usb_ohci_create_hcd failed\n");
 		ret = -ENOMEM;
 		goto ERR2;
 	}
@@ -264,19 +264,19 @@ static int sunxi_insmod_ohci(struct platform_device *pdev)
 	sunxi_ohci->supply = regulator_get(dev, "drvvbus");
 
 	if (IS_ERR(sunxi_ohci->supply)) {
-		DMSG_PANIC("%s()%d WARN: get supply failed\n", __func__, __LINE__);
+		DMSG_WARN("%s()%d WARN: get supply failed\n", __func__, __LINE__);
 		sunxi_ohci->supply = NULL;
 	}
 
 	sunxi_ohci->hci_regulator = regulator_get(dev, "hci");
 	if (IS_ERR(sunxi_ohci->hci_regulator)) {
-		DMSG_PANIC("%s()%d WARN: get hci regulator failed\n", __func__, __LINE__);
+		DMSG_WARN("%s()%d WARN: get hci regulator failed\n", __func__, __LINE__);
 		sunxi_ohci->hci_regulator = NULL;
 	}
 
 	sunxi_ohci->vbusin = regulator_get(dev, "vbusin");
 	if (IS_ERR(sunxi_ohci->vbusin)) {
-		DMSG_PANIC("%s()%d WARN: get vbusin failed\n", __func__, __LINE__);
+		DMSG_WARN("%s()%d WARN: get vbusin failed\n", __func__, __LINE__);
 		sunxi_ohci->vbusin = NULL;
 	}
 	/* ochi start to work */
@@ -284,7 +284,7 @@ static int sunxi_insmod_ohci(struct platform_device *pdev)
 
 	ret = usb_add_hcd(hcd, sunxi_ohci->irq_no, IRQF_SHARED);
 	if (ret != 0) {
-		DMSG_PANIC("ERR: usb_add_hcd failed\n");
+		DMSG_ERR("ERR: usb_add_hcd failed\n");
 		ret = -ENOMEM;
 		goto ERR3;
 	}
@@ -323,19 +323,19 @@ static int sunxi_rmmod_ohci(struct platform_device *pdev)
 	unsigned long time_left;
 
 	if (pdev == NULL) {
-		DMSG_PANIC("ERR: Argment is invalid\n");
+		DMSG_ERR("ERR: Argment is invalid\n");
 		return -1;
 	}
 
 	hcd = platform_get_drvdata(pdev);
 	if (hcd == NULL) {
-		DMSG_PANIC("ERR: hcd is null\n");
+		DMSG_ERR("ERR: hcd is null\n");
 		return -1;
 	}
 
 	sunxi_ohci = pdev->dev.platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: sunxi_ohci is null\n");
+		DMSG_ERR("ERR: sunxi_ohci is null\n");
 		return -1;
 	}
 
@@ -347,7 +347,7 @@ static int sunxi_rmmod_ohci(struct platform_device *pdev)
 		if (time_left)
 			DMSG_INFO("INFO: sunxi_ohci disable time_left = %lu\n", time_left);
 		else
-			DMSG_PANIC("ERR: sunxi_ohci waiting standby failed, go on disable\n");
+			DMSG_ERR("ERR: sunxi_ohci waiting standby failed, go on disable\n");
 		atomic_notifier_call_chain(&usb_pm_notifier_list, 0, NULL);
 
 	}
@@ -394,13 +394,13 @@ static int sunxi_ohci_hcd_probe(struct platform_device *pdev)
 	struct sunxi_hci_hcd *sunxi_ohci = NULL;
 
 	if (pdev == NULL) {
-		DMSG_PANIC("ERR: %s, Argment is invalid\n", __func__);
+		DMSG_ERR("ERR: %s, Argment is invalid\n", __func__);
 		return -1;
 	}
 
 	/* if usb is disabled, can not probe */
 	if (usb_disabled()) {
-		DMSG_PANIC("ERR: usb hcd is disabled\n");
+		DMSG_ERR("ERR: usb hcd is disabled\n");
 		return -ENODEV;
 	}
 
@@ -421,14 +421,14 @@ static int sunxi_ohci_hcd_probe(struct platform_device *pdev)
 
 	sunxi_ohci = pdev->dev.platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: %s, sunxi_ohci is null\n", __func__);
+		DMSG_ERR("ERR: %s, sunxi_ohci is null\n", __func__);
 		return -1;
 	}
 
 	if (sunxi_ohci->usbc_no == HCI0_USBC_NO) {
 		ret = register_pm_notifier(&sunxi_ohci_pm_nb);
 		if (ret) {
-			DMSG_PANIC("ERR: %s, can not register suspend notifier\n", __func__);
+			DMSG_ERR("ERR: %s, can not register suspend notifier\n", __func__);
 			return -1;
 		}
 	}
@@ -449,13 +449,13 @@ static int sunxi_ohci_hcd_remove(struct platform_device *pdev)
 	int ret = 0;
 
 	if (pdev == NULL) {
-		DMSG_PANIC("ERR: %s, Argment is invalid\n", __func__);
+		DMSG_ERR("ERR: %s, Argment is invalid\n", __func__);
 		return -1;
 	}
 
 	sunxi_ohci = pdev->dev.platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: %s, sunxi_ohci is null\n", __func__);
+		DMSG_ERR("ERR: %s, sunxi_ohci is null\n", __func__);
 		return -1;
 	}
 
@@ -486,7 +486,7 @@ static void sunxi_ohci_hcd_shutdown(struct platform_device *pdev)
 
 	sunxi_ohci = pdev->dev.platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: %s sunxi_ohci is null\n", __func__);
+		DMSG_ERR("ERR: %s sunxi_ohci is null\n", __func__);
 		return;
 	}
 
@@ -524,19 +524,19 @@ static int sunxi_ohci_hcd_suspend(struct device *dev)
 	int val = 0;
 
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: Argment is invalid\n");
+		DMSG_ERR("ERR: Argment is invalid\n");
 		return 0;
 	}
 
 	hcd = dev_get_drvdata(dev);
 	if (hcd == NULL) {
-		DMSG_PANIC("ERR: hcd is null\n");
+		DMSG_ERR("ERR: hcd is null\n");
 		return 0;
 	}
 
 	sunxi_ohci = dev->platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: sunxi_ohci is null\n");
+		DMSG_ERR("ERR: sunxi_ohci is null\n");
 		return 0;
 	}
 
@@ -554,7 +554,7 @@ static int sunxi_ohci_hcd_suspend(struct device *dev)
 
 	ohci = hcd_to_ohci(hcd);
 	if (ohci == NULL) {
-		DMSG_PANIC("ERR: ohci is null\n");
+		DMSG_ERR("ERR: ohci is null\n");
 		return 0;
 	}
 	atomic_set(&hci_thread_suspend_flag, 1);
@@ -625,19 +625,19 @@ static int sunxi_ohci_hcd_resume(struct device *dev)
 	int __maybe_unused val = 0;
 
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: Argment is invalid\n");
+		DMSG_ERR("ERR: Argment is invalid\n");
 		return 0;
 	}
 
 	hcd = dev_get_drvdata(dev);
 	if (hcd == NULL) {
-		DMSG_PANIC("ERR: hcd is null\n");
+		DMSG_ERR("ERR: hcd is null\n");
 		return 0;
 	}
 
 	sunxi_ohci = dev->platform_data;
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: sunxi_ohci is null\n");
+		DMSG_ERR("ERR: sunxi_ohci is null\n");
 		return 0;
 	}
 
@@ -649,7 +649,7 @@ static int sunxi_ohci_hcd_resume(struct device *dev)
 
 	ohci = hcd_to_ohci(hcd);
 	if (ohci == NULL) {
-		DMSG_PANIC("ERR: ohci is null\n");
+		DMSG_ERR("ERR: ohci is null\n");
 		return 0;
 	}
 
@@ -736,12 +736,12 @@ int sunxi_usb_disable_ohci(__u32 usbc_no)
 
 	sunxi_ohci = g_sunxi_ohci[usbc_no];
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: sunxi_ohci is null\n");
+		DMSG_ERR("ERR: sunxi_ohci is null\n");
 		return -1;
 	}
 
 	if (sunxi_ohci->probe == 0) {
-		DMSG_PANIC("ERR: sunxi_ohci is disable, can not disable again\n");
+		DMSG_ERR("ERR: sunxi_ohci is disable, can not disable again\n");
 		return -1;
 	}
 
@@ -764,12 +764,12 @@ int sunxi_usb_enable_ohci(__u32 usbc_no)
 
 	sunxi_ohci = g_sunxi_ohci[usbc_no];
 	if (sunxi_ohci == NULL) {
-		DMSG_PANIC("ERR: sunxi_ohci is null\n");
+		DMSG_ERR("ERR: sunxi_ohci is null\n");
 		return -1;
 	}
 
 	if (sunxi_ohci->probe == 1) {
-		DMSG_PANIC("ERR: sunxi_ohci is already enable, can not enable again\n");
+		DMSG_ERR("ERR: sunxi_ohci is already enable, can not enable again\n");
 		return -1;
 	}
 
@@ -803,7 +803,7 @@ static int __init sunxi_ohci_hcd_init(void)
 		return -ENODEV;
 	}
 
-	DMSG_INFO(KERN_INFO "%s: " DRIVER_DESC "\n", ohci_name);
+	DMSG_INFO("%s: " DRIVER_DESC "\n", ohci_name);
 	ohci_init_driver(&sunxi_ohci_hc_driver, NULL);
 	return platform_driver_register(&sunxi_ohci_hcd_driver);
 }
@@ -819,4 +819,4 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:" SUNXI_OHCI_NAME);
 MODULE_AUTHOR("javen");
-MODULE_VERSION("1.0.9");
+MODULE_VERSION("1.0.10");

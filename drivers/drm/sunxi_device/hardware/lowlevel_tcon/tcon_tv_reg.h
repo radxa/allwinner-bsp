@@ -24,7 +24,9 @@ union tcon_tv_gctl_reg_t {
 	struct {
 		u32 io_map_sel:1;
 		u32 pad_sel:1;
-		u32 res0:28;
+		u32 res0:2;
+		u32 pixel_mode:2;
+		u32 res1:24;
 		u32 tcon_gamma_en:1;
 		u32 tcon_en:1;
 	} bits;
@@ -82,10 +84,16 @@ union tcon_tv_basic0_reg_t {
 union tcon_tv_basic1_reg_t {
 	u32 dwval;
 	struct {
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		u32 vt:17;
+		u32 res0:14;
+		u32 vic39:1;
+#else
 		u32 ls_yo:12;
 		u32 res0:4;
 		u32 ls_xo:12;
 		u32 res1:4;
+#endif
 	} bits;
 };
 

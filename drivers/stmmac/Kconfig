@@ -4,16 +4,12 @@ menu "Stmmac Drivers"
 
 config AW_STMMAC_ETH
 	tristate "Allwinner STMMAC driver"
-	depends on NETDEVICES
-	depends on !STMMAC_ETH
-	depends on HAS_IOMEM && HAS_DMA
-	depends on PTP_1588_CLOCK_OPTIONAL
 	depends on OF && (ARCH_SUNXI || COMPILE_TEST)
-	select MII
-	select PAGE_POOL
-	select PHYLINK
-	select CRC32
-	select RESET_CONTROLLER
+	select NETDEVICES
+	select STMMAC_ETH
+	select STMMAC_PLATFORM
+	select AW_DWMAC_SUNXI
+
 	help
 	  Support for Allwinner GMAC-200/GMAC-300 ethernet controllers.
 
@@ -22,59 +18,29 @@ config AW_STMMAC_ETH
 	  GMAC-200/GMAC-300 ethernet controller.
 
 if AW_STMMAC_ETH
+config AW_DWMAC_SUNXI
+	tristate "Allwinner STMMAC DWMAC support"
+	depends on OF && (ARCH_SUNXI || COMPILE_TEST)
+	help
+	  Support stmmac device driver for Allwinner GMAC-200/GMAC-300.
 
 config AW_STMMAC_SELFTESTS
 	bool "Support for STMMAC Selftests"
-	depends on INET
 	depends on AW_STMMAC_ETH
+	select STMMAC_SELFTESTS
 	default n
 	help
 	  This adds support for STMMAC Selftests using ethtool. Enable this
 	  feature if you are facing problems with your HW and submit the test
 	  results to the netdev Mailing List.
 
-config AW_TSN
-	tristate "802.1 TSN Support"
-	depends on AW_STMMAC_ETH
-	depends on VLAN_8021Q && PTP_1588_CLOCK && CONFIGFS_FS
+config AW_STMMAC_UIO
+	tristate "STMMAC UIO ethernet controller"
+	default n
+	select UIO
 	help
-	  Select this if you want to enable TSN on capable interfaces.
+	  Say M here if you want to use the sunxi-uio.ko for DPDK.
 
-	  TSN allows you to set up deterministic links on your LAN (only
-	  L2 is currently supported). Once loaded, the driver will probe
-	  all available interfaces if they are capable of supporting TSN
-	  links.
-
-	  Once loaded, a directory in configfs called tsn/ will expose
-	  the capable NICs and allow userspace to create
-	  links. Userspace must provide us with a StreamID as well as
-	  reserving bandwidth through the network and once this is done,
-	  a new link can be created by issuing a mkdir() in configfs and
-	  updating the attributes for the new link.
-
-	  TSN itself does not produce nor consume data, it is dependent
-	  upon 'shims' doing this, which can be virtually anything. ALSA
-	  is a good candidate.
-
-	  For more information, refer to the TSN-documentation in the
-	  kernel documentation repository.
-
-	  The resulting module will be called 'tsn'
-
-	  If unsure, say N.
-
-config AW_STMMAC_PCI
-	tristate "STMMAC PCI bus support"
-	depends on AW_STMMAC_ETH && PCI
-	depends on COMMON_CLK
-	help
-	  This selects the platform specific bus support for the stmmac driver.
-	  This driver was tested on XLINX XC2V3000 FF1152AMT0221
-	  D1215994A VIRTEX FPGA board and SNPS QoS IPK Prototyping Kit.
-
-	  If you have a controller with this interface, say Y or M here.
-
-	  If unsure, say N.
 endif
 
 endmenu

@@ -8,7 +8,6 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _PHY_SNPS_H
 #define _PHY_SNPS_H
 
@@ -21,5 +20,7 @@ int snps_phy_init(void);
 int snps_phy_write(u8 addr, void *data);
 
 int snps_phy_read(u8 addr, void *data);
+
+ssize_t snps_phy_dump(char *buf);
 
 #endif	/* _PHY_SNPS_H */

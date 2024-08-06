@@ -37,6 +37,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/ktime.h>
+#include <linux/version.h>
 #include "../../init-input.h"
 
 
@@ -791,7 +792,11 @@ static bool gsensor_i2c_test(struct i2c_client *client)
 
 
 /*----------------------------------------------------------------------------*/
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int msa_probe(struct i2c_client *client)
+#else
 static int msa_probe(struct i2c_client *client,  const struct i2c_device_id *id)
+#endif
 {
 	int	result = -1;
 	struct input_dev	*idev;
@@ -920,7 +925,11 @@ err_detach_client:
 	return result;
 }
 /*----------------------------------------------------------------------------*/
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void msa_remove(struct i2c_client *client)
+#else
 static int msa_remove(struct i2c_client *client)
+#endif
 {
 	MSA_HANDLE  handle = msa_handle;
 
@@ -941,7 +950,11 @@ static int msa_remove(struct i2c_client *client)
 #endif
 	//hwmon_device_unregister(hwmon_dev);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 /*----------------------------------------------------------------------------*/
 static int msa_suspend(struct device *dev)

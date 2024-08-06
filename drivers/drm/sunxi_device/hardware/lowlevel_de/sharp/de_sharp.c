@@ -34,24 +34,21 @@ struct de_sharp_private {
 	struct de_reg_block reg_blks[SHARP_REG_BLK_NUM];
 	struct de_reg_block shadow_blks[SHARP_REG_BLK_NUM];
 	struct mutex lock;
+	u8 demo_hor_start;
+	u8 demo_hor_end;
+	u8 demo_ver_start;
+	u8 demo_ver_end;
+	u8 demo_en;
 
 	s32 (*de_sharp_enable)(struct de_sharp_handle *hdl, u32 enable);
 	s32 (*de_sharp_set_size)(struct de_sharp_handle *hdl, u32 width, u32 height);
 	s32 (*de_sharp_set_window)(struct de_sharp_handle *hdl,
 		      u32 win_enable, u32 x, u32 y, u32 w, u32 h);
-	s32 (*de_sharp_dump_state)(struct drm_printer *p, struct de_sharp_handle *hdl);
 };
-
-static enum enhance_init_state g_init_state;
-static win_percent_t win_per;
-
 
 struct de_sharp_handle *de_sharp_create(struct module_create_info *info)
 {
-	if (info->de_version == 0x350)
-		return de35x_sharp_create(info);
-	else
-		return NULL;
+	return de35x_sharp_create(info);
 }
 
 s32 de_sharp_enable(struct de_sharp_handle *hdl, u32 en)
@@ -59,14 +56,6 @@ s32 de_sharp_enable(struct de_sharp_handle *hdl, u32 en)
 	DRM_DEBUG_DRIVER("[SUNXI-DE] %s %d \n", __FUNCTION__, __LINE__);
 	if (hdl->private->de_sharp_enable)
 		return hdl->private->de_sharp_enable(hdl, en);
-	else
-		return 0;
-}
-
-s32 de_sharp_dump_state(struct drm_printer *p, struct de_sharp_handle *hdl)
-{
-	if (hdl->private->de_sharp_dump_state)
-		return hdl->private->de_sharp_dump_state(p, hdl);
 	else
 		return 0;
 }
@@ -134,6 +123,25 @@ static inline struct sharp_reg *de35x_get_sharp_shadow_reg(struct de_sharp_priva
 	return (struct sharp_reg *)(priv->shadow_blks[SHARP_PARA_REG_BLK].vir_addr);
 }
 
+s32 de_sharp_dump_state(struct drm_printer *p, struct de_sharp_handle *hdl)
+{
+	struct de_sharp_private *priv = hdl->private;
+	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
+	unsigned long base = (unsigned long)hdl->private->reg_blks[0].reg_addr;
+	unsigned long de_base = (unsigned long)hdl->cinfo.de_reg_base;
+
+	drm_printf(p, "\n\tsharp@%8x: %sable\n", (unsigned int)(base - de_base),
+			  reg->ctrl.bits.en ? "en" : "dis");
+	return 0;
+}
+
+bool de_sharp_is_enabled(struct de_sharp_handle *hdl)
+{
+	struct de_sharp_private *priv = hdl->private;
+	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
+	return !!reg->ctrl.bits.en;
+}
+
 s32 de35x_sharp_set_size(struct de_sharp_handle *hdl, u32 width,
 		    u32 height)
 {
@@ -155,58 +163,25 @@ s32 de35x_sharp_set_window(struct de_sharp_handle *hdl,
 	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
 
 	mutex_lock(&priv->lock);
-	if (g_init_state >= ENHANCE_TIGERLCD_ON) {
-		reg->demo_horz.bits.demo_horz_start =
-		    x + reg->size.bits.width * win_per.hor_start / 100;
-		reg->demo_horz.bits.demo_horz_end =
-		    x + reg->size.bits.width * win_per.hor_end / 100;
-		reg->demo_vert.bits.demo_vert_start =
-		    y + reg->size.bits.height * win_per.ver_start / 100;
-		reg->demo_vert.bits.demo_vert_end =
-		    y + reg->size.bits.height * win_per.ver_end / 100;
-	}
 	if (win_enable) {
 		reg->demo_horz.bits.demo_horz_start = x;
 		reg->demo_horz.bits.demo_horz_end = x + w - 1;
 		reg->demo_vert.bits.demo_vert_start = y;
 		reg->demo_vert.bits.demo_vert_end = y + h - 1;
 	}
-	reg->ctrl.bits.demo_en = win_enable | win_per.demo_en;
+	reg->ctrl.bits.demo_en = win_enable;
 	de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
-s32 de35x_sharp_enable(struct de_sharp_handle *hdl, u32 en)
+static s32 de35x_sharp_init(struct de_sharp_handle *hdl)
 {
 	struct de_sharp_private *priv = hdl->private;
 	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
 
 	mutex_lock(&priv->lock);
-	if (g_init_state == ENHANCE_TIGERLCD_ON && en == 1)
-		en = 1;
-	else
-		en = 0;
-
-	reg->ctrl.bits.en = en;
-	de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
-	mutex_unlock(&priv->lock);
-
-	return 0;
-}
-
-s32 de35x_sharp_init(struct de_sharp_handle *hdl)
-{
-	struct de_sharp_private *priv = hdl->private;
-	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
-
-	if (g_init_state >= ENHANCE_INITED) {
-		return 0;
-	}
-
-	mutex_lock(&priv->lock);
-	g_init_state = ENHANCE_INITED;
 	/*reg->ctrl.dwval = 0;*/
 	reg->strengths.dwval = 0x101010;
 
@@ -223,6 +198,87 @@ s32 de35x_sharp_init(struct de_sharp_handle *hdl)
 	de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
 
+	return 0;
+}
+
+static void de_sharp_restore_old_config_locked(struct de_sharp_handle *hdl)
+{
+	struct de_sharp_private *priv = hdl->private;
+	int i;
+
+	for (i = 0; i < SHARP_REG_BLK_NUM; i++) {
+		de_sharp_request_update(priv, i, 1);
+	}
+}
+
+s32 de35x_sharp_enable(struct de_sharp_handle *hdl, u32 en)
+{
+	struct de_sharp_private *priv = hdl->private;
+	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
+
+	mutex_lock(&priv->lock);
+	reg->ctrl.bits.en = !!en;
+	if (en) {
+		de_sharp_restore_old_config_locked(hdl);
+	}
+	de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
+	DRM_DEBUG_DRIVER("%s %d\n", __func__, !!reg->ctrl.bits.en);
+	mutex_unlock(&priv->lock);
+
+	return 0;
+}
+
+#define SHARP_LEVEL_NUM 10
+#define SHARP_CONFIG_NUM 3
+/* not use currently */
+s32 de_sharp_info2para(struct de_sharp_handle *hdl,
+		     u32 fmt, struct sharp_config *para, u32 bypass)
+{
+	struct de_sharp_private *priv = hdl->private;
+	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
+	static u8 LTI[SHARP_LEVEL_NUM][SHARP_CONFIG_NUM] = {
+		{0,  0,  0,},
+		{2,  2,  2,},
+		{2,  4,  4,},
+		{4,  4,  8,},
+		{8,  8,  8,},
+		{8,  16, 16,},
+		{16, 16, 16,},
+		{16, 32, 32,},
+		{32, 32, 32,},
+		{64, 64, 64,},
+	};
+	static u8 PEAK[SHARP_LEVEL_NUM][SHARP_CONFIG_NUM] = {
+		{16, 16, 0,},
+		{16, 16, 2,},
+		{16, 16, 4,},
+		{16, 16, 8,},
+		{16, 16, 16,},
+		{16, 16, 24,},
+		{16, 16, 32,},
+		{16, 16, 40,},
+		{16, 16, 52,},
+		{16, 16, 64,},
+	};
+
+	mutex_lock(&priv->lock);
+	if (bypass || fmt == 1) {
+		reg->ctrl.bits.en = 0;
+		de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
+		mutex_unlock(&priv->lock);
+		return 0;
+	}
+	reg->ctrl.bits.en = 1;
+	para->lti_level = para->lti_level % SHARP_LEVEL_NUM;
+	para->peak_level = para->peak_level % SHARP_LEVEL_NUM;
+	reg->strengths.bits.strength_bp0 = LTI[para->lti_level][0];
+	reg->strengths.bits.strength_bp1 = LTI[para->lti_level][1];
+	reg->strengths.bits.strength_bp2 = LTI[para->lti_level][2];
+	reg->d0_boosting.bits.d0_pst_level = PEAK[para->peak_level][0];
+	reg->d0_boosting.bits.d0_neg_level = PEAK[para->peak_level][1];
+	reg->d0_boosting.bits.d0_gain = PEAK[para->peak_level][2];
+	de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
+	mutex_unlock(&priv->lock);
 	return 0;
 }
 
@@ -290,7 +346,6 @@ struct de_sharp_handle *de35x_sharp_create(struct module_create_info *info)
 	block->vir_addr = reg_shadow->vir_addr;
 	block->size = 0x50;
 
-	g_init_state = ENHANCE_INVALID;
 	mutex_init(&priv->lock);
 
 	de35x_sharp_init(hdl);
@@ -302,102 +357,85 @@ struct de_sharp_handle *de35x_sharp_create(struct module_create_info *info)
 	return hdl;
 }
 
-//int de_sharp_pq_proc(u32 sel, u32 cmd, u32 subcmd, void *data)
-//{
-//	struct de_sharp_private *priv = NULL;
-//	struct sharp_reg *reg = NULL;
-//	sharp_de35x_t *para = NULL;
-//	int i = 0;
-//
-//	DE_INFO("sel=%d, cmd=%d, subcmd=%d, data=%px\n", sel, cmd, subcmd, data);
-//	para = (sharp_de35x_t *)data;
-//	if (para == NULL) {
-//		DE_WARN("para NULL\n");
-//		return -1;
-//	}
-//	for (i = 0; i < VI_CHN_NUM; i++) {
-//		if (!de_feat_is_support_sharp_by_chn(sel, i))
-//			continue;
-//		priv = &(sharp_priv[sel][i]);
-//		reg = de35x_get_sharp_reg(priv);
-//
-//		if (subcmd == 16) { /* read */
-//			para->value[0] = reg->ctrl.bits.en;
-//			/*para->value[1] = reg->ctrl.bits.demo_en;*/
-//			para->value[2] = reg->horz_smooth.bits.hsmooth_en;
-//			para->value[3] = reg->strengths.bits.strength_bp2;
-//			para->value[4] = reg->strengths.bits.strength_bp1;
-//			para->value[5] = reg->strengths.bits.strength_bp0;
-//			para->value[6] = reg->d0_boosting.bits.d0_gain;
-//			para->value[7] = reg->edge_adaptive.bits.edge_gain;
-//			para->value[8] = reg->edge_adaptive.bits.weak_edge_th;
-//			para->value[9] = reg->edge_adaptive.bits.edge_trans_width;
-//			para->value[10] = reg->edge_adaptive.bits.min_sharp_strength;
-//			para->value[11] = reg->overshoot_ctrl.bits.pst_up;
-//			para->value[12] = reg->overshoot_ctrl.bits.pst_shift;
-//			para->value[13] = reg->overshoot_ctrl.bits.neg_up;
-//			para->value[14] = reg->overshoot_ctrl.bits.neg_shift;
-//			para->value[15] = reg->d0_boosting.bits.d0_pst_level;
-//			para->value[16] = reg->d0_boosting.bits.d0_neg_level;
-//			para->value[17] = reg->coring.bits.zero;
-//			para->value[18] = reg->coring.bits.width;
-//			para->value[19] = reg->detail0_weight.bits.th_flat;
-//			para->value[20] = reg->detail0_weight.bits.fw_type;
-//			para->value[21] = reg->horz_smooth.bits.hsmooth_trans_width;
-//			/*para->value[22] = reg->demo_horz.bits.demo_horz_start;
-//			para->value[23] = reg->demo_horz.bits.demo_horz_end;
-//			para->value[24] = reg->demo_vert.bits.demo_vert_start;
-//			para->value[25] = reg->demo_vert.bits.demo_vert_end;*/
-//			para->value[22] = win_per.hor_start;
-//			para->value[23] = win_per.hor_end;
-//			para->value[24] = win_per.ver_start;
-//			para->value[25] = win_per.ver_end;
-//			para->value[1] = win_per.demo_en;
-//
-//		} else {
-//			reg->ctrl.bits.en = para->value[0];
-//			g_init_state = para->value[0] ? ENHANCE_TIGERLCD_ON : ENHANCE_TIGERLCD_OFF;
-//			/*reg->ctrl.bits.demo_en = para->value[1];*/
-//			reg->horz_smooth.bits.hsmooth_en = para->value[2];
-//			reg->strengths.bits.strength_bp2 = para->value[3];
-//			reg->strengths.bits.strength_bp1 = para->value[4];
-//			reg->strengths.bits.strength_bp0 = para->value[5];
-//			reg->d0_boosting.bits.d0_gain = para->value[6];
-//			reg->edge_adaptive.bits.edge_gain = para->value[7];
-//			reg->edge_adaptive.bits.weak_edge_th = para->value[8];
-//			reg->edge_adaptive.bits.edge_trans_width = para->value[9];
-//			reg->edge_adaptive.bits.min_sharp_strength = para->value[10];
-//			reg->overshoot_ctrl.bits.pst_up = para->value[11];
-//			reg->overshoot_ctrl.bits.pst_shift = para->value[12];
-//			reg->overshoot_ctrl.bits.neg_up = para->value[13];
-//			reg->overshoot_ctrl.bits.neg_shift = para->value[14];
-//			reg->d0_boosting.bits.d0_pst_level = para->value[15];
-//			reg->d0_boosting.bits.d0_neg_level = para->value[16];
-//			reg->coring.bits.zero = para->value[17];
-//			reg->coring.bits.width = para->value[18];
-//			reg->detail0_weight.bits.th_flat = para->value[19];
-//			reg->detail0_weight.bits.fw_type = para->value[20];
-//			reg->horz_smooth.bits.hsmooth_trans_width = para->value[21];
-//			/*reg->demo_horz.bits.demo_horz_start = para->value[22];
-//			reg->demo_horz.bits.demo_horz_end = para->value[23];
-//			reg->demo_vert.bits.demo_vert_start = para->value[24];
-//			reg->demo_vert.bits.demo_vert_end = para->value[25];*/
-//			win_per.hor_start = para->value[22];
-//			win_per.hor_end = para->value[23];
-//			win_per.ver_start = para->value[24];
-//			win_per.ver_end = para->value[25];
-//			win_per.demo_en = para->value[1];
-//			reg->ctrl.bits.demo_en = win_per.demo_en;
-//			reg->demo_horz.bits.demo_horz_start =
-//			    reg->size.bits.width * win_per.hor_start / 100;
-//			reg->demo_horz.bits.demo_horz_end =
-//			    reg->size.bits.width * win_per.hor_end / 100;
-//			reg->demo_vert.bits.demo_vert_start =
-//			    reg->size.bits.height * win_per.ver_start / 100;
-//			reg->demo_vert.bits.demo_vert_end =
-//			    reg->size.bits.height * win_per.ver_end / 100;
-//			sharp_set_block_dirty(priv, SHARP_PARA_REG_BLK, 1);
-//		}
-//	}
-//	return 0;
-//}
+int de_sharp_pq_proc(struct de_sharp_handle *hdl, sharp_de35x_t *para)
+{
+	struct de_sharp_private *priv = hdl->private;
+	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
+
+	if (para->cmd == PQ_READ) {
+		para->value[0] = reg->ctrl.bits.en;
+		/*para->value[1] = reg->ctrl.bits.demo_en;*/
+		para->value[2] = reg->horz_smooth.bits.hsmooth_en;
+		para->value[3] = reg->strengths.bits.strength_bp2;
+		para->value[4] = reg->strengths.bits.strength_bp1;
+		para->value[5] = reg->strengths.bits.strength_bp0;
+		para->value[6] = reg->d0_boosting.bits.d0_gain;
+		para->value[7] = reg->edge_adaptive.bits.edge_gain;
+		para->value[8] = reg->edge_adaptive.bits.weak_edge_th;
+		para->value[9] = reg->edge_adaptive.bits.edge_trans_width;
+		para->value[10] = reg->edge_adaptive.bits.min_sharp_strength;
+		para->value[11] = reg->overshoot_ctrl.bits.pst_up;
+		para->value[12] = reg->overshoot_ctrl.bits.pst_shift;
+		para->value[13] = reg->overshoot_ctrl.bits.neg_up;
+		para->value[14] = reg->overshoot_ctrl.bits.neg_shift;
+		para->value[15] = reg->d0_boosting.bits.d0_pst_level;
+		para->value[16] = reg->d0_boosting.bits.d0_neg_level;
+		para->value[17] = reg->coring.bits.zero;
+		para->value[18] = reg->coring.bits.width;
+		para->value[19] = reg->detail0_weight.bits.th_flat;
+		para->value[20] = reg->detail0_weight.bits.fw_type;
+		para->value[21] = reg->horz_smooth.bits.hsmooth_trans_width;
+			/*para->value[22] = reg->demo_horz.bits.demo_horz_start;
+		para->value[23] = reg->demo_horz.bits.demo_horz_end;
+		para->value[24] = reg->demo_vert.bits.demo_vert_start;
+		para->value[25] = reg->demo_vert.bits.demo_vert_end;*/
+		para->value[22] = priv->demo_hor_start;
+		para->value[23] = priv->demo_hor_end;
+		para->value[24] = priv->demo_ver_start;
+		para->value[25] = priv->demo_ver_end;
+		para->value[1] = priv->demo_en;
+	} else {
+		reg->ctrl.bits.en = para->value[0];
+		/*reg->ctrl.bits.demo_en = para->value[1];*/
+		reg->horz_smooth.bits.hsmooth_en = para->value[2];
+		reg->strengths.bits.strength_bp2 = para->value[3];
+		reg->strengths.bits.strength_bp1 = para->value[4];
+		reg->strengths.bits.strength_bp0 = para->value[5];
+		reg->d0_boosting.bits.d0_gain = para->value[6];
+		reg->edge_adaptive.bits.edge_gain = para->value[7];
+		reg->edge_adaptive.bits.weak_edge_th = para->value[8];
+		reg->edge_adaptive.bits.edge_trans_width = para->value[9];
+		reg->edge_adaptive.bits.min_sharp_strength = para->value[10];
+		reg->overshoot_ctrl.bits.pst_up = para->value[11];
+		reg->overshoot_ctrl.bits.pst_shift = para->value[12];
+		reg->overshoot_ctrl.bits.neg_up = para->value[13];
+		reg->overshoot_ctrl.bits.neg_shift = para->value[14];
+		reg->d0_boosting.bits.d0_pst_level = para->value[15];
+		reg->d0_boosting.bits.d0_neg_level = para->value[16];
+		reg->coring.bits.zero = para->value[17];
+		reg->coring.bits.width = para->value[18];
+		reg->detail0_weight.bits.th_flat = para->value[19];
+		reg->detail0_weight.bits.fw_type = para->value[20];
+		reg->horz_smooth.bits.hsmooth_trans_width = para->value[21];
+		/*reg->demo_horz.bits.demo_horz_start = para->value[22];
+		reg->demo_horz.bits.demo_horz_end = para->value[23];
+		reg->demo_vert.bits.demo_vert_start = para->value[24];
+		reg->demo_vert.bits.demo_vert_end = para->value[25];*/
+		priv->demo_hor_start = para->value[22];
+		priv->demo_hor_end = para->value[23];
+		priv->demo_ver_start = para->value[24];
+		priv->demo_ver_end = para->value[25];
+		priv->demo_en = para->value[1];
+		reg->ctrl.bits.demo_en = priv->demo_en;
+		reg->demo_horz.bits.demo_horz_start =
+		    reg->size.bits.width * priv->demo_hor_start / 100;
+		reg->demo_horz.bits.demo_horz_end =
+		    reg->size.bits.width * priv->demo_hor_end / 100;
+		reg->demo_vert.bits.demo_vert_start =
+		    reg->size.bits.height * priv->demo_ver_start / 100;
+		reg->demo_vert.bits.demo_vert_end =
+		    reg->size.bits.height * priv->demo_ver_end / 100;
+		de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
+	}
+	return 0;
+}

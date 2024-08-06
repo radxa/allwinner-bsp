@@ -6,7 +6,10 @@ config  TOUCHSCREEN_GT9XXNEW_TS
        depends on INPUT && I2C
        default n
        help
-         gt9xxnew touchscreen driver
+         gt9xxnew touchscreen driver.
+         The current driver version is very old and is no longer used.
+         If you need to use gt9xx, please use the driver in the gt9xx folder.
+
 
 config TOUCHSCREEN_GT9XXNEW_UPDATE
     tristate "Goodix GT9xxnew touch controller auto update support"

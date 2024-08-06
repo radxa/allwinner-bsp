@@ -170,7 +170,7 @@ ESM_STATUS ESM_SetCapability(esm_instance_t *esm)
 	}
 
 	if (esm->status != ESM_SUCCESS) {
-		hdmi_inf("status %d", esm->status);
+		hdmi_inf("esm set cap status %d", esm->status);
 		return ESM_HL_FAILED;
 	}
 

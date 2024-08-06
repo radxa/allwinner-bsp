@@ -8,10 +8,9 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _DW_DEV_H_
 #define _DW_DEV_H_
-#include <asm/io.h>
+
 #include <drm/drm_print.h>
 #include <drm/drm_edid.h>
 #include <linux/i2c.h>
@@ -19,6 +18,13 @@
 #define DW_EDID_MAC_HDMI_VIC		16
 #define DW_EDID_MAX_HDMI_3DSTRUCT	16
 #define DW_EDID_MAX_VIC_WITH_3D		16
+
+enum sunxi_platform_version {
+	HDMI_SUN8I_W20_P1 = 0,
+	HDMI_SUN50I_W9_P1,
+	HDMI_SUN55I_W3_P1,
+	HDMI_SUN60I_W2_P1,
+};
 
 enum dw_log_index_e {
 	DW_LOG_INDEX_NUL   = 0,
@@ -325,7 +331,7 @@ struct dw_video_s {
 };
 
 struct dw_hdcp_s {
-	int enable_type; /* 0:not-enable; 0x1: enable-hdcp1x; 0x2: enable-hdcp2x */
+	int enable_type;
 
 	/* hdcp1x value */
 	int hdcp1x_auth_done;
@@ -338,11 +344,11 @@ struct dw_hdcp_s {
 	u32 esm_size;
 	int esm_open;
 	int esm_auth_done;
+	int esm_auth_state;
 	int esm_cap_done;
 	u8 *esm_pairdata;
 	struct mutex lock_esm_auth;
 	struct mutex lock_esm_handler;
-	wait_queue_head_t         hdcp2x_waitqueue;
 	struct work_struct        hdcp2x_work;
 	struct workqueue_struct  *hdcp2x_workqueue;
 
@@ -549,6 +555,11 @@ typedef struct {
 } dw_edid_speaker_allocation_data_t;
 
 struct sink_info_s{
+	/* base block info */
+	u8 mfg_week;
+	u8 mfg_year;
+	char prod_name[30];
+
 	/* Array to hold all the parsed Detailed Timing Descriptors. */
 	dw_dtd_t edid_mDtd[32];
 	unsigned int edid_mDtdIndex;
@@ -560,9 +571,6 @@ struct sink_info_s{
 	/* array to hold all the parsed Short Audio Descriptors. */
 	dw_edid_block_sad_t edid_mSad[128];
 	unsigned int edid_mSadIndex;
-
-	/* A string to hold the Monitor Name parsed from EDID. */
-	char edid_mMonitorName[13];
 
 	int edid_mYcc444Support;
 	int edid_mYcc422Support;
@@ -625,8 +633,10 @@ struct dw_hdmi_dev_s {
 	u8          color_bits;
 	u8          hdmi_on;
 	u8          audio_on;
-	u8          cec_on;
 	u8 			log_level;
+	u8			clock_src; /* 0:phypll, 1:ccmu */
+	int   		plat_id;
+	int 		sw_init;
 
 	struct dw_hdcp_s		hdcp_dev;
 	struct dw_video_s		video_dev;
@@ -645,86 +655,50 @@ struct dw_hdmi_dev_s {
 #endif
 #define hdmi_inf(fmt, args...)                    \
 	do {                                          \
-		DRM_INFO("sunxi-hdmi: "fmt, ##args);           \
+		DRM_INFO("sunxi-hdmi: "fmt, ##args);      \
 	} while (0)
 
 #ifdef hdmi_wrn
 #undef hdmi_wrn
 #endif
-#define hdmi_wrn(fmt, args...)                    \
-	do {                                          \
-		DRM_INFO("sunxi-hdmi: [warn] "fmt, ##args);    \
+#define hdmi_wrn(fmt, args...)                      \
+	do {                                            \
+		DRM_INFO("sunxi-hdmi: [warn] "fmt, ##args); \
 	} while (0)
 
 #ifdef hdmi_err
 #undef hdmi_err
 #endif
-#define hdmi_err(fmt, args...)                    \
-	do {                                          \
-		DRM_INFO("sunxi-hdmi: [error] "fmt, ##args);    \
-	} while (0)
-
-#ifdef video_log
-#undef video_log
-#endif
-#define video_log(fmt, args...)                              \
-	do {                                                     \
-		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_VIDEO))        \
-			DRM_INFO("sunxi-hdmi: [video] "fmt, ##args);     \
-	} while (0)
-
-#ifdef edid_log
-#undef edid_log
-#endif
-#define edid_log(fmt, args...)                        \
-	do {                                              \
-		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_EDID))  \
-			DRM_INFO("sunxi-hdmi: [edid] "fmt, ##args);    \
-	} while (0)
-
-#ifdef audio_log
-#undef audio_log
-#endif
-#define audio_log(fmt, args...)                       \
-	do {                                              \
-		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_AUDIO)) \
-			DRM_INFO("sunxi-hdmi: [audio] "fmt, ##args);   \
-	} while (0)
-
-#ifdef cec_log
-#undef cec_log
-#endif
-#define cec_log(fmt, args...)                         \
-	do {                                              \
-		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_CEC))   \
-			DRM_INFO("sunxi-hdmi: [cec]: "fmt, ##args);     \
-	} while (0)
-
-#ifdef phy_log
-#undef phy_log
-#endif
-#define phy_log(fmt, args...) \
-	do {                                              \
-		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_PHY))   \
-			DRM_INFO("sunxi-hdmi: [phy]: "fmt, ##args);     \
+#define hdmi_err(fmt, args...)                       \
+	do {                                             \
+		DRM_INFO("sunxi-hdmi: [error] "fmt, ##args); \
 	} while (0)
 
 #ifdef hdcp_log
 #undef hdcp_log
 #endif
-#define hdcp_log(fmt, args...)                        \
-	do {                                              \
+#define hdcp_log(fmt, args...)                          \
+	do {                                                \
 		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_HDCP))  \
-			DRM_INFO("sunxi-hdmi: [hdcp] "fmt, ##args);    \
+			DRM_INFO("sunxi-hdmi: [hdcp] "fmt, ##args); \
 	} while (0)
 
 #ifdef hdmi_trace
 #undef hdmi_trace
 #endif
-#define hdmi_trace(fmt, args...)                            \
+#define hdmi_trace(fmt, args...)                        \
+	do {                                                \
+		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_TRACE)) \
+			DRM_INFO("sunxi-hdmi: "fmt, ##args);        \
+	} while (0)
+
+#ifdef shdmi_err
+#undef shdmi_err
+#endif
+#define shdmi_err(name)                                     \
 	do {                                                    \
-		if (dw_hdmi_check_loglevel(DW_LOG_INDEX_TRACE))      \
-			DRM_INFO("sunxi-hdmi: "fmt, ##args);    \
+		hdmi_err("check point %s is err or null\n", #name); \
+		dump_stack();                                       \
 	} while (0)
 
 /**

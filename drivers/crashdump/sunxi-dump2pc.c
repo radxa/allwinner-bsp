@@ -263,8 +263,8 @@ static int sunxi_dump_panic_event(struct notifier_block *self, unsigned long val
 		return NOTIFY_DONE;
 	}
 
-#if IS_REACHABLE(CONFIG_AW_DISP2)
-	sunxi_kernel_panic_printf("CRASHDUMP NOW, PLEASE CONNECT TO TIGERDUMP TOOL\n AND KEEP POWER ON");
+#if IS_REACHABLE(CONFIG_AW_DISP2) || IS_REACHABLE(CONFIG_AW_DRM)
+	sunxi_kernel_panic_printf("CRASHDUMP NOW,\n PLEASE CONNECT TO TIGERDUMP TOOL\n AND KEEP POWER ON");
 #endif
 
 	flush_cache_all();

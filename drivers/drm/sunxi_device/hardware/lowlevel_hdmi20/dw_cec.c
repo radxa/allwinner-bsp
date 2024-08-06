@@ -9,6 +9,7 @@
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
 #include <linux/delay.h>
+#include "dw_dev.h"
 #include "dw_mc.h"
 #include "dw_cec.h"
 

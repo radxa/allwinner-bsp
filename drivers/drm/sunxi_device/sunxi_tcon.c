@@ -17,11 +17,11 @@
 #include <linux/interrupt.h>
 #include <linux/component.h>
 #include <linux/phy/phy.h>
+#include <linux/of_platform.h>
+#include <linux/reset.h>
 
 #include "sunxi_tcon.h"
 #include "sunxi_tcon_top.h"
-#include "sunxi_drm_hdmi.h"
-#include "sunxi_drm_edp.h"
 
 enum tcon_type {
 	TCON_LCD = 0,
@@ -47,6 +47,8 @@ struct sunxi_tcon {
 	struct clk *ahb_clk; /* module clk */
 	struct clk *mclk; /* module clk */
 	struct clk *mclk_bus; /* module clk bus */
+	struct clk *ahb_vid_out; /*PPU clk */
+	struct clk *mbus_vo_sys; /* PPU clk */
 	struct reset_control *rst_bus_tcon;
 
 	/* interrupt resource */
@@ -124,6 +126,20 @@ static int sunxi_tcon_lcd_set_clk(struct sunxi_tcon *hwtcon, unsigned long pixel
 			return -1;
 		}
 	}
+	if (hwtcon->ahb_vid_out) {
+		ret = clk_prepare_enable(hwtcon->ahb_vid_out);
+		if (ret) {
+			DRM_ERROR("clk_prepare_enable for ahb_vid_out failed!\n");
+			return -1;
+		}
+	}
+	if (hwtcon->mbus_vo_sys) {
+		ret = clk_prepare_enable(hwtcon->mbus_vo_sys);
+		if (ret) {
+			DRM_ERROR("clk_prepare_enable for mbus_vo_sys failed!\n");
+			return -1;
+		}
+	}
 	ret = clk_prepare_enable(hwtcon->mclk);
 	if (ret != 0) {
 		DRM_ERROR("fail enable TCON%d's clock!\n", hwtcon->id);
@@ -187,6 +203,10 @@ static void sunxi_tcon_lcd_unprepare(struct sunxi_tcon *hwtcon)
 {
 	clk_disable_unprepare(hwtcon->mclk_bus);
 	clk_disable_unprepare(hwtcon->mclk);
+	if (hwtcon->ahb_vid_out)
+		clk_disable_unprepare(hwtcon->ahb_vid_out);
+	if (hwtcon->mbus_vo_sys)
+		clk_disable_unprepare(hwtcon->mbus_vo_sys);
 	reset_control_assert(hwtcon->rst_bus_tcon);
 	if (hwtcon->tcon_top)
 		sunxi_tcon_top_clk_disable(hwtcon->tcon_top);
@@ -454,132 +474,42 @@ static int sunxi_tcon_free_irq(struct sunxi_tcon *hwtcon)
 	return 0;
 }
 
-static int _sunxi_tcon_hdmi_cfg_clk(struct sunxi_tcon *hwtcon,
-		unsigned long rate)
+static int
+_sunxi_tcon_hdmi_set_rate(struct sunxi_tcon *hwtcon, unsigned long pclk)
 {
-	int ret = 0;
-	struct clk *parent_clk = NULL;
-	long rate_diff = 0, parent_rate_diff = 0;
-	unsigned long round_rate = 0;
-	unsigned long parent_rate = 0, parent_round_rate = 0;
-	unsigned int div = 1;
+	long rate_diff = 0;
 
-	if (!hwtcon->mclk) {
-		DRM_ERROR("%s tcon module clock is null\n", __func__);
+	if (IS_ERR_OR_NULL(hwtcon)) {
+		DRM_ERROR("check point hwtcon is null\n");
 		return -1;
 	}
 
-	parent_clk = clk_get_parent(hwtcon->mclk);
-	if (!parent_clk) {
-		DRM_ERROR("can not get tcon hdmi parent clock!\n");
-		return -1;
-	}
+	/* disable tcon tv clock */
+	if (!IS_ERR_OR_NULL(hwtcon->mclk))
+		clk_disable_unprepare(hwtcon->mclk);
 
-	round_rate = clk_round_rate(hwtcon->mclk, rate);
-	rate_diff = (long)(round_rate - rate);
-	if ((rate_diff > 5000000) || (rate_diff < -5000000)) {
-		for (div = 1; (rate * div) <= 600000000; div++) {
-			parent_rate = rate * div;
-			parent_round_rate = clk_round_rate(parent_clk, parent_rate);
-			parent_rate_diff = (long)(parent_round_rate - parent_rate);
-			if ((parent_rate_diff < 5000000) && (parent_rate_diff > -5000000)) {
-				clk_set_rate(parent_clk, parent_rate);
-				clk_set_rate(hwtcon->mclk, rate);
-				break;
-			}
-		}
-		if ((rate * div) > 600000000)
-			clk_set_rate(hwtcon->mclk, rate);
-	} else {
-		clk_set_rate(hwtcon->mclk, rate);
-	}
+	if (!IS_ERR_OR_NULL(hwtcon->mclk_bus))
+		clk_disable_unprepare(hwtcon->mclk_bus);
 
-	ret = clk_prepare_enable(hwtcon->mclk);
-	if (ret != 0) {
-		DRM_ERROR("can not enable tcon hdmi clock!\n");
-		return -1;
-	}
+	if (!IS_ERR_OR_NULL(hwtcon->rst_bus_tcon))
+		reset_control_assert(hwtcon->rst_bus_tcon);
 
-	return 0;
-}
+	/* enable tcon tv clock and set rate */
+	if (!IS_ERR_OR_NULL(hwtcon->rst_bus_tcon))
+		reset_control_deassert(hwtcon->rst_bus_tcon);
 
-static int _sunxi_tcon_hdmi_set_clk(struct sunxi_tcon *hwtcon,
-		unsigned long pclk)
-{
-	int ret = 0;
+	clk_set_rate(hwtcon->mclk, pclk);
+	rate_diff = (pclk - clk_round_rate(hwtcon->mclk, pclk));
+	if (rate_diff != 0)
+		DRM_WARN("suxni tcon hdmi set rate: %ldHz and get diff: %ldHz\n",
+			pclk, rate_diff);
 
-	/* deassert tcon bus clock */
-	if (hwtcon->rst_bus_tcon) {
-		ret = reset_control_deassert(hwtcon->rst_bus_tcon);
-		if (ret != 0) {
-			DRM_ERROR("%s reset tcon bus failed\n", __func__);
-			return -1;
-		}
-	}
+	if (!IS_ERR_OR_NULL(hwtcon->mclk_bus))
+		clk_prepare_enable(hwtcon->mclk_bus);
 
-	/* enable tcon bus clock */
-	if (hwtcon->mclk_bus) {
-		ret = clk_prepare_enable(hwtcon->mclk_bus);
-		if (ret != 0) {
-			DRM_ERROR("%s enable tcon bus clock failed\n", __func__);
-			return -1;
-		}
-	}
+	if (!IS_ERR_OR_NULL(hwtcon->mclk))
+		clk_prepare_enable(hwtcon->mclk);
 
-	/* config tcon hdmi clock */
-	ret = _sunxi_tcon_hdmi_cfg_clk(hwtcon, pclk);
-	if (ret != 0) {
-		DRM_ERROR("%s config tcon clock failed\n", __func__);
-		return -1;
-	}
-
-	return 0;
-}
-
-static int _sunxi_tcon_hdmi_clk_unset(struct sunxi_tcon *hwtcon)
-{
-	if (!hwtcon) {
-		DRM_ERROR("%s param is null!!!\n", __func__);
-		return -1;
-	}
-
-	clk_disable_unprepare(hwtcon->mclk);
-
-	clk_disable_unprepare(hwtcon->mclk_bus);
-
-	reset_control_assert(hwtcon->rst_bus_tcon);
-
-	return 0;
-}
-
-static int _sunxi_tcon_hdmi_prepare(struct sunxi_tcon *hwtcon,
-		unsigned long pclk)
-{
-	int ret = 0;
-
-	if (hwtcon->tcon_top)
-		sunxi_tcon_top_clk_enable(hwtcon->tcon_top);
-	ret = _sunxi_tcon_hdmi_set_clk(hwtcon, pclk);
-	if (ret < 0) {
-		DRM_ERROR("tcon hdmi set clock failed\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-static int _sunxi_tcon_hdmi_unprepare(struct sunxi_tcon *hwtcon)
-{
-	int ret = 0;
-
-	if (hwtcon->tcon_top)
-		sunxi_tcon_top_clk_disable(hwtcon->tcon_top);
-
-	ret = _sunxi_tcon_hdmi_clk_unset(hwtcon);
-	if (ret < 0) {
-		DRM_ERROR("_sunxi_tcon_hdmi_clk_unset failed\n");
-		return -1;
-	}
 	return 0;
 }
 
@@ -614,8 +544,6 @@ static int _sunxi_tcon_hdmi_config(struct sunxi_tcon *hwtcon, unsigned int de_id
 	tcon_tv_volume_force(&hwtcon->tcon_tv, 0x00040014);
 #endif /* CONFIG_ARCH_SUN55IW3 */
 
-	tcon1_hdmi_clk_enable(hwtcon->id, 1);
-
 	tcon_tv_open(&hwtcon->tcon_tv);
 
 	kfree(timings);
@@ -623,17 +551,74 @@ static int _sunxi_tcon_hdmi_config(struct sunxi_tcon *hwtcon, unsigned int de_id
 	return 0;
 }
 
-static int _sunxi_tcon_hdmi_disconfig(struct sunxi_tcon *hwtcon)
+/**
+ * @desc: for hdmi module init or resume flow
+ * open base resource
+ */
+int sunxi_tcon_hdmi_open(struct device *dev, u8 src)
 {
+	struct sunxi_tcon *hwtcon = dev_get_drvdata(dev);
 
-	tcon_tv_close(&hwtcon->tcon_tv);
-	tcon_tv_exit(&hwtcon->tcon_tv);
+	if (IS_ERR_OR_NULL(hwtcon)) {
+		DRM_ERROR("check point hwtcon is null\n");
+		return -1;
+	}
 
-	tcon1_hdmi_clk_enable(hwtcon->id, 0);
+	if (!IS_ERR_OR_NULL(hwtcon->tcon_top))
+		sunxi_tcon_top_clk_enable(hwtcon->tcon_top);
+
+	tcon_top_hdmi_set_gate(hwtcon->id, 1);
+
+	tcon_top_hdmi_set_clk_src(hwtcon->id, src);
+
+	if (!IS_ERR_OR_NULL(hwtcon->rst_bus_tcon))
+		reset_control_deassert(hwtcon->rst_bus_tcon);
+
+	if (!IS_ERR_OR_NULL(hwtcon->mclk_bus))
+		clk_prepare_enable(hwtcon->mclk_bus);
+
+	if (!IS_ERR_OR_NULL(hwtcon->mclk))
+		clk_prepare_enable(hwtcon->mclk);
 
 	return 0;
 }
 
+/**
+ * @desc: for hdmi module exit or suspend flow
+ */
+int sunxi_tcon_hdmi_close(struct device *dev)
+{
+	struct sunxi_tcon *hwtcon = dev_get_drvdata(dev);
+
+	if (IS_ERR_OR_NULL(hwtcon)) {
+		DRM_ERROR("check point hwtcon is null\n");
+		return -1;
+	}
+
+	if (!IS_ERR_OR_NULL(hwtcon->mclk))
+		clk_disable_unprepare(hwtcon->mclk);
+
+	if (!IS_ERR_OR_NULL(hwtcon->mclk_bus))
+		clk_disable_unprepare(hwtcon->mclk_bus);
+
+	if (!IS_ERR_OR_NULL(hwtcon->rst_bus_tcon))
+		reset_control_assert(hwtcon->rst_bus_tcon);
+
+	tcon_top_hdmi_set_gate(hwtcon->id, 0);
+
+	if (IS_ERR_OR_NULL(hwtcon->tcon_top)) {
+		DRM_ERROR("check point hwtcon->tcon_top is null\n");
+		return -1;
+	}
+
+	sunxi_tcon_top_clk_disable(hwtcon->tcon_top);
+	return 0;
+}
+
+/**
+ * @desc: for tcon-hdmi output.
+ * only handle clock when need change rate
+ */
 int sunxi_tcon_hdmi_mode_init(struct device *dev)
 {
 	int ret = 0;
@@ -642,6 +627,7 @@ int sunxi_tcon_hdmi_mode_init(struct device *dev)
 	unsigned int de_id = hwtcon->tcon_ctrl.cfg.de_id;
 	struct disp_video_timings *p_timing = &hwtcon->tcon_ctrl.cfg.timing;
 	enum disp_csc_type format = hwtcon->tcon_ctrl.cfg.format;
+	bool sw_enable = hwtcon->tcon_ctrl.cfg.sw_enable;
 
 	if (hwtcon->is_enabled) {
 		DRM_WARN("tcon hdmi has been enable");
@@ -649,36 +635,36 @@ int sunxi_tcon_hdmi_mode_init(struct device *dev)
 	}
 
 	/* calculate actual pixel clock */
-	hwtcon->is_enabled = true;
 	pclk = p_timing->pixel_clk * (p_timing->pixel_repeat + 1);
 	if (format == DISP_CSC_TYPE_YUV420)
 		pclk /= 2;
+	_sunxi_tcon_hdmi_set_rate(hwtcon, pclk);
 
-	ret = _sunxi_tcon_hdmi_prepare(hwtcon, pclk);
-	if (ret != 0) {
-		DRM_ERROR("tcon hdmi prepare failed\n");
-		return ret;
+	if (!sw_enable) {
+		ret = _sunxi_tcon_hdmi_config(hwtcon, de_id, p_timing, format);
+		if (ret != 0) {
+			DRM_ERROR("tcon hdmi config failed\n");
+			return ret;
+		}
 	}
 
-	ret = _sunxi_tcon_hdmi_config(hwtcon, de_id, p_timing, format);
-	if (ret != 0) {
-		DRM_ERROR("tcon hdmi config failed\n");
-		return ret;
-	}
 	sunxi_tcon_calc_judge_line(hwtcon, p_timing);
-
 	if (hwtcon->pending_enable_vblank) {
 		sunxi_tcon_enable_vblank(dev, 1);
 		hwtcon->pending_enable_vblank = false;
 	}
 	sunxi_tcon_request_irq(hwtcon);
+
+	hwtcon->is_enabled = true;
 	return 0;
 }
 
+/**
+ * @desc: for tcon-hdmi disoutput
+ */
 int sunxi_tcon_hdmi_mode_exit(struct device *tcon_dev)
 {
 	struct sunxi_tcon *hwtcon = dev_get_drvdata(tcon_dev);
-	int ret = 0;
 
 	if (!hwtcon->is_enabled) {
 		DRM_WARN("tcon hdmi has been disable");
@@ -686,60 +672,44 @@ int sunxi_tcon_hdmi_mode_exit(struct device *tcon_dev)
 	}
 
 	sunxi_tcon_free_irq(hwtcon);
-	ret = _sunxi_tcon_hdmi_disconfig(hwtcon);
-	if (ret != 0) {
-		DRM_ERROR("_sunxi_tcon_hdmi_disconfig failed\n");
-		return -1;
-	}
 
-	ret = _sunxi_tcon_hdmi_unprepare(hwtcon);
-	if (ret != 0) {
-		DRM_ERROR("_sunxi_tcon_hdmi_unprepare failed\n");
-		return -1;
-	}
+	tcon_tv_close(&hwtcon->tcon_tv);
+	tcon_tv_exit(&hwtcon->tcon_tv);
 
 	hwtcon->judge_line = 0;
 	hwtcon->is_enabled = false;
 
 	return 0;
 }
+
 static int edp_tcon_clk_enable(struct sunxi_tcon *hwtcon)
 {
 	int ret = 0;
 
-	if (!hwtcon->rst_bus_tcon) {
-		DRM_WARN("[%s] edp reset is NULL\n", __func__);
-		return -1;
-	}
-
-	if (!hwtcon->mclk_bus) {
-		DRM_WARN("[%s] edp clk_bus is NULL\n", __func__);
-		return -1;
-	}
-
-	if (!hwtcon->mclk) {
-		DRM_WARN("edp clk is NULL\n");
-		return -1;
-	}
-
 	if (hwtcon->tcon_top)
 		sunxi_tcon_top_clk_enable(hwtcon->tcon_top);
 
-	ret = reset_control_deassert(hwtcon->rst_bus_tcon);
-	if (ret) {
-		DRM_ERROR("[%s] deassert reset tcon edp failed!\n", __func__);
-		return -1;
+	if (hwtcon->rst_bus_tcon) {
+		ret = reset_control_deassert(hwtcon->rst_bus_tcon);
+		if (ret) {
+			DRM_ERROR("[%s] deassert reset tcon edp failed!\n", __func__);
+			return -1;
+		}
 	}
 
-	ret = clk_prepare_enable(hwtcon->mclk_bus);
-	if (ret != 0) {
-		DRM_WARN("fail enable edp's bus clock!\n");
-		return -1;
+	if (hwtcon->mclk_bus) {
+		ret = clk_prepare_enable(hwtcon->mclk_bus);
+		if (ret != 0) {
+			DRM_WARN("fail enable edp's bus clock!\n");
+			return -1;
+		}
 	}
 
-	if (clk_prepare_enable(hwtcon->mclk)) {
-		DRM_WARN("fail to enable edp clk\n");
-		return -1;
+	if (hwtcon->mclk) {
+		if (clk_prepare_enable(hwtcon->mclk)) {
+			DRM_WARN("fail to enable edp clk\n");
+			return -1;
+		}
 	}
 
 	return 0;
@@ -749,29 +719,18 @@ static int edp_tcon_clk_disable(struct sunxi_tcon *hwtcon)
 {
 	int ret = 0;
 
-	if (!hwtcon->mclk) {
-		DRM_WARN("edp clk is NULL\n");
-		return -1;
-	}
+	if (hwtcon->mclk)
+		clk_disable_unprepare(hwtcon->mclk);
 
-	if (!hwtcon->mclk_bus) {
-		DRM_WARN("[%s] edp clk_bus is NULL\n", __func__);
-		return -1;
-	}
+	if (hwtcon->mclk_bus)
+		clk_disable_unprepare(hwtcon->mclk_bus);
 
-	if (!hwtcon->rst_bus_tcon) {
-		DRM_WARN("[%s] edp reset is NULL\n", __func__);
-		return -1;
-	}
-
-	clk_disable_unprepare(hwtcon->mclk);
-
-	clk_disable_unprepare(hwtcon->mclk_bus);
-
-	ret = reset_control_assert(hwtcon->rst_bus_tcon);
-	if (ret) {
-		DRM_ERROR("[%s] assert reset tcon edp failed!\n", __func__);
-		return -1;
+	if (hwtcon->rst_bus_tcon) {
+		ret = reset_control_assert(hwtcon->rst_bus_tcon);
+		if (ret) {
+			DRM_ERROR("[%s] assert reset tcon edp failed!\n", __func__);
+			return -1;
+		}
 	}
 
 	if (hwtcon->tcon_top)
@@ -808,6 +767,7 @@ static int sunxi_tcon_edp_mode_init(struct device *tcon_dev)
 	struct disp_video_timings *timings = &hwtcon->tcon_ctrl.cfg.timing;
 	unsigned int de_id = hwtcon->tcon_ctrl.cfg.de_id;
 	bool sw_enable = hwtcon->tcon_ctrl.cfg.sw_enable;
+	unsigned int pixel_mode = hwtcon->tcon_ctrl.cfg.pixel_mode;
 
 	if (hwtcon->is_enabled) {
 		DRM_WARN("tcon edp has been enable!\n");
@@ -816,11 +776,13 @@ static int sunxi_tcon_edp_mode_init(struct device *tcon_dev)
 
 	hwtcon->is_enabled = true;
 	edp_tcon_clk_enable(hwtcon);
-	clk_set_rate(hwtcon->mclk, timings->pixel_clk);
+	if (hwtcon->mclk)
+		clk_set_rate(hwtcon->mclk, timings->pixel_clk / pixel_mode);
 
 	if (!sw_enable) {
 		tcon_tv_init(&hwtcon->tcon_tv);
 		tcon_tv_set_timming(&hwtcon->tcon_tv, timings);
+		tcon_tv_set_pixel_mode(&hwtcon->tcon_tv, pixel_mode);
 
 		tcon_tv_src_select(&hwtcon->tcon_tv, LCD_SRC_DE, de_id);
 
@@ -858,6 +820,18 @@ static int sunxi_tcon_edp_mode_exit(struct device *tcon_dev)
 	hwtcon->judge_line = 0;
 
 	return 0;
+}
+
+int sunxi_tcon_get_current_line(struct device *tcon_dev)
+{
+	struct sunxi_tcon *hwtcon = dev_get_drvdata(tcon_dev);
+	unsigned int tcon_type;
+	tcon_type = hwtcon->type;
+	if (tcon_type == TCON_LCD) {
+		return tcon_lcd_get_cur_line(&hwtcon->tcon_lcd);
+	} else {
+		return tcon_tv_get_cur_line(&hwtcon->tcon_tv);
+	}
 }
 
 bool sunxi_tcon_is_sync_time_enough(struct device *tcon_dev)
@@ -923,6 +897,16 @@ static int sunxi_tcon_parse_dts(struct device *dev)
 		devm_reset_control_get_shared(dev, "rst_bus_tcon");
 	if (IS_ERR(hwtcon->rst_bus_tcon)) {
 		DRM_ERROR("fail to get reset clk for tcon\n");
+		return -EINVAL;
+	}
+	hwtcon->ahb_vid_out = devm_clk_get_optional(dev, "ahb_vid_out");
+	if (IS_ERR(hwtcon->ahb_vid_out)) {
+		DRM_ERROR("fail to get ahb_vid_out clk for tcon \n");
+		return -EINVAL;
+	}
+	hwtcon->mbus_vo_sys = devm_clk_get_optional(dev, "mbus_vo_sys");
+	if (IS_ERR(hwtcon->mbus_vo_sys)) {
+		DRM_ERROR("fail to get mbus_vo_sys clk for tcon \n");
 		return -EINVAL;
 	}
 

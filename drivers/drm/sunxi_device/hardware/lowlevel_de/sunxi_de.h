@@ -45,6 +45,9 @@ struct sunxi_de_wb_info {
 
 struct sunxi_de_out_cfg {
 	bool sw_enable;
+	unsigned int kHZ_pixelclk;
+	unsigned int htotal;
+	unsigned int vtotal;
 	unsigned int hwdev_index;
 	unsigned int width, height;
 	unsigned int device_fps;
@@ -74,15 +77,18 @@ struct sunxi_de_channel_update {
 	bool fbdev_output;
 };
 
+#define FORCE_ATOMIC_FLUSH	0xffff
+
 int sunxi_de_event_proc(struct sunxi_de_out *hwde, bool timeout);
 void sunxi_de_atomic_begin(struct sunxi_de_out *hwde);
-void sunxi_de_atomic_flush(struct sunxi_de_out *hwde, struct sunxi_de_flush_cfg *cfg);
+void sunxi_de_atomic_flush(struct sunxi_de_out *hwde, struct de_backend_data *data, struct sunxi_de_flush_cfg *cfg);
 int sunxi_de_enable(struct sunxi_de_out *hwde, const struct sunxi_de_out_cfg *cfg);
 void sunxi_de_disable(struct sunxi_de_out *hwde);
 int sunxi_de_channel_update(struct sunxi_de_channel_update *info);
 bool sunxi_de_format_mod_supported(struct sunxi_de_out *hwde, struct de_channel_handle *hdl,
 					    uint32_t format, uint64_t modifier);
 
+int sunxi_de_backend_get_pqd_config(struct sunxi_de_out *hwde, struct de_backend_data *data);
 int sunxi_de_write_back(struct sunxi_de_out *hwde, struct sunxi_de_wb *wb, struct drm_framebuffer *fb);
 void sunxi_de_dump_channel_state(struct drm_printer *p, struct sunxi_de_out *hwde, struct de_channel_handle *hdl, const struct display_channel_state *state, bool state_only);
 

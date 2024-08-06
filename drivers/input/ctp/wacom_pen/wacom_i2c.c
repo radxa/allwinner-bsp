@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/pm_wakeirq.h>
 #include <linux/pm_wakeup.h>
+#include <linux/version.h>
 #include <asm/unaligned.h>
 #include "../../init-input.h"
 
@@ -272,8 +273,12 @@ static void wacom_i2c_close(struct input_dev *dev)
 	disable_irq(client->irq);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int wacom_i2c_probe(struct i2c_client *client)
+#else
 static int wacom_i2c_probe(struct i2c_client *client,
 				     const struct i2c_device_id *id)
+#endif
 {
 	struct wacom_i2c *wac_i2c;
 	struct input_dev *input;
@@ -386,7 +391,11 @@ err_free_mem:
 	return error;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void wacom_i2c_remove(struct i2c_client *client)
+#else
 static int wacom_i2c_remove(struct i2c_client *client)
+#endif
 {
 	struct wacom_i2c *wac_i2c = i2c_get_clientdata(client);
 
@@ -394,7 +403,11 @@ static int wacom_i2c_remove(struct i2c_client *client)
 	input_unregister_device(wac_i2c->input);
 	kfree(wac_i2c);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 
 static int wacom_i2c_suspend(struct device *c_dev)
@@ -514,21 +527,21 @@ static int emr_wakeup(int status, int ms)
 	if (status == 0) {
 
 		if (ms == 0) {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 		} else {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 			msleep(ms);
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 		}
 	}
 
 	if (status == 1) {
 		if (ms == 0) {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 		} else {
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 1);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 1);
 			msleep(ms);
-			__gpio_set_value(config_info.wakeup_gpio.gpio, 0);
+			gpio_set_value(config_info.wakeup_gpio.gpio, 0);
 		}
 	}
 	usleep_range(5000, 6000);

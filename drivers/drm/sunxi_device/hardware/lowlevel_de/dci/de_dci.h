@@ -31,10 +31,6 @@ struct de_dci_handle {
 	struct de_dci_private *private;
 };
 
-struct de_dci_para {
-	bool bypass;
-};
-
 struct de_dci_handle *de_dci_create(struct module_create_info *info);
 s32 de_dci_set_color_range(struct de_dci_handle *hdl, enum de_color_range cr);
 void de_dci_update_regs(struct de_dci_handle *hdl);

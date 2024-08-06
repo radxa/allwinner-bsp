@@ -82,7 +82,7 @@ int sunxi_usb_disable_hcd(__u32 usbc_no)
 		sunxi_usb_disable_ohci(usbc_no);
 	#endif
 	} else {
-		DMSG_PANIC("ERR: unknown usbc_no(%d)\n", usbc_no);
+		DMSG_ERR("ERR: unknown usbc_no(%d)\n", usbc_no);
 		return -1;
 	}
 #endif
@@ -139,7 +139,7 @@ int sunxi_usb_enable_hcd(__u32 usbc_no)
 		sunxi_usb_enable_ohci(usbc_no);
 	#endif
 	} else {
-		DMSG_PANIC("ERR: unknown usbc_no(%d)\n", usbc_no);
+		DMSG_ERR("ERR: unknown usbc_no(%d)\n", usbc_no);
 		return -1;
 	}
 #endif

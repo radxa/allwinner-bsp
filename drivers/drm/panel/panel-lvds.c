@@ -14,6 +14,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/version.h>
 
 #include <drm/drm_crtc.h>
 #include <drm/drm_panel.h>
@@ -22,6 +23,7 @@
 #include <video/display_timing.h>
 #include <video/of_display_timing.h>
 #include <video/videomode.h>
+#include "panels.h"
 
 #define POWER_MAX 3
 #define GPIO_MAX 3
@@ -36,12 +38,9 @@ struct panel_lvds {
 	unsigned int bus_format;
 	bool data_mirror;
 	struct {
-	//unsigned int prepare;
+		unsigned int power;
 		unsigned int enable;
-		unsigned int disable;
-//		unsigned int unprepare;
 		unsigned int reset;
-//		unsigned int init;
 	} delay;
 
 	struct backlight_device *backlight;
@@ -84,7 +83,7 @@ static int panel_lvds_unprepare(struct drm_panel *panel)
 		if (lvds->enable_gpio[i - 1]) {
 			gpiod_set_value_cansleep(lvds->enable_gpio[i - 1], 0);
 			if (lvds->delay.enable)
-				panel_lvds_sleep(lvds->delay.disable);
+				panel_lvds_sleep(lvds->delay.enable);
 		}
 	}
 
@@ -96,14 +95,14 @@ static int panel_lvds_unprepare(struct drm_panel *panel)
 	for (i = POWER_MAX; i > 0; i--) {
 		if (lvds->supply[i - 1]) {
 			regulator_disable(lvds->supply[i - 1]);
-			msleep(10);
+			if (lvds->delay.power)
+				panel_lvds_sleep(lvds->delay.power);
 		}
 	}
 
 	return 0;
 }
-
-static int panel_lvds_prepare(struct drm_panel *panel)
+int panel_lvds_regulator_enable(struct drm_panel *panel)
 {
 	struct panel_lvds *lvds = to_panel_lvds(panel);
 	int err, i;
@@ -116,10 +115,20 @@ static int panel_lvds_prepare(struct drm_panel *panel)
 					i, err);
 				return err;
 			}
-			msleep(10);
+			if (lvds->delay.power)
+				panel_lvds_sleep(lvds->delay.power);
 		}
 	}
+	return 0;
+}
+EXPORT_SYMBOL(panel_lvds_regulator_enable);
 
+static int panel_lvds_prepare(struct drm_panel *panel)
+{
+	struct panel_lvds *lvds = to_panel_lvds(panel);
+	int i;
+
+	panel_lvds_regulator_enable(panel);
 	for (i = 0; i < GPIO_MAX; i++) {
 		if (lvds->enable_gpio[i]) {
 			gpiod_set_value_cansleep(lvds->enable_gpio[i], 1);
@@ -270,6 +279,10 @@ static int panel_lvds_parse_dt(struct panel_lvds *lvds)
 
 	of_property_read_string(np, "label", &lvds->label);
 */
+	of_property_read_u32(np, "power-delay-ms", &lvds->delay.power);
+	of_property_read_u32(np, "enable-delay-ms", &lvds->delay.enable);
+	of_property_read_u32(np, "reset-delay-ms", &lvds->delay.reset);
+
 	ret = of_property_read_u32(np, "bus-format", &lvds->bus_format);
 	if (ret < 0) {
 		dev_err(lvds->dev, "%pOF: invalid or missing %s DT property\n",

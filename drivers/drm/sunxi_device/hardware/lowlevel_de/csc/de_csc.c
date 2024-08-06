@@ -45,14 +45,16 @@ struct de_csc_private {
 	struct de_reg_block reg_blks[CSC_REG_BLK_NUM];
 	s32 (*de_csc_enable)(struct de_csc_handle *hdl, u32 en);
 	s32 (*de_csc_apply)(struct de_csc_handle *hdl, const struct de_csc_info *in_info,
-			     const struct de_csc_info *out_info, bool en);
+			     const struct de_csc_info *out_info, int *csc_coeff, bool apply, bool en);
 	void (*de_csc_dump_state)(struct drm_printer *p, struct de_csc_handle *hdl);
 };
 
-static int de_csc2_apply(struct de_csc_handle *hdl,
-	const struct de_csc_info *in_info, const struct de_csc_info *out_info, bool en);
-static int de_ccsc_de2_apply(struct de_csc_handle *hdl,
-	const struct de_csc_info *in_info, const struct de_csc_info *out_info, bool en);
+static s32 de_csc2_apply(struct de_csc_handle *hdl,
+	const struct de_csc_info *in_info, const struct de_csc_info *out_info,
+	int *o_csc_coeff, bool apply, bool en);
+static s32 de_ccsc_de2_apply(struct de_csc_handle *hdl,
+	const struct de_csc_info *in_info, const struct de_csc_info *out_info,
+	int *o_csc_coeff, bool apply, bool en);
 
 struct de_csc_handle *de_csc_create(struct module_create_info *info)
 {
@@ -72,10 +74,11 @@ void de_csc_dump_state(struct drm_printer *p, struct de_csc_handle *hdl)
 }
 
 s32 de_csc_apply(struct de_csc_handle *hdl,
-	struct de_csc_info *in_info, struct de_csc_info *out_info, bool en)
+	struct de_csc_info *in_info, struct de_csc_info *out_info,
+	int *csc_coeff, bool apply, bool en)
 {
 	if (hdl->private->de_csc_apply)
-		return hdl->private->de_csc_apply(hdl, in_info, out_info, en);
+		return hdl->private->de_csc_apply(hdl, in_info, out_info, csc_coeff, apply, en);
 	else
 		return 0;
 }
@@ -221,15 +224,16 @@ void de35x_csc_dump_state(struct drm_printer *p, struct de_csc_handle *hdl)
 	if (debug->enable) {
 		drm_printf(p, "\t\tin:  colorfmt: %s, eotf: %s, colorspace: %s, range: %s\n",
 			    to_format_space_name(debug->in_info.px_fmt_space),
+			    to_eotf_name(debug->in_info.eotf),
 			    to_color_space_name(debug->in_info.color_space),
-			    to_color_range_name(debug->in_info.color_range),
-			    to_eotf_name(debug->in_info.eotf));
+			    to_color_range_name(debug->in_info.color_range));
 
 		drm_printf(p, "\t\tout: colorfmt: %s, eotf: %s, colorspace: %s, range: %s\n",
 			    to_format_space_name(debug->out_info.px_fmt_space),
+			    to_eotf_name(debug->out_info.eotf),
 			    to_color_space_name(debug->out_info.color_space),
-			    to_color_range_name(debug->out_info.color_range),
-			    to_eotf_name(debug->out_info.eotf));
+			    to_color_range_name(debug->out_info.color_range));
+
 		if (hdl->private->bcsh.enable)
 			drm_printf(p, "\t\tbcsh: %d %d %d %d\n",
 				    hdl->private->bcsh.brightness, hdl->private->bcsh.contrast,
@@ -239,7 +243,8 @@ void de35x_csc_dump_state(struct drm_printer *p, struct de_csc_handle *hdl)
 }
 
 s32 de35x_csc_apply(struct de_csc_handle *hdl,
-	const struct de_csc_info *in_info, const struct de_csc_info *out_info, bool en)
+	const struct de_csc_info *in_info, const struct de_csc_info *out_info,
+	int *o_csc_coeff, bool apply, bool en)
 {
 	struct de_csc_private *priv = hdl->private;
 	struct csc_debug_info *debug = &priv->debug;
@@ -253,7 +258,9 @@ s32 de35x_csc_apply(struct de_csc_handle *hdl,
 	}
 
 	de_csc_coeff_calc(in_info, out_info, &csc_coeff);
-	if (priv->reg_update && csc_coeff != NULL) {
+	if (o_csc_coeff)
+		memcpy(o_csc_coeff, csc_coeff, sizeof(u32) * 16);
+	if (priv->reg_update && csc_coeff != NULL && apply) {
 		s32 dwval;
 		reg = de35x_get_csc_reg(priv);
 
@@ -827,8 +834,9 @@ static s32 IDE_SCAL_MATRIC_MUL(const int *in1, const int *in2, int *result)
 	return 0;
 }
 
-static int de_csc2_apply(struct de_csc_handle *hdl,
-	const struct de_csc_info *in_info, const struct de_csc_info *out_info, bool en)
+static s32 de_csc2_apply(struct de_csc_handle *hdl,
+	const struct de_csc_info *in_info, const struct de_csc_info *out_info,
+	int *o_csc_coeff, bool apply, bool en)
 {
 	int csc_coeff[16], in0coeff[16], in1coeff[16];
 	const int *matrix[5], *csc_matrix[3];
@@ -886,24 +894,29 @@ static int de_csc2_apply(struct de_csc_handle *hdl,
 		}
 	}
 
-	regs->ctl.bits.en = 1;
-	regs->d0.dwval = *(csc_coeff + 12);
-	regs->d1.dwval = *(csc_coeff + 13);
-	regs->d2.dwval = *(csc_coeff + 14);
-	regs->c00.dwval = *(csc_coeff);
-	regs->c01.dwval = *(csc_coeff + 1);
-	regs->c02.dwval = *(csc_coeff + 2);
-	regs->c03.dwval = *(csc_coeff + 3);
-	regs->c10.dwval = *(csc_coeff + 4);
-	regs->c11.dwval = *(csc_coeff + 5);
-	regs->c12.dwval = *(csc_coeff + 6);
-	regs->c13.dwval = *(csc_coeff + 7);
-	regs->c20.dwval = *(csc_coeff + 8);
-	regs->c21.dwval = *(csc_coeff + 9);
-	regs->c22.dwval = *(csc_coeff + 10);
-	regs->c23.dwval = *(csc_coeff + 11);
+	if (o_csc_coeff)
+		memcpy(o_csc_coeff, csc_coeff, sizeof(u32) * 16);
 
-	csc_set_block_dirty(priv, CSC_REG_BLK_CTL, 1);
+	if (apply) {
+		regs->ctl.bits.en = 1;
+		regs->d0.dwval = *(csc_coeff + 12);
+		regs->d1.dwval = *(csc_coeff + 13);
+		regs->d2.dwval = *(csc_coeff + 14);
+		regs->c00.dwval = *(csc_coeff);
+		regs->c01.dwval = *(csc_coeff + 1);
+		regs->c02.dwval = *(csc_coeff + 2);
+		regs->c03.dwval = *(csc_coeff + 3);
+		regs->c10.dwval = *(csc_coeff + 4);
+		regs->c11.dwval = *(csc_coeff + 5);
+		regs->c12.dwval = *(csc_coeff + 6);
+		regs->c13.dwval = *(csc_coeff + 7);
+		regs->c20.dwval = *(csc_coeff + 8);
+		regs->c21.dwval = *(csc_coeff + 9);
+		regs->c22.dwval = *(csc_coeff + 10);
+		regs->c23.dwval = *(csc_coeff + 11);
+
+		csc_set_block_dirty(priv, CSC_REG_BLK_CTL, 1);
+	}
 	return 0;
 }
 
@@ -1379,13 +1392,13 @@ int de_dcsc_apply(struct de_csc_handle *hdl, const struct de_csc_info *in_info,
 		mbcsh.hue = bcsh->hue;
 		mbcsh.enable = true;
 	}
-	memcpy(&priv->bcsh, &mbcsh, sizeof(mbcsh));
 	/* map from 0~100 to 20~100 to avoid invisible */
 	if (mbcsh.brightness < 50)
 		mbcsh.brightness = mbcsh.brightness * 3 / 5 + 20;
 	if (mbcsh.contrast < 50)
 		mbcsh.contrast = mbcsh.contrast * 3 / 5 + 20;
 
+	memcpy(&priv->bcsh, &mbcsh, sizeof(mbcsh));
 	debug->enable = true;
 	memcpy(&debug->in_info, in_info, sizeof(*in_info));
 	memcpy(&debug->out_info, out_info, sizeof(*out_info));
@@ -1394,14 +1407,14 @@ int de_dcsc_apply(struct de_csc_handle *hdl, const struct de_csc_info *in_info,
 /*	if (de_rtmx_is_input_10bit(sel)) {
 		de_csc_coeff_calc_inner10bit(
 		    in_info->px_fmt_space, in_info->color_space, out_info->px_fmt_space,
-		    out_info->color_space, bcsh->brightness, bcsh->contrast,
-		    bcsh->saturation, bcsh->hue, out_info->color_range,
+		    out_info->color_space, mbcsh.brightness, mbcsh.contrast,
+		    mbcsh.saturation, mbcsh.hue, out_info->color_range,
 		    csc_coeff);
 	} else */{
 		de_csc_coeff_calc_inner8bit(
 		    in_info->px_fmt_space, in_info->color_space, out_info->px_fmt_space,
-		    out_info->color_space, bcsh->brightness, bcsh->contrast,
-		    bcsh->saturation, bcsh->hue, out_info->color_range,
+		    out_info->color_space, mbcsh.brightness, mbcsh.contrast,
+		    mbcsh.saturation, mbcsh.hue, out_info->color_range,
 		    csc_coeff);
 	}
 
@@ -1412,8 +1425,9 @@ int de_dcsc_apply(struct de_csc_handle *hdl, const struct de_csc_info *in_info,
 	return 0;
 }
 
-static int de_ccsc_de2_apply(struct de_csc_handle *hdl,
-	const struct de_csc_info *in_info, const struct de_csc_info *out_info, bool en)
+static s32 de_ccsc_de2_apply(struct de_csc_handle *hdl,
+	const struct de_csc_info *in_info, const struct de_csc_info *out_info,
+	int *o_csc_coeff, bool apply, bool en)
 {
 	struct de_csc_private *priv = hdl->private;
 	struct csc_debug_info *debug = &priv->debug;
@@ -1436,21 +1450,25 @@ static int de_ccsc_de2_apply(struct de_csc_handle *hdl,
 			  default_bcsh_val, default_bcsh_val,
 			  out_info->color_range, csc_coeff);
 
-	reg->c00.dwval = *(csc_coeff);
-	reg->c01.dwval = *(csc_coeff + 1);
-	reg->c02.dwval = *(csc_coeff + 2);
-	reg->c03.dwval = *(csc_coeff + 3) + 0x200;
-	reg->c10.dwval = *(csc_coeff + 4);
-	reg->c11.dwval = *(csc_coeff + 5);
-	reg->c12.dwval = *(csc_coeff + 6);
-	reg->c13.dwval = *(csc_coeff + 7) + 0x200;
-	reg->c20.dwval = *(csc_coeff + 8);
-	reg->c21.dwval = *(csc_coeff + 9);
-	reg->c22.dwval = *(csc_coeff + 10);
-	reg->c23.dwval = *(csc_coeff + 11) + 0x200;
-	reg->bypass.bits.enable = 1;
-	reg->alpha.bits.alpha = 0xff;
+	if (o_csc_coeff)
+		memcpy(o_csc_coeff, csc_coeff, sizeof(u32) * 16);
+
+	if (apply) {
+		reg->c00.dwval = *(csc_coeff);
+		reg->c01.dwval = *(csc_coeff + 1);
+		reg->c02.dwval = *(csc_coeff + 2);
+		reg->c03.dwval = *(csc_coeff + 3) + 0x200;
+		reg->c10.dwval = *(csc_coeff + 4);
+		reg->c11.dwval = *(csc_coeff + 5);
+		reg->c12.dwval = *(csc_coeff + 6);
+		reg->c13.dwval = *(csc_coeff + 7) + 0x200;
+		reg->c20.dwval = *(csc_coeff + 8);
+		reg->c21.dwval = *(csc_coeff + 9);
+		reg->c22.dwval = *(csc_coeff + 10);
+		reg->c23.dwval = *(csc_coeff + 11) + 0x200;
+		reg->bypass.bits.enable = 1;
+		reg->alpha.bits.alpha = 0xff;
+	}
 	csc_set_block_dirty(priv, CSC_REG_BLK_CTL, 1);
 	return 0;
 }
-

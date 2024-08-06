@@ -8,11 +8,8 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _DW_PHY_H
 #define _DW_PHY_H
-
-#include "dw_dev.h"
 
 /**
  * Set PHY to standby mode - turn off all interrupts

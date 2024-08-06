@@ -84,10 +84,10 @@ struct de_chn_info {
 	u8 lay_premul[MAX_LAYER_NUM_PER_CHN];
 	u32 flag;
 	struct de_rect_s lay_win[MAX_LAYER_NUM_PER_CHN];
-	struct de_rect_s ovl_win;
-	struct de_rect_s ovl_out_win;
+	struct de_rect_s ovl_win; /* layers input  */
+	struct de_rect_s ovl_out_win; /* layers output win, after ovl down fetch */
 	struct de_rect_s c_win; /* for chroma */
-	struct de_rect_s scn_win;
+	struct de_rect_s scn_win; /* channel output, after scaler */
 	struct de_scale_para ovl_ypara;
 	struct de_scale_para ovl_cpara; /* for chroma */
 	enum de_pixel_format px_fmt;
@@ -99,7 +99,6 @@ struct de_chn_info {
 	enum de_color_range color_range;
 	void *cdc_hdl;
 	u8 snr_en;
-	struct de_channel_handle *self;
 };
 
 struct de_channel_private {
@@ -174,14 +173,17 @@ int drm_to_de_format(uint32_t format)
 	case DRM_FORMAT_YUV444:
 		return DE_FORMAT_YUV444_P;
 	case DRM_FORMAT_YUV422:
-	case DRM_FORMAT_YVU422: /* display2 workaround FIXME */
 		return DE_FORMAT_YUV422_P;
+	case DRM_FORMAT_YVU422:
+		return DE_FORMAT_YVU422_P;
 	case DRM_FORMAT_YUV420:
-	case DRM_FORMAT_YVU420: /* display2 workaround FIXME */
 		return DE_FORMAT_YUV420_P;
+	case DRM_FORMAT_YVU420:
+		return DE_FORMAT_YVU420_P;
 	case DRM_FORMAT_YUV411:
-	case DRM_FORMAT_YVU411: /* display2 workaround FIXME */
 		return DE_FORMAT_YUV411_P;
+	case DRM_FORMAT_YVU411:
+		return DE_FORMAT_YVU411_P;
 	case DRM_FORMAT_NV61:
 		return DE_FORMAT_YUV422_SP_VUVU;
 	case DRM_FORMAT_NV16:
@@ -238,6 +240,7 @@ static s32 de_rtmx_chn_data_attr(
 		chn_info->planar_num = 1;
 		break;
 	case DE_FORMAT_YUV422_P:
+	case DE_FORMAT_YVU422_P:
 	case DE_FORMAT_YUV422_P_10BIT:
 		chn_info->px_fmt_space = DE_FORMAT_SPACE_YUV;
 		chn_info->yuv_sampling = DE_YUV422;
@@ -252,6 +255,7 @@ static s32 de_rtmx_chn_data_attr(
 		chn_info->planar_num = 3;
 		break;
 	case DE_FORMAT_YUV420_P:
+	case DE_FORMAT_YVU420_P:
 	case DE_FORMAT_YUV420_P_10BIT:
 		chn_info->px_fmt_space = DE_FORMAT_SPACE_YUV;
 		chn_info->yuv_sampling = DE_YUV420;
@@ -266,6 +270,7 @@ static s32 de_rtmx_chn_data_attr(
 		chn_info->planar_num = 2;
 		break;
 	case DE_FORMAT_YUV411_P:
+	case DE_FORMAT_YVU411_P:
 	case DE_FORMAT_YUV411_P_10BIT:
 		chn_info->px_fmt_space = DE_FORMAT_SPACE_YUV;
 		chn_info->yuv_sampling = DE_YUV411;
@@ -327,7 +332,7 @@ static s32 de_rtmx_chn_data_attr(
  * refer to disp2 de_rtmx_chn_blend_attr() for detail.
  */
 
-static void de_rtmx_chn_blend_attr(struct de_chn_info *chn_info, struct display_channel_state *state)
+static void de_rtmx_chn_blend_attr(struct de_chn_info *chn_info, struct display_channel_state *state, unsigned int layer_cnt)
 {
 	u32 i;
 	bool is_premul[MAX_LAYER_NUM_PER_CHN];
@@ -338,7 +343,7 @@ static void de_rtmx_chn_blend_attr(struct de_chn_info *chn_info, struct display_
 	chn_info->alpha_mode = ~DE_ALPHA_MODE_PREMUL;
 
 	/* if any layer is premul, chn blending with premul */
-	for (i = 0; i < chn_info->self->layer_cnt; ++i) {
+	for (i = 0; i < layer_cnt; ++i) {
 		if (!chn_info->layer_en[i])
 			continue;
 		is_premul[i] = i == 0 ? state->base.pixel_blend_mode == DRM_MODE_BLEND_PREMULTI :
@@ -355,7 +360,7 @@ static void de_rtmx_chn_blend_attr(struct de_chn_info *chn_info, struct display_
 
 	/* mark not premul layer need to convert to premul if chn blending with premul  */
 	if (chn_info->alpha_mode == DE_ALPHA_MODE_PREMUL) {
-		for (i = 0; i < chn_info->self->layer_cnt; ++i) {
+		for (i = 0; i < layer_cnt; ++i) {
 			if (!chn_info->layer_en[i])
 				continue;
 			if (chn_info->lay_premul[i] != DE_OVL_PREMUL_HAS_PREMUL)
@@ -376,8 +381,9 @@ static void de_rtmx_chn_blend_attr(struct de_chn_info *chn_info, struct display_
 //	}
 }
 
-static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_info *chn_info, struct display_channel_state *state)
+static s32 de_rtmx_chn_calc_size(struct de_channel_handle *hdl, struct de_chn_info *chn_info, struct display_channel_state *state, unsigned int layer_cnt)
 {
+	struct de_scaler_handle *scaler = hdl->private->scaler;
 	struct de_rect_s crop32[MAX_LAYER_NUM_PER_CHN];
 	struct de_scale_para ypara[MAX_LAYER_NUM_PER_CHN];
 	struct de_scale_para cpara[MAX_LAYER_NUM_PER_CHN];
@@ -390,7 +396,10 @@ static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_
 
 	win.left = win.top = 0x7FFFFFFF;
 	win.right = win.bottom = 0x0;
-	for (i = 0; i < chn_info->self->layer_cnt; ++i) {
+	for (i = 0; i < layer_cnt; ++i) {
+		if (!chn_info->layer_en[i])
+			continue;
+
 		if (i == 0) {
 			lay_scn_win[i].left = state->base.crtc_x;
 			lay_scn_win[i].top = state->base.crtc_y;
@@ -402,7 +411,6 @@ static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_
 			lay_scn_win[i].width = state->crtc_w[i - 1];
 			lay_scn_win[i].height = state->crtc_h[i - 1];
 		}
-
 		right = lay_scn_win[i].left + lay_scn_win[i].width;
 		bottom = lay_scn_win[i].top + lay_scn_win[i].height;
 		win.left = min(win.left, lay_scn_win[i].left);
@@ -414,11 +422,16 @@ static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_
 	chn_info->scn_win.top = win.top;
 	chn_info->scn_win.width = win.right - win.left;
 	chn_info->scn_win.height = win.bottom - win.top;
-	chn_info->snr_en = de_frontend_parse_snr_en(state);
+	/* FIXME BUG: snr size err when ovl down fetch or multi layer enable */
+	chn_info->snr_en = de_frontend_apply_snr(hdl->private->frontend, state,
+				((unsigned long long)state->base.src_w) >> 16,
+				((unsigned long long)state->base.src_h) >> 16);
 
 	win.left = win.top = 0x7FFFFFFF;
 	win.right = win.bottom = 0x0;
 
+	memset(ypara, 0, sizeof(ypara));
+	memset(cpara, 0, sizeof(cpara));
 
 	cal_lay_cfg.fm_space = chn_info->px_fmt_space;
 	cal_lay_cfg.yuv_sampling =  chn_info->yuv_sampling;
@@ -428,8 +441,11 @@ static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_
 	cal_lay_cfg.snr_en =  chn_info->snr_en;
 
 
-	for (i = 0; i < chn_info->self->layer_cnt; ++i) {
+	for (i = 0; i < layer_cnt; ++i) {
 		struct de_rect_s *lay_win = &(chn_info->lay_win[i]);
+
+		if (!chn_info->layer_en[i])
+			continue;
 
 		if (i == 0) {
 			crop64.left = (((unsigned long long)state->base.src_x) >> 16) << 32;
@@ -446,7 +462,7 @@ static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_
 		de_scaler_calc_lay_scale_para(scaler,
 			&cal_lay_cfg,
 			&crop64,
-			lay_scn_win,
+			&lay_scn_win[i],
 			&crop32[i], &ypara[i], &cpara[i]);
 
 		lay_win->left = de_scaler_calc_ovl_coord(scaler,
@@ -455,6 +471,10 @@ static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_
 		lay_win->top = de_scaler_calc_ovl_coord(scaler,
 			lay_scn_win[i].top - chn_info->scn_win.top,
 			ypara[i].vstep);
+		if (chn_info->yuv_sampling == DE_YUV420 &&
+			 ((lay_win->top + crop32[i].height) % 2)) {
+			lay_win->top -= 1;
+		}
 		lay_win->width = crop32[i].width;
 		lay_win->height = crop32[i].height;
 		win.left = min(lay_win->left, win.left);
@@ -472,7 +492,7 @@ static s32 de_rtmx_chn_calc_size(struct de_scaler_handle *scaler, struct de_chn_
 		(void *)&(chn_info->ovl_out_win),
 		sizeof(chn_info->ovl_win));
 
-	de_scaler_calc_ovl_scale_para(chn_info->self->layer_cnt, ypara, cpara,
+	de_scaler_calc_ovl_scale_para(layer_cnt, ypara, cpara,
 		&chn_info->ovl_ypara, &chn_info->ovl_cpara);
 
 	return 0;
@@ -583,6 +603,13 @@ bool channel_format_mod_supported(struct de_channel_handle *hdl, uint32_t format
 	return is_support;
 }
 
+int channel_get_pqd_config(struct de_channel_handle *hdl, struct display_channel_state *cstate)
+{
+	if (hdl->private->frontend)
+		return de_frontend_get_pqd_config(hdl->private->frontend, cstate);
+	return -EINVAL;
+}
+
 int channel_apply(struct de_channel_handle *hdl, struct display_channel_state *state,
 		    const struct de_output_info *de_info, struct de_channel_output_info *output,
 		    bool rgb_out)
@@ -599,6 +626,7 @@ int channel_apply(struct de_channel_handle *hdl, struct display_channel_state *s
 	memset(&tfbd_cfg, 0, sizeof(tfbd_cfg));
 	memset(&scaler_cfg, 0, sizeof(scaler_cfg));
 	memset(&frontend_cfg, 0, sizeof(frontend_cfg));
+	memset(&hdl->private->info, 0, sizeof(hdl->private->info));
 	hdl->private->info.enable = false;
 
 	/* disable channel */
@@ -609,7 +637,7 @@ int channel_apply(struct de_channel_handle *hdl, struct display_channel_state *s
 			de_tfbd_apply_lay(hdl->private->tfbd, state, &tfbd_cfg, &tfbd_en);
 		de_ovl_apply_lay(hdl->private->ovl, state, &ovl_cfg);
 		de_scaler_apply(hdl->private->scaler, &scaler_cfg);
-		de_frontend_enable(hdl->private->frontend, 0);
+		de_frontend_disable(hdl->private->frontend);
 		DRM_DEBUG_DRIVER("[SUNXI-DE] %s %s disbale\n", __FUNCTION__, hdl->name);
 		return 0;
 	}
@@ -618,8 +646,8 @@ int channel_apply(struct de_channel_handle *hdl, struct display_channel_state *s
 	/* cal chn info  */
 	cal_channel_enable_layer_cnt(hdl, state);
 	de_rtmx_chn_data_attr(&hdl->private->info, state);
-	de_rtmx_chn_blend_attr(&hdl->private->info, state);
-	de_rtmx_chn_calc_size(hdl->private->scaler, &hdl->private->info, state);
+	de_rtmx_chn_blend_attr(&hdl->private->info, state, hdl->layer_cnt);
+	de_rtmx_chn_calc_size(hdl, &hdl->private->info, state, hdl->layer_cnt);
 	de_rtmx_chn_fix_size(hdl->private->scaler, &hdl->private->info, de_info->width, de_info->height, de_info->device_fps, de_info->de_clk_freq);
 
 	/* config afbd  */
@@ -918,7 +946,6 @@ struct de_channel_handle *de_channel_create(struct module_create_info *cinfo)
 	memcpy(&info, cinfo, sizeof(*cinfo));
 	hdl = kmalloc(sizeof(*hdl), GFP_KERNEL | __GFP_ZERO);
 	hdl->private = kmalloc(sizeof(*hdl->private), GFP_KERNEL | __GFP_ZERO);
-	hdl->private->info.self = hdl;
 	memcpy(&hdl->cinfo, cinfo, sizeof(*cinfo));
 
 	/* create ovl */
@@ -944,7 +971,10 @@ struct de_channel_handle *de_channel_create(struct module_create_info *cinfo)
 	hdl->name = hdl->private->ovl->name;
 
 	/* create front process module */
+	if (hdl->private->scaler && hdl->private->scaler->is_asu)
+		info.extra = hdl->private->scaler;
 	hdl->private->frontend = de_frontend_create(&info);
+	info.extra = NULL;
 
 	hdl->formats = hdl->private->ovl->formats;
 	if (hdl->private->scaler)

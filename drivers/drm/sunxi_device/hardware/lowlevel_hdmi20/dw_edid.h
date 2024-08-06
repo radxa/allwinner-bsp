@@ -8,19 +8,18 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _DW_EDID_H
 #define _DW_EDID_H
 
-#include "dw_dev.h"
-
 #define EDID_BLOCK_SIZE		    (128)
 
-void dw_edid_sink_reset(struct sink_info_s *edidExt);
+void dw_edid_sink_reset(void);
 
 int dw_edid_read_extenal_block(int block, u8 *edid_buf);
 
 int dw_edid_parse_info(u8 *data);
+
+int dw_sink_is_hdmi20(void);
 
 int dw_edid_check_only_yuv420(u32 vic);
 

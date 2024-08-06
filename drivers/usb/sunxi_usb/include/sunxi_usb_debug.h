@@ -31,12 +31,6 @@
 #define DMSG_DEBUG(...)
 #endif //CONFIG_USB_SUNXI_USB_DEBUG
 
-/* serious warn */
-#if 1
-#define DMSG_PANIC			DMSG_WARN
-#else
-#define DMSG_PANIC(...)
-#endif
 
 #if 1
 #define  DMSG_INFO_UDC(fmt, ...)	DMSG_DEBUG("[udc]: "fmt, ##__VA_ARGS__)

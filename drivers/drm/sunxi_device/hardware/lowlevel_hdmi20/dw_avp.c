@@ -18,6 +18,7 @@
 #include <drm/display/drm_scdc_helper.h>
 #endif
 
+#include "dw_dev.h"
 #include "dw_mc.h"
 #include "dw_fc.h"
 #include "dw_edid.h"
@@ -25,7 +26,7 @@
 #include "dw_avp.h"
 
 struct dw_audio_n_table_s {
-	u32 pixel_clock;/* KHZ */
+	u32 tmds_clk;
 	u32 n;
 };
 
@@ -101,6 +102,18 @@ static struct dw_audio_n_table_s n_table_48k[] = {
 	{0, 0}
 };
 
+static bool dw_eotf_is_hdr(u8 eotf)
+{
+	switch (eotf) {
+	case DW_EOTF_HDR:
+	case DW_EOTF_SMPTE2084:
+	case DW_EOTF_HLG:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static struct dw_audio_s *dw_get_audio(void)
 {
 	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
@@ -121,7 +134,7 @@ static u32 _dw_audio_get_clock_n(void)
 	value |= dw_read_mask(AUD_N2, AUD_N2_AUDN_MASK) << 8;
 	value |= dw_read_mask(AUD_N3, AUD_N3_AUDN_MASK) << 16;
 
-	audio_log("dw audio get acr n: %d\n", value);
+	hdmi_trace("dw audio get acr n: %d\n", value);
 	return value;
 }
 
@@ -133,7 +146,7 @@ static u32 _dw_audio_get_clock_cts(void)
 	value |= dw_read_mask(AUD_CTS2, AUD_CTS2_AUDCTS_MASK) << 8;
 	value |= dw_read_mask(AUD_CTS3, AUD_CTS3_AUDCTS_MASK) << 16;
 
-	audio_log("dw audio get acr cts: %d\n", value);
+	hdmi_trace("dw audio get acr cts: %d\n", value);
 	return value;
 }
 
@@ -219,7 +232,7 @@ static int _dw_audio_i2s_config(struct dw_audio_s *audio)
 	}
 	dw_write_mask(AUD_INPUTCLKFS, AUD_INPUTCLKFS_IFSFACTOR_MASK, fs_fac);
 
-	audio_log("dw audio i2s config done!\n");
+	hdmi_trace("dw audio i2s config done!\n");
 	return 0;
 }
 
@@ -250,9 +263,9 @@ static u32 _dw_audio_sw_compute_n(u32 freq, u32 pixel_clk)
 	}
 
 	for (i = 0; n_table[i].n != 0; i++) {
-		if (pixel_clk == n_table[i].pixel_clock) {
+		if (pixel_clk == n_table[i].tmds_clk) {
 			n = n_table[i].n * multiplier_factor;
-			audio_log("get acr n value = %d\n", n);
+			hdmi_trace("get acr n value = %d\n", n);
 			return n;
 		}
 	}
@@ -281,19 +294,20 @@ static int _dw_audio_param_reset(struct dw_audio_s *audio)
 
 static int _dw_audio_param_print(struct dw_audio_s *audio)
 {
-	if (!audio) {
-		hdmi_err("%s param is null!!!\n", __func__);
+	if (IS_ERR_OR_NULL(audio)) {
+		shdmi_err(audio);
 		return -1;
 	}
-	audio_log("[audio info]\n");
-	audio_log(" - interface type = %s\n",
+
+	hdmi_trace("[audio info]\n");
+	hdmi_trace(" - interface type = %s\n",
 		audio->mInterfaceType == DW_AUDIO_INTERFACE_I2S ? "I2S" :
 		audio->mInterfaceType == DW_AUDIO_INTERFACE_SPDIF ? "SPDIF" :
 		audio->mInterfaceType == DW_AUDIO_INTERFACE_HBR ? "HBR" :
 		audio->mInterfaceType == DW_AUDIO_INTERFACE_GPA ? "GPA" :
 		audio->mInterfaceType == DW_AUDIO_INTERFACE_DMA ? "DMA" : "---");
 
-	audio_log(" - coding type = %s\n",
+	hdmi_trace(" - coding type = %s\n",
 		audio->mCodingType == DW_AUD_CODING_PCM ? "PCM" :
 		audio->mCodingType == DW_AUD_CODING_AC3 ? "AC3" :
 		audio->mCodingType == DW_AUD_CODING_MPEG1 ? "MPEG1" :
@@ -306,11 +320,11 @@ static int _dw_audio_param_print(struct dw_audio_s *audio)
 		audio->mCodingType == DW_AUD_CODING_DOLBY_DIGITAL_PLUS ? "DOLBY DIGITAL +" :
 		audio->mCodingType == DW_AUD_CODING_DTS_HD ? "DTS HD" :
 		audio->mCodingType == DW_AUD_CODING_MAT ? "MAT" : "---");
-	audio_log(" - frequency = %dHz\n", audio->mSamplingFrequency);
-	audio_log(" - sample size = %d\n", audio->mSampleSize);
-	audio_log(" - FS factor = %d\n", audio->mClockFsFactor);
-	audio_log(" - ChannelAllocationr = %d\n", audio->mChannelAllocation);
-	audio_log(" - mChannelNum = %d\n", audio->mChannelNum);
+	hdmi_trace(" - frequency = %dHz\n", audio->mSamplingFrequency);
+	hdmi_trace(" - sample size = %d\n", audio->mSampleSize);
+	hdmi_trace(" - FS factor = %d\n", audio->mClockFsFactor);
+	hdmi_trace(" - ChannelAllocationr = %d\n", audio->mChannelAllocation);
+	hdmi_trace(" - mChannelNum = %d\n", audio->mChannelNum);
 
 	return 0;
 }
@@ -415,7 +429,7 @@ static int _dw_video_csc_config(struct dw_video_s *video)
 
 	color_depth = _dw_video_color_bits_to_hw(video->mColorResolution);
 
-	video_log("dw video csc check interpolation: %d, decimation: %d, %dbit\n",
+	hdmi_trace("dw video csc check interpolation: %d, decimation: %d, %dbit\n",
 		interpolation, decimation, video->mColorResolution);
 
 	dw_write_mask(CSC_CFG, CSC_CFG_INTMODE_MASK, interpolation);
@@ -527,7 +541,7 @@ static int _dw_video_path_config(struct dw_video_s *video)
 
 	dw_write_mask(VP_REMAP, VP_REMAP_YCC422_SIZE_MASK, remap_size);
 
-	video_log("dw video path output select: %s\n", data_path[output_select]);
+	hdmi_trace("dw video path output select: %s\n", data_path[output_select]);
 	if (output_select == 0) {
 		/* pixel packing */
 		dw_write_mask(VP_CONF, VP_CONF_BYPASS_EN_MASK, 0);
@@ -676,7 +690,7 @@ static int _dw_video_on(void)
 	if (ret != 0)
 		goto failed_exit;
 
-	video_log("dw video config done!\n");
+	hdmi_trace("dw video config done!\n");
 	return 0;
 
 failed_exit:
@@ -729,11 +743,11 @@ int dw_audio_set_info(void *data)
 int dw_audio_init(void)
 {
 	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
-	struct dw_audio_s *audio  = &hdmi->audio_dev;
+	struct dw_audio_s *audio   = &hdmi->audio_dev;
 	int ret = 0;
 
-	if (!audio) {
-		hdmi_err("check point audio is null\n");
+	if (IS_ERR_OR_NULL(audio)) {
+		shdmi_err(audio);
 		return -1;
 	}
 
@@ -762,12 +776,17 @@ int dw_audio_on(void)
 	}
 
 	if (!hdmi->hdmi_on) {
-		hdmi_inf("dw audio not config when dvi mode\n");
+		hdmi_inf("dw audio unset when dvi mode\n");
 		return 0;
 	}
 
 	if (!hdmi->audio_on) {
-		hdmi_inf("dw audio control is off\n");
+		hdmi_inf("dw audio unset when control off\n");
+		return 0;
+	}
+
+	if (audio->mSamplingFrequency == 0) {
+		hdmi_inf("dw audio unset when freq = 0\n");
 		return 0;
 	}
 
@@ -790,6 +809,8 @@ int dw_audio_on(void)
 		return -1;
 	}
 
+	dw_mc_irq_clear_state(DW_IRQ_AUDIO_SAMPLER, dw_mc_irq_get_state(DW_IRQ_AUDIO_SAMPLER));
+
 	/* clear audio fifo interrupt state */
 	dw_write_mask(AUD_INT, AUD_INT_FIFO_FULL_MASK_MASK, 0x1);
 	dw_write_mask(AUD_INT, AUD_INT_FIFO_EMPTY_MASK_MASK, 0x1);
@@ -805,7 +826,7 @@ int dw_audio_on(void)
 	audio->mClockFsFactor = 64;
 	ret = _dw_audio_i2s_config(audio);
 	if (ret != 0) {
-		hdmi_err("audio i2s config is failed!!!\n");
+		hdmi_err("dw audio i2s config is failed!!!\n");
 		return -1;
 	}
 
@@ -830,7 +851,9 @@ int dw_audio_on(void)
 
 	dw_fc_audio_set_mute(0);
 
-	audio_log("dw audio config done!\n");
+	dw_write_mask(AUD_INT, AUD_INT_FIFO_FULL_MASK_MASK, 0x0);
+	dw_write_mask(AUD_INT, AUD_INT_FIFO_EMPTY_MASK_MASK, 0x0);
+	hdmi_trace("dw audio config done!\n");
 	return 0;
 }
 
@@ -838,14 +861,14 @@ int dw_video_filling_timing(dw_dtd_t *dtd, u32 rate)
 {
 	struct dw_video_s *video = dw_get_video();
 
-	if (!video) {
-		hdmi_err("check point video is null\n");
-		goto ret_failed;
+	if (IS_ERR_OR_NULL(video)) {
+		shdmi_err(video);
+		return -1;
 	}
 
-	if (!dtd) {
-		hdmi_err("check point dtd is null\n");
-		goto ret_failed;
+	if (IS_ERR_OR_NULL(dtd)) {
+		shdmi_err(dtd);
+		return -1;
 	}
 
 	memcpy(&video->mDtd, dtd, sizeof(dw_dtd_t));
@@ -866,9 +889,6 @@ int dw_video_filling_timing(dw_dtd_t *dtd, u32 rate)
 		video->mDtd.mVSyncPulseWidth, video->mDtd.mVSyncPolarity);
 
 	return 0;
-
-ret_failed:
-	return -1;
 }
 
 u32 dw_video_get_pixel_clk(void)
@@ -926,7 +946,8 @@ int dw_video_use_hdmi20_vsif(void)
 	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
 	struct dw_product_s	 *prod = &hdmi->prod_dev;
 
-	if (!hdmi->video_dev.mHdmi20) {
+	if (!dw_sink_is_hdmi20()) {
+		hdmi_inf("dw video check is not hdmi20 device\n");
 		return -1;
 	}
 
@@ -1063,104 +1084,99 @@ void dw_video_csc_update_coefficients(struct dw_video_s *video)
 
 int dw_video_update_color_format(dw_color_format_t format)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
 
 #ifdef SUNXI_HDMI20_USE_CSC
 	if (format == DW_COLOR_FORMAT_YCC422) {
-		video_dev->mEncodingIn  = DW_COLOR_FORMAT_YCC444;
-		video_dev->mEncodingOut = DW_COLOR_FORMAT_YCC422;
+		video->mEncodingIn  = DW_COLOR_FORMAT_YCC444;
+		video->mEncodingOut = DW_COLOR_FORMAT_YCC422;
 		hdmi_inf("dw video use csc: yuv444 to yuv422\n");
 		return 0;
 	}
 #endif
 
-	video_dev->mEncodingIn  = format;
-	video_dev->mEncodingOut = format;
+	video->mEncodingIn  = format;
+	video->mEncodingOut = format;
 	hdmi_trace("dw video update format: %d\n", format);
 	return 0;
 }
 
 int dw_video_update_color_depth(u8 bits)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
 
-	video_dev->mColorResolution = bits;
+	video->mColorResolution = bits;
 	hdmi_trace("dw video update depth: %d\n", bits);
 	return 0;
 }
 
 int dw_video_update_color_metry(u8 metry, u8 ext_metry)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
 
-	video_dev->mColorimetry = metry;
-	video_dev->mExtColorimetry = ext_metry;
+	video->mColorimetry = metry;
+	video->mExtColorimetry = ext_metry;
 	return 0;
 }
 
-int dw_video_update_hdr_eotf(u8 hdr, u8 eotf)
+int dw_video_update_hdr_eotf(u8 eotf)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
+	dw_fc_drm_pb_t *drm_pb   = video->pb;
 
-	if (video_dev->pb) {
-		kfree(video_dev->pb);
-		video_dev->pb = NULL;
-	}
-
-	video_dev->pb = kmalloc(sizeof(dw_fc_drm_pb_t), GFP_KERNEL);
-	if (!video_dev->pb) {
-		hdmi_err("malloc drm pb failed\n");
+	drm_pb = kmalloc(sizeof(dw_fc_drm_pb_t), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(drm_pb)) {
+		shdmi_err(drm_pb);
 		return -1;
 	}
+	memset(drm_pb, 0x0, sizeof(dw_fc_drm_pb_t));
+	video->pb = drm_pb;
 
-	memset(video_dev->pb, 0x0, sizeof(dw_fc_drm_pb_t));
+	video->mHdr  = dw_eotf_is_hdr(eotf) ? 1 : 0;
+	drm_pb->eotf = eotf;
 
-	video_dev->mHdr = hdr;
-	video_dev->pb->eotf = eotf;
-
-	if (hdr) {
-		dw_drm_packet_filling_data(video_dev->pb);
-	}
+	if (video->mHdr)
+		dw_drm_packet_filling_data(drm_pb);
 
 	return 0;
 }
 
 int dw_video_update_tmds_mode(u8 mode)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
 
-	video_dev->mHdmi = mode;
+	video->mHdmi = mode;
 	return 0;
 }
 
 int dw_video_update_range(u8 range)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
 
-	video_dev->mRgbQuantizationRange = range;
+	video->mRgbQuantizationRange = range;
 	return 0;
 }
 
 int dw_video_update_scaninfo(u8 scan)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
 
-	video_dev->mScanInfo = scan;
+	video->mScanInfo = scan;
 	return 0;
 }
 
 int dw_video_update_ratio(u8 ratio)
 {
-	struct dw_video_s *video_dev = dw_get_video();
+	struct dw_video_s *video = dw_get_video();
 
-	video_dev->mActiveFormatAspectRatio = ratio;
+	video->mActiveFormatAspectRatio = ratio;
 	return 0;
 }
 
 int dw_video_dump_disp_info(void)
 {
 	struct dw_video_s *video = dw_get_video();
-	char *color_format[] = {"RGB", "YUV422", "YUV444", "YUV420"};
+	char *color_format[] = {"RGB", "YUV444", "YUV422", "YUV420"};
 	char *color_range[] = {"default", "limit", "full"};
 	char *color_eotf[] = {"sdr", "hdr", "smpte2084", "hlg"};
 	char *scan_info[] = {"no-data", "overscan", "underscan"};
@@ -1172,7 +1188,7 @@ int dw_video_dump_disp_info(void)
 		color_format[video->mEncodingIn], color_format[video->mEncodingOut],
 		video->mColorResolution);
 	hdmi_trace(" - %s mode, eotf: %s, %s-range, %s, color metry: %s\n",
-		video->mHdr ? "hdr" : "sdr", color_eotf[video->pb->eotf],
+		video->mHdr ? "hdr" : "sdr", color_eotf[video->mHdr ? video->pb->eotf : 0],
 		color_range[video->mRgbQuantizationRange], scan_info[video->mScanInfo],
 		color_merty[video->mColorimetry]);
 	if (video->mColorimetry == DW_METRY_EXTENDED)
@@ -1185,8 +1201,7 @@ int dw_video_dump_disp_info(void)
 ssize_t dw_avp_dump(char *buf)
 {
 	int n = 0;
-	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
-	struct dw_video_s *video = &hdmi->video_dev;
+	struct dw_video_s *video = dw_get_video();
 	char *color_format[] = {"RGB", "YUV422", "YUV444", "YUV420"};
 	u32 state = 0;
 	u32 hactive = dw_fc_video_get_hactive();
@@ -1195,30 +1210,37 @@ ssize_t dw_avp_dump(char *buf)
 		hactive = hactive * 2;
 
 	n += sprintf(buf + n, "[dw video]\n");
-	n += sprintf(buf + n, " - %d*%d@%dHz %s_%dbits\n",
+	n += sprintf(buf + n, " - cea vic      : %d\n", dw_avi_get_video_code());
+	n += sprintf(buf + n, " - timings      : %d*%d@%dHz %s_%dbits\n",
 		hactive, dw_fc_video_get_vactive(),
 		video->rate, color_format[dw_avi_get_rgb_ycc()],
 		_dw_video_get_color_bits());
-	n += sprintf(buf + n, " - tmds clock: [%dKhz], pixel clock: [%dkhz]\n",
-		hdmi->tmds_clk, hdmi->pixel_clk);
-	n += sprintf(buf + n, " - avmute: [%s], scramble: [%s], tmds_mode: [%s], vic: [%d]\n",
-		dw_gcp_get_avmute() ? "mute" : "unmute",
-		dw_fc_video_get_scramble() ? "enable" : "disable",
-		dw_fc_video_get_tmds_mode() ? "hdmi" : "dvi", dw_avi_get_video_code());
+	n += sprintf(buf + n, " - avmute       : [%s]\n",
+			dw_gcp_get_avmute() ? "enable" : "disable");
+	n += sprintf(buf + n, " - scramble     : [%s]\n",
+			dw_fc_video_get_scramble() ? "enable" : "disable");
+	n += sprintf(buf + n, " - tmds mode    : [%s]\n",
+			dw_fc_video_get_tmds_mode() ? "hdmi" : "dvi");
 
 	n += sprintf(buf + n, "[dw audio]\n");
-	n += sprintf(buf + n, " - acr_n: [%d], acr_cts: [%d], cts_mode: [%s]\n",
-		_dw_audio_get_clock_n(), _dw_audio_get_clock_cts(),  \
-		dw_read_mask(AUD_CTS3, AUD_CTS3_CTS_MANUAL_MASK) ? "user" : "auto");
-	n += sprintf(buf + n, " - fs: [%dHz], factor: [%dxFs], mute: [%s], ",
-		dw_fc_audio_get_sample_freq(), _dw_audio_get_fs_factor(), \
-		dw_fc_audio_get_mute() ? "on" : "off");
+	n += sprintf(buf + n, " - mute         : [%s]\n",
+			dw_fc_audio_get_mute() ? "enable" : "disable");
+	n += sprintf(buf + n, " - sample freq  : [%dHz]\n",
+			dw_fc_audio_get_sample_freq());
+	n += sprintf(buf + n, " - sample factor: [%dxFs]\n",
+			_dw_audio_get_fs_factor());
+	n += sprintf(buf + n, " - acr n        : [%d]\n",
+			_dw_audio_get_clock_n());
+	n += sprintf(buf + n, " - acr cts      : [%d]\n",
+			_dw_audio_get_clock_cts());
+	n += sprintf(buf + n, " - cts mode     : [%s]\n",
+			dw_read_mask(AUD_CTS3, AUD_CTS3_CTS_MANUAL_MASK) ? "user" : "auto");
 
 	state = dw_mc_irq_get_state(DW_IRQ_AUDIO_SAMPLER);
 	if (state == 0) {
-		n += sprintf(buf + n, "audio_fifo: [ok]\n");
+		n += sprintf(buf + n, " - fifo state   : [ok]\n");
 	} else {
-		n += sprintf(buf + n, "audio_fifo: ");
+		n += sprintf(buf + n, " - fifo state   : ");
 		if (state & IH_AS_STAT0_AUD_FIFO_OVERFLOW_MASK)
 			n += sprintf(buf + n, "[over flow]");
 		if (state & IH_AS_STAT0_AUD_FIFO_UNDERFLOW_MASK)
@@ -1243,43 +1265,38 @@ int dw_avp_set_mute(u8 enable)
 int dw_avp_config_scramble(void)
 {
 	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
-	bool setup = false;
+	int sink_scdc = dw_edid_check_scdc_support();
 
-	if (hdmi->tmds_clk < 340000)
-		goto config_flow; /* not need scramble */
+	if (hdmi->tmds_clk > 340000) {
+		/* enable scramble */
+		if (sink_scdc == 0) {
+			hdmi_wrn("sink unsupport scdc so can-not set this timing!\n");
+			return 0;
+		}
 
-	if (!dw_edid_check_scdc_support()) {
-		hdmi_err("sink unsupport config scramble and 1/40 ratio\n");
+		dw_hdmi_scdc_set_scramble(0x1);
+		dw_mc_reset_tmds_clock();
+		dw_fc_video_set_scramble(0x1);
+		dw_fc_video_set_hdcp_keepout(0x1);
+		hdmi_trace("dw avp enable scramble done\n");
 		return 0;
 	}
 
-	/* need scramble */
-	setup = true;
+	dw_fc_video_set_scramble(0x0);
+	dw_fc_video_set_hdcp_keepout(0x0);
+	dw_mc_reset_tmds_clock();
+	if (sink_scdc)
+		dw_hdmi_scdc_set_scramble(0x0);
 
-config_flow:
-	/* set sink scdc info */
-	dw_hdmi_scdc_set_scramble(setup);
-	/* tmds software reset */
-	dw_mc_reset_tmds_clock(setup);
-	/* enable scramble */
-	dw_fc_video_set_scramble(setup);
-	dw_fc_video_set_hdcp_keepout(setup);
-
-	video_log("dw video %s scramble.\n", setup ? "enable" : "disable");
+	hdmi_trace("dw avp disable scramble done\n");
 	return 0;
 }
 
 int dw_avp_config(void)
 {
 	int ret = 0;
-	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
 
-	dw_avp_set_mute(0x1);
 	dw_mc_set_main_irq(0x0);
-	dw_fc_video_force_value(0x1, 0x0);
-
-	if (hdmi->phy_ext->phy_disconfig)
-		hdmi->phy_ext->phy_disconfig();
 
 	ret = dw_hdmi_ctrl_update();
 	if (ret != 0) {
@@ -1303,21 +1320,12 @@ int dw_avp_config(void)
 	if (ret != 0)
 		hdmi_err("dw infoframe packet failed\n");
 
+	dw_mc_irq_mask_all();
+
 	dw_mc_all_clock_enable();
 
 	/* config scramble */
 	dw_avp_config_scramble();
-
-	if (hdmi->phy_ext->phy_config)
-		hdmi->phy_ext->phy_config();
-
-	dw_fc_video_force_value(0x0, 0x0);
-	dw_mc_irq_mask_all();
-	dw_mc_set_main_irq(0x1);
-
-	mdelay(50);
-
-	dw_avp_set_mute(0x0);
 
 	hdmi_trace("dw avp config done\n");
 	return 0;

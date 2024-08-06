@@ -22,6 +22,8 @@ ccflags-y += -I$(srctree)/$(obj)/$(cur_dir)/gamma/
 ccflags-y += -I$(srctree)/$(obj)/$(cur_dir)/dither/
 ccflags-y += -I$(srctree)/$(obj)/$(cur_dir)/crc/
 ccflags-y += -I$(srctree)/$(obj)/$(cur_dir)/smbl/
+ccflags-y += -I$(srctree)/$(obj)/$(cur_dir)/deband/
+ccflags-y += -I$(srctree)/$(obj)/$(cur_dir)/fmt/
 
 de_obj += $(cur_dir)/de_backend.o
 de_obj += $(cur_dir)/de_channel.o
@@ -47,3 +49,4 @@ de_obj += $(cur_dir)/gamma/de_gamma.o $(cur_dir)/gamma/de_gamma_platform.o
 de_obj += $(cur_dir)/dither/de_dither.o $(cur_dir)/dither/de_dither_platform.o
 de_obj += $(cur_dir)/crc/de_crc.o $(cur_dir)/crc/de_crc_platform.o
 de_obj += $(cur_dir)/smbl/de_smbl.o $(cur_dir)/smbl/de_smbl_platform.o
+de_obj += $(cur_dir)/deband/de_deband.o $(cur_dir)/deband/de_deband_platform.o

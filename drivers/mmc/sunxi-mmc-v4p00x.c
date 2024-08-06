@@ -56,9 +56,6 @@
 /* reg */
 #define CCMU_BASE_ADDR		(0x1c20000)
 
-/* bit */
-#define	SDXC_2X_TIMING_MODE			(1U<<31)
-
 /* mask */
 #define SDXC_TX_TL_MASK				(0x0f)
 #define SDXC_RX_TL_MASK				(0x000F0000)

@@ -58,13 +58,13 @@ static ssize_t xhci_enable_show(struct device *dev,
 	struct sunxi_hci_hcd *sunxi_xhci = NULL;
 
 	if (dev == NULL) {
-		DMSG_PANIC("Argment is invalid\n");
+		DMSG_WARN("Argment is invalid\n");
 		return 0;
 	}
 
 	sunxi_xhci = dev->platform_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_WARN("sunxi_xhci is null\n");
 		return 0;
 	}
 
@@ -81,13 +81,13 @@ static ssize_t xhci_enable_store(struct device *dev,
 	int ret = 0;
 
 	if (dev == NULL) {
-		DMSG_PANIC("Argment is invalid\n");
+		DMSG_WARN("Argment is invalid\n");
 		return count;
 	}
 
 	sunxi_xhci = dev->platform_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_WARN("sunxi_xhci is null\n");
 		return count;
 	}
 
@@ -166,14 +166,14 @@ static ssize_t ed_test_show(struct device *dev,
 	struct sunxi_hci_hcd *dev_data = NULL;
 
 	if (dev == NULL) {
-		DMSG_PANIC("Argment is invalid\n");
+		DMSG_WARN("Argment is invalid\n");
 		return 0;
 	}
 
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_WARN("sunxi_xhci is null\n");
 		return 0;
 	}
 
@@ -194,14 +194,14 @@ static ssize_t ed_test_store(struct device *dev,
 	u32 testmode = 0;
 
 	if (dev == NULL) {
-		DMSG_PANIC("Argment is invalid\n");
+		DMSG_WARN("Argment is invalid\n");
 		return count;
 	}
 
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_WARN("sunxi_xhci is null\n");
 		return count;
 	}
 
@@ -213,7 +213,7 @@ static ssize_t ed_test_store(struct device *dev,
 
 	hcd = dev_get_drvdata(&sunxi_xhci->pdev->dev);
 	if (hcd == NULL) {
-		DMSG_PANIC("xhci hcd is null\n");
+		DMSG_WARN("xhci hcd is null\n");
 		return count;
 	}
 
@@ -433,13 +433,13 @@ static int sunxi_xhci_hcd_probe(struct platform_device *pdev)
 	void __iomem	*regs;
 
 	if (pdev == NULL || dev == NULL) {
-		DMSG_PANIC("%s, Argment is invalid\n", __func__);
+		DMSG_ERR("%s, Argment is invalid\n", __func__);
 		return -1;
 	}
 
 	/* if usb is disabled, can not probe */
 	if (usb_disabled()) {
-		DMSG_PANIC("usb hcd is disabled\n");
+		DMSG_ERR("usb hcd is disabled\n");
 		return -ENODEV;
 	}
 
@@ -536,14 +536,14 @@ static int sunxi_xhci_hcd_remove(struct platform_device *pdev)
 	struct sunxi_hci_hcd *dev_data = NULL;
 
 	if (pdev == NULL) {
-		DMSG_PANIC("%s, Argment is invalid\n", __func__);
+		DMSG_ERR("%s, Argment is invalid\n", __func__);
 		return -1;
 	}
 
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("%s, sunxi_xhci is null\n", __func__);
+		DMSG_ERR("%s, sunxi_xhci is null\n", __func__);
 		return -1;
 	}
 
@@ -563,14 +563,14 @@ static void sunxi_xhci_hcd_shutdown(struct platform_device *pdev)
 	struct sunxi_hci_hcd *dev_data = NULL;
 
 	if (pdev == NULL) {
-		DMSG_PANIC("%s, Argment is invalid\n", __func__);
+		DMSG_ERR("%s, Argment is invalid\n", __func__);
 		return;
 	}
 
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("%s, is null\n", __func__);
+		DMSG_ERR("%s, is null\n", __func__);
 		return;
 	}
 
@@ -596,12 +596,12 @@ int sunxi_usb_disable_xhci(void)
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL || dev_data == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_ERR("sunxi_xhci is null\n");
 		return -1;
 	}
 
 	if (dev_data->probe == 0) {
-		DMSG_PANIC("sunxi_xhci is disable, can not disable again\n");
+		DMSG_ERR("sunxi_xhci is disable, can not disable again\n");
 		return -1;
 	}
 
@@ -624,12 +624,12 @@ int sunxi_usb_enable_xhci(void)
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL || dev_data == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_ERR("sunxi_xhci is null\n");
 		return -1;
 	}
 
 	if (dev_data->probe == 1) {
-		DMSG_PANIC("sunxi_xhci is already enable, can not enable again\n");
+		DMSG_ERR("sunxi_xhci is already enable, can not enable again\n");
 		return -1;
 	}
 
@@ -656,14 +656,14 @@ static int sunxi_xhci_hcd_suspend(struct device *dev)
 	struct xhci_hcd *xhci = NULL;
 
 	if (dev == NULL) {
-		DMSG_PANIC("%s, Argment is invalid\n", __func__);
+		DMSG_ERR("%s, Argment is invalid\n", __func__);
 		return 0;
 	}
 
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_ERR("sunxi_xhci is null\n");
 		return 0;
 	}
 
@@ -675,13 +675,13 @@ static int sunxi_xhci_hcd_suspend(struct device *dev)
 
 	hcd = dev_get_drvdata(&sunxi_xhci->pdev->dev);
 	if (hcd == NULL) {
-		DMSG_PANIC("xhci hcd is null\n");
+		DMSG_ERR("xhci hcd is null\n");
 		return 0;
 	}
 
 	xhci = hcd_to_xhci(hcd);
 	if (xhci == NULL) {
-		DMSG_PANIC("xhci is null\n");
+		DMSG_ERR("xhci is null\n");
 		return 0;
 	}
 
@@ -719,14 +719,14 @@ static int sunxi_xhci_hcd_resume(struct device *dev)
 	struct xhci_hcd *xhci = NULL;
 
 	if (dev == NULL) {
-		DMSG_PANIC("Argment is invalid\n");
+		DMSG_ERR("Argment is invalid\n");
 		return 0;
 	}
 
 	sunxi_xhci = g_sunxi_xhci;
 	dev_data = g_dev_data;
 	if (sunxi_xhci == NULL) {
-		DMSG_PANIC("sunxi_xhci is null\n");
+		DMSG_ERR("sunxi_xhci is null\n");
 		return 0;
 	}
 
@@ -738,13 +738,13 @@ static int sunxi_xhci_hcd_resume(struct device *dev)
 
 	hcd = dev_get_drvdata(&sunxi_xhci->pdev->dev);
 	if (hcd == NULL) {
-		DMSG_PANIC("xhci hcd is null\n");
+		DMSG_ERR("xhci hcd is null\n");
 		return 0;
 	}
 
 	xhci = hcd_to_xhci(hcd);
 	if (xhci == NULL) {
-		DMSG_PANIC("xhci is null\n");
+		DMSG_ERR("xhci is null\n");
 		return 0;
 	}
 
@@ -796,5 +796,5 @@ module_platform_driver(sunxi_xhci_hcd_driver);
 MODULE_ALIAS("platform:sunxi xhci");
 MODULE_AUTHOR("wangjx <wangjx@allwinnertech.com>");
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_VERSION(1.0.1);
+MODULE_VERSION("1.0.2");
 MODULE_DESCRIPTION("Allwinnertech Xhci Controller Driver");

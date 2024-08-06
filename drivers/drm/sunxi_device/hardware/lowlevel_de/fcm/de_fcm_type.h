@@ -560,34 +560,4 @@ struct fcm_reg {
     union fcm_csc1_c23_reg csc1_c23;
 };
 
-struct fcm_config_data {
-    u32 level;
-};
-
-typedef struct fcm_hardware_data {
-	char name[32];
-	u32 lut_id;
-
-	s32 hbh_hue[28];
-	s32 sbh_hue[28];
-	s32 ybh_hue[28];
-
-	s32 angle_hue[28];
-	s32 angle_sat[13];
-	s32 angle_lum[13];
-
-	s32 hbh_sat[364];
-	s32 sbh_sat[364];
-	s32 ybh_sat[364];
-
-	s32 hbh_lum[364];
-	s32 sbh_lum[364];
-	s32 ybh_lum[364];
-} fcm_hardware_data_t;
-
-struct fcm_info {
-	int cmd;/* 0 write_with update, 1 write without update, 2 read*/
-	fcm_hardware_data_t fcm_data;
-};
-
 #endif /* #ifndef _DE_FCM_TYPE_H_ */

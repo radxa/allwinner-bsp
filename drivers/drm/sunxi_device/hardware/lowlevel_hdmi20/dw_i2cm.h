@@ -8,11 +8,9 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #ifndef _DW_I2CM_H
 #define _DW_I2CM_H
 
-#include "dw_dev.h"
 
 /**
  * @desc: dw i2c master send and receive

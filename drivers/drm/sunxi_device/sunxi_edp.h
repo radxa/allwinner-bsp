@@ -116,7 +116,10 @@ enum dp_hdcp_mode {
 #define DPCD_0005H 0x0005
 #define DPCD_0006H 0x0006
 #define DPCD_0100H 0x0100
+
 #define DPCD_0101H 0x0101
+#define DPCD_ENHANCE_FRAME_ENABLE_MASK	(1 << 7)
+#define DPCD_LANE_CNT_MASK				(0x1f << 0)
 
 #define DPCD_0102H 0x0102
 #define DPCD_SCRAMBLING_DISABLE_FLAG	(1 << 5)
@@ -344,6 +347,8 @@ struct edp_lane_para {
 	u32 lane_cnt;
 	u32 lane_sw[4];
 	u32 lane_pre[4];
+	u32 lane_remap[4];
+	u32 lane_invert[4];
 	u32 colordepth;
 	u32 color_fmt;
 	u32 colormetry;
@@ -372,6 +377,9 @@ struct edp_tx_cap {
 	bool hdcp2x_support;
 	bool hardware_hdcp1x_support;
 	bool hardware_hdcp2x_support;
+	bool enhance_frame_support;
+	bool lane_remap_support;
+	bool lane_invert_support;
 };
 
 struct edp_rx_cap {
@@ -389,6 +397,7 @@ struct edp_rx_cap {
 	bool is_edp_device;
 	bool assr_support;
 	bool enhance_frame_support;
+	bool framing_change_support;
 
 	/*parse from edid*/
 	u32 mfg_week;
@@ -412,13 +421,13 @@ struct edp_rx_cap {
 struct edp_tx_core {
 	u32 ssc_en;
 	s32 ssc_mode;
+	u32 pixel_mode;
 	u32 psr_en;
 	u32 training_param_type;
 	u32 interval_CR;
 	u32 interval_EQ;
 	/* 0:edp_mode  1:dp-mode*/
 	u32 controller_mode;
-	u32 pixel_count;
 	bool interlace;
 	bool sync_clock;
 	struct edp_lane_para lane_para;
@@ -438,6 +447,7 @@ struct edp_tx_core {
 /* it also useful for new controller IP support */
 struct sunxi_edp_hw_desc {
 	void __iomem *reg_base;
+	void __iomem *top_base;
 	u32 cur_aux_request;
 	u64 cur_bit_rate;
 	struct mutex aux_lock;
@@ -453,6 +463,7 @@ struct sunxi_edp_hw_video_ops {
 	u32 (*get_cur_line)(struct sunxi_edp_hw_desc *edp_hw);
 	u32 (*get_tu_size)(struct sunxi_edp_hw_desc *edp_hw);
 	u32 (*get_pixel_clk)(struct sunxi_edp_hw_desc *edp_hw);
+	u32 (*get_pixel_mode)(struct sunxi_edp_hw_desc *edp_hw);
 	s32 (*get_color_format)(struct sunxi_edp_hw_desc *edp_hw);
 	u32 (*get_pattern)(struct sunxi_edp_hw_desc *edp_hw);
 	s32 (*get_lane_para)(struct sunxi_edp_hw_desc *edp_hw, struct edp_lane_para *tmp_lane_para);
@@ -486,7 +497,7 @@ struct sunxi_edp_hw_video_ops {
 	s32 (*main_link_start)(struct sunxi_edp_hw_desc *edp_hw);
 	s32 (*main_link_stop)(struct sunxi_edp_hw_desc *edp_hw);
 	void (*scrambling_enable)(struct sunxi_edp_hw_desc *edp_hw, bool enable);
-	void (*enhanced_frame_enable)(struct sunxi_edp_hw_desc *edp_hw, bool enable);
+	void (*enhance_frame_enable)(struct sunxi_edp_hw_desc *edp_hw, bool enable);
 	void (*fec_enable)(struct sunxi_edp_hw_desc *edp_hw, bool enable);
 	void (*set_lane_sw_pre)(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, u32 sw, u32 pre, u32 param_type);
 	void (*set_lane_cnt)(struct sunxi_edp_hw_desc *edp_hw, u32 lane_cnt);
@@ -519,6 +530,7 @@ struct sunxi_edp_hw_video_ops {
 	bool (*support_hw_hdcp2x)(struct sunxi_edp_hw_desc *edp_hw);
 	bool (*support_lane_remap)(struct sunxi_edp_hw_desc *edp_hw);
 	bool (*support_lane_invert)(struct sunxi_edp_hw_desc *edp_hw);
+	bool (*support_enhance_frame)(struct sunxi_edp_hw_desc *edp_hw);
 };
 
 struct sunxi_edp_hw_hdcp_ops {
@@ -678,6 +690,9 @@ bool edp_source_support_hdcp1x(struct sunxi_edp_hw_desc *edp_hw);
 bool edp_source_support_hdcp2x(struct sunxi_edp_hw_desc *edp_hw);
 bool edp_source_support_hardware_hdcp1x(struct sunxi_edp_hw_desc *edp_hw);
 bool edp_source_support_hardware_hdcp2x(struct sunxi_edp_hw_desc *edp_hw);
+bool edp_source_support_enhance_frame(struct sunxi_edp_hw_desc *edp_hw);
+bool edp_source_support_lane_remap(struct sunxi_edp_hw_desc *edp_hw);
+bool edp_source_support_lane_invert(struct sunxi_edp_hw_desc *edp_hw);
 bool edp_hw_check_controller_error(struct sunxi_edp_hw_desc *edp_hw);
 
 bool edp_hw_ssc_is_enabled(struct sunxi_edp_hw_desc *edp_hw);
@@ -685,6 +700,7 @@ bool edp_hw_psr_is_enabled(struct sunxi_edp_hw_desc *edp_hw);
 bool edp_hw_audio_is_enabled(struct sunxi_edp_hw_desc *edp_hw);
 
 void edp_hw_set_reg_base(struct sunxi_edp_hw_desc *edp_hw, void __iomem *base);
+void edp_hw_set_top_base(struct sunxi_edp_hw_desc *edp_hw, void __iomem *base);
 void edp_hw_show_builtin_patten(struct sunxi_edp_hw_desc *edp_hw, u32 pattern);
 void edp_hw_irq_handler(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core);
 
@@ -711,9 +727,11 @@ s32 edp_hw_ssc_set_mode(struct sunxi_edp_hw_desc *edp_hw, u32 mode);
 s32 edp_hw_ssc_get_mode(struct sunxi_edp_hw_desc *edp_hw);
 s32 edp_hw_psr_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable);
 s32 edp_hw_assr_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable);
+s32 edp_hw_enhance_frame_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable);
 s32 edp_hw_get_color_fmt(struct sunxi_edp_hw_desc *edp_hw);
 s32 edp_hw_set_pattern(struct sunxi_edp_hw_desc *edp_hw, u32 pattern, u32 lane_cnt);
 u32 edp_hw_get_pixclk(struct sunxi_edp_hw_desc *edp_hw);
+u32 edp_hw_get_pixel_mode(struct sunxi_edp_hw_desc *edp_hw);
 u32 edp_hw_get_pattern(struct sunxi_edp_hw_desc *edp_hw);
 s32 edp_hw_get_lane_para(struct sunxi_edp_hw_desc *edp_hw, struct edp_lane_para *tmp_lane_para);
 u32 edp_hw_get_tu_size(struct sunxi_edp_hw_desc *edp_hw);

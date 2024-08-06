@@ -85,7 +85,7 @@ int sunxi_udc_dma_release(dm_hdl_t dma_hdl)
 	u32 reg_value = 0;
 
 	if (dma_hdl == NULL) {
-		DMSG_PANIC("ERR: sunxi_udc_dma_release failed dma_hdl is NULL\n");
+		DMSG_ERR("ERR: sunxi_udc_dma_release failed dma_hdl is NULL\n");
 		return -1;
 	}
 
@@ -106,7 +106,7 @@ int sunxi_udc_dma_chan_disable(dm_hdl_t dma_hdl)
 	u32 reg_value = 0;
 
 	if (dma_hdl == NULL) {
-		DMSG_PANIC("[sunxi_udc_dma_chan_disable] dma_hdl is NULL\n");
+		DMSG_ERR("[sunxi_udc_dma_chan_disable] dma_hdl is NULL\n");
 		return -1;
 	}
 
@@ -131,7 +131,7 @@ void sunxi_dma_set_config(dm_hdl_t dma_hdl, struct dma_config_t *pcfg)
 	dma_channel_t *pchan = NULL;
 
 	if (dma_hdl == NULL || pcfg == NULL) {
-		DMSG_PANIC("ERR: sunxi_dma_set_config failed dma_hdl or pcfg is NULL\n");
+		DMSG_ERR("ERR: sunxi_dma_set_config failed dma_hdl or pcfg is NULL\n");
 		return;
 	}
 
@@ -193,7 +193,7 @@ void sunxi_udc_dma_set_config(struct sunxi_udc_ep *ep,
 
 	dma_hdl = sunxi_udc_dma_request();
 	if (dma_hdl == NULL) {
-		DMSG_PANIC("ERR: sunxi_udc_dma_request failed dma_hdl is NULL\n");
+		DMSG_ERR("ERR: sunxi_udc_dma_request failed dma_hdl is NULL\n");
 		return;
 	}
 
@@ -267,7 +267,7 @@ static void sunxi_udc_dma_callback1(void *parg)
 
 	dev = (struct sunxi_udc *)parg;
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: sw_udc_dma_callback failed\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback failed\n");
 		return;
 	}
 
@@ -287,7 +287,7 @@ static void sunxi_udc_dma_callback1(void *parg)
 		if (req)
 			sunxi_udc_dma_completion(dev, ep, req);
 	} else {
-		DMSG_PANIC("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
 	}
 }
 
@@ -299,7 +299,7 @@ static void sunxi_udc_dma_callback2(void *parg)
 
 	dev = (struct sunxi_udc *)parg;
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: sw_udc_dma_callback failed\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback failed\n");
 		return;
 	}
 
@@ -319,7 +319,7 @@ static void sunxi_udc_dma_callback2(void *parg)
 		if (req)
 			sunxi_udc_dma_completion(dev, ep, req);
 	} else {
-		DMSG_PANIC("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
 	}
 }
 
@@ -331,7 +331,7 @@ static void sunxi_udc_dma_callback3(void *parg)
 
 	dev = (struct sunxi_udc *)parg;
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: sw_udc_dma_callback failed\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback failed\n");
 		return;
 	}
 
@@ -351,7 +351,7 @@ static void sunxi_udc_dma_callback3(void *parg)
 		if (req)
 			sunxi_udc_dma_completion(dev, ep, req);
 	} else {
-		DMSG_PANIC("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
 	}
 }
 
@@ -363,7 +363,7 @@ static void sunxi_udc_dma_callback4(void *parg)
 
 	dev = (struct sunxi_udc *)parg;
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: sw_udc_dma_callback failed\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback failed\n");
 		return;
 	}
 
@@ -383,7 +383,7 @@ static void sunxi_udc_dma_callback4(void *parg)
 		if (req)
 			sunxi_udc_dma_completion(dev, ep, req);
 	} else {
-		DMSG_PANIC("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
 	}
 }
 
@@ -395,7 +395,7 @@ static void sunxi_udc_dma_callback5(void *parg)
 
 	dev = (struct sunxi_udc *)parg;
 	if (dev == NULL) {
-		DMSG_PANIC("ERR: sw_udc_dma_callback failed\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback failed\n");
 		return;
 	}
 
@@ -415,7 +415,7 @@ static void sunxi_udc_dma_callback5(void *parg)
 		if (req)
 			sunxi_udc_dma_completion(dev, ep, req);
 	} else {
-		DMSG_PANIC("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
+		DMSG_ERR("ERR: sw_udc_dma_callback: dma is remove, but dma irq is happened\n");
 	}
 }
 
@@ -438,7 +438,7 @@ void sunxi_udc_dma_set_config(struct sunxi_udc_ep *ep,
 	struct dma_slave_config slave_config;
 #ifdef SW_UDC_DMA_INNER
 	if (ep->dev->sunxi_udc_dma[ep->num].chan ==  NULL) {
-		DMSG_PANIC("udc_dma start error,DMA is NULL.\n");
+		DMSG_ERR("udc_dma start error,DMA is NULL.\n");
 		return;
 	}
 #endif
@@ -510,7 +510,7 @@ void sunxi_udc_dma_start(struct sunxi_udc_ep *ep,
 	is_tx = is_tx_ep(ep);
 #ifdef SW_UDC_DMA_INNER
 	if (ep->dev->sunxi_udc_dma[ep->num].chan ==  NULL) {
-		DMSG_PANIC("udc_dma start error,DMA is NULL.\n");
+		DMSG_ERR("udc_dma start error,DMA is NULL.\n");
 		return;
 	}
 
@@ -523,7 +523,7 @@ void sunxi_udc_dma_start(struct sunxi_udc_ep *ep,
 					DMA_MEM_TO_DEV,
 					DMA_PREP_INTERRUPT|DMA_CTRL_ACK);
 		if (!dma_desc) {
-			DMSG_PANIC("[sunxi-udc-%d]dmaengine_prep_slave_sg() failed!\n",
+			DMSG_ERR("[sunxi-udc-%d]dmaengine_prep_slave_sg() failed!\n",
 				ep->num);
 			return;
 		}
@@ -535,7 +535,7 @@ void sunxi_udc_dma_start(struct sunxi_udc_ep *ep,
 					DMA_DEV_TO_MEM,
 					DMA_PREP_INTERRUPT|DMA_CTRL_ACK);
 		if (!dma_desc) {
-			DMSG_PANIC("[sunxi-udc-%d]dmaengine_prep_slave_sg() failed!\n",
+			DMSG_ERR("[sunxi-udc-%d]dmaengine_prep_slave_sg() failed!\n",
 				ep->num);
 			return;
 		}
@@ -575,7 +575,7 @@ void sunxi_udc_dma_stop(struct sunxi_udc_ep *ep)
 #ifdef SW_UDC_DMA_INNER
 	ret = dmaengine_terminate_all(ep->dev->sunxi_udc_dma[ep->num].chan);
 	if (ret != 0) {
-		DMSG_PANIC("ERR: sunxi_dma_ctl stop  failed\n");
+		DMSG_ERR("ERR: sunxi_dma_ctl stop  failed\n");
 		return;
 	}
 #endif
@@ -611,7 +611,7 @@ __s32 sunxi_udc_dma_probe(struct sunxi_udc *dev)
 			dev->sunxi_udc_dma[i].chan =
 					dma_request_channel(mask, NULL, NULL);
 			if (dev->sunxi_udc_dma[i].chan == NULL) {
-				DMSG_PANIC("Request DMA(EP%d) failed!\n", i);
+				DMSG_ERR("Request DMA(EP%d) failed!\n", i);
 				return -EINVAL;
 			}
 		}

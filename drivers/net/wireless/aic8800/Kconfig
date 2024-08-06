@@ -19,7 +19,7 @@ endchoice
 
 choice
 	prompt "Choice host wake IRQ type"
-	default AIC_IRQ_UNSET
+	default AIC_IRQ_ACTIVE_UNSET
 	help
 		Choice host wake IRQ type.
 config AIC_IRQ_ACTIVE_UNSET

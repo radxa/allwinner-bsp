@@ -28,13 +28,8 @@ struct de_fcm_handle {
 	struct de_fcm_private *private;
 };
 
-struct de_fcm_para {
-	bool bypass;
-	bool lut_need_update;
-	fcm_hardware_data_t fcm_lut_data;
-};
-
 struct de_fcm_handle *de_fcm_create(struct module_create_info *info);
+bool de_fcm_is_enabled(struct de_fcm_handle *hdl);
 int de_fcm_set_csc(struct de_fcm_handle *hdl,
 				   struct de_csc_info *in_info, struct de_csc_info *out_info);
 s32 de_fcm_enable(struct de_fcm_handle *hdl, u32 en);
@@ -42,7 +37,7 @@ void de_fcm_update_regs(struct de_fcm_handle *hdl);
 s32 de_fcm_set_window(struct de_fcm_handle *hdl, u32 demo_enable,
 			u32 x, u32 y, u32 w, u32 h);
 s32 de_fcm_set_size(struct de_fcm_handle *hdl, u32 width, u32 height);
-s32 de_fcm_apply_lut(struct de_fcm_handle *hdl, fcm_hardware_data_t *data, unsigned int update);
+s32 de_fcm_lut_proc(struct de_fcm_handle *hdl, struct fcm_info *info);
 s32 de_fcm_dump_state(struct drm_printer *p, struct de_fcm_handle *hdl);
 
 

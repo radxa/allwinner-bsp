@@ -487,12 +487,12 @@ static int sunxi_dsi_combophy_probe(struct platform_device *pdev)
 	phy_provider =
 		devm_of_phy_provider_register(&pdev->dev, of_phy_simple_xlate);
 
-	component_add(&pdev->dev, &sunxi_cphy_component_ops);
 	cphy->usage_count = 0;
 	mutex_init(&cphy->lock);
 
 	DRM_INFO("[PHY]%s finish\n", __FUNCTION__);
 
+	component_add(&pdev->dev, &sunxi_cphy_component_ops);
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
 

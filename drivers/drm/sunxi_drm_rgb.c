@@ -18,6 +18,7 @@
 #include <linux/gpio.h>
 #include <linux/phy/phy.h>
 #include <linux/phy/phy-mipi-dphy.h>
+#include <linux/version.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
@@ -31,6 +32,7 @@
 #include "sunxi_device/sunxi_tcon.h"
 #include "sunxi_drm_intf.h"
 #include "sunxi_drm_crtc.h"
+#include "panel/panels.h"
 #if IS_ENABLED(CONFIG_ARCH_SUN55IW6)
 #define RGB_DISPLL_CLK
 #endif
@@ -38,24 +40,16 @@ struct rgb_data {
 	int id;
 };
 struct sunxi_drm_rgb {
-	struct drm_connector connector;
-	struct drm_encoder encoder;
-	struct device *tcon_dev;
-	struct drm_device *drm_dev;
+	struct sunxi_drm_device sdrm;
 	struct drm_display_mode mode;
 	struct disp_rgb_para rgb_para;
-	unsigned int tcon_id;
-	struct drm_panel *panel;
-	struct drm_bridge *bridge;
 	bool bound;
-	bool allow_sw_enable;
 	bool sw_enable;
 	struct device *dev;
 
 	struct phy *phy;
 	union phy_configure_opts phy_opts;
 	const struct rgb_data *rgb_data;
-	u32 rgb_id;
 
 	struct clk *pclk;
 	unsigned long mode_flags;
@@ -74,11 +68,6 @@ static const struct of_device_id sunxi_drm_rgb_match[] = {
 	{ .compatible = "allwinner,rgb1", .data = &rgb1_data },
 	{},
 };
-static inline struct sunxi_drm_rgb *
-	drm_encoder_to_sunxi_drm_rgb(struct drm_encoder *encoder)
-{
-	return container_of(encoder, struct sunxi_drm_rgb, encoder);
-}
 
 static struct device *drm_rgb_of_get_tcon(struct device *rgb_dev)
 {
@@ -121,12 +110,16 @@ RGB_PUT:
 
 static inline struct sunxi_drm_rgb *encoder_to_sunxi_drm_rgb(struct drm_encoder *encoder)
 {
-	return container_of(encoder, struct sunxi_drm_rgb, encoder);
+	struct sunxi_drm_device *sdrm = container_of(encoder, struct sunxi_drm_device, encoder);
+
+	return container_of(sdrm, struct sunxi_drm_rgb, sdrm);
 }
 
 static inline struct sunxi_drm_rgb *connector_to_sunxi_drm_rgb(struct drm_connector *connector)
 {
-	return container_of(connector, struct sunxi_drm_rgb, connector);
+	struct sunxi_drm_device *sdrm = container_of(connector, struct sunxi_drm_device, connector);
+
+	return container_of(sdrm, struct sunxi_drm_rgb, sdrm);
 }
 
 static int sunxi_lcd_pin_set_state(struct device *dev, char *name)
@@ -192,16 +185,19 @@ void sunxi_drm_rgb_encoder_atomic_enable(struct drm_encoder *encoder,
 #else
 	disp_cfg.displl_clk = false;
 #endif
-	sunxi_tcon_mode_init(rgb->tcon_dev, &disp_cfg);
+	sunxi_tcon_mode_init(rgb->sdrm.tcon_dev, &disp_cfg);
 
 	pclk_clk_rate = rgb->rgb_para.timings.pixel_clk * disp_cfg.tcon_lcd_div;
 
 	sunxi_lcd_pin_set_state(rgb->dev, "active");
 
 	if (rgb->sw_enable) {
-		if (rgb->phy)
+		if (rgb->phy) {
 			phy_power_on(rgb->phy);
-		drm_panel_prepare(rgb->panel);
+			if (rgb->pclk)
+				clk_prepare_enable(rgb->pclk);
+		}
+		panel_rgb_regulator_enable(rgb->sdrm.panel);
 	} else {
 		if (rgb->phy) {
 			phy_power_on(rgb->phy);
@@ -210,13 +206,12 @@ void sunxi_drm_rgb_encoder_atomic_enable(struct drm_encoder *encoder,
 				clk_prepare_enable(rgb->pclk);
 			}
 		}
-		drm_panel_prepare(rgb->panel);
-		ret = sunxi_rgb_enable_output(rgb->tcon_dev);
+		drm_panel_prepare(rgb->sdrm.panel);
+		ret = sunxi_rgb_enable_output(rgb->sdrm.tcon_dev);
 		if (ret < 0)
 			DRM_DEV_INFO(rgb->dev, "failed to enable rgb ouput\n");
-		drm_panel_enable(rgb->panel);
 	}
-	rgb->allow_sw_enable = false;
+	drm_panel_enable(rgb->sdrm.panel);
 	DRM_INFO("[RGB] %s finish\n", __FUNCTION__);
 
 	return;
@@ -225,10 +220,13 @@ void sunxi_drm_rgb_encoder_atomic_enable(struct drm_encoder *encoder,
 void sunxi_drm_rgb_encoder_atomic_disable(struct drm_encoder *encoder,
 					struct drm_atomic_state *state)
 {
-	struct sunxi_drm_rgb *rgb = drm_encoder_to_sunxi_drm_rgb(encoder);
+	struct sunxi_drm_rgb *rgb = encoder_to_sunxi_drm_rgb(encoder);
 
-	drm_panel_disable(rgb->panel);
-	drm_panel_unprepare(rgb->panel);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	rgb->sdrm.panel.prepare_prev_first = false;
+#endif
+	drm_panel_disable(rgb->sdrm.panel);
+	drm_panel_unprepare(rgb->sdrm.panel);
 
 	if (rgb->phy) {
 		phy_power_off(rgb->phy);
@@ -237,28 +235,34 @@ void sunxi_drm_rgb_encoder_atomic_disable(struct drm_encoder *encoder,
 		clk_disable_unprepare(rgb->pclk);
 
 	sunxi_lcd_pin_set_state(rgb->dev, "sleep");
-	sunxi_rgb_disable_output(rgb->tcon_dev);
-	sunxi_tcon_mode_exit(rgb->tcon_dev);
+	sunxi_rgb_disable_output(rgb->sdrm.tcon_dev);
+	sunxi_tcon_mode_exit(rgb->sdrm.tcon_dev);
 	DRM_DEBUG_DRIVER("%s finish\n", __FUNCTION__);
 }
 
 static bool sunxi_rgb_fifo_check(void *data)
 {
 	struct sunxi_drm_rgb *rgb = (struct sunxi_drm_rgb *)data;
-	return sunxi_tcon_check_fifo_status(rgb->tcon_dev);
+	return sunxi_tcon_check_fifo_status(rgb->sdrm.tcon_dev);
+}
+
+int sunxi_rgb_get_current_line(void *data)
+{
+	struct sunxi_drm_rgb *rgb = (struct sunxi_drm_rgb *)data;
+	return sunxi_tcon_get_current_line(rgb->sdrm.tcon_dev);
 }
 
 static bool sunxi_rgb_is_sync_time_enough(void *data)
 {
 	struct sunxi_drm_rgb *rgb = (struct sunxi_drm_rgb *)data;
-	return sunxi_tcon_is_sync_time_enough(rgb->tcon_dev);
+	return sunxi_tcon_is_sync_time_enough(rgb->sdrm.tcon_dev);
 }
 
 static void sunxi_rgb_enable_vblank(bool enable, void *data)
 {
 	struct sunxi_drm_rgb *rgb = (struct sunxi_drm_rgb *)data;
 
-	sunxi_tcon_enable_vblank(rgb->tcon_dev, enable);
+	sunxi_tcon_enable_vblank(rgb->sdrm.tcon_dev, enable);
 }
 
 int sunxi_drm_rgb_encoder_atomic_check(struct drm_encoder *encoder,
@@ -271,11 +275,16 @@ int sunxi_drm_rgb_encoder_atomic_check(struct drm_encoder *encoder,
 	/* FIXME:TODO: color_fmt/clolor_depth update by actual configuration */
 //	scrtc_state->color_fmt = DISP_CSC_TYPE_RGB;
 //	scrtc_state->color_depth = DISP_DATA_8BITS;
-	scrtc_state->tcon_id = rgb->tcon_id;
+	scrtc_state->tcon_id = rgb->sdrm.tcon_id;
+	scrtc_state->get_cur_line = sunxi_rgb_get_current_line;
 	scrtc_state->is_sync_time_enough = sunxi_rgb_is_sync_time_enough;
 	scrtc_state->enable_vblank = sunxi_rgb_enable_vblank;
 	scrtc_state->check_status = sunxi_rgb_fifo_check;
 	scrtc_state->output_dev_data = rgb;
+	if (conn_state->crtc) {
+		rgb->sw_enable = sunxi_drm_check_if_need_sw_enable(conn_state->connector);
+		scrtc_state->sw_enable = rgb->sw_enable;
+	}
 	DRM_DEBUG_DRIVER("%s finish\n", __FUNCTION__);
 	return 0;
 }
@@ -338,7 +347,7 @@ static int sunxi_rgb_connector_get_modes(struct drm_connector *connector)
 	struct sunxi_drm_rgb *rgb = connector_to_sunxi_drm_rgb(connector);
 
 	DRM_INFO("[RGB]%s start\n", __FUNCTION__);
-	return drm_panel_get_modes(rgb->panel, connector);
+	return drm_panel_get_modes(rgb->sdrm.panel, connector);
 }
 
 static const struct drm_connector_helper_funcs sunxi_rgb_connector_helper_funcs = {
@@ -351,7 +360,7 @@ s32 sunxi_rgb_parse_dt(struct device *dev)
 
 	rgb->phy = devm_phy_get(dev, "combophy0");
 	if (IS_ERR_OR_NULL(rgb->phy)) {
-		DRM_INFO("rgb%d's combophy0 not setting, maybe not used!\n", rgb->rgb_id);
+		DRM_INFO("rgb%d's combophy0 not setting, maybe not used!\n", rgb->sdrm.hw_id);
 		rgb->phy = NULL;
 	}
 
@@ -364,11 +373,10 @@ s32 sunxi_rgb_parse_dt(struct device *dev)
 }
 static int sunxi_drm_rgb_bind(struct device *dev, struct device *master, void *data)
 {
-	const int lcd_type = 1;
 	struct drm_device *drm = (struct drm_device *)data;
 	struct device *tcon_lcd_dev = NULL;
-	struct sunxi_drm_private *drv_private = to_sunxi_drm_private(drm);
 	struct sunxi_drm_rgb *rgb = dev_get_drvdata(dev);
+	struct sunxi_drm_device *sdrm = &rgb->sdrm;
 	int ret, tcon_id;
 
 	DRM_INFO("[RGB]%s start\n", __FUNCTION__);
@@ -378,7 +386,7 @@ static int sunxi_drm_rgb_bind(struct device *dev, struct device *master, void *d
 	}
 
 	ret = drm_of_find_panel_or_bridge(dev->of_node, 1, -1,
-			&rgb->panel, &rgb->bridge);
+			&rgb->sdrm.panel, &rgb->sdrm.bridge);
 	if (ret) {
 		DRM_DEV_ERROR(dev, "Failed to find panel or bridge: %d\n", ret);
 		return ret;
@@ -391,46 +399,43 @@ static int sunxi_drm_rgb_bind(struct device *dev, struct device *master, void *d
 	}
 	tcon_id = sunxi_tcon_of_get_id(tcon_lcd_dev);
 
-	rgb->tcon_dev = tcon_lcd_dev;
-	rgb->tcon_id = tcon_id;
-	rgb->drm_dev = drm;
-	drm_encoder_helper_add(&rgb->encoder, &sunxi_rgb_encoder_helper_funcs);
-	ret = drm_simple_encoder_init(drm, &rgb->encoder, DRM_MODE_ENCODER_DPI);
+	sdrm->tcon_dev = tcon_lcd_dev;
+	sdrm->tcon_id = tcon_id;
+	sdrm->drm_dev = drm;
+	drm_encoder_helper_add(&sdrm->encoder, &sunxi_rgb_encoder_helper_funcs);
+	ret = drm_simple_encoder_init(drm, &sdrm->encoder, DRM_MODE_ENCODER_DPI);
 	if (ret) {
 		DRM_ERROR("Couldn't initialise the encoder for tcon %d\n", tcon_id);
 		return ret;
 	}
 
-	rgb->encoder.possible_crtcs =
+	sdrm->encoder.possible_crtcs =
 			drm_of_find_possible_crtcs(drm, tcon_lcd_dev->of_node);
-	if (rgb->panel) {
-		drm_connector_helper_add(&rgb->connector,
+	if (rgb->sdrm.panel) {
+		drm_connector_helper_add(&sdrm->connector,
 				&sunxi_rgb_connector_helper_funcs);
 
-		ret = drm_connector_init(drm, &rgb->connector,
+		ret = drm_connector_init(drm, &sdrm->connector,
 				&sunxi_rgb_connector_funcs,
 				DRM_MODE_CONNECTOR_DPI);
 		if (ret) {
-			drm_encoder_cleanup(&rgb->encoder);
+			drm_encoder_cleanup(&sdrm->encoder);
 			DRM_ERROR("[RGB]Couldn't initialise the connector for tcon %d\n", tcon_id);
 			return ret;
 		}
 
-		drm_connector_attach_encoder(&rgb->connector, &rgb->encoder);
+		drm_connector_attach_encoder(&sdrm->connector, &sdrm->encoder);
 	//	tcon_dev->cfg.private_data = rgb;
 	} else {
-		ret = drm_bridge_attach(&rgb->encoder, rgb->bridge, NULL, 0);
+		ret = drm_bridge_attach(&sdrm->encoder, rgb->sdrm.bridge, NULL, 0);
 		if (ret) {
-			drm_encoder_cleanup(&rgb->encoder);
+			drm_encoder_cleanup(&sdrm->encoder);
 			DRM_ERROR("[RGB]failed to attach bridge %d\n", ret);
 			return ret;
 		}
 	}
 
-	rgb->allow_sw_enable = true;
 	rgb->bound = true;
-	rgb->sw_enable = rgb->allow_sw_enable && drv_private->sw_enable &&
-			    (drv_private->boot.device_type == lcd_type);
 	DRM_INFO("[RGB]%s ok\n", __FUNCTION__);
 
 	return 0;
@@ -441,8 +446,8 @@ static void sunxi_drm_rgb_unbind(struct device *dev, struct device *master,
 {
 	struct sunxi_drm_rgb *rgb = dev_get_drvdata(dev);
 
-	drm_connector_cleanup(&rgb->connector);
-	drm_encoder_cleanup(&rgb->encoder);
+	drm_connector_cleanup(&rgb->sdrm.connector);
+	drm_encoder_cleanup(&rgb->sdrm.encoder);
 	rgb->bound = false;
 }
 
@@ -467,7 +472,7 @@ static int sunxi_drm_rgb_probe(struct platform_device *pdev)
 		DRM_ERROR("sunxi_drm_rgb fail to get match data\n");
 		return -ENODEV;
 	}
-	rgb->rgb_id = rgb->rgb_data->id;
+	rgb->sdrm.hw_id = rgb->rgb_data->id;
 	rgb->dev = dev;
 
 	dev_set_drvdata(dev, rgb);

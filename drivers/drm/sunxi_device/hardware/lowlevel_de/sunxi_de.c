@@ -10,6 +10,7 @@
  * option) any later version.
  */
 #include <linux/of_device.h>
+#include <linux/hrtimer.h>
 #include <linux/dma-mapping.h>
 #include <linux/pm_runtime.h>
 #include <linux/platform_device.h>
@@ -33,6 +34,7 @@
 #include "de_top.h"
 #include "de_wb.h"
 #include "de_backend.h"
+#include "sunxi_drm_debug.h"
 
 #define CHANNEL_MAX			(6)
 #define DE_BLOCK_SIZE			(256000)
@@ -42,6 +44,7 @@ struct de_match_data {
 	enum de_update_mode update_mode;
 	/* ui channel no csc, must blending in rgb */
 	bool blending_in_rgb;
+	bool rcq_wait_line;
 };
 
 struct de_reg_buffer {
@@ -73,6 +76,7 @@ enum de_update_status {
 struct sunxi_de_out {
 	int id;
 	struct device *dev;
+	struct hrtimer rcq_timer;
 	bool enable;
 	atomic_t update_finish;
 	struct sunxi_drm_crtc *scrtc;
@@ -84,7 +88,12 @@ struct sunxi_de_out {
 	struct de_rcq_mem_info rcq_info;
 	struct de_rcq_mem_info rcq_info_test0;
 	struct de_rcq_mem_info rcq_info_test1;
+	bool work;
+	struct work_struct pq_work;
 	struct de_output_info output_info;
+	unsigned int kHZ_pixelclk;
+	unsigned int htotal;
+	unsigned int vtotal;
 };
 
 struct sunxi_display_engine {
@@ -95,6 +104,8 @@ struct sunxi_display_engine {
 	struct clk *mclk;
 	struct clk *mclk_bus;
 	struct clk *mclk_ahb;
+	struct clk *ahb_vid_out; /* PPU clk */
+	struct clk *mbus_vo_sys; /* PPU clk */
 	struct reset_control *rst_bus_de;
 	struct reset_control *rst_bus_de_sys;
 	int irq_no;
@@ -482,6 +493,14 @@ void sunxi_de_reg_mem_deinit(struct sunxi_display_engine *de)
 	}
 }
 
+int sunxi_de_backend_get_pqd_config(struct sunxi_de_out *hwde, struct de_backend_data *data)
+{
+	if (hwde->backend_hdl) {
+		return de_backend_get_pqd_config(hwde->backend_hdl, data);
+	}
+	return -ENODEV;
+}
+
 void sunxi_de_atomic_begin(struct sunxi_de_out *hwde)
 {
 //	struct sunxi_display_engine *engine = dev_get_drvdata(hwde->dev);
@@ -501,28 +520,19 @@ static void sunxi_de_update_regs(struct sunxi_de_out *hwde)
 	//bld_update_regs(hwde->bld_hdl);
 }
 
-static void sunxi_de_process_late(struct sunxi_de_out *hwde)
-{
-	u32 i = 0;
-	struct de_channel_handle *ch;
-
-	for (i = 0; i < hwde->ch_cnt; i++) {
-		ch = hwde->ch_hdl[i];
-		channel_process_late(ch);
-	}
-
-	//bld_process_late(hwde->bld_hdl);
-}
-
-static int sunxi_de_exconfig_check_and_update(struct sunxi_de_out *hwde,  struct sunxi_de_flush_cfg *cfg)
+static int sunxi_de_exconfig_check_and_update(struct sunxi_de_out *hwde, struct de_backend_data *data, struct sunxi_de_flush_cfg *cfg)
 {
 	bool dirty = false;
 	struct de_backend_apply_cfg bcfg;
 	struct sunxi_display_engine *engine = dev_get_drvdata(hwde->dev);
+	struct de_output_info *output_info = &hwde->output_info;
 
 	memset(&bcfg, 0, sizeof(bcfg));
 	bcfg.w = hwde->output_info.width;
 	bcfg.h = hwde->output_info.height;
+
+	if (data)
+		dirty = true;
 
 	if (hwde->backend_hdl) {
 		if (cfg->gamma_dirty) {
@@ -545,6 +555,8 @@ static int sunxi_de_exconfig_check_and_update(struct sunxi_de_out *hwde,  struct
 			bcfg.out_csc.width = bcfg.w;
 			bcfg.out_csc.height = bcfg.w;
 
+			bcfg.bits = output_info->data_bits;
+
 			bcfg.brightness = cfg->brightness;
 			bcfg.contrast = cfg->contrast;
 			bcfg.saturation = cfg->saturation;
@@ -554,7 +566,7 @@ static int sunxi_de_exconfig_check_and_update(struct sunxi_de_out *hwde,  struct
 		}
 	}
 	if (dirty)
-		de_backend_apply(hwde->backend_hdl, &bcfg);
+		de_backend_apply(hwde->backend_hdl, data, &bcfg);
 	sunxi_de_update_regs(hwde);
 	return 0;
 }
@@ -574,7 +586,43 @@ int sunxi_de_event_proc(struct sunxi_de_out *hwde, bool timeout)
 	return 0;
 }
 
-void sunxi_de_atomic_flush(struct sunxi_de_out *hwde,  struct sunxi_de_flush_cfg *cfg)
+static enum hrtimer_restart timer_handler_rcq_update(struct hrtimer *timer)
+{
+	/* note: irq context */
+	struct sunxi_de_out *de_out = container_of(timer, struct sunxi_de_out, rcq_timer);
+	struct sunxi_display_engine *engine = dev_get_drvdata(de_out->dev);
+	de_top_set_rcq_update(engine->top_hdl, de_out->id, 1);
+	//printk("update line %d\n", sunxi_drm_crtc_get_output_current_line(de_out->scrtc));
+	return HRTIMER_NORESTART;
+}
+
+static int rcq_update_timer_start(struct sunxi_de_out *de_out)
+{
+	struct sunxi_display_engine *engine = dev_get_drvdata(de_out->dev);
+	u32 vt = de_out->vtotal;
+	u64 ns_per_line = (u64)(de_out->htotal) * 1000000;
+	u32 cur_line;
+	u32 min_line = vt / 4;
+	u32 max_line = vt / 4 * 3;
+	u64 delay_ns = 0;
+
+	do_div(ns_per_line, de_out->kHZ_pixelclk);
+	cur_line = sunxi_drm_crtc_get_output_current_line(de_out->scrtc);
+	if (cur_line < min_line) {
+		delay_ns = (min_line - cur_line) * ns_per_line;
+	} else if (cur_line > max_line) {
+		delay_ns = (vt - cur_line + min_line) * ns_per_line;
+	}
+
+	if (delay_ns) {
+		hrtimer_start(&de_out->rcq_timer, ktime_set(0, delay_ns), HRTIMER_MODE_REL);
+	} else {
+		de_top_set_rcq_update(engine->top_hdl, de_out->id, 1);
+	}
+	return 0;
+}
+
+void sunxi_de_atomic_flush(struct sunxi_de_out *hwde, struct de_backend_data *data, struct sunxi_de_flush_cfg *cfg)
 {
 	int disp = hwde->id;
 	bool is_finished = false;
@@ -589,21 +637,31 @@ void sunxi_de_atomic_flush(struct sunxi_de_out *hwde,  struct sunxi_de_flush_cfg
 	}
 
 	/* update dep */
-	if (cfg)
-		sunxi_de_exconfig_check_and_update(hwde, cfg);
+	if ((cfg || data) && (unsigned long)cfg != FORCE_ATOMIC_FLUSH)
+		sunxi_de_exconfig_check_and_update(hwde, data, cfg);
+
+	if ((unsigned long)cfg == FORCE_ATOMIC_FLUSH) {
+		de_update_ahb(hwde);
+		if (use_double_buffer)
+			de_top_set_double_buffer_ready(engine->top_hdl, hwde->id);
+		return;
+	}
 
 	/* request update */
 	if (use_rcq) {
 		//make sure clear finish flag before enable rcq
 		check_update_finished(hwde);
-		de_top_set_rcq_update(engine->top_hdl, hwde->id, 1);
+		if (engine->match_data->rcq_wait_line)
+			rcq_update_timer_start(hwde);
+		else
+			de_top_set_rcq_update(engine->top_hdl, hwde->id, 1);
 	} else if (use_double_buffer) {
 		de_update_ahb(hwde);
 		de_top_set_double_buffer_ready(engine->top_hdl, hwde->id);
 	}
 
-	/* block until finish */
-	if (hwde->enable) {
+	/* block until finish except calling from crash dump in interrupt */
+	if (in_task()) {
 		if (use_rcq) {
 			timeout = read_poll_timeout(check_update_finished, is_finished,
 					  is_finished, 100, 50000, false, hwde);
@@ -630,7 +688,8 @@ void sunxi_de_atomic_flush(struct sunxi_de_out *hwde,  struct sunxi_de_flush_cfg
 		DRM_INFO("%s timeout\n", __func__);
 	else {
 		de_rtmx_set_all_reg_dirty(hwde, 0);
-		sunxi_de_process_late(hwde);
+		if (hwde->work)
+			queue_work(system_long_wq, &hwde->pq_work);
 	}
 }
 
@@ -729,6 +788,20 @@ int sunxi_de_enable(struct sunxi_de_out *hwde,
 			return -1;
 		}
 	}
+	if (engine->ahb_vid_out) {
+		ret = clk_prepare_enable(engine->ahb_vid_out);
+		if (ret < 0) {
+			DRM_ERROR("Enable de module ahb_vid_out clk failed\n");
+			return -1;
+		}
+	}
+	if (engine->mbus_vo_sys) {
+		ret = clk_prepare_enable(engine->mbus_vo_sys);
+		if (ret < 0) {
+			DRM_ERROR("Enable de module mbus_vo_sys clk failed\n");
+			return -1;
+		}
+	}
 
 	pm_runtime_get_sync(hwde->dev);
 
@@ -742,6 +815,9 @@ int sunxi_de_enable(struct sunxi_de_out *hwde,
 	hwde->output_info.color_space = cfg->color_space;
 	hwde->output_info.color_range = cfg->color_range;
 	hwde->output_info.data_bits = cfg->data_bits;
+	hwde->kHZ_pixelclk = cfg->kHZ_pixelclk;
+	hwde->htotal = cfg->htotal;
+	hwde->vtotal = cfg->vtotal;
 
 	rtmx_start(engine, hwde->id, cfg->hwdev_index);
 	DRM_INFO("%s finish sw en=%d\n", __FUNCTION__, cfg->sw_enable);
@@ -762,6 +838,7 @@ void sunxi_de_disable(struct sunxi_de_out *hwde)
 
 	hwde->enable = false;
 
+	de_backend_disable(hwde->backend_hdl);
 	/* we need to disbale all bld pipe to avoid enable not used pipe after crtc enable */
 	for (i = 0; i < CHANNEL_MAX; i++) {
 		de_bld_pipe_reset(hwde->bld_hdl, i, -255);
@@ -777,6 +854,10 @@ void sunxi_de_disable(struct sunxi_de_out *hwde)
 	clk_disable_unprepare(engine->mclk);
 	clk_disable_unprepare(engine->mclk_bus);
 	clk_disable_unprepare(engine->mclk_ahb);
+	if (engine->ahb_vid_out)
+		clk_disable_unprepare(engine->ahb_vid_out);
+	if (engine->mbus_vo_sys)
+		clk_disable_unprepare(engine->mbus_vo_sys);
 	reset_control_assert(engine->rst_bus_de);
 	reset_control_assert(engine->rst_bus_de_sys);
 	if (engine->disp_sys)
@@ -819,6 +900,16 @@ static int sunxi_de_parse_dts(struct device *dev,
 	engine->mclk_ahb = devm_clk_get_optional(dev, "clk_ahb_de");
 	if (IS_ERR(engine->mclk_ahb)) {
 		DRM_ERROR("fail to get ahb clk for de\n");
+		return -EINVAL;
+	}
+	engine->ahb_vid_out = devm_clk_get_optional(dev, "ahb_vid_out");
+	if (IS_ERR(engine->ahb_vid_out)) {
+		DRM_ERROR("fail to get ahb_vid_out clk for de\n");
+		return -EINVAL;
+	}
+	engine->mbus_vo_sys = devm_clk_get_optional(dev, "mbus_vo_sys");
+	if (IS_ERR(engine->mbus_vo_sys)) {
+		DRM_ERROR("fail to get mbus_vo_sys clk for de\n");
 		return -EINVAL;
 	}
 
@@ -1022,6 +1113,19 @@ static int sunxi_de_get_disp_sys(struct sunxi_display_engine *engine)
 	return 0;
 }
 
+static void de_process_late_work(struct work_struct *work)
+{
+	struct sunxi_de_out *disp = container_of(work, struct sunxi_de_out, pq_work);
+	struct de_channel_handle *ch;
+	u32 i = 0;
+	for (i = 0; i < disp->ch_cnt; i++) {
+		ch = disp->ch_hdl[i];
+		if (ch->routine_job)
+			channel_process_late(ch);
+	}
+	//bld_process_late(hwde->bld_hdl);
+}
+
 static int sunxi_de_probe(struct platform_device *pdev)
 {
 	int i, j, ret;
@@ -1033,11 +1137,6 @@ static int sunxi_de_probe(struct platform_device *pdev)
 	ret = sunxi_display_engine_init(&pdev->dev);
 	if (ret)
 		goto OUT;
-	ret = component_add(&pdev->dev, &sunxi_de_component_ops);
-	if (ret) {
-		DRM_ERROR("failed to add component de\n");
-		goto EXIT;
-	}
 	pm_runtime_enable(&pdev->dev);
 
 	//create hw
@@ -1061,6 +1160,8 @@ static int sunxi_de_probe(struct platform_device *pdev)
 		display_out = &engine->display_out[i];
 		display_out->id = i;
 		display_out->dev = &pdev->dev;
+		hrtimer_init(&display_out->rcq_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		display_out->rcq_timer.function = timer_handler_rcq_update;
 		display_out->port = of_graph_get_port_by_id(pdev->dev.of_node, i);
 
 		cinfo.id = display_out->id;
@@ -1081,6 +1182,8 @@ static int sunxi_de_probe(struct platform_device *pdev)
 						ch_hdl->is_video, ch_hdl->type_hw_id) >= 0) {
 				display_out->ch_hdl[display_out->ch_cnt] = ch_hdl;
 				display_out->ch_cnt++;
+				if (ch_hdl->routine_job)
+					display_out->work = true;
 				break;
 			}
 		}
@@ -1089,9 +1192,19 @@ static int sunxi_de_probe(struct platform_device *pdev)
 	//setup rcq
 	for (i = 0; i < engine->display_out_cnt; i++) {
 		de_rtmx_init_rcq(engine, i);
+		INIT_WORK(&engine->display_out[i].pq_work, de_process_late_work);
+
 	}
 
-	return 0;
+	sunxidrm_debug_init(pdev);
+
+	ret = component_add(&pdev->dev, &sunxi_de_component_ops);
+	if (ret) {
+		DRM_ERROR("failed to add component de\n");
+		goto EXIT;
+	}
+
+	return ret;
 EXIT:
 	sunxi_display_engine_exit(&pdev->dev);
 OUT:
@@ -1100,6 +1213,7 @@ OUT:
 
 static int sunxi_de_remove(struct platform_device *pdev)
 {
+	sunxidrm_debug_term();
 	pm_runtime_disable(&pdev->dev);
 	component_del(&pdev->dev, &sunxi_de_component_ops);
 	sunxi_display_engine_exit(&pdev->dev);
@@ -1124,6 +1238,7 @@ static const struct de_match_data de352_data = {
 static const struct de_match_data de210_data = {
 	.version = 0x210,
 	.update_mode = RCQ_MODE,
+	.rcq_wait_line = true,
 };
 
 static const struct de_match_data de201_data = {

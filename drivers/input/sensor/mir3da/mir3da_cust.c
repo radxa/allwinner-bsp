@@ -37,6 +37,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/ktime.h>
+#include <linux/version.h>
 #include "../../init-input.h"
 #include "mir3da_core.h"
 #include "mir3da_cust.h"
@@ -788,7 +789,11 @@ MIR_GENERAL_OPS_DECLARE(ops_handle, i2c_smbus_read, i2c_smbus_read_block, i2c_sm
 		NULL, NULL, NULL, get_address, NULL, msdelay, sprintf);
 #endif
 /*----------------------------------------------------------------------------*/
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static int mir3da_probe(struct i2c_client *client)
+#else
 static int mir3da_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	int	result = -1;
 	struct input_dev	*idev;
@@ -901,7 +906,11 @@ err_detach_client:
 	return result;
 }
 /*----------------------------------------------------------------------------*/
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void mir3da_remove(struct i2c_client *client)
+#else
 static int mir3da_remove(struct i2c_client *client)
+#endif
 {
 	MIR_HANDLE	  handle = mir_handle;
 
@@ -926,7 +935,11 @@ static int mir3da_remove(struct i2c_client *client)
 #endif
 	//hwmon_device_unregister(hwmon_dev);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	return;
+#else
 	return 0;
+#endif
 }
 /*----------------------------------------------------------------------------*/
 static int mir3da_suspend(struct device *dev)

@@ -217,11 +217,10 @@ static void ilitek_plat_regulator_power_init(void)
 static int ilitek_plat_gpio_register(void)
 {
 	int ret = 0;
-	u32 flag;
 	struct device_node *dev_node = ilits->dev->of_node;
 
-	ilits->tp_int = of_get_named_gpio_flags(dev_node, DTS_INT_GPIO, 0, &flag);
-	ilits->tp_rst = of_get_named_gpio_flags(dev_node, DTS_RESET_GPIO, 0, &flag);
+	ilits->tp_int = of_get_named_gpio(dev_node, DTS_INT_GPIO, 0);
+	ilits->tp_rst = of_get_named_gpio(dev_node, DTS_RESET_GPIO, 0);
 
 	ILI_INFO("TP INT: %d\n", ilits->tp_int);
 	ILI_INFO("TP RESET: %d\n", ilits->tp_rst);

@@ -13,6 +13,8 @@
 #define _DE_CHANNEL_H_
 
 #include <drm/drm_plane.h>
+#include <drm/drm_plane.h>
+#include <video/sunxi_drm.h>
 #include "de_base.h"
 
 #define MAX_LAYER_NUM_PER_CHN		(4)
@@ -56,31 +58,34 @@ enum de_pixel_format {
 	DE_FORMAT_YUV422_I_VYUY = 0x45,
 	DE_FORMAT_YUV444_P = 0x46,
 	DE_FORMAT_YUV422_P = 0x47,
-	DE_FORMAT_YUV420_P = 0x48,
-	DE_FORMAT_YUV411_P = 0x49,
-	DE_FORMAT_YUV422_SP_UVUV = 0x4a,
-	DE_FORMAT_YUV422_SP_VUVU = 0x4b,
-	DE_FORMAT_YUV420_SP_UVUV = 0x4c,
-	DE_FORMAT_YUV420_SP_VUVU = 0x4d,
-	DE_FORMAT_YUV411_SP_UVUV = 0x4e,
-	DE_FORMAT_YUV411_SP_VUVU = 0x4f,
-	DE_FORMAT_8BIT_GRAY                    = 0x50,
-	DE_FORMAT_YUV444_I_AYUV_10BIT          = 0x51,
-	DE_FORMAT_YUV444_I_VUYA_10BIT          = 0x52,
-	DE_FORMAT_YUV422_I_YVYU_10BIT          = 0x53,
-	DE_FORMAT_YUV422_I_YUYV_10BIT          = 0x54,
-	DE_FORMAT_YUV422_I_UYVY_10BIT          = 0x55,
-	DE_FORMAT_YUV422_I_VYUY_10BIT          = 0x56,
-	DE_FORMAT_YUV444_P_10BIT               = 0x57,
-	DE_FORMAT_YUV422_P_10BIT               = 0x58,
-	DE_FORMAT_YUV420_P_10BIT               = 0x59,
-	DE_FORMAT_YUV411_P_10BIT               = 0x5a,
-	DE_FORMAT_YUV422_SP_UVUV_10BIT         = 0x5b,
-	DE_FORMAT_YUV422_SP_VUVU_10BIT         = 0x5c,
-	DE_FORMAT_YUV420_SP_UVUV_10BIT         = 0x5d,
-	DE_FORMAT_YUV420_SP_VUVU_10BIT         = 0x5e,
-	DE_FORMAT_YUV411_SP_UVUV_10BIT         = 0x5f,
-	DE_FORMAT_YUV411_SP_VUVU_10BIT         = 0x60,
+	DE_FORMAT_YVU422_P = 0x48,
+	DE_FORMAT_YUV420_P = 0x49,
+	DE_FORMAT_YVU420_P = 0x4a,
+	DE_FORMAT_YUV411_P = 0x4b,
+	DE_FORMAT_YVU411_P = 0x4c,
+	DE_FORMAT_YUV422_SP_UVUV = 0x4d,
+	DE_FORMAT_YUV422_SP_VUVU = 0x4e,
+	DE_FORMAT_YUV420_SP_UVUV = 0x4f,
+	DE_FORMAT_YUV420_SP_VUVU = 0x50,
+	DE_FORMAT_YUV411_SP_UVUV = 0x51,
+	DE_FORMAT_YUV411_SP_VUVU = 0x52,
+	DE_FORMAT_8BIT_GRAY                    = 0x53,
+	DE_FORMAT_YUV444_I_AYUV_10BIT          = 0x54,
+	DE_FORMAT_YUV444_I_VUYA_10BIT          = 0x55,
+	DE_FORMAT_YUV422_I_YVYU_10BIT          = 0x56,
+	DE_FORMAT_YUV422_I_YUYV_10BIT          = 0x57,
+	DE_FORMAT_YUV422_I_UYVY_10BIT          = 0x58,
+	DE_FORMAT_YUV422_I_VYUY_10BIT          = 0x59,
+	DE_FORMAT_YUV444_P_10BIT               = 0x5a,
+	DE_FORMAT_YUV422_P_10BIT               = 0x5b,
+	DE_FORMAT_YUV420_P_10BIT               = 0x5c,
+	DE_FORMAT_YUV411_P_10BIT               = 0x5d,
+	DE_FORMAT_YUV422_SP_UVUV_10BIT         = 0x5e,
+	DE_FORMAT_YUV422_SP_VUVU_10BIT         = 0x5f,
+	DE_FORMAT_YUV420_SP_UVUV_10BIT         = 0x60,
+	DE_FORMAT_YUV420_SP_VUVU_10BIT         = 0x61,
+	DE_FORMAT_YUV411_SP_UVUV_10BIT         = 0x62,
+	DE_FORMAT_YUV411_SP_VUVU_10BIT         = 0x63,
 };
 
 struct display_channel_state {
@@ -106,6 +111,7 @@ struct display_channel_state {
 struct de_channel_handle {
 	struct module_create_info cinfo;
 	const char *name;
+	bool routine_job;
 	const uint32_t *formats;
 	bool afbc_rot_support;
 	unsigned int exclusive_scaler_ids;
@@ -145,5 +151,6 @@ void channel_process_late(struct de_channel_handle *hdl);
 struct de_channel_handle *de_channel_create(struct module_create_info *cinfo);
 bool channel_format_mod_supported(struct de_channel_handle *hdl, uint32_t format, uint64_t modifier);
 void dump_channel_state(struct drm_printer *p, struct de_channel_handle *hdl, const struct display_channel_state *state, bool state_only);
+int channel_get_pqd_config(struct de_channel_handle *hdl, struct display_channel_state *cstate);
 
 #endif

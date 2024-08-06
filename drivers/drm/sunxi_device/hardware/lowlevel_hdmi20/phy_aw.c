@@ -8,9 +8,10 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
 #include <linux/delay.h>
+
 #include "dw_dev.h"
+#include "dw_mc.h"
 #include "dw_phy.h"
 #include "phy_aw.h"
 
@@ -606,7 +607,7 @@ static int _aw_phy_enable(void)
 		udelay(5);
 		status = aw_phy_addr->phy_pll_sts.bits.phy_rcalend2d_status;
 		if (status & 0x1) {
-			video_log("[%s]:phy_rcalend2d_status\n", __func__);
+			hdmi_trace("aw phy wait rcalend2d done\n");
 			break;
 		}
 	}
@@ -620,7 +621,7 @@ static int _aw_phy_enable(void)
 		udelay(5);
 		status = aw_phy_addr->phy_pll_sts.bits.pll_lock_status;
 		if (status & 0x1) {
-			video_log("[%s]:pll_lock_status\n", __func__);
+			hdmi_trace("aw phy wait pll lock done\n");
 			break;
 		}
 	}
@@ -639,7 +640,7 @@ static int _aw_phy_enable(void)
 		udelay(5);
 		status = aw_phy_addr->phy_pll_sts.bits.tx_ready_dly_status;
 		if (status & 0x1) {
-			video_log("[%s]:tx_ready_status\n", __func__);
+			hdmi_trace("aw phy wait tx ready done\n");
 			break;
 		}
 	}
@@ -797,7 +798,7 @@ int aw_phy_read(u8 addr, void *data)
 int aw_phy_init(void)
 {
 	struct dw_hdmi_dev_s *hdmi = dw_get_hdmi();
-
+	hdmi_trace("aw phy init\n");
 	aw_phy_addr = (struct __aw_phy_reg_t *)(hdmi->addr + PHY_REG_OFFSET);
 	return 0;
 }

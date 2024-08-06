@@ -23,6 +23,7 @@
 #include <linux/mount.h>
 #include <linux/firmware.h>
 #include <linux/ctype.h>
+#include <linux/pinctrl/consumer.h>
 
 #define GUP_REG_HW_INFO		0x4220
 #define GUP_REG_FW_MSG		0x41E4

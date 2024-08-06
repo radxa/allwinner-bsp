@@ -97,7 +97,7 @@ static s32 request_usb_regulator_io(struct sunxi_hci_hcd *sunxi_hci)
 			sunxi_hci->hsic_regulator_io_hdle =
 					regulator_get(NULL, sunxi_hci->hsic_regulator_io);
 			if (IS_ERR(sunxi_hci->hsic_regulator_io_hdle)) {
-				DMSG_PANIC("ERR: some error happen, %s, hsic_regulator_io_hdle fail to get regulator!", sunxi_hci->hci_name);
+				DMSG_ERR("ERR: some error happen, %s, hsic_regulator_io_hdle fail to get regulator!", sunxi_hci->hci_name);
 				sunxi_hci->hsic_regulator_io_hdle = NULL;
 				return 0;
 			}
@@ -201,12 +201,12 @@ void sunxi_hci_set_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 			}
 			ret = regulator_enable(sunxi_hci->vbusin);
 			if (ret)
-				DMSG_PANIC("enable vbusin failed\n");
+				DMSG_ERR("enable vbusin failed\n");
 		} else {
 			if (regulator_is_enabled(sunxi_hci->vbusin)) {
 				ret = regulator_disable(sunxi_hci->vbusin);
 				if (ret)
-					DMSG_PANIC("force disable vbusin failed\n");
+					DMSG_ERR("force disable vbusin failed\n");
 			}
 		}
 		sunxi_hci->vbusin_on = is_on;
@@ -278,7 +278,7 @@ static void __iomem *usb_phy_csr_read(struct sunxi_hci_hcd *sunxi_hci)
 		return sunxi_hci->usb_vbase + SUNXI_HCI_UTMI_PHY_STATUS;
 
 	default:
-		DMSG_PANIC("usb_phy_csr_read is failed in %d index\n",
+		DMSG_ERR("usb_phy_csr_read is failed in %d index\n",
 			sunxi_hci->usbc_no);
 		break;
 	}
@@ -302,7 +302,7 @@ static void __iomem *usb_phy_csr_write(struct sunxi_hci_hcd *sunxi_hci)
 		return sunxi_hci->usb_vbase + SUNXI_HCI_PHY_CTRL;
 
 	default:
-		DMSG_PANIC("usb_phy_csr_write is failed in %d index\n",
+		DMSG_ERR("usb_phy_csr_write is failed in %d index\n",
 			sunxi_hci->usbc_no);
 		break;
 	}
@@ -320,18 +320,18 @@ int usb_phyx_tp_write(struct sunxi_hci_hcd *sunxi_hci,
 	int dtmp = 0;
 
 	if (sunxi_hci->otg_vbase == NULL) {
-		DMSG_PANIC("%s,otg_vbase is null\n", __func__);
+		DMSG_ERR("%s,otg_vbase is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_add(sunxi_hci) == NULL) {
-		DMSG_PANIC("%s,phy_csr_add is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_add is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_write(sunxi_hci) == NULL) {
 
-		DMSG_PANIC("%s,phy_csr_write is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_write is null\n", __func__);
 		return -1;
 	}
 
@@ -434,17 +434,17 @@ int usb_phyx_tp_read(struct sunxi_hci_hcd *sunxi_hci, int addr, int len)
 	int reg_temp = 0;
 
 	if (sunxi_hci->otg_vbase == NULL) {
-		DMSG_PANIC("%s,otg_vbase is null\n", __func__);
+		DMSG_ERR("%s,otg_vbase is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_add(sunxi_hci) == NULL) {
-		DMSG_PANIC("%s,phy_csr_add is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_add is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_read(sunxi_hci) == NULL) {
-		DMSG_PANIC("%s,phy_csr_read is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_read is null\n", __func__);
 		return -1;
 	}
 
@@ -482,18 +482,18 @@ static int usb_new_phyx_tp_write(struct sunxi_hci_hcd *sunxi_hci,
 	void __iomem *base;
 
 	if (sunxi_hci->otg_vbase == NULL) {
-		DMSG_PANIC("%s,otg_vbase is null\n", __func__);
+		DMSG_ERR("%s,otg_vbase is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_add(sunxi_hci) == NULL) {
-		DMSG_PANIC("%s,phy_csr_add is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_add is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_write(sunxi_hci) == NULL) {
 
-		DMSG_PANIC("%s,phy_csr_write is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_write is null\n", __func__);
 		return -1;
 	}
 	/* device: 0x410(phy_ctl) */
@@ -540,17 +540,17 @@ static int usb_new_phyx_tp_read(struct sunxi_hci_hcd *sunxi_hci, int addr, int l
 	void __iomem *base;
 
 	if (sunxi_hci->otg_vbase == NULL) {
-		DMSG_PANIC("%s,otg_vbase is null\n", __func__);
+		DMSG_ERR("%s,otg_vbase is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_add(sunxi_hci) == NULL) {
-		DMSG_PANIC("%s,phy_csr_add is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_add is null\n", __func__);
 		return -1;
 	}
 
 	if (usb_phy_csr_read(sunxi_hci) == NULL) {
-		DMSG_PANIC("%s,phy_csr_read is null\n", __func__);
+		DMSG_ERR("%s,phy_csr_read is null\n", __func__);
 		return -1;
 	}
 
@@ -1235,7 +1235,7 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 	if (sunxi_hci->hci_regulator) {
 		ret = regulator_enable(sunxi_hci->hci_regulator);
 		if (ret)
-			DMSG_PANIC("ERR:%s hci regulator enable failed\n",
+			DMSG_ERR("ERR:%s hci regulator enable failed\n",
 					sunxi_hci->hci_name);
 	}
 	/* otg and hci0 Controller Shared phy in SUN50I */
@@ -1327,28 +1327,28 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 			if (sunxi_hci->hsic_ctrl_flag) {
 				if (sunxi_hci->hsic_enable_flag) {
 					if (clk_prepare_enable(sunxi_hci->pll_hsic))
-						DMSG_PANIC("ERR:try to prepare_enable %s pll_hsic failed!\n",
+						DMSG_ERR("ERR:try to prepare_enable %s pll_hsic failed!\n",
 							sunxi_hci->hci_name);
 
 					if (clk_prepare_enable(sunxi_hci->clk_usbhsic12m))
-						DMSG_PANIC("ERR:try to prepare_enable %s clk_usbhsic12m failed!\n",
+						DMSG_ERR("ERR:try to prepare_enable %s clk_usbhsic12m failed!\n",
 							sunxi_hci->hci_name);
 
 					if (clk_prepare_enable(sunxi_hci->hsic_usbphy))
-						DMSG_PANIC("ERR:try to prepare_enable %s_hsic_usbphy failed!\n",
+						DMSG_ERR("ERR:try to prepare_enable %s_hsic_usbphy failed!\n",
 							sunxi_hci->hci_name);
 				}
 			} else {
 				if (clk_prepare_enable(sunxi_hci->pll_hsic))
-					DMSG_PANIC("ERR:try to prepare_enable %s pll_hsic failed!\n",
+					DMSG_ERR("ERR:try to prepare_enable %s pll_hsic failed!\n",
 						sunxi_hci->hci_name);
 
 				if (clk_prepare_enable(sunxi_hci->clk_usbhsic12m))
-					DMSG_PANIC("ERR:try to prepare_enable %s clk_usbhsic12m failed!\n",
+					DMSG_ERR("ERR:try to prepare_enable %s clk_usbhsic12m failed!\n",
 						sunxi_hci->hci_name);
 
 				if (clk_prepare_enable(sunxi_hci->hsic_usbphy))
-					DMSG_PANIC("ERR:try to prepare_enable %s_hsic_usbphy failed!\n",
+					DMSG_ERR("ERR:try to prepare_enable %s_hsic_usbphy failed!\n",
 						sunxi_hci->hci_name);
 			}
 		} else {
@@ -1387,7 +1387,7 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 		}
 
 	} else {
-		DMSG_PANIC("[%s]: wrn: open clock failed, (%d, 0x%p)\n",
+		DMSG_WARN("[%s]: wrn: open clock failed, (%d, 0x%p)\n",
 			sunxi_hci->hci_name,
 			sunxi_hci->clk_is_open,
 			sunxi_hci->mod_usb);
@@ -1492,7 +1492,7 @@ static int close_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 
 		udelay(10);
 	} else {
-		DMSG_PANIC("[%s]: wrn: open clock failed, (%d, 0x%p)\n",
+		DMSG_WARN("[%s]: wrn: open clock failed, (%d, 0x%p)\n",
 			sunxi_hci->hci_name,
 			sunxi_hci->clk_is_open,
 			sunxi_hci->mod_usb);
@@ -1592,7 +1592,7 @@ static void usb_passby(struct sunxi_hci_hcd *sunxi_hci, u32 enable)
 	} else if (sunxi_hci->usbc_no == HCI3_USBC_NO) {
 		__usb_passby(sunxi_hci, enable, &usb4_enable_passly_cnt);
 	} else {
-		DMSG_PANIC("EER: unknown usbc_no(%d)\n", sunxi_hci->usbc_no);
+		DMSG_ERR("EER: unknown usbc_no(%d)\n", sunxi_hci->usbc_no);
 		spin_unlock_irqrestore(&lock, flags);
 
 		mutex_unlock(&usb_passby_lock);
@@ -1611,7 +1611,7 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 	if (sunxi_hci->id_gpio_valid) {
 		ret = gpio_request(sunxi_hci->id_gpio_set.gpio, NULL);
 		if (ret != 0) {
-			DMSG_PANIC("request %s gpio:%d\n", sunxi_hci->hci_name,
+			DMSG_ERR("request %s gpio:%d\n", sunxi_hci->hci_name,
 				   sunxi_hci->id_gpio_set.gpio);
 		} else {
 			gpio_direction_input(sunxi_hci->id_gpio_set.gpio);
@@ -1622,7 +1622,7 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 	if (sunxi_hci->gma340_oe_gpio_valid) {
 		ret = gpio_request(sunxi_hci->gma340_oe_gpio_set.gpio, NULL);
 		if (ret != 0) {
-			DMSG_PANIC("request %s gpio:%d\n", sunxi_hci->hci_name,
+			DMSG_ERR("request %s gpio:%d\n", sunxi_hci->hci_name,
 				   sunxi_hci->gma340_oe_gpio_set.gpio);
 		} else {
 			gpio_direction_output(sunxi_hci->gma340_oe_gpio_set.gpio, 0);
@@ -1632,7 +1632,7 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 	if (sunxi_hci->drvvbus_en_gpio_valid) {
 		ret = gpio_request(sunxi_hci->drvvbus_en_gpio_set.gpio, NULL);
 		if (ret != 0) {
-			DMSG_PANIC("request %s gpio:%d\n", sunxi_hci->hci_name,
+			DMSG_ERR("request %s gpio:%d\n", sunxi_hci->hci_name,
 				   sunxi_hci->drvvbus_en_gpio_set.gpio);
 		} else {
 			gpio_direction_output(sunxi_hci->drvvbus_en_gpio_set.gpio, 0);
@@ -1644,7 +1644,7 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 		if (sunxi_hci->usb_host_hsic_rdy_valid) {
 			ret = gpio_request(sunxi_hci->usb_host_hsic_rdy.gpio, NULL);
 			if (ret != 0) {
-				DMSG_PANIC("ERR: gpio_request failed\n");
+				DMSG_ERR("ERR: gpio_request failed\n");
 				sunxi_hci->usb_host_hsic_rdy_valid = 0;
 			} else {
 				gpio_direction_output(sunxi_hci->usb_host_hsic_rdy.gpio, 0);
@@ -1656,7 +1656,7 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 			if (sunxi_hci->usb_hsic_hub_connect_valid) {
 				ret = gpio_request(sunxi_hci->usb_hsic_hub_connect.gpio, NULL);
 				if (ret != 0) {
-					DMSG_PANIC("ERR: gpio_request failed\n");
+					DMSG_ERR("ERR: gpio_request failed\n");
 					sunxi_hci->usb_hsic_hub_connect_valid = 0;
 				} else {
 					gpio_direction_output(sunxi_hci->usb_hsic_hub_connect.gpio, 1);
@@ -1666,7 +1666,7 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 			if (sunxi_hci->usb_hsic_int_n_valid) {
 				ret = gpio_request(sunxi_hci->usb_hsic_int_n.gpio, NULL);
 				if (ret != 0) {
-					DMSG_PANIC("ERR: gpio_request failed\n");
+					DMSG_ERR("ERR: gpio_request failed\n");
 					sunxi_hci->usb_hsic_int_n_valid = 0;
 				} else {
 					gpio_direction_output(sunxi_hci->usb_hsic_int_n.gpio, 1);
@@ -1678,7 +1678,7 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 			if (sunxi_hci->usb_hsic_reset_n_valid) {
 				ret = gpio_request(sunxi_hci->usb_hsic_reset_n.gpio, NULL);
 				if (ret != 0) {
-					DMSG_PANIC("ERR: gpio_request failed\n");
+					DMSG_ERR("ERR: gpio_request failed\n");
 					sunxi_hci->usb_hsic_reset_n_valid = 0;
 				} else {
 					gpio_direction_output(sunxi_hci->usb_hsic_reset_n.gpio, 1);
@@ -1757,12 +1757,12 @@ void sunxi_set_host_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 		if (is_on) {
 			ret = regulator_enable(sunxi_hci->supply);
 			if (ret)
-				DMSG_PANIC("ERR: %s regulator enable failed\n",
+				DMSG_ERR("ERR: %s regulator enable failed\n",
 					sunxi_hci->hci_name);
 		} else {
 			ret = regulator_disable(sunxi_hci->supply);
 			if (ret)
-				DMSG_PANIC("ERR: %s regulator force disable failed\n",
+				DMSG_ERR("ERR: %s regulator force disable failed\n",
 					sunxi_hci->hci_name);
 		}
 	}
@@ -1805,12 +1805,12 @@ static void __sunxi_set_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 		if (is_on) {
 			ret = regulator_enable(sunxi_hci->supply);
 			if (ret)
-				DMSG_PANIC("ERR: %s regulator enable failed\n",
+				DMSG_ERR("ERR: %s regulator enable failed\n",
 					sunxi_hci->hci_name);
 		} else {
 			ret = regulator_disable(sunxi_hci->supply);
 			if (ret)
-				DMSG_PANIC("ERR: %s regulator force disable failed\n",
+				DMSG_ERR("ERR: %s regulator force disable failed\n",
 					sunxi_hci->hci_name);
 		}
 	}
@@ -1829,7 +1829,7 @@ static void __sunxi_set_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 		if (!is_on) {
 			ret = regulator_disable(sunxi_hci->hci_regulator);
 			if (ret)
-				DMSG_PANIC("ERR: %s hci regulator force disable failed\n",
+				DMSG_ERR("ERR: %s hci regulator force disable failed\n",
 					sunxi_hci->hci_name);
 		}
 	}
@@ -2012,21 +2012,21 @@ static int sunxi_get_hci_clock(struct platform_device *pdev,
 		sunxi_hci->hsic_usbphy = of_clk_get(np, 2);
 		if (IS_ERR(sunxi_hci->hsic_usbphy)) {
 			sunxi_hci->hsic_usbphy = NULL;
-			DMSG_PANIC("ERR: %s get usb hsic_usbphy failed.\n",
+			DMSG_ERR("ERR: %s get usb hsic_usbphy failed.\n",
 				sunxi_hci->hci_name);
 		}
 
 		sunxi_hci->clk_usbhsic12m = of_clk_get(np, 3);
 		if (IS_ERR(sunxi_hci->clk_usbhsic12m)) {
 			sunxi_hci->clk_usbhsic12m = NULL;
-			DMSG_PANIC("ERR: %s get usb clk_usbhsic12m failed.\n",
+			DMSG_ERR("ERR: %s get usb clk_usbhsic12m failed.\n",
 				sunxi_hci->hci_name);
 		}
 
 		sunxi_hci->pll_hsic = of_clk_get(np, 4);
 		if (IS_ERR(sunxi_hci->pll_hsic)) {
 			sunxi_hci->pll_hsic = NULL;
-			DMSG_PANIC("ERR: %s get usb pll_hsic failed.\n",
+			DMSG_ERR("ERR: %s get usb pll_hsic failed.\n",
 				sunxi_hci->hci_name);
 		}
 	}
@@ -2053,7 +2053,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 	ret = of_property_read_string(usbc_np,
 			"status", &sunxi_hci->used_status);
 	if (ret) {
-		DMSG_PANIC("get %s used is fail, %d\n",
+		DMSG_ERR("get %s used is fail, %d\n",
 			sunxi_hci->hci_name, -ret);
 		sunxi_hci->used = 0;
 	} else if (!strcmp(sunxi_hci->used_status, "okay")) {
@@ -2082,7 +2082,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 		if (sunxi_hci->hsic_flag) {
 			if (!strncmp(sunxi_hci->hci_name,
 					"ohci", strlen("ohci"))) {
-				DMSG_PANIC("HSIC is no susport in %s, and to return\n",
+				DMSG_ERR("HSIC is no susport in %s, and to return\n",
 					sunxi_hci->hci_name);
 				sunxi_hci->used = 0;
 				return 0;
@@ -2093,12 +2093,12 @@ static int get_usb_cfg(struct platform_device *pdev,
 					KEY_USB_HSIC_REGULATOR_IO,
 					&sunxi_hci->hsic_regulator_io);
 			if (ret) {
-				DMSG_PANIC("get %s, hsic_regulator_io is fail, %d\n",
+				DMSG_ERR("get %s, hsic_regulator_io is fail, %d\n",
 					sunxi_hci->hci_name, -ret);
 				sunxi_hci->hsic_regulator_io = NULL;
 			} else {
 				if (!strcmp(sunxi_hci->hsic_regulator_io, "nocare")) {
-					DMSG_PANIC("get %s, hsic_regulator_io is no nocare\n",
+					DMSG_ERR("get %s, hsic_regulator_io is no nocare\n",
 						sunxi_hci->hci_name);
 					sunxi_hci->hsic_regulator_io = NULL;
 				}
@@ -2109,7 +2109,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 					KEY_USB_HSIC_CTRL,
 					&sunxi_hci->hsic_ctrl_flag);
 			if (ret) {
-				DMSG_PANIC("get %s usb_hsic_ctrl is fail, %d\n",
+				DMSG_ERR("get %s usb_hsic_ctrl is fail, %d\n",
 					sunxi_hci->hci_name, -ret);
 				sunxi_hci->hsic_ctrl_flag = 0;
 			}
@@ -2121,7 +2121,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 					sunxi_hci->usb_host_hsic_rdy_valid = 1;
 				} else {
 					sunxi_hci->usb_host_hsic_rdy_valid = 0;
-					DMSG_PANIC("get %s drv_vbus_gpio is fail\n",
+					DMSG_ERR("get %s drv_vbus_gpio is fail\n",
 						sunxi_hci->hci_name);
 				}
 			} else {
@@ -2133,7 +2133,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 					"usb_hsic_usb3503_flag",
 					&sunxi_hci->usb_hsic_usb3503_flag);
 			if (ret) {
-				DMSG_PANIC("get %s usb_hsic_usb3503_flag is fail, %d\n",
+				DMSG_ERR("get %s usb_hsic_usb3503_flag is fail, %d\n",
 					sunxi_hci->hci_name, -ret);
 				sunxi_hci->usb_hsic_usb3503_flag = 0;
 			}
@@ -2147,7 +2147,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 					sunxi_hci->usb_hsic_hub_connect_valid = 1;
 				} else {
 					sunxi_hci->usb_hsic_hub_connect_valid = 0;
-					DMSG_PANIC("get %s usb_hsic_hub_connect is fail\n",
+					DMSG_ERR("get %s usb_hsic_hub_connect is fail\n",
 						sunxi_hci->hci_name);
 				}
 
@@ -2159,7 +2159,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 					sunxi_hci->usb_hsic_int_n_valid = 1;
 				} else {
 					sunxi_hci->usb_hsic_int_n_valid = 0;
-					DMSG_PANIC("get %s usb_hsic_int_n is fail\n",
+					DMSG_ERR("get %s usb_hsic_int_n is fail\n",
 						sunxi_hci->hci_name);
 				}
 
@@ -2171,7 +2171,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 					sunxi_hci->usb_hsic_reset_n_valid = 1;
 				} else {
 					sunxi_hci->usb_hsic_reset_n_valid = 0;
-					DMSG_PANIC("get %s usb_hsic_reset_n is fail\n",
+					DMSG_ERR("get %s usb_hsic_reset_n is fail\n",
 						sunxi_hci->hci_name);
 				}
 
@@ -2195,7 +2195,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 			KEY_USB_WAKEUP_SUSPEND,
 			&sunxi_hci->wakeup_suspend);
 	if (ret) {
-		DMSG_PANIC("get %s wakeup_suspend is fail, %d\n",
+		DMSG_ERR("get %s wakeup_suspend is fail, %d\n",
 			sunxi_hci->hci_name, -ret);
 	}
 
@@ -2204,7 +2204,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 			KEY_USB_DRVVBUS_EN_GPIO,
 			&sunxi_hci->drvvbus_en_name);
 	if (ret) {
-		DMSG_PANIC("get drvvbus-en is fail, %d\n", -ret);
+		DMSG_ERR("get drvvbus-en is fail, %d\n", -ret);
 		sunxi_hci->drvvbus_en_gpio_valid = 0;
 	} else {
 		/* get drvvbus-en gpio */
@@ -2223,7 +2223,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 			KEY_USB_GMA340_OE_GPIO,
 			&sunxi_hci->gma340_oe_name);
 	if (ret) {
-		DMSG_PANIC("get gma340-oe is fail, %d\n", -ret);
+		DMSG_ERR("get gma340-oe is fail, %d\n", -ret);
 		sunxi_hci->gma340_oe_gpio_valid = 0;
 	} else {
 		/* get gma340-oe gpio */
@@ -2260,7 +2260,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 	if (of_property_read_bool(usbc_np, KEY_WAKEUP_SOURCE)) {
 		sunxi_hci->wakeup_source_flag = 1;
 	} else {
-		DMSG_PANIC("get %s wakeup-source is fail.\n",
+		DMSG_ERR("get %s wakeup-source is fail.\n",
 				sunxi_hci->hci_name);
 		sunxi_hci->wakeup_source_flag = 0;
 	}
@@ -2276,7 +2276,7 @@ int sunxi_get_hci_num(struct platform_device *pdev)
 
 	ret = of_property_read_u32(np, HCI_USBC_NO, &hci_num);
 	if (ret)
-		DMSG_PANIC("get hci_ctrl_num is fail, %d\n", -ret);
+		DMSG_ERR("get hci_ctrl_num is fail, %d\n", -ret);
 
 	return hci_num;
 }
@@ -2588,7 +2588,7 @@ static int sunxi_hci_dump_reg_all(int usbc_type)
 		return 0;
 
 	default:
-		DMSG_PANIC("%s()%d invalid argument\n", __func__, __LINE__);
+		DMSG_ERR("%s()%d invalid argument\n", __func__, __LINE__);
 		return -EINVAL;
 	}
 }
@@ -2614,7 +2614,7 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 			sunxi_hci = &sunxi_ehci3;
 			break;
 		default:
-			DMSG_PANIC("%s()%d invalid argument\n", __func__, __LINE__);
+			DMSG_ERR("%s()%d invalid argument\n", __func__, __LINE__);
 			return -EINVAL;
 		}
 
@@ -2626,7 +2626,7 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 				       (void *)sunxi_hci->ehci_base, 0x58, false);
 			DMSG_INFO("\n");
 		} else
-			DMSG_PANIC("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
+			DMSG_ERR("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
 
 		return 0;
 
@@ -2645,7 +2645,7 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 			sunxi_hci = &sunxi_ohci3;
 			break;
 		default:
-			DMSG_PANIC("%s()%d invalid argument\n", __func__, __LINE__);
+			DMSG_ERR("%s()%d invalid argument\n", __func__, __LINE__);
 			return -EINVAL;
 		}
 
@@ -2657,7 +2657,7 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 				       (void *)sunxi_hci->ohci_base, 0x58, false);
 			DMSG_INFO("\n");
 		} else
-			DMSG_PANIC("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
+			DMSG_ERR("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
 
 		return 0;
 
@@ -2676,7 +2676,7 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 			sunxi_hci = &sunxi_ehci3;
 			break;
 		default:
-			DMSG_PANIC("%s()%d invalid argument\n", __func__, __LINE__);
+			DMSG_ERR("%s()%d invalid argument\n", __func__, __LINE__);
 			return -EINVAL;
 		}
 
@@ -2688,7 +2688,7 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 				       (void *)sunxi_hci->usb_vbase + SUNXI_USB_PMU_IRQ_ENABLE, 0x34, false);
 			DMSG_INFO("\n");
 		} else
-			DMSG_PANIC("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
+			DMSG_ERR("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
 
 		return 0;
 
@@ -2711,7 +2711,7 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 			sunxi_ohci = &sunxi_ohci3;
 			break;
 		default:
-			DMSG_PANIC("%s()%d invalid argument\n", __func__, __LINE__);
+			DMSG_ERR("%s()%d invalid argument\n", __func__, __LINE__);
 			return -EINVAL;
 		}
 
@@ -2732,12 +2732,12 @@ static int sunxi_hci_dump_reg(int usbc_no, int usbc_type)
 				       (void *)(sunxi_ehci->usb_vbase + SUNXI_USB_PMU_IRQ_ENABLE), 0x34, false);
 			DMSG_INFO("\n");
 		} else
-			DMSG_PANIC("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
+			DMSG_ERR("%s()%d usbc%d is disable\n", __func__, __LINE__, usbc_no);
 
 		return 0;
 
 	default:
-		DMSG_PANIC("%s()%d invalid argument\n", __func__, __LINE__);
+		DMSG_ERR("%s()%d invalid argument\n", __func__, __LINE__);
 		return -EINVAL;
 	}
 }
@@ -3039,7 +3039,7 @@ static int __init init_sunxi_hci_class(void)
 
 	ret = class_register(&hci_class);
 	if (ret) {
-		DMSG_PANIC("%s()%d register class fialed\n", __func__, __LINE__);
+		DMSG_ERR("%s()%d register class fialed\n", __func__, __LINE__);
 		return -1;
 	}
 
@@ -3058,4 +3058,4 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:" SUNXI_HCI_NAME);
 MODULE_AUTHOR("javen");
-MODULE_VERSION("1.1.1");
+MODULE_VERSION("1.1.2");

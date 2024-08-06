@@ -1282,7 +1282,7 @@ __u32 USBC_Phyx_Read(__hdle hUSB)
 	__usbc_otg_t *usbc_otg = (__usbc_otg_t *)hUSB;
 
 	if (usbc_otg == NULL) {
-		DMSG_PANIC("ERR: usbc_otg is null!");
+		DMSG_ERR("ERR: usbc_otg is null!");
 		return -1;
 	}
 

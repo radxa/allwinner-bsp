@@ -147,7 +147,7 @@ static void rmmod_host_driver(struct usb_msg_center_info *center_info)
 
 	ret = sunxi_usb_host0_disable();
 	if (ret != 0) {
-		DMSG_PANIC("err: disable hcd0 failed\n");
+		DMSG_ERR("err: disable hcd0 failed\n");
 		return;
 	}
 }
@@ -319,7 +319,7 @@ void usb_msg_center(struct usb_cfg *cfg)
 		break;
 
 	default:
-		DMSG_PANIC("ERR: unknown role(%x)\n", role);
+		DMSG_ERR("ERR: unknown role(%x)\n", role);
 	}
 }
 

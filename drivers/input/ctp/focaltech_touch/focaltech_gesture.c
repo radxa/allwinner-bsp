@@ -122,6 +122,10 @@ static ssize_t fts_gesture_store(
 {
     struct fts_ts_data *ts_data = dev_get_drvdata(dev);
 
+    if (ts_data->suspended) {
+        FTS_INFO("In suspend,not operation gesture mode!");
+        return count;
+    }
     mutex_lock(&ts_data->input_dev->mutex);
     if (FTS_SYSFS_ECHO_ON(buf)) {
         FTS_DEBUG("enable gesture");
@@ -385,6 +389,7 @@ int fts_gesture_suspend(struct fts_ts_data *ts_data)
 {
     int i = 0;
     u8 state = 0xFF;
+    int ret = 0;
 
     FTS_FUNC_ENTER();
     if (enable_irq_wake(ts_data->irq)) {
@@ -411,7 +416,7 @@ int fts_gesture_suspend(struct fts_ts_data *ts_data)
         FTS_INFO("Enter into gesture(suspend) successfully");
 
     FTS_FUNC_EXIT();
-    return 0;
+    return ret;
 }
 
 int fts_gesture_resume(struct fts_ts_data *ts_data)
@@ -483,6 +488,15 @@ int fts_gesture_init(struct fts_ts_data *ts_data)
     ts_data->gesture_bmode = GESTURE_BM_REG;
     ts_data->gesture_support = FTS_GESTURE_EN;
 
+    if (ts_data->bus_type == BUS_TYPE_SPI) {
+        if ((ts_data->ic_info.ids.type <= 0x25)
+            || (ts_data->ic_info.ids.type == 0x87)
+            || (ts_data->ic_info.ids.type == 0x88)) {
+            FTS_INFO("ic type:0x%02x,GESTURE_BM_TOUCH", ts_data->ic_info.ids.type);
+            ts_data->touch_size += FTS_GESTURE_DATA_LEN;
+            ts_data->gesture_bmode = GESTURE_BM_TOUCH;
+        }
+    }
 
     FTS_FUNC_EXIT();
     return 0;

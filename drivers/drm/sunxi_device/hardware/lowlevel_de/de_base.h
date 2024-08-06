@@ -189,7 +189,6 @@ struct module_create_info {
 
 
 int drm_to_de_format(uint32_t format);
-ssize_t de_frontend_data_size(void);
 void *sunxi_de_reg_buffer_alloc(struct sunxi_display_engine *de, u32 size, dma_addr_t *phy_addr, u32 rcq_used);
 void *sunxi_de_dma_alloc_coherent(struct sunxi_display_engine *de, u32 size, dma_addr_t *phy_addr);
 void sunxi_de_dma_free_coherent(struct sunxi_display_engine *de, u32 size, dma_addr_t phy_addr, void *virt_addr);

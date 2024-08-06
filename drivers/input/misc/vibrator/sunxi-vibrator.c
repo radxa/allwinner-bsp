@@ -29,6 +29,14 @@
 #include <linux/timer.h>
 #include "../../init-input.h"
 
+#include <linux/version.h>
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
+#define CONST_TYPE_PREFIX const
+#else
+#define CONST_TYPE_PREFIX
+#endif
+
 static struct work_struct vibrator_work;
 static struct hrtimer vibe_timer;
 static int vibe_state;
@@ -136,14 +144,14 @@ static enum hrtimer_restart vibrator_timer_func(struct hrtimer *timer)
 	return HRTIMER_NORESTART;
 }
 
-static ssize_t on_show(struct class *cls,
-			struct class_attribute *attr, char *buf)
+static ssize_t on_show(CONST_TYPE_PREFIX struct class *cls,
+			CONST_TYPE_PREFIX struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", vibrator_get_time());
 }
 
-static ssize_t on_store(struct class *cls,
-	       struct class_attribute *attr,
+static ssize_t on_store(CONST_TYPE_PREFIX struct class *cls,
+	       CONST_TYPE_PREFIX struct class_attribute *attr,
 	       const char *buf, size_t count)
 {
 	int value;
@@ -169,12 +177,16 @@ ATTRIBUTE_GROUPS(vibrator_class);
 
 static struct class vibrator_class = {
 	.name = "vibrator",
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(6, 3, 0))
 	.owner = THIS_MODULE,
+#endif
 	.class_groups = vibrator_class_groups,
 };
 
 static int __init sunxi_vibrator_init(void)
 {
+	int ret;
+
 	if (input_sensor_startup(&(motor_info.input_type))) {
 		printk("%s: motor_fetch_sysconfig_para err.\n", __func__);
 		goto exit;
@@ -202,7 +214,10 @@ static int __init sunxi_vibrator_init(void)
 	hrtimer_init(&vibe_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	vibe_timer.function = vibrator_timer_func;
 
-	class_register(&vibrator_class);
+	ret = class_register(&vibrator_class);
+	if (ret)
+		dprintk(DEBUG_INIT, "class_register error\n");
+
 	//timed_output_dev_register(&sunxi_vibrator);
 
 	dprintk(DEBUG_INIT, "sunxi_vibrator init end\n");

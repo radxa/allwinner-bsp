@@ -12,6 +12,7 @@ obj_low_hdmi += $(hdmidir)/dw_mc.o
 obj_low_hdmi += $(hdmidir)/dw_phy.o
 
 # phy model select.
+obj_low_hdmi += $(hdmidir)/phy_top.o
 obj_low_hdmi += $(hdmidir)/phy_aw.o
 obj_low_hdmi += $(hdmidir)/phy_snps.o
 obj_low_hdmi += $(hdmidir)/phy_inno.o

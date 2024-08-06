@@ -38,7 +38,7 @@
 /*****************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
-#define FTS_FW_REQUEST_SUPPORT                      0
+#define FTS_FW_REQUEST_SUPPORT                      1
 /* Example: focaltech_ts_fw_tianma.bin */
 #define FTS_FW_NAME_PREX_WITH_REQUEST               "focaltech_ts_fw_"
 
@@ -64,7 +64,7 @@ struct upgrade_module module_list[] = {
 };
 
 struct upgrade_func *upgrade_func_list[] = {
-    &upgrade_func_ft5422,
+    &upgrade_func_ft8205,
 };
 
 struct fts_upgrade *fwupgrade;
@@ -362,7 +362,7 @@ static int fts_pram_write_buf(struct fts_upgrade *upg, u8 *buf, u32 len)
         if ((i == (packet_number - 1)) && remainder)
             packet_len = remainder;
 
-        if (upg->ts_data->bus_type == BUS_TYPE_SPI_V2) {
+        if ((upg->ts_data->bus_type == BUS_TYPE_SPI) && (upg->ts_data->bus_ver == BUS_VER_V2)) {
             packet_buf[0] = FTS_ROMBOOT_CMD_SET_PRAM_ADDR;
             packet_buf[1] = BYTE_OFF_16(offset);
             packet_buf[2] = BYTE_OFF_8(offset);
@@ -938,7 +938,7 @@ int fts_flash_write_buf(
         if ((i == (packet_number - 1)) && remainder)
             packet_len = remainder;
 
-        if (upg->ts_data->bus_type == BUS_TYPE_SPI_V2) {
+        if ((upg->ts_data->bus_type == BUS_TYPE_SPI) && (upg->ts_data->bus_ver == BUS_VER_V2)) {
             packet_buf[0] = FTS_CMD_SET_WFLASH_ADDR;
             packet_buf[1] = BYTE_OFF_16(addr);
             packet_buf[2] = BYTE_OFF_8(addr);
@@ -1057,38 +1057,41 @@ int fts_flash_read_buf(u32 saddr, u8 *buf, u32 len)
                 FTS_ERROR("pram/bootloader read 03 command fail");
                 return ret;
             }
-        } else if (upg->ts_data->bus_type == BUS_TYPE_SPI_V2) {
-            wbuf[0] = FTS_CMD_SET_RFLASH_ADDR;
-            wbuf[1] = BYTE_OFF_16(addr);
-            wbuf[2] = BYTE_OFF_8(addr);
-            wbuf[3] = BYTE_OFF_0(addr);
-            ret = fts_write(wbuf, FTS_LEN_SET_ADDR);
-            if (ret < 0) {
-                FTS_ERROR("set flash address fail");
-                return ret;
-            }
-
-            msleep(FTS_CMD_READ_DELAY);
-            wbuf[0] = FTS_CMD_READ;
-            ret = fts_read(wbuf, 1, buf + offset, packet_len);
-            if (ret < 0) {
-                FTS_ERROR("pram/bootloader read 03(SPI_V2) command fail");
-                return ret;
-            }
         } else if (upg->ts_data->bus_type == BUS_TYPE_SPI) {
-            wbuf[0] = FTS_CMD_READ;
-            wbuf[1] = BYTE_OFF_16(addr);
-            wbuf[2] = BYTE_OFF_8(addr);
-            wbuf[3] = BYTE_OFF_0(addr);
-            wbuf[4] = BYTE_OFF_8(packet_len);
-            wbuf[5] = BYTE_OFF_0(packet_len);
-            ret = fts_read(wbuf, FTS_CMD_READ_LEN_SPI, \
-                           buf + offset, packet_len);
-            if (ret < 0) {
-                FTS_ERROR("pram/bootloader read 03(SPI) command fail");
-                return ret;
+            FTS_INFO("bus ver:%d", upg->ts_data->bus_ver);
+            if (upg->ts_data->bus_ver == BUS_VER_V2) {
+                wbuf[0] = FTS_CMD_SET_RFLASH_ADDR;
+                wbuf[1] = BYTE_OFF_16(addr);
+                wbuf[2] = BYTE_OFF_8(addr);
+                wbuf[3] = BYTE_OFF_0(addr);
+                ret = fts_write(wbuf, FTS_LEN_SET_ADDR);
+                if (ret < 0) {
+                    FTS_ERROR("set flash address fail");
+                    return ret;
+                }
+
+                msleep(FTS_CMD_READ_DELAY);
+                wbuf[0] = FTS_CMD_READ;
+                ret = fts_read(wbuf, 1, buf + offset, packet_len);
+                if (ret < 0) {
+                    FTS_ERROR("pram/bootloader read 03(SPI_V2) command fail");
+                    return ret;
+                }
+            } else if (upg->ts_data->bus_ver == BUS_VER_DEFAULT) {
+                wbuf[0] = FTS_CMD_READ;
+                wbuf[1] = BYTE_OFF_16(addr);
+                wbuf[2] = BYTE_OFF_8(addr);
+                wbuf[3] = BYTE_OFF_0(addr);
+                wbuf[4] = BYTE_OFF_8(packet_len);
+                wbuf[5] = BYTE_OFF_0(packet_len);
+                ret = fts_read(wbuf, FTS_CMD_READ_LEN_SPI, \
+                               buf + offset, packet_len);
+                if (ret < 0) {
+                    FTS_ERROR("pram/bootloader read 03(SPI) command fail");
+                    return ret;
+                }
             }
-        }
+        } else FTS_ERROR("unknown bus type:%d", upg->ts_data->bus_type);
     }
 
     return 0;
@@ -1135,7 +1138,7 @@ read_flash_err:
 
 static int fts_read_file_default(char *file_name, u8 **file_buf)
 {
-#if 0
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
     int ret = 0;
     char file_path[FILE_NAME_LENGTH] = { 0 };
     struct file *filp = NULL;
@@ -1179,22 +1182,20 @@ static int fts_read_file_default(char *file_name, u8 **file_buf)
     FTS_INFO("file len:%d read len:%d pos:%d", (u32)file_len, ret, (u32)pos);
     filp_close(filp, NULL);
     set_fs(old_fs);
-
     return ret;
+#else
+    FTS_INFO("not support vfs_read to get fw file");
+    return -EINVAL;
 #endif
-	return -1;
 }
 
 static int fts_read_file_request_firmware(char *file_name, u8 **file_buf)
 {
+#if FTS_FW_REQUEST_SUPPORT
     int ret = 0;
     const struct firmware *fw = NULL;
     char fwname[FILE_NAME_LENGTH] = { 0 };
     struct fts_upgrade *upg = fwupgrade;
-
-#if !FTS_FW_REQUEST_SUPPORT
-    return -EINVAL;
-#endif
 
     snprintf(fwname, FILE_NAME_LENGTH, "%s", file_name);
     ret = request_firmware(&fw, fwname, upg->ts_data->dev);
@@ -1219,6 +1220,10 @@ static int fts_read_file_request_firmware(char *file_name, u8 **file_buf)
     }
 
     return ret;
+#else
+    FTS_INFO("not support request_firmware to get fw file");
+    return -EINVAL;
+#endif
 }
 
 static int fts_read_file(char *file_name, u8 **file_buf)
@@ -1229,7 +1234,7 @@ static int fts_read_file(char *file_name, u8 **file_buf)
     if (ret < 0) {
         ret = fts_read_file_default(file_name, file_buf);
         if (ret < 0) {
-            FTS_ERROR("get fw file(default) fail");
+            FTS_INFO("get fw file(default) abnormal");
             return ret;
         }
     }
@@ -1892,6 +1897,20 @@ static int fts_fwupg_get_vendorid(struct fts_upgrade *upg, int *vid)
     }
 
     *vid = (int)((module_id << 8) + vendor_id);
+    return 0;
+}
+
+int fts_fw_recovery(void)
+{
+    return 0;
+}
+
+int fts_enter_gesture_fw(void)
+{
+    return 0;
+}
+int fts_enter_normal_fw(void)
+{
     return 0;
 }
 

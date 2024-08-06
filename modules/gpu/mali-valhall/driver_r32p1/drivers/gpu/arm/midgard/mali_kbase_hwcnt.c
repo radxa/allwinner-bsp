@@ -675,7 +675,7 @@ void kbase_hwcnt_context_disable(struct kbase_hwcnt_context *hctx)
 
 	mutex_lock(&hctx->accum_lock);
 
-	kbasep_hwcnt_context_disable(hctx, true);
+	kbasep_hwcnt_context_disable(hctx, false);
 
 	mutex_unlock(&hctx->accum_lock);
 }

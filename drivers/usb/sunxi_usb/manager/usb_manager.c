@@ -135,7 +135,7 @@ static int sunxi_dr_get_property(struct dual_role_phy_instance *dual_role,
 		*val = dr;
 		break;
 	default:
-		DMSG_PANIC("unsupported property %d\n", prop);
+		DMSG_ERR("unsupported property %d\n", prop);
 		return -EINVAL;
 	}
 
@@ -160,7 +160,7 @@ static inline enum sw_usb_role to_sw_usb_role(enum usb_role role)
 		sw_role = SW_USB_ROLE_DEVICE;
 		break;
 	default:
-		DMSG_PANIC("unsupported usb role %d\n", role);
+		DMSG_ERR("unsupported usb role %d\n", role);
 		break;
 	}
 	return sw_role;
@@ -181,7 +181,7 @@ static inline enum usb_role to_usb_role(enum sw_usb_role sw_role)
 		role = USB_ROLE_DEVICE;
 		break;
 	default:
-		DMSG_PANIC("unsupported usb role %d\n", sw_role);
+		DMSG_ERR("unsupported usb role %d\n", sw_role);
 		break;
 	}
 	return role;
@@ -202,7 +202,7 @@ static inline const char *sw_usb_role_to_string(enum sw_usb_role sw_role)
 		role = "device";
 		break;
 	default:
-		DMSG_PANIC("unsupported usb role %d\n", sw_role);
+		DMSG_ERR("unsupported usb role %d\n", sw_role);
 		break;
 	}
 	return role;
@@ -230,7 +230,7 @@ static void sunxi_usb_set_mode(enum sw_usb_role sw_role, bool callback)
 		usb_msg_center(&g_usb_cfg);
 		break;
 	default:
-		DMSG_PANIC("unsupported usb mode %d\n", sw_role);
+		DMSG_ERR("unsupported usb mode %d\n", sw_role);
 		break;
 	}
 
@@ -409,7 +409,7 @@ static int usb_id_irq_thread(void *parg)
 		if (cfg->port.id.valid) {
 			id_irq_num = gpio_to_irq(cfg->port.id.gpio_set.gpio);
 			if (IS_ERR_VALUE((unsigned long)id_irq_num)) {
-				DMSG_PANIC("ERR: map usb id gpio to virq failed, err %d\n",
+				DMSG_ERR("ERR: map usb id gpio to virq failed, err %d\n",
 					   id_irq_num);
 				return -EINVAL;
 			}
@@ -419,7 +419,7 @@ static int usb_id_irq_thread(void *parg)
 			ret = request_threaded_irq(id_irq_num, NULL, usb_id_irq,
 						   irq_flags, "usb_id", cfg);
 			if (IS_ERR_VALUE((unsigned long)ret)) {
-				DMSG_PANIC("ERR: request usb id virq %d failed, err %d\n",
+				DMSG_ERR("ERR: request usb id virq %d failed, err %d\n",
 					 id_irq_num, ret);
 				return -EINVAL;
 			}
@@ -507,7 +507,7 @@ static int sunxi_det_vbus_gpio_enable_power(struct usb_cfg *cfg)
 
 	ret = regulator_enable(cfg->port.usb_det_vbus_gpio_regulator);
 	if (ret)
-		DMSG_PANIC("fail to enable usb det vbus gpio regulator\n");
+		DMSG_ERR("fail to enable usb det vbus gpio regulator\n");
 
 	return ret;
 }
@@ -521,7 +521,7 @@ static int sunxi_det_vbus_gpio_disable_power(struct usb_cfg *cfg)
 
 	ret = regulator_disable(cfg->port.usb_det_vbus_gpio_regulator);
 	if (ret)
-		DMSG_PANIC("fail to disable usb det vbus gpio regulator\n");
+		DMSG_ERR("fail to disable usb det vbus gpio regulator\n");
 
 	return ret;
 }
@@ -640,12 +640,12 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 
 	ret = usb_script_parse(np, &g_usb_cfg);
 	if (ret != 0) {
-		DMSG_PANIC("ERR: get_usb_cfg failed\n");
+		DMSG_ERR("ERR: get_usb_cfg failed\n");
 		return -1;
 	}
 
 	if (g_usb_cfg.port.enable == 0) {
-		DMSG_PANIC("wrn: usb0 is disable\n");
+		DMSG_ERR("wrn: usb0 is disable\n");
 		return 0;
 	}
 
@@ -654,13 +654,13 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 	if (!IS_ERR_OR_NULL(g_usb_cfg.port.usbc_regulator)) {
 		ret = regulator_enable(g_usb_cfg.port.usbc_regulator);
 		if (ret)
-			DMSG_PANIC("ERR:usbc regulator enable failed\n");
+			DMSG_ERR("ERR:usbc regulator enable failed\n");
 	}
 
 	if (!IS_ERR_OR_NULL(g_usb_cfg.port.usb_det_vbus_gpio_regulator)) {
 		ret = sunxi_det_vbus_gpio_enable_power(&g_usb_cfg);
 		if (ret)
-			DMSG_PANIC("ERR:enable usb_det_vbus_gpio regulator failed\n");
+			DMSG_ERR("ERR:enable usb_det_vbus_gpio regulator failed\n");
 	}
 
 #if IS_ENABLED(CONFIG_DUAL_ROLE_USB_INTF)
@@ -674,7 +674,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 
 	g_usb_cfg.port.dual_role = devm_dual_role_instance_register(&pdev->dev, &g_usb_cfg.port.dr_desc);
 	if (IS_ERR(g_usb_cfg.port.dual_role))
-		DMSG_PANIC("ERR: failed to register dual_role_class device\n");
+		DMSG_ERR("ERR: failed to register dual_role_class device\n");
 #endif
 
 #if IS_ENABLED(CONFIG_TYPEC)
@@ -689,7 +689,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 						NULL,
 						"usb_device_chose");
 		if (IS_ERR(device_th)) {
-			DMSG_PANIC("ERR: device kthread_create failed\n");
+			DMSG_ERR("ERR: device kthread_create failed\n");
 			return -1;
 		}
 
@@ -702,7 +702,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 						NULL,
 						"usb_host_chose");
 		if (IS_ERR(host_th)) {
-			DMSG_PANIC("ERR: host kthread_create failed\n");
+			DMSG_ERR("ERR: host kthread_create failed\n");
 			return -1;
 		}
 
@@ -722,7 +722,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 							&g_usb_cfg,
 							"usb-hardware-scan");
 				if (IS_ERR(th)) {
-					DMSG_PANIC("ERR: kthread_create failed\n");
+					DMSG_ERR("ERR: kthread_create failed\n");
 					return -1;
 				}
 
@@ -733,13 +733,13 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 								&g_usb_cfg,
 								"usb_id_irq");
 				if (IS_ERR(id_irq_th)) {
-					DMSG_PANIC("ERR: id_irq kthread_create failed\n");
+					DMSG_ERR("ERR: id_irq kthread_create failed\n");
 					return -1;
 				}
 
 				wake_up_process(id_irq_th);
 			} else {
-				DMSG_PANIC("ERR: usb detect mode isn't supported\n");
+				DMSG_ERR("ERR: usb detect mode isn't supported\n");
 				return -1;
 			}
 		} else if (g_usb_cfg.port.detect_type == USB_DETECT_TYPE_VBUS_PMU) {
@@ -749,7 +749,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 				g_usb_cfg.port.pmu_psy = devm_power_supply_get_by_phandle(&pdev->dev,
 											"det_vbus_supply");
 			if (!g_usb_cfg.port.pmu_psy  || IS_ERR(g_usb_cfg.port.pmu_psy)) {
-				DMSG_PANIC("%s()%d WARN: get power supply failed\n", __func__, __LINE__);
+				DMSG_WARN("%s()%d WARN: get power supply failed\n", __func__, __LINE__);
 				if (!IS_ERR_OR_NULL(g_usb_cfg.port.usbc_regulator))
 					regulator_disable(g_usb_cfg.port.usbc_regulator);
 				return -1;
@@ -762,7 +762,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 							&g_usb_cfg,
 							"usb_pmu_scan");
 				if (IS_ERR(pmu_th)) {
-					DMSG_PANIC("ERR:pmu_scan kthread_create failed\n");
+					DMSG_ERR("ERR:pmu_scan kthread_create failed\n");
 					return -1;
 				}
 				wake_up_process(pmu_th);
@@ -803,7 +803,7 @@ static int sunxi_otg_manager_remove(struct platform_device *pdev)
 #endif
 
 	if (g_usb_cfg.port.enable == 0) {
-		DMSG_PANIC("wrn: usb0 is disable\n");
+		DMSG_WARN("wrn: usb0 is disable\n");
 		return 0;
 	}
 
@@ -842,7 +842,7 @@ static int sunxi_otg_manager_remove(struct platform_device *pdev)
 	if (!IS_ERR_OR_NULL(g_usb_cfg.port.usbc_regulator)) {
 		ret = regulator_disable(g_usb_cfg.port.usbc_regulator);
 		if (ret)
-			DMSG_PANIC("ERR:usbc regulator disable failed\n");
+			DMSG_ERR("ERR:usbc regulator disable failed\n");
 	}
 
 	sunxi_det_vbus_gpio_disable_power(&g_usb_cfg);
@@ -874,7 +874,7 @@ static int sunxi_otg_manager_resume(struct device *dev)
 	if (!IS_ERR_OR_NULL(g_usb_cfg.port.usbc_regulator)) {
 		ret = regulator_enable(g_usb_cfg.port.usbc_regulator);
 		if (ret)
-			DMSG_PANIC("ERR:usbc regulator enable failed\n");
+			DMSG_ERR("ERR:usbc regulator enable failed\n");
 	}
 
 	sunxi_det_vbus_gpio_enable_power(&g_usb_cfg);
@@ -943,4 +943,4 @@ MODULE_AUTHOR("wangjx<wangjx@allwinnertech.com>");
 MODULE_DESCRIPTION("Driver for Allwinner usb otg manager");
 MODULE_ALIAS("platform: usb manager for host and udc");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.1.0");
+MODULE_VERSION("1.1.1");

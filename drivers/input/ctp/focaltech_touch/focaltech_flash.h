@@ -134,6 +134,13 @@ enum UPGRADE_SPEC {
     UPGRADE_SPEC_V_1_2 = 0x0102,
 };
 
+
+enum FW_TYPE {
+    FW_AUTO,
+    FW_GESTURE,
+    FW_NORMAL,
+};
+
 /*****************************************************************************
 * Private enumerations, structures and unions using typedef
 *****************************************************************************/
@@ -206,7 +213,8 @@ struct fts_upgrade {
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
-extern struct upgrade_func upgrade_func_ft5422;
+extern struct upgrade_func upgrade_func_ft8205;
+
 
 
 /*****************************************************************************

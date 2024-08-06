@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* SPDX-License-Identifier: GPL-2.0-or-later WITH Linux-syscall-note */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /** @file
  * Copyright (C) 2022 Allwinner, Inc.
@@ -17,8 +17,12 @@
 #ifndef _UAPI_RT_MEDIA_H_
 #define _UAPI_RT_MEDIA_H_
 
+//#include <stdio.h>
+//#include <sys/types.h>
+
 #define SENSOR_0_SIGN 0xAA66AA66
 #define SENSOR_1_SIGN 0xBB66BB66
+#define SENSOR_2_SIGN 0xCC66CC66
 
 #if 1//config 0
 #define CSI_SENSOR_0_VIPP_0 0
@@ -31,6 +35,11 @@
 #define CSI_SENSOR_1_VIPP_2 9
 #define CSI_SENSOR_1_VIPP_3 13
 
+#define CSI_SENSOR_2_VIPP_0 2
+#define CSI_SENSOR_2_VIPP_1 6
+#define CSI_SENSOR_2_VIPP_2 10
+#define CSI_SENSOR_2_VIPP_3 14
+
 #else//config 1
 #define CSI_SENSOR_0_VIPP_0 0
 #define CSI_SENSOR_0_VIPP_1 4
@@ -41,10 +50,31 @@
 #define CSI_SENSOR_1_VIPP_1 6
 #define CSI_SENSOR_1_VIPP_2 10
 #define CSI_SENSOR_1_VIPP_3 14
+
+#define CSI_SENSOR_2_VIPP_0 1
+#define CSI_SENSOR_2_VIPP_1 5
+#define CSI_SENSOR_2_VIPP_2 9
+#define CSI_SENSOR_2_VIPP_3 13
 #endif
 
+#define LBC_2X_COM_RATIO_EVEN 600
+#define LBC_2X_COM_RATIO_ODD 450
+
+#define LBC_2_5X_COM_RATIO_EVEN 440
+#define LBC_2_5X_COM_RATIO_ODD 380
+
+#define LBC_BIT_DEPTH 8
+
+#define LBC_EXT_SIZE (2 * 1024)
+
+#define NEI_TEST_CODE 0
+
+#define RT_AE_FACE_MAX_NUM 8
+#define RT_AE_FACE_WIN_WEIGHT_LENGTH 16
+#define RT_AE_FACE_POS_WEIGHT_LENGTH 64
+
 enum RT_MEDIA_IOCTL_CMD {
-	IOCTL_UNKOWN = 0x100,
+	IOCTL_RT_UNKOWN = 0x100,
 
 	IOCTL_CONFIG,  //+1
 	IOCTL_START,   //+2
@@ -63,7 +93,6 @@ enum RT_MEDIA_IOCTL_CMD {
 	IOCTL_CATCH_JPEG_GET_DATA,
 	IOCTL_CATCH_JPEG_STOP,
 
-	IOCTL_GET_YUV_FRAME,
 	IOCTL_SET_OSD,
 
 	//IOCTL_GET_BIN_IMAGE_DATA,
@@ -75,7 +104,7 @@ enum RT_MEDIA_IOCTL_CMD {
 
 	IOCTL_GET_ISP_LV,
 	IOCTL_GET_ISP_HIST,
-	IOCTL_GET_ISP_EXP_GAIN,
+	IOCTL_GET_ISP_EXP_GAIN, //+20
 	IOCTL_GET_ISP_AE_METERING_MODE,
 	IOCTL_SET_IR_PARAM,
 	IOCTL_SET_VERTICAL_FLIP,
@@ -84,10 +113,12 @@ enum RT_MEDIA_IOCTL_CMD {
 	IOCTL_GET_ISP_ATTR_CFG,
 	IOCTL_SET_ISP_ORL,
 
+	IOCTL_SET_ISP_AE_MODE,
+
 	IOCTL_SET_FORCE_KEYFRAME,
 	IOCTL_RESET_ENCODER_TYPE,
 
-	IOCTL_REQUEST_ENC_YUV_FRAME,
+	IOCTL_REQUEST_ENC_YUV_FRAME, //+30
 	IOCTL_SUBMIT_ENC_YUV_FRAME,
 
 	IOCTL_SET_POWER_LINE_FREQ,
@@ -99,27 +130,60 @@ enum RT_MEDIA_IOCTL_CMD {
 	IOCTL_SET_ENC_MOTION_SEARCH_PARAM,
 	IOCTL_GET_ENC_MOTION_SEARCH_RESULT,
 	IOCTL_SET_VENC_SUPER_FRAME_PARAM,
-	IOCTL_SET_FPS,
+	IOCTL_SET_FPS, //+40
 	IOCTL_SET_SHARP,
 	IOCTL_GET_CSI_STATUS,
 	IOCTL_SET_ROI,
-	IOCTL_SET_IPC_CASE,
 	IOCTL_SET_GDC,
 	IOCTL_SET_ROTATE,
 	IOCTL_SET_REC_REF_LBC_MODE,
 	IOCTL_SET_WEAK_TEXT_TH,
 	IOCTL_SET_REGION_D3D_PARAM,
-	IOCTL_GET_REGION_D3D_RESULT,
+	IOCTL_GET_REGION_D3D_RESULT, //+50
 	IOCTL_SET_CHROMA_QP_OFFSET,
 	IOCTL_SET_H264_CONSTRAINT_FLAG,
 	IOCTL_SET_VE2ISP_D2D_LIMIT,
+	IOCTL_SET_EN_SMALL_SEARCH_RANGE,
+	IOCTL_SET_FORCE_CONF_WIN,
+	IOCTL_SET_ROT_VE2ISP,
+	IOCTL_SET_INSERT_DATA,
+	IOCTL_GET_INSERT_DATA_BUF_STATUS,
 	IOCTL_SET_GRAY,
-	IOCTL_SET_WB_YUV,
+	IOCTL_SET_WB_YUV, //+60
 	IOCTL_GET_WB_YUV,
 	IOCTL_SET_2DNR,
 	IOCTL_SET_3DNR,
 	IOCTL_SET_CYCLIC_INTRA_REFRESH,
 	IOCTL_SET_P_FRAME_INTRA,
+	IOCTL_RESET_IN_OUT_BUFFER,
+	IOCTL_DROP_FRAME, ///< notify rt_media to drop <n> video frames
+	IOCTL_SET_CAMERA_MOVE_STATUS,
+	IOCTL_SET_CROP,
+	IOCTL_SET_VENC_TARTGET_BITS_CLIP_PARAM,
+	IOCTL_SET_JPEG_QUALITY,
+	IOCTL_SET_FIX_QP,
+	IOCTL_SET_MB_RC_MOVE_STATUS,
+	IOCTL_SET_H264_VIDEO_TIMING,
+	IOCTL_SET_H265_VIDEO_TIMING,
+	IOCTL_GET_TDM_BUF,
+	IOCTL_RETURN_TDM_BUF,
+	IOCTL_GET_TDM_DATA,
+	IOCTL_SET_BRIGHTNESS,
+	IOCTL_SET_CONTRAST,
+	IOCTL_SET_SATURATION,
+	IOCTL_SET_HUE,
+	IOCTL_SET_SHARPNESS,
+	IOCTL_SET_SENSOR_EXP,
+	IOCTL_SET_SENSOR_GAIN,
+	IOCTL_GET_SENSOR_NAME,
+	IOCTL_GET_SENSOR_RESOLUTION,
+	IOCTL_GET_TUNNING_CTL_DATA,
+	IOCTL_SET_ENC_AND_DEC_CASE,
+	IOCTL_GET_SENSOR_RESERVE_ADDR,
+	IOCTL_GET_ISP_REG,
+	IOCTL_SET_TDM_DROP_FRAME,
+	IOCTL_SET_INPUT_BIT_WIDTH_START,
+	IOCTL_SET_INPUT_BIT_WIDTH_STOP,
 };
 
 typedef struct KERNEL_VBV_BUFFER_INFO{
@@ -147,26 +211,13 @@ typedef struct video_stream_s{
 	unsigned int offset2;
 
 	int keyframe_flag;
-	//struct timespec64 tv;
+	struct timeval tv;
 
 	unsigned char *data0;
 	unsigned char *data1;
 	unsigned char *data2;
 } video_stream_s;
 typedef video_stream_s STREAM_DATA_INFO;
-
-typedef struct catch_jpeg_config {
-	int 		   channel_id;
-	int 		   width;
-	int 		   height;
-	int 		   qp;
-	int 		   rotate_angle;
-} catch_jpeg_config;
-
-typedef struct catch_jpeg_buf_info {
-	unsigned int   buf_size; // set the max_size, return valid_size
-	unsigned char *buf;
-} catch_jpeg_buf_info;
 
 /* overlay related */
 #define MAX_OVERLAY_ITEM_SIZE  (64)
@@ -207,11 +258,25 @@ typedef struct VideoInputOSD_t {
 	unsigned char		   osd_num; //num of overlay region
 	OVERLAY_ARGB_TYPE	   argb_type;//reference definition of VENC_OVERLAY_ARGB_TYPE
 	OverlayItemInfo 	   item_info[MAX_OVERLAY_ITEM_SIZE];
-    //* for v5v200 and newer ic
+	//* for v5v200 and newer ic
     unsigned int                invert_mode;
     unsigned int                invert_threshold;
     //* end
 } VideoInputOSD;
+
+typedef struct catch_jpeg_config {
+	int 		   channel_id;
+	int 		   width;
+	int 		   height;
+	int 		   qp;
+	int 		   rotate_angle;
+	VideoInputOSD  overlay_info;
+} catch_jpeg_config;
+
+typedef struct catch_jpeg_buf_info {
+	unsigned int   buf_size; // set the max_size, return valid_size
+	unsigned char *buf;
+} catch_jpeg_buf_info;
 
 //typedef struct VideoGetBinImageBufInfo {
 //	unsigned int   max_size;
@@ -223,7 +288,11 @@ typedef struct VideoInputOSD_t {
 //	unsigned char  *buf;
 //} VideoGetMvInfoBufInfo;
 
+#if defined(CONFIG_FRAMEDONE_TWO_BUFFER)
+#define CONFIG_YUV_BUF_NUM (2)
+#else
 #define CONFIG_YUV_BUF_NUM (3)
+#endif
 
 typedef struct config_yuv_buf_info {
 	unsigned char *phy_addr[CONFIG_YUV_BUF_NUM];
@@ -240,7 +309,7 @@ typedef struct rt_yuv_info {
 } rt_yuv_info;
 
 
-#define VIDEO_INPUT_CHANNEL_NUM (15)
+#define VIDEO_INPUT_CHANNEL_NUM (16)
 
 typedef enum {
 	AW_Video_H264ProfileBaseline  = 66, 		/**< Baseline profile */
@@ -294,17 +363,25 @@ typedef enum {
 } AW_Video_H265LEVELTYPE; ///< same to #VENC_H265LEVELTYPE
 
 typedef struct video_qp_range {
-	int i_min_qp;//[1 ~ 51], I帧qp最小值，默认值: 35
-	int i_max_qp;//[1 ~ 51], I帧qp最大值，默认值: 51
-	int p_min_qp;//[1 ~ 51], P帧qp最小值，默认值: 35
-	int p_max_qp;//[1 ~ 51], P帧qp最大值，默认值: 51
+	int i_min_qp;//[1 ~ 51]
+	int i_max_qp;//[1 ~ 51]
+	int p_min_qp;//[1 ~ 51]
+	int p_max_qp;//[1 ~ 51]
 	int i_init_qp;
 	int enable_mb_qp_limit;
 } video_qp_range;
+
+typedef struct RTVencFixQP {
+	int bEnable;
+	int nIQp;
+	int nPQp;
+} RTVencFixQP;
+
 typedef enum VIDEO_OUTPUT_MODE{
-	OUTPUT_MODE_STREAM = 0, // yuv图像经过编码器输出码流数据；
-	OUTPUT_MODE_YUV    = 1, // 直接调用接口获取yuv数据
-	OUTPUT_MODE_ONLY_ENCDODER	= 2, // 调试用：不启用isp，应用层传递yuv给编码器进行编码
+	OUTPUT_MODE_STREAM = 0,
+	OUTPUT_MODE_YUV    = 1,
+	OUTPUT_MODE_ENCODE_FILE_YUV	= 2,
+	OUTPUT_MODE_ENCODE_OUTSIDE_YUV = 3,
 } VIDEO_OUTPUT_MODE;
 
 typedef enum rt_pixelformat_type {
@@ -312,11 +389,28 @@ typedef enum rt_pixelformat_type {
 	RT_PIXEL_YVU420SP, //nv21
 	RT_PIXEL_YUV420P,
 	RT_PIXEL_YVU420P,
+	RT_PIXEL_YUV422SP,
+	RT_PIXEL_YVU422SP,
+	RT_PIXEL_YUV422P,
+	RT_PIXEL_YVU422P,
+	RT_PIXEL_YUYV422,
+	RT_PIXEL_UYVY422,
+	RT_PIXEL_YVYU422,
+	RT_PIXEL_VYUY422,
 	RT_PIXEL_LBC_25X,
 	RT_PIXEL_LBC_2X,
 	RT_PIXEL_NUM
 } rt_pixelformat_type;
 typedef rt_pixelformat_type RT_PIXELFORMAT_TYPE;
+
+typedef enum rt_outputformat_type {
+    RT_OUTPUT_SAME_AS_INPUT,
+    RT_OUTPUT_420,
+    RT_OUTPUT_444,
+    RT_OUTPUT_422,
+    RT_OUPUT_NUM
+} rt_outputformat_type;
+typedef rt_outputformat_type RT_OUTPUTFORMAT_TYPE;
 
 typedef struct {
 	int en_motion_search;
@@ -396,22 +490,49 @@ typedef struct {
     unsigned int        nEncodeCnt;
 } RTVencThumbInfo;
 
+typedef struct {
+    int            enable_crop;
+    RTVencRect     s_crop_rect;
+} RTCropInfo;
+
+typedef enum {
+    RTVENC_PRODUCT_STATIC_IPC = 0,
+    RTVENC_PRODUCT_MOVING_IPC = 1,
+    RTVENC_PRODUCT_DOORBELL = 2,
+    RTVENC_PRODUCT_CDR = 3,
+    RTVENC_PRODUCT_SDV = 4,
+    RTVENC_PRODUCT_PROJECTION = 5,
+    RTVENC_PRODUCT_UAV = 6,       // Unmanned Aerial Vehicle
+    RTVENC_PRODUCT_NUM,
+} RTeVencProductMode; ///< same to eVencProductMode
+
 #define MAX_ROI_AREA 8
 
+typedef struct {
+	unsigned int			uMaxBitRate; //* kbps
+	unsigned int			nMovingTh;		//range[1,31], 1:all frames are moving,
+											//			  31:have no moving frame, default: 20
+	int 					nQuality;		//range[1,50], 1:worst quality, 10: common quality, 50:best quality
+	int 					nIFrmBitsCoef;	 //range[1, 20], 1:worst quality, 20:best quality
+	int 					nPFrmBitsCoef;	 //range[1, 50], 1:worst quality, 50:best quality
+} RTVencVbrParam;
+
 typedef struct rt_media_config_s {
-	int channelId;				// channel ID，码流通道 0)主码流 1)次码流。
-	int encodeType; 			//编码类型:0)h264 1)mjpeg 2)h265
+	int channelId;				// channel ID. equivalent to vipp number, scope[0,15].
+	int encodeType; 			//0)h264 1)mjpeg 2)h265
 	int width;	// resolution width
 	int height;// resolution height
 	int dst_width; ///< operate venc. encode output size.
 	int dst_height;
 	int fps;					///< operate isp. fps:1~30
+	int dst_fps;					///< operate isp. fps:1~30
 	int bitrate;				///< operate venc. h264 bitrate (kbps)
-	int gop;					///< operate venc. h264 I帧间隔（秒），如果sdk有自动降帧逻辑，要保证I帧间隔不变。
+	int gop;					///< operate venc. h264
 	int vbr;					///< operate venc. VBR=1, CBR=0
+	RTVencVbrParam vbr_param;
 	int profile; //AW_Video_H264PROFILETYPE or AW_VideoH265PROFILETYPE
 	int level; //AW_Video_H264LEVELTYPE or AW_Video_H265LEVELTYPE
-	int drop_frame_num; //丢弃的图像帧数：如drop_frame_num = 5, 则前5帧图像丢弃掉，从第6帧开始编码
+	int drop_frame_num;
 	video_qp_range qp_range;
 	VIDEO_OUTPUT_MODE output_mode;
 
@@ -425,6 +546,7 @@ typedef struct rt_media_config_s {
 	int enable_wdr; ///< config isp: set wdr, [0,1]
 
 	RT_PIXELFORMAT_TYPE pixelformat;//* just set it to: RT_PIXELFORMAT_UNKNOWN
+	RT_OUTPUTFORMAT_TYPE outputformat;
 	//RTVencMotionSearchParam motion_search_param;// should setup the param if use motion search by encoder
 	int enable_overlay;
 	int jpg_quality;
@@ -433,7 +555,7 @@ typedef struct rt_media_config_s {
 	int jpg_mode;//0: jpg 1: mjpg
 	RTVencBitRateRange bit_rate_range;
 	RTVencVideoSignal venc_video_signal;
-	int is_ipc; ///< operate venc. 0: normal; 1: ipc
+	RTeVencProductMode product_mode;
 	//RTVencROIConfig   sRoiConfig[MAX_ROI_AREA];
 
 	int demo_start;
@@ -441,11 +563,17 @@ typedef struct rt_media_config_s {
 	int en_16_align_fill_data;
 	int vin_buf_num;
 	int breduce_refrecmem;//Can reduce memory usage and optimize memory efficiency. default set enable
-    int            enable_crop;
-    RTVencRect     s_crop_rect;
+	RTCropInfo	   s_crop_info;
 	RTsWbYuvParam  s_wbyuv_param;
 	int vbv_buf_size;			//all bitstream buf size.
 	int vbv_thresh_size;		//one bitstream max size.
+
+	int enable_ve_isp_linkage;
+	int skip_sharp_param_frame_num;
+	int ve_encpp_sharp_atten_coef_per;      //decrease encpp sharpness percent [0, 100]. 100 means no decrease
+
+	int enable_aiisp;
+	unsigned int tdm_rxbuf_cnt;
 } rt_media_config_s;
 typedef rt_media_config_s VideoInputConfig;
 
@@ -538,15 +666,6 @@ typedef struct {
 //} RTsEncppSharp;
 
 typedef struct {
-	unsigned int			uMaxBitRate; //* kbps
-	unsigned int			nMovingTh;		//range[1,31], 1:all frames are moving,
-											//			  31:have no moving frame, default: 20
-	int 					nQuality;		//range[1,50], 1:worst quality, 10: common quality, 50:best quality
-	int 					nIFrmBitsCoef;	 //range[1, 20], 1:worst quality, 20:best quality
-	int 					nPFrmBitsCoef;	 //range[1, 50], 1:worst quality, 50:best quality
-} RTVencVbrParam;
-
-typedef struct {
 	unsigned int sum_mad;
 	unsigned int sum_qp;
 	unsigned long long sum_sse;
@@ -565,7 +684,7 @@ typedef struct RTVencSuperFrameConfig {
 	unsigned int			nMaxPFrameBits;
 	int 					nMaxRencodeTimes;
 	float					nMaxP2IFrameBitsRatio;
-} RTVencSuperFrameConfig; ///< same to RTVencSuperFrameConfig
+} RTVencSuperFrameConfig; ///< same to VencSuperFrameConfig
 
 
 
@@ -611,23 +730,41 @@ typedef enum {
 	RT_ISP_CTRL_AE_EV_LV_ADJ,
 	RT_ISP_CTRL_AE_WEIGHT_LUM,
 	RT_ISP_CTRL_AE_LOCK,
+	RT_ISP_CTRL_AE_FACE_CFG,
+	RT_ISP_CTRL_MIPI_SWITCH,
 	RT_ISP_CTRL_AE_TABLE,
 	RT_ISP_CTRL_AE_STATS,
 	RT_ISP_CTRL_IR_STATUS,
 	RT_ISP_CTRL_IR_AWB_GAIN,
 	RT_ISP_CTRL_READ_BIN_PARAM,
 	RT_ISP_CTRL_AE_ROI_TARGET,
+	RT_ISP_CTRL_AI_ISP,
 } RT_ISP_CTRL_CFG_IDS; ///< ref to hw_isp_ctrl_cfg_ids
 
+typedef enum {
+	/*tunning_ctrl*/
+	RT_ISP_CTRL_GET_SENSOR_CFG = 0,
+	RT_ISP_CTRL_RPBUF_INIT,
+	RT_ISP_CTRL_RPBUF_RELEASE,
+	RT_ISP_CTRL_GET_ISP_PARAM,
+	RT_ISP_CTRL_SET_ISP_PARAM,
+	RT_ISP_CTRL_GET_LOG,
+	RT_ISP_CTRL_GET_3A_STAT,
+} RT_TUNNING_CTRL_IDS; //ref to hw_tunning_ctrl_ids
+
 typedef struct {
-	int grey; // 0 彩色模式 	1 黑白模式
+	int grey; // 0 color 1 gray
 	int ir_on;
 	int ir_flash_on;
 } RTIrParam;
 
 typedef struct {
 	int exp_val;
+	int exp_mid_val;
+	int exp_short_val;
 	int gain_val;
+	int gain_mid_val;
+	int gain_short_val;
 	int r_gain;
 	int b_gain;
 } RTIspExpGain;
@@ -671,6 +808,44 @@ typedef struct {
 	unsigned short moving_level_table[484];
 } RTEncMovingLevelInfo; ///< same to struct enc_MovingLevelInfo
 
+typedef struct {
+	RTIspH3aCoorWin face_ae_coor[RT_AE_FACE_MAX_NUM];
+	unsigned char enable;
+	unsigned char vaild_face_cnt;
+	short face_ae_tolerance;
+	short face_ae_speed;
+	short face_ae_target;
+	short face_ae_delay_cnt;
+	unsigned short face_up_percent;
+	unsigned short face_down_percent;
+	unsigned short ae_face_block_num_thrd;
+	unsigned short ae_face_block_weight;
+	unsigned short ae_over_face_max_exp_control;
+	unsigned short ae_face_win_weight[RT_AE_FACE_WIN_WEIGHT_LENGTH];
+	int ae_face_pos_weight[RT_AE_FACE_POS_WEIGHT_LENGTH];
+} RTFaceAeCfg;
+
+typedef enum {
+	RT_MIPI_SWITCH_A = 0,
+	RT_MIPI_SWITCH_B = 1,
+	RT_MIPI_SWITCH_MAX,
+} RTMipiSwitchChoiceType;
+
+typedef enum {
+	RT_MIPI_GET_SWITCH = 0,
+	RT_MIPI_SET_SWITCH = 1,
+	RT_MIPI_CTRL_MAX,
+} RTMipiSwitchCtrlType;
+
+typedef struct {
+	RTMipiSwitchCtrlType switch_ctrl;
+	unsigned int mipi_switch_status;
+	unsigned int comp_ratio;
+	unsigned int exp_comp;
+	unsigned int gain_comp;
+	unsigned int drop_frame_num;
+	unsigned long long time_stamp;
+} RTSensorMipiSwitchEntity;
 
 typedef struct {
 	unsigned char enable_3d_filter;
@@ -691,14 +866,29 @@ typedef struct {
 	unsigned char filter_th_y; //* range[0~15], advice: 2
 } RTs2DfilterParam;
 
+typedef struct RTVencH264VideoTiming {
+	unsigned long num_units_in_tick;
+	unsigned long time_scale;
+	unsigned int fixed_frame_rate_flag;
+
+} RTVencH264VideoTiming;
+
+typedef struct RTVencH265TimingS {
+	//0:stream without timing info; 1:stream with timing info
+	unsigned char timing_info_present_flag;
+	unsigned int num_units_in_tick; //time_scale/frameRate
+	unsigned int time_scale; //1second is  average divided by time_scale
+	unsigned int num_ticks_poc_diff_one; //num ticks of diff frame
+} RTVencH265TimingS;
+
 typedef struct {
 	int bEnable;
 	int nBlockNumber;
 } RTVencCyclicIntraRefresh;
 
 typedef struct {
-//	int d2d_level; //[1,1024], 256 means 1X
-//	int d3d_level; //[1,1024], 256 means 1X
+	int d2d_level; //[1,1024], 256 means 1X
+	int d3d_level; //[1,1024], 256 means 1X
 	RTEncMovingLevelInfo mMovingLevelInfo;
 } RTEncVencVe2IspParam; ///< same to struct enc_VencVe2IspParam
 
@@ -717,17 +907,43 @@ typedef struct {
 	int ae_ev_lv_adj;
 	int ae_lock;
 	int awb_color_temp;
+	int ae_weight_lum;
 	RTIspIrAwbGain awb_ir_gain;
 	RTIspAeTableInfo *ae_table;
 	char path[100];
 	RTIspAeRoiAttr ae_roi_area;
 	unsigned char ae_stat_avg[432];
 	RTEncVencVe2IspParam VencVe2IspParam;
+	unsigned char ai_isp_en;
+	unsigned char ai_isp_update;
+	RTFaceAeCfg ae_face_info;
+	RTSensorMipiSwitchEntity mipi_switch_info;
 } RTIspCfgAttrData; ///< same to struct isp_cfg_attr_data
 
 typedef struct {
 	RTIspCfgAttrData isp_attr_cfg;
 } RTIspCtrlAttr;
+
+typedef struct {
+	unsigned char isp_id;
+	unsigned short sensor_width;
+	unsigned short sensor_height;
+	unsigned short act_fps;
+	unsigned char wdr;
+} RTTunningSensorCfg; //< same to struct tunning_sensor_cfg
+
+typedef struct {
+	unsigned short cfg_id;
+	char path[100];
+	RTTunningSensorCfg sensor_cfg;
+} RTTunningCtlData; // < same to tunning_ctl_data
+
+typedef struct {
+	unsigned int width_max;
+	unsigned int height_max;
+	unsigned int width_min;
+	unsigned int height_min;
+} RTSensorResolution;
 
 #define MAX_ISP_ORL_NUM (16)
 struct orl_win {
@@ -837,6 +1053,10 @@ typedef struct {
 } RTVenWeakTextTh;
 
 typedef struct {
+	float weak_text_th;
+} RTDynamicProcSettings;
+
+typedef struct {
 	int pix_x_bgn;
 	int pix_x_end;
 	int pix_y_bgn;
@@ -848,19 +1068,24 @@ typedef struct {
 	float zero_mv_rate;
 } RTVencRegionD3DRegion; ///< same to VencRegionD3DRegion
 
-typedef struct {
-	int total_region_num;
-	int static_region_num;
-	RTVencRegionD3DRegion *region;
-} RTVencRegionD3DResult; ///< same to VencRegionD3DResult
+typedef struct sRTVencRegionD3DResult RTVencRegionD3DResult; ///< same to VencRegionD3DResult
+struct sRTVencRegionD3DResult{
+    int total_region_num;
+    int static_region_num;
+    RTVencRegionD3DRegion *region;
+    RTVencRegionD3DResult **prev;
+    RTVencRegionD3DResult **next;
+};
 
 typedef struct {
 	int en_region_d3d;
 	int dis_default_para;
+	int result_num;
 	int hor_region_num;
 	int ver_region_num;
 	int hor_expand_num;
 	int ver_expand_num;
+    int lv_weak_th[9];
 	float zero_mv_rate_th[3];
 	unsigned char chroma_offset;
 	unsigned char static_coef[3];		   //* fallow by zero_mv_rate
@@ -882,21 +1107,124 @@ typedef struct {
 	int d2d_level[6];
 } RTVencVe2IspD2DLimit; ///< same to VencVe2IspD2DLimit
 
-//APP and kernel start encoder main channel will user flow param.
-#define MAIN_CHANNEL_CHANNEL_ID 	    CSI_SENSOR_0_VIPP_0
-#define MAIN_CHANNEL_ENCODE_TYPE 	    0//0:H264; 1:JPG; 2:H265
-#define MAIN_CHANNEL_WIDTH				640//if read from flash, size will be insteaded; 0 means according sensor to set default size
-#define MAIN_CHANNEL_HEIGHT				480//same as width
-#define MAIN_CHANNEL_FPS 			    15
-#define MAIN_CHANNEL_BIT_RATE 		    1536//kb
-#define MAIN_CHANNEL_GOP  			    40
-#define MAIN_CHANNEL_VBR 			    0
-#define MAIN_CHANNEL_I_MIN_QP 		    35
-#define MAIN_CHANNEL_I_MAX_QP 		    51
-#define MAIN_CHANNEL_P_MIN_QP 		    35
-#define MAIN_CHANNEL_P_MAX_QP 		    51
-#define MAIN_CHANNEL_OUT_MODE 		    OUTPUT_MODE_YUV
-#define MAIN_CHANNEL_PXL_FMT 		    RT_PIXEL_YVU420SP
-#define MAIN_CHANNEL_REDUCE_REFREC_MEM  1//Can save memory space
+typedef struct {
+    unsigned int                  en_force_conf;
+    unsigned int                  left_offset;
+    unsigned int                  right_offset;
+    unsigned int                  top_offset;
+    unsigned int                  bottom_offset;
+} RTVencForceConfWin; ///< same to VencForceConfWin
+
+typedef struct {
+    int dis_default_d2d;
+    int d2d_min_lv_th;
+    int d2d_max_lv_th;
+    int d2d_min_lv_level;
+    int d2d_max_lv_level;
+    int dis_default_d3d;
+    int d3d_min_lv_th;
+    int d3d_max_lv_th;
+    int d3d_min_lv_level;
+    int d3d_max_lv_level;
+} RTVencRotVe2Isp; ///< same to VencRotVe2Isp
+
+typedef struct {
+    unsigned char *pBuffer;
+    unsigned int  nBufLen;
+    unsigned int  nDataLen;
+    unsigned int  nType;
+} RTVencSeiData; ///< same to VencSeiData
+
+typedef struct {
+    unsigned int nSeiNum;
+    RTVencSeiData  *pSeiData;
+} RTVencSeiParam; ///< same to VencSeiParam
+
+#define RT_MAX_INSERT_FRAME_LEN (196569)
+
+typedef enum {
+    RT_BUF_IDLE,
+    RT_BUF_STANDBY,
+    RT_BUF_OCCUPY,
+} RT_VENC_BUF_STATUS; ///< same to VENC_BUF_STATUS
+
+typedef struct {
+    unsigned char *pBuffer;
+    unsigned int  nBufLen;
+    unsigned int  nDataLen;
+    unsigned int  nFrameRate;
+    RT_VENC_BUF_STATUS eStatus;
+} RTVencInsertData; ///< same to VencInsertData
+
+// notify callback event to AWVideoInput_cxt, using netlink.
+typedef enum {
+    RTCB_EVENT_VENC_DROP_FRAME = 0,
+} RTCbEventType;
+
+typedef struct {
+    RTCbEventType eEventType;
+    int nData1;
+    int nData2;
+} RTCbEvent;
+
+/**
+  generic netlink rt_media family definition.
+*/
+enum {
+	RT_MEDIA_CMD_UNSPEC = 0,	/* Reserved */
+	RT_MEDIA_CMD_SEND,		/* user->kernel, send some infos such as channelId */
+	RT_MEDIA_CMD_CB_EVENT,	/* kernel->user, send rt_media callback event to AWVideoInput */
+	__RT_MEDIA_CMD_MAX,
+};
+
+#define RT_MEDIA_CMD_MAX (__RT_MEDIA_CMD_MAX - 1)
+
+/**
+  rt_media family netlink attribute definition.
+*/
+enum {
+	RT_MEDIA_CMD_ATTR_UNSPEC = 0,
+	RT_MEDIA_CMD_ATTR_CHNID, //record channel id, type = int.
+	RT_MEDIA_CMD_ATTR_RTCBEVENT, //type = RTCbEvent
+	__RT_MEDIA_CMD_ATTR_MAX,
+};
+
+#define RT_MEDIA_CMD_ATTR_MAX (__RT_MEDIA_CMD_ATTR_MAX - 1)
+
+typedef enum {
+    RT_VENC_CAMERA_ADAPTIVE_STATIC = 0,
+    RT_VENC_CAMERA_FORCE_STATIC = 1,
+    RT_VENC_CAMERA_FORCE_MOVING = 2,
+    RT_VENC_CAMERA_ADAPTIVE_MOVING_AND_STATIC = 3,
+    RT_VENC_CAMERA_STATUS_NUM
+} RT_VENC_CAMERA_MOVE_STATUS;
+
+typedef struct {
+	int dis_default_para;
+	int mode;
+	int en_gop_clip;
+	float gop_bit_ratio_th[3];
+	float coef_th[5][2];
+} RT_VENC_TARGET_BITS_CLIP_PARAM; /* < same to VencTargetBitsClipParam > */
+
+typedef struct {
+	int flag;			//0: print; 1: save to file; others: reserve for future use
+	char *path;			//path string
+	unsigned int len;	//path string length
+} VIN_ISP_REG_GET_CFG;
+
+typedef enum {
+	RT_BX_TO_CLOSE = 0,
+	RT_B10_TO_B8 = 1,
+	RT_B8_TO_B10 = 2,
+} RT_VIN_SET_BIT_WIDTH;
+
+/**
+  NETLINK_GENERIC related info
+  RT_MEDIA_GENL_NAME: rt_media generic netlink family name, string_length + 1 <= GENL_NAMSIZ.
+  RT_MEDIA_GENL_VERSION: rt_media generic netlink family version
+*/
+#define RT_MEDIA_GENL_NAME	"genl-rt_media"
+#define RT_MEDIA_GENL_VERSION	0x1
 
 #endif
