@@ -30,7 +30,7 @@ int dw_hdcp_set_enable_type(int type);
  * @enable: 1 - enable hdcp avmute
  *          0 - disable hdcp avmute
  */
-void dw_hdcp_set_avmute_state(int enable);
+void dw_hdcp1x_set_avmute(int enable);
 /**
  * @desc: dw hdcp sync config tmds mode from framecomposer
  */
@@ -40,20 +40,10 @@ void dw_hdcp_sync_tmds_mode(void);
  */
 void dw_hdcp_sync_data_polarity(void);
 /**
- * @desc: dw hdcp config data pth
- * @path: 0 - hdcp14 path
- *        1 - hdcp22 path
- */
-void dw_hdcp_set_data_path(u8 path);
-/**
  * @desc: check hdcp encrypt status and handle the status
  * @return: refer to enum dw_hdcp_state_e
  */
 int dw_hdcp_get_state(void);
-/**
- * @desc: dw hdcp api for config init
- */
-void dw_hdcp_config_init(void);
 /**
  * @desc: dw hdcp api for init
  */

@@ -32,6 +32,9 @@ static u64 dptx_hdcp1_hw_get_an(struct sunxi_edp_hw_desc *edp_hw)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
 
+	if (ops == NULL)
+		return 0;
+
 	if (ops->hdcp1_get_an)
 		return ops->hdcp1_get_an(edp_hw);
 	else
@@ -41,6 +44,9 @@ static u64 dptx_hdcp1_hw_get_an(struct sunxi_edp_hw_desc *edp_hw)
 static u64 dptx_hdcp1_hw_get_aksv(struct sunxi_edp_hw_desc *edp_hw)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
+
+	if (ops == NULL)
+		return 0;
 
 	if (ops->hdcp1_get_aksv)
 		return ops->hdcp1_get_aksv(edp_hw);
@@ -52,6 +58,9 @@ static void dptx_hdcp1_hw_write_bksv(struct sunxi_edp_hw_desc *edp_hw, u64 bksv)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
 
+	if (ops == NULL)
+		return;
+
 	if (ops->hdcp1_write_bksv)
 		return ops->hdcp1_write_bksv(edp_hw, bksv);
 }
@@ -59,6 +68,9 @@ static void dptx_hdcp1_hw_write_bksv(struct sunxi_edp_hw_desc *edp_hw, u64 bksv)
 static u64 dptx_hdcp1_hw_calculate_km(struct sunxi_edp_hw_desc *edp_hw, u64 bksv)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
+
+	if (ops == NULL)
+		return 0;
 
 	if (ops->hdcp1_cal_km)
 		return ops->hdcp1_cal_km(edp_hw, bksv);
@@ -70,6 +82,9 @@ static u32 dptx_hdcp1_hw_calculate_r0(struct sunxi_edp_hw_desc *edp_hw, u64 an, 
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
 
+	if (ops == NULL)
+		return 0;
+
 	if (ops->hdcp1_cal_r0)
 		return ops->hdcp1_cal_r0(edp_hw, an, km);
 	else
@@ -79,6 +94,9 @@ static u32 dptx_hdcp1_hw_calculate_r0(struct sunxi_edp_hw_desc *edp_hw, u64 an, 
 static u64 dptx_hdcp1_hw_get_m0(struct sunxi_edp_hw_desc *edp_hw)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
+
+	if (ops == NULL)
+		return 0;
 
 	if (ops->hdcp1_get_m0)
 		return ops->hdcp1_get_m0(edp_hw);
@@ -90,6 +108,9 @@ static void dptx_hdcp1_hw_encrypt_enable(struct sunxi_edp_hw_desc *edp_hw, bool 
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
 
+	if (ops == NULL)
+		return;
+
 	if (ops->hdcp1_encrypt_enable)
 		ops->hdcp1_encrypt_enable(edp_hw, enable);
 }
@@ -98,6 +119,9 @@ static void dptx_hdcp_hw_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
 
+	if (ops == NULL)
+		return;
+
 	if (ops->hdcp_enable)
 		ops->hdcp_enable(edp_hw, enable);
 }
@@ -105,6 +129,9 @@ static void dptx_hdcp_hw_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 void dptx_hdcp_hw_set_mode(struct sunxi_edp_hw_desc *edp_hw, enum dp_hdcp_mode mode)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
+
+	if (ops == NULL)
+		return;
 
 	if (ops->hdcp_set_mode)
 		ops->hdcp_set_mode(edp_hw, mode);

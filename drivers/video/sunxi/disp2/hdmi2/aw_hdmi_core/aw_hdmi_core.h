@@ -14,7 +14,7 @@
 #ifndef _AW_HDMI_CORE_H_
 #define _AW_HDMI_CORE_H_
 
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 #include <video/drv_hdmi.h>
 
 #include "dw_hdmi/dw_i2cm.h"

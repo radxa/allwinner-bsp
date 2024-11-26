@@ -38,14 +38,14 @@ static struct dw_hdcp_s  *hdcp;
 #define DW_HDCP14_KSV_LEN			(5)
 #define DW_HDCP14_OESS_SIZE			(0x40)
 
-enum _dw_hdcp_state_e {
-	HDCP_IDLE = 0,
-	HDCP_KSV_LIST_READY,
-	HDCP_ERR_KSV_LIST_NOT_VALID,
-	HDCP_KSV_LIST_ERR_DEPTH_EXCEEDED,
-	HDCP_KSV_LIST_ERR_MEM_ACCESS,
-	HDCP_ENGAGED,
-	HDCP_FAILED
+enum _dw_hdcp1x_state_e {
+	DW_HDCP1X_IDLE = 0,
+	DW_HDCP1X_KSV_READY,
+	DW_HDCP1X_KSV_ERR_INVALID,
+	DW_HDCP1X_KSV_ERR_DEPTH_EXCEEDED,
+	DW_HDCP1X_KSV_ERR_MEM_ACCESS,
+	DW_HDCP1X_ENGAGED,
+	DW_HDCP1X_FAILED
 };
 
 struct _dw_hdcp14_sha_s{
@@ -57,20 +57,49 @@ struct _dw_hdcp14_sha_s{
 	unsigned mDigest[5];
 } ;
 
-static int _dw_hdcp_get_enable_type(void)
+static inline int _dw_hdcp_get_enable_type(void)
 {
 	return hdcp->enable_type;
 }
 
-static u8 _dw_hdcp_get_data_path(void)
+static inline void _dw_hdcp1x_set_rxdetect(u8 bit)
 {
-	int ret = 0x0;
+	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_RXDETECT_MASK, bit);
+}
 
-	if (dw_read_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HDCP22_OVR_EN_MASK) &&
-			dw_read_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HDCP22_OVR_VAL_MASK))
-		ret = 0x1;
+static inline void _dw_hdcp1x_set_encrypt(u8 bit)
+{
+	dw_write_mask(A_HDCPCFG1, A_HDCPCFG1_ENCRYPTIONDISABLE_MASK, !bit);
+}
 
-	return ret;
+static inline void _dw_hdcp1x_int_clear(u8 value)
+{
+	dw_write(A_APIINTCLR, value);
+}
+
+static inline void _dw_hdcp1x_int_mask(u8 value)
+{
+	dw_write(A_APIINTMSK, value);
+}
+
+static inline void _dw_hdcp1x_set_oess_size(u8 value)
+{
+	dw_write(A_OESSWCFG, value);
+}
+
+static inline void _dw_hdcp1x_set_data_polarity(u8 enable)
+{
+	dw_write_mask(A_VIDPOLCFG, A_VIDPOLCFG_DATAENPOL_MASK, enable);
+}
+
+static inline u8 _dw_hdcp1x_sha_get_memory_granted(void)
+{
+	return (u8)dw_read_mask(A_KSVMEMCTRL, A_KSVMEMCTRL_KSVMEMACCESS_MASK);
+}
+
+void dw_hdcp1x_set_avmute(int enable)
+{
+	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_AVMUTE_MASK, enable);
 }
 
 int dw_hdcp_set_enable_type(int type)
@@ -82,11 +111,6 @@ int dw_hdcp_set_enable_type(int type)
 
 	hdmi_inf("dw hdcp set type: %d\n", hdcp->enable_type);
 	return hdcp->enable_type;
-}
-
-void dw_hdcp_set_avmute_state(int enable)
-{
-	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_AVMUTE_MASK, enable);
 }
 
 void dw_hdcp_sync_tmds_mode(void)
@@ -104,23 +128,7 @@ void dw_hdcp_sync_data_polarity(void)
 
 	dw_write_mask(A_VIDPOLCFG, A_VIDPOLCFG_VSYNCPOL_MASK, vsPol ? 0x1 : 0x0);
 	dw_write_mask(A_VIDPOLCFG, A_VIDPOLCFG_HSYNCPOL_MASK, hsPol ? 0x1 : 0x0);
-	dw_write_mask(A_VIDPOLCFG, A_VIDPOLCFG_DATAENPOL_MASK, 0x1);
-}
-
-/**
- * @path: 0 - hdcp14 path
- *        1 - hdcp22 path
- */
-void dw_hdcp_set_data_path(u8 path)
-{
-	dw_write_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HDCP22_OVR_VAL_MASK, path);
-	dw_write_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HDCP22_OVR_EN_MASK, 0x1);
-}
-
-static u8 _dw_hdcp1x_sha_get_memory_granted(void)
-{
-	return (u8)((dw_read(A_KSVMEMCTRL)
-		& A_KSVMEMCTRL_KSVMEMACCESS_MASK) >> 1);
+	_dw_hdcp1x_set_data_polarity(DW_HDMI_ENABLE);
 }
 
 static void _dw_hdcp1x_sha_reset(struct _dw_hdcp14_sha_s *sha)
@@ -319,7 +327,7 @@ static u8 _dw_hdcp1x_sha_calculation(int *param)
 	int timeout = 1000;
 	u16 bstatus = 0;
 	u16 deviceCount = 0;
-	int valid = HDCP_IDLE;
+	int valid = DW_HDCP1X_IDLE;
 	int size = 0;
 	int i = 0;
 
@@ -342,7 +350,7 @@ static u8 _dw_hdcp1x_sha_calculation(int *param)
 		dw_write_mask(A_KSVMEMCTRL, A_KSVMEMCTRL_KSVMEMREQUEST_MASK, 0x0);
 		hdcp_log("KSV List memory access denied");
 		*param = 0;
-		return HDCP_KSV_LIST_ERR_MEM_ACCESS;
+		return DW_HDCP1X_KSV_ERR_MEM_ACCESS;
 	}
 
 	/* 3 - Read VH', M0, Bstatus, and the KSV FIFO.
@@ -356,7 +364,7 @@ static u8 _dw_hdcp1x_sha_calculation(int *param)
 	if (deviceCount > DW_HDCP14_MAX_DEVICES) {
 		*param = 0;
 		hdcp_log("depth exceeds KSV List memory");
-		return HDCP_KSV_LIST_ERR_DEPTH_EXCEEDED;
+		return DW_HDCP1X_KSV_ERR_DEPTH_EXCEEDED;
 	}
 
 	size = deviceCount * DW_HDCP14_KSV_LEN + DW_HDCP14_KSV_HEADER + DW_HDCP14_KSV_SHAMAX;
@@ -376,11 +384,11 @@ static u8 _dw_hdcp1x_sha_calculation(int *param)
 	/* 4 - Calculate the SHA-1 checksum (VH) over M0,
 		Bstatus, and the KSV FIFO. */
 	if (_dw_hdcp1x_sha_verify_ksv(hdcp_ksv_list_buffer, size) == true) {
-		valid = HDCP_KSV_LIST_READY;
-		hdcp_log("HDCP_KSV_LIST_READY");
+		valid = DW_HDCP1X_KSV_READY;
+		hdcp_log("dw hdcp1x verify ksv list ready\n");
 	} else {
-		valid = HDCP_ERR_KSV_LIST_NOT_VALID;
-		hdcp_log("HDCP_ERR_KSV_LIST_NOT_VALID");
+		valid = DW_HDCP1X_KSV_ERR_INVALID;
+		hdcp_log("dw hdcp1x verify ksv not valid\n");
 	}
 
 	/* 5 - If the calculated VH equals the VH',
@@ -392,51 +400,28 @@ static u8 _dw_hdcp1x_sha_calculation(int *param)
 	/* to re-authenticate from the beginning. */
 	dw_write_mask(A_KSVMEMCTRL, A_KSVMEMCTRL_KSVMEMREQUEST_MASK, 0x0);
 	dw_write_mask(A_KSVMEMCTRL, A_KSVMEMCTRL_SHA1FAIL_MASK,
-			(valid == HDCP_KSV_LIST_READY) ? 0 : 1);
+			(valid == DW_HDCP1X_KSV_READY) ? 0 : 1);
 	dw_write_mask(A_KSVMEMCTRL, A_KSVMEMCTRL_KSVCTRLUPD_MASK, 1);
 	dw_write_mask(A_KSVMEMCTRL, A_KSVMEMCTRL_KSVCTRLUPD_MASK, 0);
 
 	return valid;
 }
 
-static void _dw_hdcp1x_set_rxdetect(u8 bit)
-{
-	hdmi_trace("dw hdcp set rx detect: %s\n", bit ? "enable" : "disable");
-	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_RXDETECT_MASK, bit);
-}
-
-static void _dw_hdcp1x_set_encrypt(u8 bit)
-{
-	hdmi_trace("dw hdcp set encrypt: %s\n", bit ? "enable" : "disable");
-	dw_write_mask(A_HDCPCFG1, A_HDCPCFG1_ENCRYPTIONDISABLE_MASK, !bit);
-}
-
-static void _dw_hdcp1x_interrupt_clear(u8 value)
-{
-	dw_write(A_APIINTCLR, value);
-}
-
-static void _dw_hdcp1x_set_oess_size(u8 value)
-{
-	hdmi_trace("dw hdcp set oess size: %d\n", value);
-	dw_write(A_OESSWCFG, value);
-}
-
 u8 _dw_hdcp1x_status_handler(int *param, u32 irq_stat)
 {
-	int valid = HDCP_IDLE;
+	int valid = DW_HDCP1X_IDLE;
 
 	if (irq_stat != 0)
 		hdcp_log("hdcp get interrupt state: 0x%x\n", irq_stat);
 
 	if (irq_stat == 0) {
-		if (hdcp->hdcp1x_encry_delay && (hdcp->hdcp1x_auth_state == HDCP_ENGAGED)) {
+		if (hdcp->hdcp1x_encry_delay && (hdcp->hdcp1x_auth_state == DW_HDCP1X_ENGAGED)) {
 			hdcp->hdcp1x_encry_delay++;
 			if (hdcp->hdcp1x_encry_delay >= 20) {
-				_dw_hdcp1x_set_encrypt(true);
+				_dw_hdcp1x_set_encrypt(DW_HDMI_ENABLE);
 				hdcp->hdcp1x_encry_delay = 0;
-				hdcp->hdcp1x_encrying = 0x1;
-				hdmi_inf("hdcp start encryption\n");
+				hdcp->hdcp1x_encrying    = DW_HDMI_ENABLE;
+				hdmi_inf("dw hdcp1x start encryption\n");
 			}
 		}
 
@@ -444,21 +429,21 @@ u8 _dw_hdcp1x_status_handler(int *param, u32 irq_stat)
 	}
 
 	if ((irq_stat & A_APIINTSTAT_KEEPOUTERRORINT_MASK) != 0) {
-		hdcp->hdcp1x_auth_state = HDCP_FAILED;
+		hdcp->hdcp1x_auth_state = DW_HDCP1X_FAILED;
 		hdcp->hdcp1x_encry_delay = 0;
-		return HDCP_FAILED;
+		return DW_HDCP1X_FAILED;
 	}
 
 	if ((irq_stat & A_APIINTSTAT_LOSTARBITRATION_MASK) != 0) {
-		hdcp->hdcp1x_auth_state = HDCP_FAILED;
+		hdcp->hdcp1x_auth_state = DW_HDCP1X_FAILED;
 		hdcp->hdcp1x_encry_delay = 0;
-		return HDCP_FAILED;
+		return DW_HDCP1X_FAILED;
 	}
 
 	if ((irq_stat & A_APIINTSTAT_I2CNACK_MASK) != 0) {
-		hdcp->hdcp1x_auth_state = HDCP_FAILED;
+		hdcp->hdcp1x_auth_state = DW_HDCP1X_FAILED;
 		hdcp->hdcp1x_encry_delay = 0;
-		return HDCP_FAILED;
+		return DW_HDCP1X_FAILED;
 	}
 
 	if (irq_stat & A_APIINTSTAT_KSVSHA1CALCINT_MASK)
@@ -467,16 +452,16 @@ u8 _dw_hdcp1x_status_handler(int *param, u32 irq_stat)
 	if ((irq_stat & A_APIINTSTAT_HDCP_FAILED_MASK) != 0) {
 		*param = 0;
 		_dw_hdcp1x_set_encrypt(false);
-		hdcp->hdcp1x_auth_state = HDCP_FAILED;
+		hdcp->hdcp1x_auth_state = DW_HDCP1X_FAILED;
 		hdcp->hdcp1x_encry_delay = 0;
-		return HDCP_FAILED;
+		return DW_HDCP1X_FAILED;
 	}
 
 	if ((irq_stat & A_APIINTSTAT_HDCP_ENGAGED_MASK) != 0) {
 		*param = 1;
-		hdcp->hdcp1x_auth_state = HDCP_ENGAGED;
+		hdcp->hdcp1x_auth_state = DW_HDCP1X_ENGAGED;
 		hdcp->hdcp1x_encry_delay = 1;
-		return HDCP_ENGAGED;
+		return DW_HDCP1X_ENGAGED;
 	}
 
 	return valid;
@@ -494,71 +479,50 @@ static int _dw_hdcp1x_get_encrypt_state(void)
 	}
 
 	hdcp14_status = dw_read(A_APIINTSTAT);
-	_dw_hdcp1x_interrupt_clear(hdcp14_status);
+	_dw_hdcp1x_int_clear(hdcp14_status);
 
 	ret = _dw_hdcp1x_status_handler(&param, (u32)hdcp14_status);
-	if ((ret != HDCP_ERR_KSV_LIST_NOT_VALID) && (ret != HDCP_FAILED))
+	if ((ret != DW_HDCP1X_KSV_ERR_INVALID) && (ret != DW_HDCP1X_FAILED))
 		return DW_HDCP_SUCCESS;
 
 	return DW_HDCP_FAILED;
 }
 
-static int _dw_hdcp1x_start_auth(void)
+int dw_hdcp1x_enable(void)
 {
-	u8 hdcp_mask = 0, data = 0;
+	u8 hdcp_mask = 0;
 
 	if (hdcp->hdcp1x_auth_done) {
-		hdmi_inf("hdcp14 has been auth done!\n");
-		return -1;
+		hdmi_inf("dw hdcp1x has been auth done!\n");
+		return 0;
 	}
 
-	/* disable encrypt */
-	_dw_hdcp1x_set_encrypt(false);
+	/* 1. disable hdcp config for hdcp1x enable flow */
+	_dw_hdcp1x_set_encrypt(DW_HDMI_DISABLE);
+	_dw_hdcp1x_set_rxdetect(DW_HDMI_DISABLE);
+	_dw_hdcp1x_set_data_polarity(DW_HDMI_DISABLE);
 
-	/* enable hdcp keepout */
-	dw_fc_video_set_hdcp_keepout(true);
-
-	/* config hdcp work mode */
+	/* 2. set hdcp1x data path for hdcp1x enable flow */
 	dw_hdcp_sync_tmds_mode();
-
-	/* config Hsync and Vsync polarity and enable */
 	dw_hdcp_sync_data_polarity();
+	dw_fc_video_set_hdcp_keepout(DW_HDMI_ENABLE);
+	dw_hdcp2x_ovr_set_path(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
 
-	/* bypass hdcp_block = 0 */
-	dw_write_mask(0x4003, 1 << 5, 0x0);
-
-	/* config use hdcp14 path */
-	dw_hdcp_set_data_path(0x0);
-
-	/* config hdcp14 feature11 */
-	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_EN11FEATURE_MASK, 0x0);
-
-	/* config hdcp14 ri check mode */
-	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_SYNCRICHECK_MASK, 0x0);
-
-	/* config hdcp14 i2c mode */
-	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_I2CFASTMODE_MASK, 0x0);
-
-	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_ELVENA_MASK, 0x0);
-
-	/* fixed */
-	dw_hdcp_set_avmute_state(false);
-
-	/* config send color when sending unencrtypted video data */
+	/* 3. set hdcp1x basic config for hdcp1x enable flow */
+	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_EN11FEATURE_MASK, DW_HDMI_DISABLE);
+	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_SYNCRICHECK_MASK, DW_HDMI_DISABLE);
+	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_I2CFASTMODE_MASK, DW_HDMI_DISABLE);
+	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_ELVENA_MASK, DW_HDMI_DISABLE);
 	dw_write_mask(A_VIDPOLCFG, A_VIDPOLCFG_UNENCRYPTCONF_MASK, 0x2);
+	dw_write_mask(A_HDCPCFG1, A_HDCPCFG1_PH2UPSHFTENC_MASK, DW_HDMI_ENABLE);
 
-	/* set enable encoding packet header */
-	dw_write_mask(A_HDCPCFG1, A_HDCPCFG1_PH2UPSHFTENC_MASK, 0x1);
-
-	/* config encryption oess size */
 	_dw_hdcp1x_set_oess_size(DW_HDCP14_OESS_SIZE);
+	dw_hdcp1x_set_avmute(DW_HDMI_DISABLE);
 
-	/* software reset hdcp14 engine */
-	dw_write_mask(A_HDCPCFG1, A_HDCPCFG1_SWRESET_MASK, 0x0);
+	/* 4. set hdcp1x hardware reset for hdcp1x enable flow */
+	dw_write_mask(A_HDCPCFG1, A_HDCPCFG1_SWRESET_MASK, DW_HDMI_DISABLE);
 
-	/* enable hdcp14 rx detect for start auth */
-	_dw_hdcp1x_set_rxdetect(true);
-
+	/* 5. mask and clear hdcp1x interrupt state */
 	hdcp_mask  = A_APIINTCLR_KSVACCESSINT_MASK;
 	hdcp_mask |= A_APIINTCLR_KSVSHA1CALCINT_MASK;
 	hdcp_mask |= A_APIINTCLR_KEEPOUTERRORINT_MASK;
@@ -566,49 +530,28 @@ static int _dw_hdcp1x_start_auth(void)
 	hdcp_mask |= A_APIINTCLR_I2CNACK_MASK;
 	hdcp_mask |= A_APIINTCLR_HDCP_FAILED_MASK;
 	hdcp_mask |= A_APIINTCLR_HDCP_ENGAGED_MASK;
-	_dw_hdcp1x_interrupt_clear(hdcp_mask);
+	_dw_hdcp1x_int_clear(hdcp_mask);
+	_dw_hdcp1x_int_mask(hdcp_mask);
 
-	hdcp_mask  = A_APIINTMSK_KSVACCESSINT_MASK;
-	hdcp_mask |= A_APIINTMSK_KSVSHA1CALCINT_MASK;
-	hdcp_mask |= A_APIINTMSK_KEEPOUTERRORINT_MASK;
-	hdcp_mask |= A_APIINTMSK_LOSTARBITRATION_MASK;
-	hdcp_mask |= A_APIINTMSK_I2CNACK_MASK;
-	hdcp_mask |= A_APIINTMSK_SPARE_MASK;
-	hdcp_mask |= A_APIINTMSK_HDCP_FAILED_MASK;
-	hdcp_mask |= A_APIINTMSK_HDCP_ENGAGED_MASK;
-	data = (~hdcp_mask) & dw_read(A_APIINTMSK);
-	dw_write(A_APIINTMSK, data);
+	/* 6. enable and start auth for hdcp1x enable flow */
+	_dw_hdcp1x_set_rxdetect(DW_HDMI_ENABLE);
+	dw_mc_set_hdcp_clk(DW_HDMI_ENABLE);
 
-	hdcp->hdcp1x_auth_done = 0x1;
-
-	return 0;
-}
-
-int dw_hdcp1x_enable(void)
-{
-	int ret = 0;
-
-	hdcp->hdcp1x_auth_state = HDCP_FAILED;
-	ret = _dw_hdcp1x_start_auth();
-	if (ret != 0) {
-		hdmi_err("dw hdcp14 start auth failed\n");
-		return -1;
-	}
-
+	hdcp->hdcp1x_auth_done  = DW_HDMI_ENABLE;
+	hdcp->hdcp1x_auth_state = DW_HDCP1X_FAILED;
 	dw_hdcp_set_enable_type(DW_HDCP_TYPE_HDCP14);
 	return 0;
 }
 
 int dw_hdcp1x_disable(void)
 {
-	/* 1. disable encryption */
-	_dw_hdcp1x_set_encrypt(false);
+	_dw_hdcp1x_set_encrypt(DW_HDMI_DISABLE);
 
 	dw_hdcp_set_enable_type(DW_HDCP_TYPE_NULL);
 
-	hdcp->hdcp1x_auth_state = HDCP_FAILED;
-	hdcp->hdcp1x_auth_done  = 0x0;
-	hdcp->hdcp1x_encrying   = 0x0;
+	hdcp->hdcp1x_auth_state = DW_HDCP1X_FAILED;
+	hdcp->hdcp1x_auth_done  = DW_HDMI_DISABLE;
+	hdcp->hdcp1x_encrying   = DW_HDMI_DISABLE;
 	hdcp_log("hdcp14 disconfig done!\n");
 	return 0;
 }
@@ -625,27 +568,6 @@ int dw_hdcp_get_state(void)
 	return ret;
 }
 
-void dw_hdcp_config_init(void)
-{
-	/* init hdcp14 oess windows size is DW_HDCP14_OESS_SIZE */
-	_dw_hdcp1x_set_oess_size(DW_HDCP14_OESS_SIZE);
-
-	/* frame composer keepout hdcp */
-	dw_fc_video_set_hdcp_keepout(true);
-
-	/* main control enable hdcp clock */
-	dw_mc_disable_hdcp_clock(false);
-
-	/* disable hdcp14 rx detect */
-	_dw_hdcp1x_set_rxdetect(false);
-
-	/* disable hdcp14 encrypt */
-	_dw_hdcp1x_set_encrypt(false);
-
-	/* disable hdcp data polarity */
-	dw_write_mask(A_VIDPOLCFG, A_VIDPOLCFG_DATAENPOL_MASK, 0x0);
-}
-
 void dw_hdcp_initial(void)
 {
 	struct dw_hdmi_dev_s  *hdmi = dw_get_hdmi();
@@ -655,14 +577,14 @@ void dw_hdcp_initial(void)
 	dw_i2cm_re_init();
 
 	/* enable hdcp14 bypass encryption */
-	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_BYPENCRYPTION_MASK, 0x0);
+	dw_write_mask(A_HDCPCFG0, A_HDCPCFG0_BYPENCRYPTION_MASK, DW_HDMI_DISABLE);
 
 	/* disable hdcp14 encryption */
-	_dw_hdcp1x_set_encrypt(false);
+	_dw_hdcp1x_set_encrypt(DW_HDMI_DISABLE);
 
 	/* reset hdcp14 status flag */
-	hdcp->hdcp1x_auth_done = 0x0;
-	hdcp->hdcp1x_encrying  = 0x0;
+	hdcp->hdcp1x_auth_done = DW_HDMI_DISABLE;
+	hdcp->hdcp1x_encrying  = DW_HDMI_DISABLE;
 }
 
 void dw_hdcp_exit(void)
@@ -674,23 +596,23 @@ ssize_t dw_hdcp_dump(char *buf)
 {
 	ssize_t n = 0;
 
-	if (_dw_hdcp_get_enable_type() == 0x0)
-		return n;
-
 	n += sprintf(buf + n, "[dw hdcp]:\n");
 	n += sprintf(buf + n, " - tmds mode     : [%s]\n",
 			dw_read_mask(A_HDCPCFG0, A_HDCPCFG0_HDMIDVI_MASK) ? "hdmi" : "dvi");
 	n += sprintf(buf + n, " - data path     : [%s]\n",
-			_dw_hdcp_get_data_path() ? "hdcp2x" : "hdcp1x");
+			dw_hdcp2x_get_path() ? "hdcp2x" : "hdcp1x");
 	n += sprintf(buf + n, " - hdcp clock    : [%s]\n",
 			dw_mc_get_hdcp_clk() ? "disable" : "enable");
+
+	if (_dw_hdcp_get_enable_type() == 0x0)
+		return n;
 
 	if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP14)) {
 		n += sprintf(buf + n, " - [dw hdcp1x]\n");
 		n += sprintf(buf + n, "\t- auth config: %s\n",
 				hdcp->hdcp1x_auth_done ? "done" : "not-done");
 		n += sprintf(buf + n, "\t- auth state : %s\n",
-				hdcp->hdcp1x_auth_state == HDCP_ENGAGED ? "success" : "failed");
+				hdcp->hdcp1x_auth_state == DW_HDCP1X_ENGAGED ? "success" : "failed");
 		n += sprintf(buf + n, "\t- hw encrying: %s\n",
 				hdcp->hdcp1x_encrying ? "enable" : "disable");
 		n += sprintf(buf + n, "\t- sw encrying: %s\n",

@@ -91,6 +91,17 @@ config AW_REGULATOR_PMU_EXT
 	  This driver provides support for the voltage regulators on the
 	  PMU_EXT PMIC.
 
+if AW_REGULATOR_PMU_EXT
+
+config AW_AXP1530_WORKAROUND_DVM
+	bool "AXP1530_EXT DVM"
+	default n
+	help
+	  Say Y here if you want to enable axp1530 DVM function
+
+endif
+
+
 endif
 
 config AW_REGULATOR_PWM

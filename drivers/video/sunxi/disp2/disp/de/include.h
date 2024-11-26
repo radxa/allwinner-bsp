@@ -65,7 +65,7 @@
 #include <linux/clk-provider.h>
 #include <sunxi-sid.h>
 
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 #include <video/sunxi_metadata.h>
 #include "../disp_sys_intf.h"
 #include "../disp_log.h"

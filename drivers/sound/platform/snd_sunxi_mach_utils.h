@@ -112,6 +112,8 @@ int asoc_simple_parse_daifmt(struct device_node *node,
 int asoc_simple_parse_tdm_slot(struct device_node *node,
 			       char *prefix,
 			       struct asoc_simple_dai *dais);
+int asoc_simple_parse_dlc_name(struct device *dev, struct device_node *node,
+			       char *prefix, struct snd_soc_dai_link *dai_link);
 int asoc_simple_parse_tdm_clk(struct device_node *cpu,
 			      struct device_node *codec,
 			      char *prefix,

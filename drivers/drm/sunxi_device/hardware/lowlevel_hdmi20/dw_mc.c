@@ -31,29 +31,29 @@ static irq_vector_t irq_vec[] = {
 	{0, 0, 0},
 };
 
-void _dw_mc_disable_csc_clock(u8 bit)
+void _dw_mc_set_csc_clk(u8 bit)
 {
-	dw_write_mask(MC_CLKDIS, MC_CLKDIS_CSCCLK_DISABLE_MASK, bit);
+	dw_write_mask(MC_CLKDIS, MC_CLKDIS_CSCCLK_DISABLE_MASK, !bit);
 }
 
-void _dw_mc_disable_tmds_clock(u8 bit)
+void _dw_mc_set_tmds_clk(u8 bit)
 {
-	dw_write_mask(MC_CLKDIS, MC_CLKDIS_TMDSCLK_DISABLE_MASK, bit);
+	dw_write_mask(MC_CLKDIS, MC_CLKDIS_TMDSCLK_DISABLE_MASK, !bit);
 }
 
-void _dw_mc_disable_pixel_clock(u8 bit)
+void _dw_mc_set_pixel_clk(u8 bit)
 {
-	dw_write_mask(MC_CLKDIS, MC_CLKDIS_PIXELCLK_DISABLE_MASK, bit);
+	dw_write_mask(MC_CLKDIS, MC_CLKDIS_PIXELCLK_DISABLE_MASK, !bit);
 }
 
-void _dw_mc_disable_pixel_repetition_clock(u8 bit)
+void _dw_mc_set_pixel_rep_clk(u8 bit)
 {
-	dw_write_mask(MC_CLKDIS, MC_CLKDIS_PREPCLK_DISABLE_MASK, bit);
+	dw_write_mask(MC_CLKDIS, MC_CLKDIS_PREPCLK_DISABLE_MASK, !bit);
 }
 
-void dw_mc_disable_hdcp_clock(u8 bit)
+void dw_mc_set_hdcp_clk(u8 bit)
 {
-	dw_write_mask(MC_CLKDIS, MC_CLKDIS_HDCPCLK_DISABLE_MASK, bit);
+	dw_write_mask(MC_CLKDIS, MC_CLKDIS_HDCPCLK_DISABLE_MASK, !bit);
 }
 
 u8 dw_mc_get_hdcp_clk(void)
@@ -61,24 +61,24 @@ u8 dw_mc_get_hdcp_clk(void)
 	return dw_read_mask(MC_CLKDIS, MC_CLKDIS_HDCPCLK_DISABLE_MASK);
 }
 
-void dw_mc_disable_cec_clock(u8 bit)
+void dw_mc_set_cec_clk(u8 bit)
 {
-	dw_write_mask(MC_CLKDIS, MC_CLKDIS_CECCLK_DISABLE_MASK, bit);
+	dw_write_mask(MC_CLKDIS, MC_CLKDIS_CECCLK_DISABLE_MASK, !bit);
 }
 
-void dw_mc_disable_audio_sampler_clock(u8 bit)
+void dw_mc_set_audio_sample_clk(u8 bit)
 {
-	dw_write_mask(MC_CLKDIS, MC_CLKDIS_AUDCLK_DISABLE_MASK, bit);
+	dw_write_mask(MC_CLKDIS, MC_CLKDIS_AUDCLK_DISABLE_MASK, !bit);
 }
 
-u8 dw_mc_get_audio_sample_clock(void)
+u8 dw_mc_get_audio_sample_clk(void)
 {
 	return (u8)dw_read_mask(MC_CLKDIS, MC_CLKDIS_AUDCLK_DISABLE_MASK);
 }
 
-void _dw_mc_video_feed_through_off(u8 bit)
+void _dw_mc_set_csc_bypass(u8 bit)
 {
-	dw_write_mask(MC_FLOWCTRL, MC_FLOWCTRL_FEED_THROUGH_OFF_MASK, bit);
+	dw_write_mask(MC_FLOWCTRL, MC_FLOWCTRL_FEED_THROUGH_OFF_MASK, !bit);
 }
 
 void dw_mc_reset_audio_i2s(void)
@@ -103,27 +103,31 @@ void dw_mc_all_clock_enable(void)
 
 	hdmi_trace("dw hdmi mc enable all clock\n");
 
-	_dw_mc_video_feed_through_off(0);
-	_dw_mc_disable_pixel_clock(0);
-	_dw_mc_disable_tmds_clock(0);
-	val = (hdmi->pixel_repeat > 0) ? 0 : 1;
-	_dw_mc_disable_pixel_repetition_clock(val);
-	_dw_mc_disable_csc_clock(0);
-	val = (hdmi->audio_on) ? 0 : 1;
-	dw_mc_disable_audio_sampler_clock(val);
-	dw_mc_disable_hdcp_clock(1);/* disable it */
+	_dw_mc_set_csc_bypass(DW_HDMI_ENABLE);
+	_dw_mc_set_pixel_clk(DW_HDMI_ENABLE);
+	_dw_mc_set_tmds_clk(DW_HDMI_ENABLE);
+
+	val = (hdmi->pixel_repeat > 0) ? DW_HDMI_ENABLE : DW_HDMI_DISABLE;
+	_dw_mc_set_pixel_rep_clk(val);
+	_dw_mc_set_csc_clk(DW_HDMI_ENABLE);
+
+	val = (hdmi->audio_on) ? DW_HDMI_ENABLE : DW_HDMI_DISABLE;
+	dw_mc_set_audio_sample_clk(val);
+	dw_mc_set_hdcp_clk(DW_HDMI_DISABLE);/* disable it */
 }
 
 void dw_mc_all_clock_disable(void)
 {
 	hdmi_trace("dw hdmi mc disable all clock\n");
-	_dw_mc_disable_pixel_clock(1);
-	_dw_mc_disable_tmds_clock(1);
-	_dw_mc_disable_pixel_repetition_clock(1);
-	_dw_mc_disable_csc_clock(1);
-	dw_mc_disable_audio_sampler_clock(1);
-	dw_mc_disable_cec_clock(1);
-	dw_mc_disable_hdcp_clock(1);
+
+	_dw_mc_set_pixel_clk(DW_HDMI_DISABLE);
+	_dw_mc_set_tmds_clk(DW_HDMI_DISABLE);
+	_dw_mc_set_pixel_rep_clk(DW_HDMI_DISABLE);
+	_dw_mc_set_csc_clk(DW_HDMI_DISABLE);
+
+	dw_mc_set_audio_sample_clk(DW_HDMI_DISABLE);
+	dw_mc_set_cec_clk(DW_HDMI_DISABLE);
+	dw_mc_set_hdcp_clk(DW_HDMI_DISABLE);
 }
 
 u8 dw_mc_irq_get_state(irq_sources_t irq)
@@ -201,5 +205,6 @@ void dw_mc_irq_mask_all(void)
 	dw_mc_irq_mute_source(DW_IRQ_VIDEO_PACKETIZER);
 	dw_mc_irq_mute_source(DW_IRQ_I2C_PHY);
 	dw_mc_irq_mute_source(DW_IRQ_AUDIO_DMA);
-	dw_mc_set_main_irq(0x1);
+
+	dw_mc_set_main_irq(DW_HDMI_ENABLE);
 }

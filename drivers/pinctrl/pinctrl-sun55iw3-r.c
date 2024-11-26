@@ -224,7 +224,8 @@ static const struct sunxi_pinctrl_desc sun55iw3_r_pinctrl_data = {
 	.irq_banks = ARRAY_SIZE(sun55iw3_r_irq_bank_map),
 	.irq_bank_map = sun55iw3_r_irq_bank_map,
 	.pin_base = SUNXI_PIN_BASE('L'),
-	.hw_type = SUNXI_PCTL_HW_TYPE_1,
+	.hw_type = SUNXI_PCTL_HW_TYPE_6,
+	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_CTL_V2,
 };
 
 static int sun55iw3_r_pinctrl_probe(struct platform_device *pdev)
@@ -255,4 +256,4 @@ postcore_initcall(sun55iw3_r_pio_init);
 MODULE_DESCRIPTION("Allwinner sun55iw3 R_PIO pinctrl driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("<rengaomin@allwinnertech>");
-MODULE_VERSION("1.1.4");
+MODULE_VERSION("1.1.5");

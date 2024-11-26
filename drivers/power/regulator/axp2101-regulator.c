@@ -13,7 +13,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
  */
-
 #include <linux/err.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -26,6 +25,10 @@
 #include <linux/regulator/machine.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/delay.h>
+
+#define CPUX_GPIO	0
+#define CPUS_GPIO	1
+extern void sun55iw3_pinctrl_fix_over_voltage(bool is_cpus_gpio);
 
 #define AXP20X_IO_ENABLED		0x03
 #define AXP20X_IO_DISABLED		0x07
@@ -160,6 +163,14 @@ struct regulator_delay {
 	u32 final;
 };
 
+#define MAX_NAME_LEN		(20)
+struct axp_reg_data {
+	struct regulator_delay rdev_delay;
+	struct regulator *virtual_consumer;
+	char consumer_name[MAX_NAME_LEN];
+	struct notifier_block nb;
+};
+
 static int regulator_is_enabled_regmap_axp2202_c_drivevbus(struct regulator_dev *rdev)
 {
 	unsigned int val[2];
@@ -230,7 +241,8 @@ static int regulator_disable_regmap_axp2202_rbfet(struct regulator_dev *rdev)
 static int axp2101_set_voltage_time_sel(struct regulator_dev *rdev,
 		unsigned int old_selector, unsigned int new_selector)
 {
-	struct regulator_delay *delay = (struct regulator_delay *)rdev->reg_data;
+	struct axp_reg_data *rdev_data = (struct axp_reg_data *)rdev_get_drvdata(rdev);
+	struct regulator_delay *delay = &rdev_data->rdev_delay;
 
 	return abs(new_selector - old_selector) * delay->step + delay->final;
 };
@@ -1370,6 +1382,40 @@ static bool axp20x_is_polyphase_slave(struct axp20x_dev *axp20x, int id)
 	return false;
 }
 
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+void sunxi_pinctrl_fix_over_voltage(void)
+{
+	sun55iw3_pinctrl_fix_over_voltage(CPUX_GPIO);
+	sun55iw3_pinctrl_fix_over_voltage(CPUS_GPIO);
+}
+
+static int sunxi_iodomain_notify(struct notifier_block *nb,
+				    unsigned long event,
+				    void *data)
+{
+	struct axp_reg_data *rdev_data =
+			container_of(nb, struct axp_reg_data, nb);
+	int uV;
+
+	if (event & (REGULATOR_EVENT_VOLTAGE_CHANGE |
+			    REGULATOR_EVENT_ABORT_VOLTAGE_CHANGE)) {
+		uV = (unsigned long)data;
+		/* Overvoltage detection is only required when the IO voltage changes */
+		if (uV >= 1800000) {
+			mdelay(1);
+			pr_debug("[regulator]: %s set_voltage uV: %d\n", rdev_data->consumer_name, uV);
+			sunxi_pinctrl_fix_over_voltage();
+		}
+	} else if (event & REGULATOR_EVENT_ENABLE) {
+		mdelay(1);
+		pr_debug("[regulator]: %s enable \n", rdev_data->consumer_name);
+		sunxi_pinctrl_fix_over_voltage();
+	}
+
+	return NOTIFY_OK;
+}
+#endif
+
 static int axp2101_regulator_probe(struct platform_device *pdev)
 {
 	struct regulator_dev *rdev;
@@ -1387,7 +1433,8 @@ static int axp2101_regulator_probe(struct platform_device *pdev)
 	const char *dcdc5_name = axp22x_regulators[AXP22X_DCDC5].name;
 	bool drivevbus = false;
 	u32 dval;
-	struct regulator_delay *rdev_delay;
+	struct axp_reg_data *rdev_data;
+	__maybe_unused const char *axp_reg_name;
 
 	switch (axp20x->variant) {
 	case AXP152_ID:
@@ -1510,24 +1557,43 @@ static int axp2101_regulator_probe(struct platform_device *pdev)
 			return PTR_ERR(rdev);
 		}
 
-		rdev_delay = devm_kzalloc(&pdev->dev, sizeof(*rdev_delay), GFP_KERNEL);
-		if (!rdev_delay) {
-			PMIC_DEV_ERR(&pdev->dev, "rdev_delay kzalloc error %s\n", regulators[i].name);
+		rdev_data = devm_kzalloc(&pdev->dev, sizeof(*rdev_data), GFP_KERNEL);
+		if (!rdev_data) {
+			PMIC_DEV_ERR(&pdev->dev, "rdev_data kzalloc error %s\n", regulators[i].name);
 			return -ENOMEM;
 		}
 		if (!of_property_read_u32(rdev->dev.of_node,
 				"regulator-step-delay-us", &dval))
-			rdev_delay->step = dval;
+			rdev_data->rdev_delay.step = dval;
 		else
-			rdev_delay->step = 0;
+			rdev_data->rdev_delay.step = 0;
 
 		if (!of_property_read_u32(rdev->dev.of_node,
 				"regulator-final-delay-us", &dval))
-			rdev_delay->final = dval;
+			rdev_data->rdev_delay.final = dval;
 		else
-			rdev_delay->final = 0;
+			rdev_data->rdev_delay.final = 0;
 
-		rdev->reg_data = rdev_delay;
+		rdev->reg_data = rdev_data;
+
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+		of_property_read_string(rdev->dev.of_node, "regulator-name", &axp_reg_name);
+		snprintf(rdev_data->consumer_name, MAX_NAME_LEN, "%s", axp_reg_name);
+		rdev_data->virtual_consumer = regulator_get_optional(NULL, axp_reg_name);
+		if (IS_ERR(rdev_data->virtual_consumer)) {
+			PMIC_DEV_ERR(&pdev->dev, "Failed to get regulator %s\n", axp_reg_name);
+			return PTR_ERR(rdev_data->virtual_consumer);
+		}
+
+		rdev_data->nb.notifier_call = sunxi_iodomain_notify;
+
+		/* register regulator notifier */
+		ret = regulator_register_notifier(rdev_data->virtual_consumer, &rdev_data->nb);
+		if (ret) {
+			PMIC_DEV_ERR(&pdev->dev, "regulator notifier request failed\n");
+			return ret;
+		}
+#endif
 
 		ret = of_property_read_u32(rdev->dev.of_node,
 					   "x-powers,dcdc-workmode",
@@ -1553,6 +1619,11 @@ static int axp2101_regulator_probe(struct platform_device *pdev)
 						"regulator-name",
 						&dcdc5_name);
 	}
+
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+	/* Actively initiate overpressure detection */
+	sunxi_pinctrl_fix_over_voltage();
+#endif
 
 	if (drivevbus) {
 		switch (axp20x->variant) {
@@ -1645,4 +1716,4 @@ MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Carlo Caione <carlo@caione.org>");
 MODULE_DESCRIPTION("Regulator Driver for AXP20X PMIC");
 MODULE_ALIAS("platform:axp20x-regulator");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.1");

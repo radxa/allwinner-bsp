@@ -149,9 +149,24 @@ enum HDMI_CEA_VIC {
 /******************************************************************
  * @desc: sunxi hdmi level struct
  *****************************************************************/
+struct sunxi_hdmi_rescal_s {
+	unsigned long rescal_ctrl_pa;
+	u32 bit_hdmi_res_sel;
+	u32 bit_rescal_mode;
+	u32 bit_cal_ana_en;
+	u32 bit_cal_en;
+
+	unsigned long res0_ctrl_pa;
+	u32 res0_ctrl_bitmask;
+};
+
 struct sunxi_hdmi_plat_s {
 	unsigned char version;
 	unsigned char use_top_phy;
+	/* resistance calibration */
+	unsigned char need_res_cal;
+	struct sunxi_hdmi_rescal_s  rescal_regs;
+
 	struct dw_phy_ops_s  phy_func;
 };
 
@@ -162,6 +177,7 @@ struct sunxi_hdmi_s {
 
 	u8 smooth_boot;
 	u8 clock_src;
+	u8 resistor_src;
 	uintptr_t reg_base;
 
 	struct sunxi_hdmi_plat_s    *plat_data;

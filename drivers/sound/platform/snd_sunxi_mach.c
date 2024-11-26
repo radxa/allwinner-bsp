@@ -363,14 +363,17 @@ static int simple_dai_link_of(struct device_node *node, struct asoc_simple_priv 
 	if (ret < 0) {
 		if (ret == -EPROBE_DEFER)
 			goto dai_link_of_err;
-		dai_link->codecs = devm_kcalloc(dev, 1, sizeof(*(dai_link->codecs)),
-						GFP_KERNEL);
-		dai_link->num_codecs = 1;
-		dai_link->codecs->name = "snd-soc-dummy";
-		dai_link->codecs->dai_name = "snd-soc-dummy-dai";
-		/* dai_link->codecs->name = "sunxi-dummy-codec"; */
-		/* dai_link->codecs->dai_name = "sunxi-dummy-codec-dai"; */
-		SND_LOG_DEBUG("use dummy codec for simple card.\n");
+		ret = asoc_simple_parse_dlc_name(dev, codec, prefix, dai_link);
+		if (ret < 0) {
+			dai_link->codecs = devm_kcalloc(dev, 1, sizeof(*(dai_link->codecs)),
+							GFP_KERNEL);
+			dai_link->num_codecs = 1;
+			dai_link->codecs->name = "snd-soc-dummy";
+			dai_link->codecs->dai_name = "snd-soc-dummy-dai";
+			/* dai_link->codecs->name = "sunxi-dummy-codec"; */
+			/* dai_link->codecs->dai_name = "sunxi-dummy-codec-dai"; */
+			SND_LOG_DEBUG("use dummy codec for simple card.\n");
+		}
 	}
 	ret = asoc_simple_parse_platform(plat, dai_link, DAI, CELL);
 	if (ret < 0)

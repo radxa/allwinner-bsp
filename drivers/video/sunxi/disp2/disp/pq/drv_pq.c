@@ -11,7 +11,7 @@
  */
 
 #include "../dev_disp.h"
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 #include "drv_pq.h"
 #include <linux/file.h>
 

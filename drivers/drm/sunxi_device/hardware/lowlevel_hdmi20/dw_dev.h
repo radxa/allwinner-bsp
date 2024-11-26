@@ -15,6 +15,9 @@
 #include <drm/drm_edid.h>
 #include <linux/i2c.h>
 
+#define DW_HDMI_ENABLE         (1)
+#define DW_HDMI_DISABLE        (0)
+
 #define DW_EDID_MAC_HDMI_VIC		16
 #define DW_EDID_MAX_HDMI_3DSTRUCT	16
 #define DW_EDID_MAX_VIC_WITH_3D		16
@@ -699,6 +702,17 @@ struct dw_hdmi_dev_s {
 	do {                                                    \
 		hdmi_err("check point %s is err or null\n", #name); \
 		dump_stack();                                       \
+	} while (0)
+
+#ifdef shdmi_free_point
+#undef shdmi_free_point
+#endif
+#define shdmi_free_point(x)   \
+	do {                      \
+		if (x != NULL) {      \
+			kfree(x);         \
+			x = NULL;         \
+		}                     \
 	} while (0)
 
 /**

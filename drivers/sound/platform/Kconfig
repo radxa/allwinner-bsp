@@ -150,7 +150,12 @@ config SND_SOC_SUNXI_CODEC_EDP
 	depends on ARCH_SUN55IW3
 	help
 	  Select Y or M to support edp audio in Allwinner SoCs.
-
+#AVAUDIO
+config SND_SOC_SUNXI_CODEC_AV
+	tristate "Allwinner AVAUDIO support"
+	depends on ARCH_SUN55IW3
+	help
+	  Select Y or M to support av audio in Allwinner SoCs.
 endif
 
 # ahub

@@ -54,7 +54,7 @@
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
 #include <linux/compat.h>
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 
 
 #define edp_wrn(fmt, ...)                                                     \

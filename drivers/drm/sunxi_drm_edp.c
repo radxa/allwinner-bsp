@@ -36,6 +36,7 @@
 #include <sunxi-log.h>
 #include <linux/component.h>
 #include <linux/phy/phy.h>
+#include <sound/hdmi-codec.h>
 
 #include "sunxi_device/sunxi_edp.h"
 #include "sunxi_device/sunxi_tcon.h"
@@ -54,6 +55,8 @@
 #define CEA_BASIC_AUDIO_MASK     (1 << 6) /* Version3 */
 #define CEA_YCC444_MASK	         (1 << 5) /* Version3 */
 #define CEA_YCC422_MASK	         (1 << 4) /* Version3 */
+
+#define SUNXI_EDP_CODEC_DRV_NAME "sunxi-snd-codec-av"
 
 u32 loglevel_debug;
 
@@ -92,6 +95,7 @@ struct sunxi_drm_edp {
 	struct class *edp_class;
 	struct device *edp_class_dev;
 	struct device *dev;
+	struct platform_device *audio_pdev;
 	struct phy *dp_phy;
 	struct phy *aux_phy;
 	struct phy *combo_phy;
@@ -4120,6 +4124,79 @@ OUT:
 	return ret;
 }
 
+static int sunxi_edp_audio_hw_params(struct device *dev, void *data,
+				  struct hdmi_codec_daifmt *daifmt,
+				  struct hdmi_codec_params *params)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+	int channels = params->channels;
+	int sample_rate = params->sample_rate;
+	int sample_width = params->sample_width;
+	int interface = daifmt->fmt;
+
+	edp_hw_audio_config(edp_hw, interface, channels,
+			    sample_width, sample_rate);
+
+	return 0;
+}
+
+static int sunxi_edp_audio_mute_stream(struct device *dev, void *data,
+				     bool enable, int direction)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+
+	edp_hw_audio_mute(edp_hw, enable, direction);
+
+	return 0;
+}
+
+static int sunxi_edp_audio_startup(struct device *dev, void *data)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+
+	edp_hw_audio_enable(edp_hw);
+
+	return 0;
+}
+
+static void sunxi_edp_audio_shutdown(struct device *dev, void *data)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+
+	edp_hw_audio_disable(edp_hw);
+}
+
+static const struct hdmi_codec_ops sunxi_edp_audio_codec_ops = {
+	.hw_params = sunxi_edp_audio_hw_params,
+	.audio_startup = sunxi_edp_audio_startup,
+	.audio_shutdown = sunxi_edp_audio_shutdown,
+	.mute_stream = sunxi_edp_audio_mute_stream,
+};
+
+static int sunxi_edp_register_audio_driver(struct device *dev)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct hdmi_codec_pdata codec_data = {
+		.ops = &sunxi_edp_audio_codec_ops,
+		.max_i2s_channels = edp_hw_audio_get_max_channel(&drm_edp->edp_hw),
+		.i2s = 1,
+		.spdif = 1,
+		.data = drm_edp,
+	};
+
+	drm_edp->audio_pdev = platform_device_register_data(dev,
+							   SUNXI_EDP_CODEC_DRV_NAME,
+							   PLATFORM_DEVID_AUTO,
+							   &codec_data,
+							   sizeof(codec_data));
+
+	return PTR_ERR_OR_ZERO(drm_edp->audio_pdev);
+}
+
 static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 			   void *data)
 {
@@ -4129,6 +4206,8 @@ static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 	struct device_node *panel_np;
 	struct drm_device *drm = (struct drm_device *)data;
 	struct device *tcon_tv_dev = NULL;
+	struct edp_tx_cap *src_cap;
+
 	const struct of_device_id *match;
 	int ret, tcon_id, conn_type, conn_id;
 
@@ -4223,6 +4302,10 @@ static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 		EDP_DEV_ERR(dev, "request irq fail: %d\n", ret);
 		goto OUT;
 	}
+
+	src_cap = &drm_edp->source_cap;
+	if (src_cap->audio_support)
+		sunxi_edp_register_audio_driver(dev);
 
 	EDP_DRV_DBG("edp bind finish!\n");
 	return RET_OK;

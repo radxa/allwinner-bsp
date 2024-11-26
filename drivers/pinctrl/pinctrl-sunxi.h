@@ -132,6 +132,7 @@ enum sunxi_pinctrl_hw_type {
 	SUNXI_PCTL_HW_TYPE_3,  /* Newer chips: sun55iw3 */
 	SUNXI_PCTL_HW_TYPE_4,  /* Newer chips: sun60iw2 */
 	SUNXI_PCTL_HW_TYPE_5,  /* Support self-adaption */
+	SUNXI_PCTL_HW_TYPE_6,  /* chips: sun55iw3-prcm */
 	/* Add new types here ... */
 	SUNXI_PCTL_HW_TYPE_CNT,
 };

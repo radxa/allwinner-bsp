@@ -424,6 +424,45 @@ int asoc_simple_parse_tdm_slot(struct device_node *node, char *prefix,
 	return 0;
 }
 
+int asoc_simple_parse_dlc_name(struct device *dev, struct device_node *node,
+			       char *prefix, struct snd_soc_dai_link *dai_link)
+{
+	int ret;
+	int num;
+	unsigned int i;
+	char dlc_prop[128], dai_prop[128];
+	struct snd_soc_dai_link_component *component;
+
+	if (!prefix)
+		prefix = "";
+
+	snprintf(dlc_prop, sizeof(dlc_prop), "%sdlc-names", prefix);
+	num = of_property_count_strings(node, dlc_prop);
+	if (num < 0)
+		return -EINVAL;
+
+	component = devm_kcalloc(dev, num, sizeof(*component), GFP_KERNEL);
+	if (!component)
+		return -ENOMEM;
+
+	for (i = 0; i < num; i++) {
+		ret = of_property_read_string_index(node, dlc_prop, i, &component[i].name);
+		if (ret < 0)
+			return ret;
+
+		snprintf(dai_prop, sizeof(dai_prop), "%sdlc%d-dai-name", prefix, i);
+		ret = of_property_read_string(node, dai_prop, &component[i].dai_name);
+		if (ret < 0)
+			SND_LOG_WARN("confirm if this component without dai:%s\n",
+				     component[i].name);
+	}
+
+	dai_link->num_codecs = num;
+	dai_link->codecs = component;
+
+	return 0;
+}
+
 int asoc_simple_parse_tdm_clk(struct device_node *cpu,
 			      struct device_node *codec,
 			      char *prefix,

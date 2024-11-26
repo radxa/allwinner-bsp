@@ -26,21 +26,26 @@ typedef enum irq_sources {
 
 /**
  * @desc: main control set hdcp clock
+ * @bit: 0 - disable module clock
+ *       1 - enable module clock
  */
-void dw_mc_disable_hdcp_clock(u8 bit);
-
+void dw_mc_set_hdcp_clk(u8 bit);
+/**
+ * @desc: main control get hdcp module clock.
+ * @return: 0 - module clock is enable
+ *          1 - module clock is disable
+ */
 u8 dw_mc_get_hdcp_clk(void);
-
 /**
  * @desc: main control set cec clock
  */
-void dw_mc_disable_cec_clock(u8 bit);
+void dw_mc_set_cec_clk(u8 bit);
 
 /**
  * @desc: main control set audio sample clock
  */
-void dw_mc_disable_audio_sampler_clock(u8 bit);
-u8 dw_mc_get_audio_sample_clock(void);
+void dw_mc_set_audio_sample_clk(u8 bit);
+u8 dw_mc_get_audio_sample_clk(void);
 /**
  * @desc: main control reset i2s
  */

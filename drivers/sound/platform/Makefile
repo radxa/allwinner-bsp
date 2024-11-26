@@ -59,6 +59,10 @@ obj-$(CONFIG_SND_SOC_SUNXI_CODEC_HDMI)		+= snd_soc_sunxi_codec_hdmi.o
 snd_soc_sunxi_codec_edp-objs			+= snd_sunxi_codec_edp.o
 obj-$(CONFIG_SND_SOC_SUNXI_CODEC_EDP)		+= snd_soc_sunxi_codec_edp.o
 
+# codec -> av codec
+snd_soc_sunxi_codec_av-objs			+= snd_sunxi_codec_av.o
+obj-$(CONFIG_SND_SOC_SUNXI_CODEC_AV)		+= snd_soc_sunxi_codec_av.o
+
 # platform -> analog audio
 snd_soc_sunxi_aaudio-objs			+= snd_sunxi_aaudio.o
 obj-$(CONFIG_SND_SOC_SUNXI_AAUDIO)		+= snd_soc_sunxi_aaudio.o

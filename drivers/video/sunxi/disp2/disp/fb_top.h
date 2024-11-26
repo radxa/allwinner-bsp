@@ -24,7 +24,7 @@
 #include <linux/decompress/unlzma.h>
 #include <linux/dma-buf.h>
 #include <linux/dma-mapping.h>
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 
 #define MAX_DEVICE	8
 extern int fb_debug_val;

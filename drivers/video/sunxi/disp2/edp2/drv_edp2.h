@@ -51,7 +51,7 @@
 #include <linux/of_gpio.h>
 #include <linux/gpio.h>
 #include <linux/compat.h>
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 #include <video/sunxi_edp.h>
 #include <linux/regulator/consumer.h>
 #include <linux/pinctrl/consumer.h>

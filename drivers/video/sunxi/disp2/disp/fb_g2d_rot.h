@@ -20,7 +20,7 @@
 #include "disp_sys_intf.h"
 #include <sunxi-g2d.h>
 #include "de/disp_features.h"
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 #include "dev_disp.h"
 #include <linux/fb.h>
 

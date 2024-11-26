@@ -156,6 +156,7 @@ struct sunxi_hdmi_ctrl_s {
 	unsigned int drv_dts_power_cnt;
 	unsigned int drv_dts_clk_src;
 	unsigned int drv_dts_ddc_index;
+	unsigned int drv_dts_res_src;
 
 	/* hdcp control state */
 	int drv_hdcp_clock;
@@ -1959,6 +1960,8 @@ static ssize_t _sunxi_hdmi_sysfs_hdmi_source_show(struct device *dev,
 			hdmi->hdmi_ctrl.drv_dts_hdcp2x ? "enable" : "disable");
 	n += sprintf(buf + n, " - clk_source : [%s]\n",
 			hdmi->hdmi_ctrl.drv_dts_clk_src ? "ccmu" : "phypll");
+	n += sprintf(buf + n, " - resistor   : [%s]\n",
+			hdmi->hdmi_ctrl.drv_dts_res_src ? "onboard" : "onchip");
 
 	n += sprintf(buf + n, "[drm state]\n");
 	n += sprintf(buf + n, " - enable     : [%s]\n",
@@ -2575,6 +2578,7 @@ use_default:
 static enum drm_mode_status _sunxi_drm_hdmi_mode_valid(
 		struct drm_connector *connector, struct drm_display_mode *mode)
 {
+
 	int rate = drm_mode_vrefresh(mode);
 
 	/* check frame rate support */
@@ -2869,6 +2873,10 @@ static int __sunxi_hdmi_init_dts(struct sunxi_drm_hdmi *hdmi)
 	ret = of_property_read_u32(node, "hdmi_clock_source", &value);
 	hdmi->hdmi_ctrl.drv_dts_clk_src = (ret != 0x0) ? 0x0 : value;
 
+	/* if dts not set, default use external resistor */
+	ret = of_property_read_u32(node, "hdmi_resistor_select", &value);
+	hdmi->hdmi_ctrl.drv_dts_res_src = (ret != 0x0) ? 0x1 : value;
+
 	/* if dts not set, default use 0x1F */
 	ret = of_property_read_u32(node, "hdmi_ddc_index", &value);
 	hdmi->hdmi_ctrl.drv_dts_ddc_index = (ret != 0x0) ? 0x1F : value;
@@ -3157,7 +3165,8 @@ static int _sunxi_hdmi_init_drv(struct sunxi_drm_hdmi *hdmi)
 	hdmi->hdmi_core.i2c_adap  = &hdmi->i2c_adap;
 	hdmi->hdmi_core.connect   = &hdmi->sdrm.connector;
 	hdmi->hdmi_core.clock_src = hdmi->hdmi_ctrl.drv_dts_clk_src;
-	hdmi->hdmi_core.smooth_boot = hdmi->hdmi_ctrl.drv_boot_enable;
+	hdmi->hdmi_core.resistor_src = hdmi->hdmi_ctrl.drv_dts_res_src;
+	hdmi->hdmi_core.smooth_boot  = hdmi->hdmi_ctrl.drv_boot_enable;
 	ret = sunxi_hdmi_init(&hdmi->hdmi_core);
 	if (ret != 0) {
 		hdmi_err("sunxi hdmi init core failed!!!\n");

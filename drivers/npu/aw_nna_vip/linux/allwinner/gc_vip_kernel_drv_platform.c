@@ -83,7 +83,7 @@ static vip_status_e npu_regulator_enable(struct device_node *node)
 	/* npu-regulator para : NPU Regulator Control.
 	 * if 1, use npu set vol; if 0, uboot set npu vol.
 	 */
-	err = of_property_read_u32_index(node, "npu-regulator", 0, &npu_regulator);
+	err = of_property_read_u32_index(node, "npu-setvol", 0, &npu_regulator);
 	if (err != 0)
 		PRINTK("Get NPU Regulator Control FAIL!\n");
 

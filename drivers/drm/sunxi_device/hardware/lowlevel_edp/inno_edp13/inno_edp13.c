@@ -1697,6 +1697,23 @@ s32 inno_audio_disable(struct sunxi_edp_hw_desc *edp_hw)
 	return RET_OK;
 }
 
+s32 inno_audio_config(struct sunxi_edp_hw_desc *edp_hw, int interface,
+		      int chn_cnt, int data_width, int data_rate)
+{
+	edp_audio_interface_config(edp_hw, interface);
+	edp_audio_channel_config(edp_hw, chn_cnt);
+	edp_audio_data_width_config(edp_hw, data_width);
+
+	return RET_OK;
+}
+
+s32 inno_audio_mute(struct sunxi_edp_hw_desc *edp_hw, bool enable, int direction)
+{
+	edp_audio_mute_config(edp_hw, enable);
+
+	return RET_OK;
+}
+
 
 /*
 s32 edp_hal_audio_set_para(edp_audio_t *para)
@@ -2082,7 +2099,7 @@ bool inno13_audio_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 	return false;
 }
 
-s32 inno_get_audio_if(struct sunxi_edp_hw_desc *edp_hw)
+u32 inno_get_audio_if(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
@@ -2092,17 +2109,22 @@ s32 inno_get_audio_if(struct sunxi_edp_hw_desc *edp_hw)
 	return reg_val;
 }
 
-s32 inno_audio_is_muted(struct sunxi_edp_hw_desc *edp_hw)
+bool inno_audio_is_muted(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
 	reg_val = readl(edp_hw->reg_base + REG_EDP_AUDIO);
 	reg_val = GET_BITS(15, 1, reg_val);
 
-	return reg_val;
+	return reg_val ? true : false;
 }
 
-s32 inno_get_audio_chn_cnt(struct sunxi_edp_hw_desc *edp_hw)
+u32 inno_get_audio_max_channel(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return 8;
+}
+
+u32 inno_get_audio_chn_cnt(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
@@ -2117,7 +2139,7 @@ s32 inno_get_audio_chn_cnt(struct sunxi_edp_hw_desc *edp_hw)
 		return 8;
 }
 
-s32 inno_get_audio_date_width(struct sunxi_edp_hw_desc *edp_hw)
+u32 inno_get_audio_date_width(struct sunxi_edp_hw_desc *edp_hw)
 {
 	u32 reg_val;
 
@@ -2318,6 +2340,27 @@ bool inno_check_controller_error(struct sunxi_edp_hw_desc *edp_hw)
 		return false;
 }
 
+void inno_enhance_frame_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
+{
+	u32 reg_val;
+
+	if (enable) {
+		reg_val = readl(edp_hw->reg_base + REG_EDP_HPD_SCALE);
+		reg_val = SET_BITS(1, 1, reg_val, 1);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_HPD_SCALE);
+	} else {
+		reg_val = readl(edp_hw->reg_base + REG_EDP_HPD_SCALE);
+		reg_val = SET_BITS(1, 1, reg_val, 0);
+		writel(reg_val, edp_hw->reg_base + REG_EDP_HPD_SCALE);
+	}
+}
+
+bool inno_support_enhance_frame(struct sunxi_edp_hw_desc *edp_hw)
+{
+	return true;
+}
+
+
 static struct sunxi_edp_hw_video_ops inno_edp13_video_ops = {
 	.check_controller_error = inno_check_controller_error,
 	.assr_enable = inno_assr_enable,
@@ -2330,14 +2373,7 @@ static struct sunxi_edp_hw_video_ops inno_edp13_video_ops = {
 	.get_tu_valid_symbol = inno_get_tu_valid_symbol,
 	.get_hotplug_change = inno_get_hotplug_change,
 	.get_hotplug_state = inno_get_hotplug_state,
-	.audio_is_enabled = inno13_audio_is_enabled,
-	.get_audio_if = inno_get_audio_if,
-	.audio_is_muted = inno_audio_is_muted,
-	.audio_enable = inno_audio_enable,
-	.audio_disable = inno_audio_disable,
 	.get_pattern = inno_get_pattern,
-	.get_audio_data_width = inno_get_audio_date_width,
-	.get_audio_chn_cnt = inno_get_audio_chn_cnt,
 	.set_pattern = inno_set_pattern,
 	.ssc_enable = inno_ssc_enable,
 	.ssc_is_enabled = inno_ssc_is_enabled,
@@ -2369,17 +2405,14 @@ static struct sunxi_edp_hw_video_ops inno_edp13_video_ops = {
 	.support_max_lane = inno_get_max_lane,
 	.support_tps3 = inno_support_tps3,
 	.support_fast_training = inno_support_fast_train,
-	.support_audio = inno_support_audio,
 	.support_psr = inno_support_psr,
 	.support_psr2 = inno_support_psr2,
 	.support_ssc = inno_support_ssc,
 	.support_mst = inno_support_mst,
 	.support_fec = inno_support_fec,
 	.support_assr = inno_support_assr,
-	.support_hdcp1x = inno_support_hdcp1x,
-	.support_hdcp2x = inno_support_hdcp2x,
-	.support_hw_hdcp1x = inno_support_hw_hdcp1x,
-	.support_hw_hdcp2x = inno_support_hw_hdcp2x,
+	.enhance_frame_enable = inno_enhance_frame_enable,
+	.support_enhance_frame = inno_support_enhance_frame,
 };
 
 struct sunxi_edp_hw_video_ops *sunxi_edp_get_hw_video_ops(void)
@@ -2387,3 +2420,21 @@ struct sunxi_edp_hw_video_ops *sunxi_edp_get_hw_video_ops(void)
 	return &inno_edp13_video_ops;
 }
 
+static struct sunxi_edp_hw_audio_ops inno_edp13_audio_ops = {
+	.support_audio = inno_support_audio,
+	.audio_is_enabled = inno13_audio_is_enabled,
+	.get_audio_if = inno_get_audio_if,
+	.audio_is_muted = inno_audio_is_muted,
+	.audio_enable = inno_audio_enable,
+	.audio_disable = inno_audio_disable,
+	.audio_mute = inno_audio_mute,
+	.audio_config = inno_audio_config,
+	.get_audio_data_width = inno_get_audio_date_width,
+	.get_audio_chn_cnt = inno_get_audio_chn_cnt,
+	.get_audio_max_channel = inno_get_audio_max_channel,
+};
+
+struct sunxi_edp_hw_audio_ops *sunxi_edp_get_hw_audio_ops(void)
+{
+	return &inno_edp13_audio_ops;
+}

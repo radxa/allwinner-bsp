@@ -16,7 +16,7 @@
 #include <sunxi-log.h>
 #include <linux/dev_printk.h>
 #include <linux/types.h>
-#include <video/sunxi_display2.h>
+#include <uapi/video/sunxi_display2.h>
 #include <video/sunxi_edp.h>
 #include "../../include/disp_edid.h"
 

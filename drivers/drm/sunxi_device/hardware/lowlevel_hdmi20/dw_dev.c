@@ -166,7 +166,7 @@ int dw_hdmi_ctrl_update(void)
 
 int dw_hdmi_scdc_set_scramble(u8 setup)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
 	struct i2c_adapter   *dev = hdmi->i2c_adap;
 #else
 	struct drm_connector *dev = hdmi->connect;

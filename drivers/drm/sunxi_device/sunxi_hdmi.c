@@ -8,7 +8,7 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  ******************************************************************************/
-
+#include <linux/bitops.h>
 #include <linux/version.h>
 #include <linux/delay.h>
 
@@ -62,13 +62,23 @@ struct sunxi_hdmi_plat_s sun55i_hdmi = {
 
 struct sunxi_hdmi_plat_s sun60i_hdmi = {
 	.version = HDMI_SUN60I_W2_P1,
-	.use_top_phy            = 0x1,
+	.use_top_phy            = SUNXI_HDMI_ENABLE,
 	.phy_func.phy_init      = snps_phy_init,
 	.phy_func.phy_config    = snps_phy_config,
 	.phy_func.phy_disconfig = snps_phy_disconfig,
 	.phy_func.phy_read      = snps_phy_read,
 	.phy_func.phy_write     = snps_phy_write,
 	.phy_func.phy_dump      = snps_phy_dump,
+
+	/* config sun60i res cal and register and bitmask */
+	.need_res_cal        = SUNXI_HDMI_ENABLE,
+	.rescal_regs.rescal_ctrl_pa   = 0x03000160,
+	.rescal_regs.bit_hdmi_res_sel = (u32)BIT(12),
+	.rescal_regs.bit_rescal_mode  = (u32)BIT(2),
+	.rescal_regs.bit_cal_ana_en   = (u32)BIT(1),
+	.rescal_regs.bit_cal_en       = (u32)BIT(0),
+	.rescal_regs.res0_ctrl_pa        = 0x03000164,
+	.rescal_regs.res0_ctrl_bitmask   = (u32)GENMASK(31, 24),
 };
 
 struct sunxi_hdmi_s      *sunxi_hdmi;
@@ -293,19 +303,17 @@ int sunxi_hdcp2x_fw_loading(const u8 *data, size_t size)
 
 int sunxi_hdcp1x_config(u8 state)
 {
-	if (state) {
-		dw_hdcp_config_init();
+	if (state)
 		return dw_hdcp1x_enable();
-	} else
+	else
 		return dw_hdcp1x_disable();
 }
 
 int sunxi_hdcp2x_config(u8 state)
 {
-	if (state) {
-		dw_hdcp_config_init();
+	if (state)
 		return dw_hdcp2x_enable();
-	} else
+	else
 		return dw_hdcp2x_disable();
 }
 
@@ -970,6 +978,45 @@ ret_failed:
 	return -1;
 }
 
+static int _sunxi_hdmi_board_init(struct sunxi_hdmi_s *hdmi)
+{
+	u8 res_src   = hdmi->resistor_src;
+	u8 rescal_en = hdmi->plat_data->need_res_cal;
+	struct sunxi_hdmi_rescal_s *res_reg = &hdmi->plat_data->rescal_regs;
+
+	void __iomem *reg_addr;
+
+	if (!rescal_en) {
+		hdmi_trace("this plat not need use resistance calibration\n");
+		return 0;
+	}
+
+	if (res_src == 0x1) {
+		reg_addr = ioremap(res_reg->rescal_ctrl_pa, 4);
+		writel(readl(reg_addr) | res_reg->bit_hdmi_res_sel, reg_addr);
+		iounmap(reg_addr);
+
+		reg_addr = ioremap(res_reg->res0_ctrl_pa, 4);
+		writel(readl(reg_addr) & (~res_reg->res0_ctrl_bitmask), reg_addr);
+		iounmap(reg_addr);
+	} else {
+		reg_addr = ioremap(res_reg->rescal_ctrl_pa, 4);
+
+		writel((readl(reg_addr) & (~res_reg->bit_cal_en)), reg_addr);
+		writel((readl(reg_addr) & (~res_reg->bit_hdmi_res_sel)), reg_addr);
+		writel((readl(reg_addr) | (res_reg->bit_cal_ana_en)), reg_addr);
+		writel((readl(reg_addr) | (res_reg->bit_cal_en)), reg_addr);
+
+		udelay(200);
+
+		writel((readl(reg_addr) & (~res_reg->bit_cal_ana_en)), reg_addr);
+		writel((readl(reg_addr) & (~res_reg->bit_cal_en)), reg_addr);
+
+		iounmap(reg_addr);
+	}
+	return 0;
+}
+
 static const struct of_device_id hdmi_plat_match[] = {
 	{ .compatible = "arm,sun8iw20p1", .data = &sun8i_hdmi },
 	{ .compatible = "arm,sun50iw9p1", .data = &sun50i_hdmi },
@@ -1000,6 +1047,11 @@ int sunxi_hdmi_init(struct sunxi_hdmi_s *hdmi)
 	if (IS_ERR_OR_NULL(hdmi->plat_data)) {
 		shdmi_err(hdmi->plat_data);
 		return -1;
+	}
+
+	if (!hdmi->smooth_boot) {
+		_sunxi_hdmi_board_init(hdmi);
+		hdmi_trace("sunxi hdmi board init done\n");
 	}
 
 	/* bind phy ops */

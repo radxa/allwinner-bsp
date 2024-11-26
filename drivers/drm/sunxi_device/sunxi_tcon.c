@@ -634,13 +634,14 @@ int sunxi_tcon_hdmi_mode_init(struct device *dev)
 		return 0;
 	}
 
-	/* calculate actual pixel clock */
-	pclk = p_timing->pixel_clk * (p_timing->pixel_repeat + 1);
-	if (format == DISP_CSC_TYPE_YUV420)
-		pclk /= 2;
-	_sunxi_tcon_hdmi_set_rate(hwtcon, pclk);
-
+	/* if sw enable. will not handle tcon clock and timing config */
 	if (!sw_enable) {
+		/* calculate actual pixel clock */
+		pclk = p_timing->pixel_clk * (p_timing->pixel_repeat + 1);
+		if (format == DISP_CSC_TYPE_YUV420)
+			pclk /= 2;
+		_sunxi_tcon_hdmi_set_rate(hwtcon, pclk);
+
 		ret = _sunxi_tcon_hdmi_config(hwtcon, de_id, p_timing, format);
 		if (ret != 0) {
 			DRM_ERROR("tcon hdmi config failed\n");

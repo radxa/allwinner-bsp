@@ -32,17 +32,22 @@
 static struct dw_hdcp_s  *hdcp;
 static esm_instance_t  *esm;
 
+static inline void _dw_hdcp2x_int_mute(u8 value)
+{
+	dw_write(HDCP22REG_MUTE, value);
+}
+
 /**
  * @desc: chose which way to enable hdcp22
  * @enable: 0 - chose to enable hdcp22 by dwc_hdmi inner signal ist_hdcp_capable
  *          1 - chose to enable hdcp22 by hdcp22_ovr_val bit
  */
-static void _dw_hdcp2x_set_avmute(u8 val, u8 enable)
+static void _dw_hdcp2x_ovr_set_avmute(u8 ovr_val, u8 ovr_en)
 {
 	dw_write_mask(HDCP22REG_CTRL1,
-		HDCP22REG_CTRL1_HDCP22_AVMUTE_OVR_VAL_MASK, val);
+			HDCP22REG_CTRL1_HDCP22_AVMUTE_OVR_VAL_MASK, ovr_val);
 	dw_write_mask(HDCP22REG_CTRL1,
-		HDCP22REG_CTRL1_HDCP22_AVMUTE_OVR_EN_MASK, enable);
+			HDCP22REG_CTRL1_HDCP22_AVMUTE_OVR_EN_MASK, ovr_en);
 }
 
 /**
@@ -51,22 +56,40 @@ static void _dw_hdcp2x_set_avmute(u8 val, u8 enable)
  *       1 - hdcp22 hpd come from hpd_ovr_val
  * @enable:hpd_ovr_val
  */
-static void _dw_hdcp2x_set_hpd(u8 val)
+static void _dw_hdcp2x_ovr_set_hpd(u8 ovr_val, u8 ovr_en)
 {
-	dw_write_mask(HDCP22REG_CTRL,
-		HDCP22REG_CTRL_HPD_OVR_VAL_MASK, val);
-	dw_write_mask(HDCP22REG_CTRL,
-		HDCP22REG_CTRL_HPD_OVR_EN_MASK, 0x1);
+	dw_write_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HPD_OVR_VAL_MASK, ovr_val);
+	dw_write_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HPD_OVR_EN_MASK, ovr_en);
 }
 
 void _dw_hdcp2x_data_enable(u8 enable)
 {
-	dw_mc_disable_hdcp_clock(enable ? 0x0 : 0x1);
-	_dw_hdcp2x_set_avmute(enable ? 0x0 : 0x1, 0x1);
+	if (enable == DW_HDMI_ENABLE) {
+		_dw_hdcp2x_ovr_set_avmute(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
+		dw_mc_set_hdcp_clk(DW_HDMI_ENABLE);
+		return;
+	}
+
+	dw_mc_set_hdcp_clk(DW_HDMI_DISABLE);
+	_dw_hdcp2x_ovr_set_avmute(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
 }
 
-static int
-_esm_hpi_read(void *instance, uint32_t offset, uint32_t *data)
+/**
+ * @path: 0 - hdcp14 path
+ *        1 - hdcp22 path
+ */
+void dw_hdcp2x_ovr_set_path(u8 ovr_val, u8 ovr_en)
+{
+	dw_write_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HDCP22_OVR_VAL_MASK, ovr_val);
+	dw_write_mask(HDCP22REG_CTRL, HDCP22REG_CTRL_HDCP22_OVR_EN_MASK, ovr_en);
+}
+
+u8 dw_hdcp2x_get_path(void)
+{
+	return dw_read_mask(HDCP22REG_STS, HDCP22REG_STS_HDCP22_SWITCH);
+}
+
+static int _esm_hpi_read(void *instance, uint32_t offset, uint32_t *data)
 {
 	unsigned long addr =  esm->driver->hpi_base + offset;
 
@@ -75,8 +98,7 @@ _esm_hpi_read(void *instance, uint32_t offset, uint32_t *data)
 	return 0;
 }
 
-static int
-_esm_hpi_write(void *instance, uint32_t offset, uint32_t data)
+static int _esm_hpi_write(void *instance, uint32_t offset, uint32_t data)
 {
 	unsigned long addr = esm->driver->hpi_base + offset;
 	*((volatile u32 *)addr) = data;
@@ -84,22 +106,22 @@ _esm_hpi_write(void *instance, uint32_t offset, uint32_t data)
 	return 0;
 }
 
-static int
-_esm_data_read(void *instance, uint32_t offset, uint8_t *dest_buf, uint32_t nbytes)
+static int _esm_data_read(void *instance, uint32_t offset,
+		uint8_t *dest_buf, uint32_t nbytes)
 {
 	memcpy(dest_buf, (u8 *)(esm->driver->vir_data_base + offset), nbytes);
 	return 0;
 }
 
-static int
-_esm_data_write(void *instance, uint32_t offset, uint8_t *src_buf, uint32_t nbytes)
+static int _esm_data_write(void *instance, uint32_t offset,
+		uint8_t *src_buf, uint32_t nbytes)
 {
 	memcpy((u8 *)(esm->driver->vir_data_base + offset), src_buf, nbytes);
 	return 0;
 }
 
-static int
-_esm_data_set(void *instance, uint32_t offset, uint8_t data, uint32_t nbytes)
+static int _esm_data_set(void *instance, uint32_t offset,
+		uint8_t data, uint32_t nbytes)
 {
 	memset((u8 *)(esm->driver->vir_data_base + offset), data, nbytes);
 	return 0;
@@ -143,7 +165,7 @@ static void _dw_hdcp2x_auth_work(struct work_struct *work)
 		return;
 	}
 
-	hdcp->esm_auth_done = 0x1;
+	hdcp->esm_auth_done = DW_HDMI_ENABLE;
 }
 
 /**
@@ -158,57 +180,57 @@ static int _dw_hdcp2x_get_encry_state(void)
 	uint32_t state = 0;
 	ESM_STATUS ret = ESM_HL_SUCCESS;
 
-	if (ESM_GetState(esm, &state, &Status) == ESM_HL_SUCCESS) {
+	ret = ESM_GetState(esm, &state, &Status);
+	if (ret != ESM_HL_SUCCESS)
+		return -1;
 
-		if (Status.esm_sync_lost) {
-			hdmi_err("[hdcp2.2-error]esm sync lost!\n");
+	if (Status.esm_sync_lost) {
+		hdmi_err("[hdcp2.2-error]esm sync lost!\n");
+		return -1;
+	}
+
+	if (Status.esm_exception) {
+		/* Got an exception. can check */
+		/* bits for more detail */
+		if (Status.esm_exception & 0x80000000)
+			hdmi_inf("hardware exception\n");
+		else
+			hdmi_inf("solfware exception\n");
+
+		hdmi_inf(" - line number:%d\n",
+					(Status.esm_exception >> 10) & 0xfffff);
+		hdmi_inf(" - flag:%d\n",
+				(Status.esm_exception >> 1) & 0x1ff);
+		hdmi_inf(" - Type:%s\n",
+				(Status.esm_exception & 0x1) ? "notify" : "abort");
+		if (((Status.esm_exception >> 1) & 0x1ff) != 109)
 			return -1;
-		}
 
-		if (Status.esm_exception) {
-			/* Got an exception. can check */
-			/* bits for more detail */
-			if (Status.esm_exception & 0x80000000)
-				hdmi_inf("hardware exception\n");
-			else
-				hdmi_inf("solfware exception\n");
-
-			hdmi_inf("exception line number:%d\n",
-				       (Status.esm_exception >> 10) & 0xfffff);
-			hdmi_inf("exception flag:%d\n",
-					(Status.esm_exception >> 1) & 0x1ff);
-			hdmi_inf("exception Type:%s\n",
-					(Status.esm_exception & 0x1) ? "notify" : "abort");
-			if (((Status.esm_exception >> 1) & 0x1ff) != 109)
-				return -1;
-
-			if (hdcp->esm_pairdata) {
-				memset(hdcp->esm_pairdata, 0, DW_ESM_PAIRDATA_SIZE);
-				ret = ESM_SavePairing(esm, hdcp->esm_pairdata,
-						&esm->esm_pair_size);
-				if (ret != ESM_HL_SUCCESS)
-					hdmi_err("ESM_SavePairing failed\n");
-			}
-
-			return 1;
-		}
-
-		if (Status.esm_auth_fail) {
-			hdmi_err("esm status check result,failed:%d\n", Status.esm_auth_fail);
-			return -1;
-		}
-
-		if (Status.esm_auth_pass) {
+		if (hdcp->esm_pairdata) {
 			memset(hdcp->esm_pairdata, 0, DW_ESM_PAIRDATA_SIZE);
-			ret = ESM_SavePairing(esm, hdcp->esm_pairdata, &esm->esm_pair_size);
+			ret = ESM_SavePairing(esm, hdcp->esm_pairdata,
+					&esm->esm_pair_size);
 			if (ret != ESM_HL_SUCCESS)
 				hdmi_err("ESM_SavePairing failed\n");
-			return 0;
 		}
 
-		return 2;
+		return 1;
 	}
-	return -1;
+
+	if (Status.esm_auth_fail) {
+		hdmi_err("esm status check result,failed:%d\n", Status.esm_auth_fail);
+		return -1;
+	}
+
+	if (Status.esm_auth_pass) {
+		memset(hdcp->esm_pairdata, 0, DW_ESM_PAIRDATA_SIZE);
+		ret = ESM_SavePairing(esm, hdcp->esm_pairdata, &esm->esm_pair_size);
+		if (ret != ESM_HL_SUCCESS)
+			hdmi_err("ESM_SavePairing failed\n");
+		return 0;
+	}
+
+	return 2;
 }
 
 static int _dw_hdcp2x_open(void)
@@ -248,7 +270,7 @@ static int _dw_hdcp2x_open(void)
 
 	if (ESM_LoadPairing(esm, hdcp->esm_pairdata, esm->esm_pair_size) < 0)
 		hdmi_inf("ESM Load Pairing failed\n");
-	hdcp->esm_open = 0x1;
+	hdcp->esm_open = DW_HDMI_ENABLE;
 
 set_capability:
 	if (hdcp->esm_cap_done)
@@ -258,11 +280,13 @@ set_capability:
 	/* Enable logging */
 	ESM_LogControl(esm, 1, 0);
 	/* ESM_EnableLowValueContent(esm); */
-	if (ESM_SetCapability(esm) != ESM_HL_SUCCESS) {
-		hdmi_err("esm set capability fail, maybe remote Rx is not 2.2 capable!\n");
+	err = ESM_SetCapability(esm);
+	if (err != ESM_HL_SUCCESS) {
+		hdmi_err("dw hdcp2x esm set capability failed!\n");
 		return -1;
 	}
-	hdcp->esm_cap_done = 0x1;
+	hdcp->esm_cap_done = DW_HDMI_ENABLE;
+
 	msleep(50);
 	queue_work(hdcp->hdcp2x_workqueue, &hdcp->hdcp2x_work);
 	return 0;
@@ -279,12 +303,12 @@ int dw_hdcp2x_get_encrypt_state(void)
 
 	ret = _dw_hdcp2x_get_encry_state();
 	if (ret == 0) {
-		_dw_hdcp2x_data_enable(1);
+		_dw_hdcp2x_data_enable(DW_HDMI_ENABLE);
 		hdcp->esm_auth_state = DW_HDCP_SUCCESS;
 		hdmi_inf("dw hdcp2x enable data encry\n");
 		goto esm_exit;
 	} else if (ret == -1) {
-		_dw_hdcp2x_data_enable(0);
+		_dw_hdcp2x_data_enable(DW_HDMI_DISABLE);
 		msleep(25);
 		if (!_dw_hdcp2x_start_auth()) {
 			hdcp->esm_auth_state = DW_HDCP_ING;
@@ -309,11 +333,13 @@ esm_exit:
 /* configure hdcp2.2 and enable hdcp2.2 encrypt */
 int dw_hdcp2x_enable(void)
 {
+	u8 hdcp_mask = 0;
+
 	/* 1 - set main controller hdcp clock disable */
-	_dw_hdcp2x_data_enable(0);
+	_dw_hdcp2x_data_enable(DW_HDMI_DISABLE);
 
 	/* 2 - set hdcp keepout */
-	dw_fc_video_set_hdcp_keepout(true);
+	dw_fc_video_set_hdcp_keepout(DW_HDMI_ENABLE);
 
 	/* 3 - Select DVI or HDMI mode */
 	dw_hdcp_sync_tmds_mode();
@@ -321,19 +347,21 @@ int dw_hdcp2x_enable(void)
 	/* 4 - Set the Data enable, Hsync, and VSync polarity */
 	dw_hdcp_sync_data_polarity();
 
-	dw_write_mask(0x4003, 1 << 5, 0x1);
+	dw_hdcp2x_ovr_set_path(DW_HDMI_ENABLE, DW_HDMI_ENABLE);
 
-	dw_hdcp_set_data_path(0x1);
-
-	_dw_hdcp2x_set_hpd(0x1);
+	_dw_hdcp2x_ovr_set_hpd(DW_HDMI_ENABLE, DW_HDMI_ENABLE);
 
 	/* disable avmute overwrite */
-	_dw_hdcp2x_set_avmute(0x0, 0x0);
-
-	dw_write_mask(0x4003, 1 << 4, 0x1);
+	_dw_hdcp2x_ovr_set_avmute(DW_HDMI_DISABLE, DW_HDMI_DISABLE);
 
 	/* mask the interrupt of hdcp22 event */
-	dw_write_mask(HDCP22REG_MASK, 0xff, 0);
+	hdcp_mask  = HDCP22REG_MUTE_CAPABLE_MASK;
+	hdcp_mask |= HDCP22REG_MUTE_NOT_CAPABLE_MASK;
+	hdcp_mask |= HDCP22REG_MUTE_AUTHEN_LOST_MASK;
+	hdcp_mask |= HDCP22REG_MUTE_AUTHEN_MASK;
+	hdcp_mask |= HDCP22REG_MUTE_AUTHEN_FAIL_MASK;
+	hdcp_mask |= HDCP22REG_MUTE_DECRYP_CHG_MASK;
+	_dw_hdcp2x_int_mute(hdcp_mask);
 
 	if (_dw_hdcp2x_open() < 0)
 		return -1;
@@ -345,15 +373,11 @@ int dw_hdcp2x_enable(void)
 
 int dw_hdcp2x_disable(void)
 {
-	dw_mc_disable_hdcp_clock(1);
+	dw_mc_set_hdcp_clk(DW_HDMI_DISABLE);
 
-	dw_write_mask(0x4003, 1 << 5, 0x0);
+	dw_hdcp2x_ovr_set_path(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
 
-	dw_hdcp_set_data_path(0x0);
-
-	_dw_hdcp2x_set_hpd(0x0);
-
-	dw_write_mask(0x4003, 1 << 4, 0x0);
+	_dw_hdcp2x_ovr_set_hpd(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
 
 	if (hdcp->esm_auth_done) {
 		mutex_lock(&hdcp->lock_esm_auth);
@@ -362,8 +386,8 @@ int dw_hdcp2x_disable(void)
 		msleep(20);
 	}
 
-	hdcp->esm_auth_done  = 0x0;
-	hdcp->esm_cap_done   = 0x0;
+	hdcp->esm_auth_done  = DW_HDMI_DISABLE;
+	hdcp->esm_cap_done   = DW_HDMI_DISABLE;
 	hdcp->esm_auth_state = DW_HDCP_DISABLE;
 
 	dw_hdcp_set_enable_type(DW_HDCP_TYPE_NULL);
@@ -391,8 +415,8 @@ int dw_hdcp2x_firmware_update(const u8 *data, size_t size)
 	}
 
 	memcpy(esm_addr, data, size);
-	hdcp->esm_size = (u32)size;
-	hdcp->esm_loading = 0x1;
+	hdcp->esm_size    = (u32)size;
+	hdcp->esm_loading = DW_HDMI_ENABLE;
 
 	hdmi_inf("dw hdcp2x loading firmware size %d finish.\n", (u32)size);
 	return 0;
@@ -404,35 +428,26 @@ int dw_hdcp2x_init(void)
 
 	hdcp = &hdmi->hdcp_dev;
 
-	hdcp->esm_loading = 0x0;
-	hdcp->esm_open = 0x0;
-	hdcp->esm_auth_done = 0x0;
-	hdcp->esm_cap_done  = 0x0;
+	hdcp->esm_open      = DW_HDMI_DISABLE;
+	hdcp->esm_loading   = DW_HDMI_DISABLE;
+	hdcp->esm_auth_done = DW_HDMI_DISABLE;
+	hdcp->esm_cap_done  = DW_HDMI_DISABLE;
 
-	if (hdcp->esm_pairdata != NULL) {
-		kfree(hdcp->esm_pairdata);
-		hdcp->esm_pairdata = NULL;
-	}
+	shdmi_free_point(hdcp->esm_pairdata);
 	hdcp->esm_pairdata = kzalloc(DW_ESM_PAIRDATA_SIZE, GFP_KERNEL | __GFP_ZERO);
 	if (IS_ERR_OR_NULL(hdcp->esm_pairdata)) {
 		shdmi_err(hdcp->esm_pairdata);
 		return -1;
 	}
 
-	if (esm != NULL) {
-		kfree(esm);
-		esm = NULL;
-	}
+	shdmi_free_point(esm);
 	esm = kzalloc(sizeof(esm_instance_t), GFP_KERNEL | __GFP_ZERO);
 	if (IS_ERR_OR_NULL(esm)) {
 		shdmi_err(esm);
 		return -1;
 	}
 
-	if (esm->driver != NULL) {
-		kfree(esm->driver);
-		esm->driver = NULL;
-	}
+	shdmi_free_point(esm->driver);
 	esm->driver = kzalloc(sizeof(esm_host_driver_t), GFP_KERNEL | __GFP_ZERO);
 	if (IS_ERR_OR_NULL(esm->driver)) {
 		shdmi_err(esm->driver);
@@ -484,25 +499,13 @@ int dw_hdcp2x_init(void)
 
 void dw_hdcp2x_exit(void)
 {
-	if (hdcp->hdcp2x_workqueue != NULL) {
-		kfree(hdcp->hdcp2x_workqueue);
-		hdcp->hdcp2x_workqueue = NULL;
-	}
+	shdmi_free_point(esm->driver);
 
-	if (esm->driver != NULL) {
-		kfree(esm->driver);
-		esm->driver = NULL;
-	}
+	shdmi_free_point(esm);
 
-	if (esm != NULL) {
-		kfree(esm);
-		esm = NULL;
-	}
+	shdmi_free_point(hdcp->hdcp2x_workqueue);
 
-	if (hdcp != NULL) {
-		kfree(hdcp);
-		hdcp = NULL;
-	}
+	shdmi_free_point(hdcp);
 }
 
 ssize_t dw_hdcp2x_dump(char *buf)

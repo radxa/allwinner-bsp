@@ -80,7 +80,7 @@ int dw_cec_set_enable(u8 enable)
 	u8 mask = 0x0;
 	if (enable == 0x1) {
 		/* enable cec module clock */
-		dw_mc_disable_cec_clock(0x0);
+		dw_mc_set_cec_clk(DW_HDMI_ENABLE);
 
 		udelay(20);
 
@@ -122,7 +122,7 @@ int dw_cec_set_enable(u8 enable)
 
 		udelay(20);
 		/* disable cec module clock */
-		dw_mc_disable_cec_clock(0x1);
+		dw_mc_set_cec_clk(DW_HDMI_DISABLE);
 	}
 	return 0;
 }

@@ -2897,7 +2897,7 @@
 			reset-names = "npu_rst";
 			interrupt-names = "npu";
 			npu-vf = <696>;
-			npu-regulator = <1>;
+			npu-setvol = <1>;
 			power-domains = <&pd A523_PD_NPU>;
 			status = "okay";
 		};

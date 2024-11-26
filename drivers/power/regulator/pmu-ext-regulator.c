@@ -89,6 +89,46 @@
 		.ops		= &pmu_ext_ops_range_step_delay,				\
 	}
 
+#define AXP1530_EXT_HW_DVM_REGULATOR_RANGE_STEP_DELAY(_family, _id, _match, _supply, _ranges, _n_voltages,	\
+			_vreg, _vmask, _ereg, _emask)						\
+	[_family##_##_id] = {									\
+		.name		= (_match),							\
+		.supply_name	= (_supply),							\
+		.of_match	= of_match_ptr(_match),						\
+		.regulators_node = of_match_ptr("regulators"),					\
+		.type		= REGULATOR_VOLTAGE,						\
+		.id		= _family##_##_id,						\
+		.n_voltages	= (_n_voltages),						\
+		.owner		= THIS_MODULE,							\
+		.vsel_reg	= (_vreg),							\
+		.vsel_mask	= (_vmask),							\
+		.enable_reg	= (_ereg),							\
+		.enable_mask	= (_emask),							\
+		.linear_ranges	= (_ranges),							\
+		.n_linear_ranges = ARRAY_SIZE(_ranges),						\
+		.ops		= &axp1530_ext_hw_dvm_ops_range_step_delay,				\
+	}
+
+#define AXP1530_EXT_SW_DVM_REGULATOR_RANGE_STEP_DELAY(_family, _id, _match, _supply, _ranges, _n_voltages,	\
+			_vreg, _vmask, _ereg, _emask)						\
+	[_family##_##_id] = {									\
+		.name		= (_match),							\
+		.supply_name	= (_supply),							\
+		.of_match	= of_match_ptr(_match),						\
+		.regulators_node = of_match_ptr("regulators"),					\
+		.type		= REGULATOR_VOLTAGE,						\
+		.id		= _family##_##_id,						\
+		.n_voltages	= (_n_voltages),						\
+		.owner		= THIS_MODULE,							\
+		.vsel_reg	= (_vreg),							\
+		.vsel_mask	= (_vmask),							\
+		.enable_reg	= (_ereg),							\
+		.enable_mask	= (_emask),							\
+		.linear_ranges	= (_ranges),							\
+		.n_linear_ranges = ARRAY_SIZE(_ranges),						\
+		.ops		= &axp1530_ext_sw_dvm_ops_range_step_delay,				\
+	}
+
 struct regulator_delay {
 	u32 step;
 	u32 final;
@@ -105,6 +145,178 @@ static int pmu_ext_set_voltage_time_sel(struct regulator_dev *rdev,
 	return delay_time * 1000;
 };
 
+static int axp1530_ext_hw_dvm_set_voltage_time_sel_regmap(struct regulator_dev *rdev,
+		unsigned int old_selector, unsigned int new_selector)
+{
+	struct regulator_delay *delay = (struct regulator_delay *)rdev->reg_data;
+	int delay_time;
+
+	if (abs(new_selector - old_selector))
+		delay_time = (abs(new_selector - old_selector) * delay->step + delay->final + 999) / 1000;
+	else
+		delay_time = 0;
+
+	mdelay(delay_time);
+
+	return 0;
+};
+
+static int axp1530_ext_hw_dvm_set_voltage_sel_regmap(struct regulator_dev *rdev, unsigned sel)
+{
+	int ret;
+	int val;
+	sel <<= ffs(rdev->desc->vsel_mask) - 1;
+
+	regmap_read(rdev->regmap, AXP1530_DCDC1_CONRTOL, &val);
+	val |= 0x80;
+	ret = regmap_write(rdev->regmap, AXP1530_DCDC2_CONRTOL, val);
+
+	regmap_update_bits(rdev->regmap, 0x14, BIT(7), BIT(7));
+	regmap_update_bits(rdev->regmap, 0x1d, BIT(0), 0);
+	regmap_update_bits(rdev->regmap, 0x22, BIT(1), 0);
+
+	ret = regmap_update_bits(rdev->regmap, AXP1530_DCDC2_CONRTOL,
+				  rdev->desc->vsel_mask, sel);
+	mdelay(1);
+
+	ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+				  rdev->desc->vsel_mask, sel);
+	udelay(500);
+
+	regmap_update_bits(rdev->regmap, 0x22, BIT(1), BIT(1));
+
+	if (ret)
+		return ret;
+
+	if (rdev->desc->apply_bit)
+		ret = regmap_update_bits(rdev->regmap, rdev->desc->apply_reg,
+					 rdev->desc->apply_bit,
+					 rdev->desc->apply_bit);
+	return ret;
+}
+
+static int axp1530_ext_sw_dvm_set_voltage_time_sel(struct regulator_dev *rdev,
+		unsigned int old_selector, unsigned int new_selector)
+{
+	struct regulator_delay *delay = (struct regulator_delay *)rdev->reg_data;
+	int delay_time;
+
+	if (abs(new_selector - old_selector))
+		delay_time = (abs(new_selector - old_selector) * delay->step + delay->final);
+	else
+		delay_time = 0;
+
+	return delay_time;
+};
+
+#define AXP1530_EXT_SW_DVM_STEP (2)
+static int axp1530_ext_sw_dvm_set_voltage_sel_regmap
+		  (struct regulator_dev *rdev, unsigned int new_selector)
+{
+	int ret;
+	int i, delay = 0;
+	int old_selector = -1;
+	int start_selector = 0;
+	unsigned int quot, rem;
+	const struct regulator_ops *ops = rdev->desc->ops;
+
+	/* first step voltage 1.00v */
+	start_selector = 50;
+
+	old_selector = ops->get_voltage_sel(rdev);
+	if (old_selector < 0)
+		return old_selector;
+
+	new_selector <<= ffs(rdev->desc->vsel_mask) - 1;
+
+	if (new_selector <= old_selector) {
+		/* step down voltage */
+
+		ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+					rdev->desc->vsel_mask, new_selector);
+		if (ret)
+			return ret;
+
+		delay = pmu_ext_set_voltage_time_sel(rdev, old_selector, new_selector);
+		mdelay(delay / 1000);
+	} else {
+		/* step up voltage */
+		if ((old_selector < start_selector) && (start_selector <= new_selector)) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask,
+						start_selector);
+			if (ret)
+				return ret;
+			delay = axp1530_ext_sw_dvm_set_voltage_time_sel(rdev, old_selector,
+						start_selector);
+
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			} else if (delay) {
+				udelay(delay);
+			}
+			old_selector = start_selector;
+		} else if (new_selector < start_selector) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask,
+						new_selector);
+			if (ret)
+				return ret;
+			delay = axp1530_ext_sw_dvm_set_voltage_time_sel(rdev, old_selector,
+						new_selector);
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			}  else if (delay) {
+				udelay(delay);
+			}
+			old_selector = new_selector;
+		}
+
+		quot = (new_selector - old_selector) / AXP1530_EXT_SW_DVM_STEP;
+		rem = (new_selector - old_selector) % AXP1530_EXT_SW_DVM_STEP;
+		for (i = 1; i <= quot; i++) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask,
+						old_selector + AXP1530_EXT_SW_DVM_STEP * i);
+			if (ret)
+				return ret;
+
+			/* delay for every dvm step */
+			delay = axp1530_ext_sw_dvm_set_voltage_time_sel(rdev,
+									old_selector,
+									old_selector + AXP1530_EXT_SW_DVM_STEP);
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			} else if (delay) {
+				udelay(delay);
+			}
+		}
+
+		if (rem) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask, new_selector);
+			if (ret)
+				return ret;
+
+			/* delay for remainder */
+			delay = axp1530_ext_sw_dvm_set_voltage_time_sel(rdev,
+									old_selector,
+									old_selector + rem);
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			} else if (delay) {
+				udelay(delay);
+			}
+		}
+	}
+
+	return ret;
+}
+
 static struct regulator_ops pmu_ext_ops_step_delay = {
 	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
 	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
@@ -115,7 +327,7 @@ static struct regulator_ops pmu_ext_ops_step_delay = {
 	.set_voltage_time_sel	= pmu_ext_set_voltage_time_sel,
 };
 
-static struct regulator_ops pmu_ext_ops_range_step_delay = {
+static struct regulator_ops __maybe_unused pmu_ext_ops_range_step_delay = {
 	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
 	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
 	.list_voltage		= regulator_list_voltage_linear_range,
@@ -123,6 +335,25 @@ static struct regulator_ops pmu_ext_ops_range_step_delay = {
 	.disable		= regulator_disable_regmap,
 	.is_enabled		= regulator_is_enabled_regmap,
 	.set_voltage_time_sel	= pmu_ext_set_voltage_time_sel,
+};
+
+static struct regulator_ops __maybe_unused axp1530_ext_hw_dvm_ops_range_step_delay = {
+	.set_voltage_sel	= axp1530_ext_hw_dvm_set_voltage_sel_regmap,
+	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
+	.list_voltage		= regulator_list_voltage_linear_range,
+	.enable			= regulator_enable_regmap,
+	.disable		= regulator_disable_regmap,
+	.is_enabled		= regulator_is_enabled_regmap,
+	.set_voltage_time_sel	= axp1530_ext_hw_dvm_set_voltage_time_sel_regmap,
+};
+
+static struct regulator_ops __maybe_unused axp1530_ext_sw_dvm_ops_range_step_delay = {
+	.set_voltage_sel	= axp1530_ext_sw_dvm_set_voltage_sel_regmap,
+	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
+	.list_voltage		= regulator_list_voltage_linear_range,
+	.enable			= regulator_enable_regmap,
+	.disable		= regulator_disable_regmap,
+	.is_enabled		= regulator_is_enabled_regmap,
 };
 
 /* Operations permitted on DCDCx */
@@ -152,12 +383,22 @@ static const struct linear_range axp1530_dcdc3_ranges[] = {
 };
 
 static const struct regulator_desc axp1530_ext_regulators[] = {
+#if !IS_ENABLED(CONFIG_AW_AXP1530_WORKAROUND_DVM)
 	PMU_EXT_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC1, "dcdc1", "vin1", axp1530_dcdc1_ranges,
 			0x6B, AXP1530_DCDC1_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(0)),
 	PMU_EXT_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC2, "dcdc2", "vin2", axp1530_dcdc2_ranges,
 			0x58, AXP1530_DCDC2_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(1)),
 	PMU_EXT_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC3, "dcdc3", "vin3", axp1530_dcdc3_ranges,
 			0x58, AXP1530_DCDC3_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(2)),
+#else
+	AXP1530_EXT_HW_DVM_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC1, "dcdc1", "vin1", axp1530_dcdc1_ranges,
+			0x6B, AXP1530_DCDC1_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(0)),
+	AXP1530_EXT_HW_DVM_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC2, "dcdc2", "vin2", axp1530_dcdc2_ranges,
+			0x58, AXP1530_DCDC2_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(1)),
+	AXP1530_EXT_SW_DVM_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC3, "dcdc3", "vin3", axp1530_dcdc3_ranges,
+			0x58, AXP1530_DCDC3_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(2)),
+#endif
+
 	PMU_EXT_REGULATOR_STEP_DELAY(AXP1530, LDO1, "ldo1", "ldo1in", 500, 3500, 100,
 		AXP1530_ALDO1_CONRTOL, 0x1f, AXP1530_OUTPUT_CONTROL, BIT(3)),
 	PMU_EXT_REGULATOR_STEP_DELAY(AXP1530, LDO2, "ldo2", "ldo2in", 500, 3500, 100,

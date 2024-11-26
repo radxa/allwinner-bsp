@@ -847,7 +847,7 @@ int dw_audio_on(void)
 	/* Configure audio info frame packets */
 	dw_fc_audio_packet_config(audio);
 
-	dw_mc_disable_audio_sampler_clock(0x0);
+	dw_mc_set_audio_sample_clk(DW_HDMI_ENABLE);
 
 	dw_fc_audio_set_mute(0);
 
@@ -1258,7 +1258,7 @@ ssize_t dw_avp_dump(char *buf)
 int dw_avp_set_mute(u8 enable)
 {
 	dw_gcp_set_avmute(enable);
-	dw_hdcp_set_avmute_state(enable);
+	dw_hdcp1x_set_avmute(enable);
 	return 0;
 }
 

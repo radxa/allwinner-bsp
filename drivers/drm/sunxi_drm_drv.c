@@ -53,6 +53,7 @@ struct display_boot_info {
 	unsigned int tcon_id;
 	unsigned int connector_type;//DRM_MODE_CONNECTOR_
 	unsigned int hw_id;//DRM_MODE_CONNECTOR_
+	struct drm_display_mode mode;
 /*	unsigned int mode;
 	unsigned int format;
 	unsigned int bits;
@@ -591,9 +592,12 @@ static int get_boot_display_info(struct drm_device *drm)
 {
 	struct sunxi_drm_private *pri = to_sunxi_drm_private(drm);
 	struct display_boot_info *info;
+	struct drm_display_mode *mode;
 	struct device_node *routing;
+	struct device_node *mode_node;
 	char name[16];
 	int i, ret;
+	u32 read_val = 0;
 
 	INIT_LIST_HEAD(&pri->priv->boot_info_head);
 	for (i = 0; ; i++) {
@@ -613,15 +617,49 @@ static int get_boot_display_info(struct drm_device *drm)
 
 		ret = of_property_read_u32_array(routing, "route", &info->de_id, 4);
 		if (ret) {
-			kfree(info);
 			of_node_put(routing);
+			kfree(info);
 			return 0;
 		}
 
+		/* parse add mode info */
+		mode = &info->mode;
+		mode_node = of_get_child_by_name(routing, "mode");
+		if (!mode_node) {
+			DRM_ERROR("find mode node failed\n");
+			return 0;
+		}
+
+#define of_mode_read(name, value)                              \
+		do {                                                   \
+			of_property_read_u32(mode_node, name, &read_val);  \
+			value = read_val;                                  \
+		} while (0)
+
+		of_mode_read("clock", mode->clock);
+		of_mode_read("hdisplay", mode->hdisplay);
+		of_mode_read("vdisplay", mode->vdisplay);
+		of_mode_read("hsync_start", mode->hsync_start);
+		of_mode_read("vsync_start", mode->vsync_start);
+		of_mode_read("hsync_end", mode->hsync_end);
+		of_mode_read("vsync_end", mode->vsync_end);
+		of_mode_read("htotal", mode->htotal);
+		of_mode_read("vtotal", mode->vtotal);
+		of_mode_read("vscan", mode->vscan);
+		of_mode_read("flags", mode->flags);
+		of_mode_read("hskew", mode->hskew);
+		of_mode_read("type",  mode->type);
+#undef of_mode_read
+
+		drm_mode_set_name(mode);
+
+		DRM_DEBUG_DRIVER("boot mode: " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
+
 		list_add_tail(&info->list, &pri->priv->boot_info_head);
+
+		of_node_put(mode_node);
 		of_node_put(routing);
 	}
-
 	return 0;
 }
 
@@ -635,7 +673,7 @@ static int init_connecting(struct drm_device *drm, struct drm_crtc **crtcs, unsi
 	struct drm_connector *connector_ = NULL;
 	struct display_boot_info *info;
 	struct drm_display_mode *mode = NULL;
-	int i, id, modes_count, init_cnt = 0;
+	int i, id, modes_count, init_cnt = 0, mode_found = 0;
 
 	if (!crtc_cnt || !connector_cnt) {
 		DRM_ERROR("connector or crtc null\n");
@@ -668,9 +706,20 @@ static int init_connecting(struct drm_device *drm, struct drm_crtc **crtcs, unsi
 				  info->hw_id == sdrm->hw_id) {
 				mutex_lock(&drm->mode_config.mutex);
 				modes_count = connectors[i]->funcs->fill_modes(connectors[i], 8192, 8192);
-				//DRM_INFO("%s found mode %d\n", __FUNCTION__, modes_count);
-				//TODO pick mode
-				mode = list_first_entry_or_null(&connectors[i]->modes, struct drm_display_mode, head);
+				if (!modes_count)
+					break;
+
+				list_for_each_entry(mode, &connectors[i]->modes, head) {
+					if (mode && drm_mode_equal(&info->mode, mode)) {
+						mode_found = 1;
+						break;
+					}
+				};
+				if (mode_found)
+					mode = &info->mode;
+				else
+					mode = list_first_entry_or_null(&connectors[i]->modes, struct drm_display_mode, head);
+				DRM_DEBUG_DRIVER("%s use mode %dx%d\n", __FUNCTION__, mode->hdisplay, mode->vdisplay);
 				mutex_unlock(&drm->mode_config.mutex);
 
 				if (mode) {

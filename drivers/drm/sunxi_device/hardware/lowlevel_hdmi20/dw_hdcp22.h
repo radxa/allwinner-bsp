@@ -19,6 +19,18 @@
  *                                                                           *
  *****************************************************************************/
 /**
+ * @desc: dw hdcp config data pth
+ * @path: 0 - hdcp14 path
+ *        1 - hdcp22 path
+ */
+void dw_hdcp2x_ovr_set_path(u8 ovr_val, u8 ovr_en);
+/**
+ * @desc: dw hdcp get data path
+ * @return: 0 - hdcp1x path
+ *          1 - hdcp2x path
+ */
+u8 dw_hdcp2x_get_path(void);
+/**
  * @desc: dw hdcp2x get encry state
  * @return: refer to enum dw_hdcp_state_e
  */

@@ -611,6 +611,10 @@ static void axp2202_usb_det_monitor(struct work_struct *work)
 			cancel_delayed_work_sync(&usb_power->usb_chg_state);
 			schedule_delayed_work(&usb_power->usb_chg_state, msecs_to_jiffies(5 * 1000));
 		}
+	} else {
+		regmap_update_bits(usb_power->regmap, AXP2202_CC_MODE_CTRL, GENMASK(1, 0), 0);
+		mdelay(50);
+		regmap_update_bits(usb_power->regmap, AXP2202_CC_MODE_CTRL, GENMASK(1, 0), 0x3);
 	}
 }
 

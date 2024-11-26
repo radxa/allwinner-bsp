@@ -201,6 +201,31 @@ struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
 		.power_mode_reverse	= false,
 		.power_mode_detect	= true,
 	},
+	{
+		.initial_bank_offset	= 0x0,
+		.mux_regs_offset	= 0x0,
+		.data_regs_offset	= 0x10,
+		.dlevel_regs_offset	= 0x14,
+		.bank_mem_size          = 0x30,
+		.pull_regs_offset       = 0x24,
+		.dlevel_pins_per_reg    = 8,
+		.dlevel_pins_bits       = 4,
+		.dlevel_pins_mask       = 0xF,
+		.irq_mux_val         	= 0xE,
+		.irq_cfg_reg		= 0x200,
+		.irq_ctrl_reg		= 0x210,
+		.irq_status_reg		= 0x214,
+		.irq_debounce_reg	= 0x218,
+		.irq_mem_base		= 0x200,
+		.irq_mem_size		= 0x20,
+		.irq_mem_used		= 0x20,
+		.power_mode_sel_reg	= 0x340,
+		.power_mode_ctrl_reg	= 0x344,
+		.power_mode_val_reg	= 0x348,
+		.pio_pow_ctrl_reg	= 0x350,
+		.power_mode_reverse	= true,
+		.power_mode_detect	= true,
+	},
 };
 EXPORT_SYMBOL_GPL(sunxi_pinctrl_hw_info);
 
@@ -641,6 +666,147 @@ static const struct pinctrl_ops sunxi_pctrl_ops = {
 	.get_group_pins		= sunxi_pctrl_get_group_pins,
 };
 
+DEFINE_SPINLOCK(sun55iw3_pinctrl_lock);
+
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+static const u32 sun55iw3_bank_base[] = {
+	SUNXI_BANK_OFFSET('B', 'A'),
+	SUNXI_BANK_OFFSET('C', 'A'),
+	SUNXI_BANK_OFFSET('D', 'A'),
+	SUNXI_BANK_OFFSET('E', 'A'),
+	SUNXI_BANK_OFFSET('F', 'A'),
+	SUNXI_BANK_OFFSET('G', 'A'),
+	SUNXI_BANK_OFFSET('H', 'A'),
+	SUNXI_BANK_OFFSET('I', 'A'),
+	SUNXI_BANK_OFFSET('J', 'A'),
+	SUNXI_BANK_OFFSET('K', 'A'),
+};
+/* Describe which bank use vcc-io */
+static const u32 sun55iw3_vccio_banks[] = {
+	SUNXI_BANK_OFFSET('B', 'A'),
+	SUNXI_BANK_OFFSET('H', 'A'),
+};
+
+static const u32 sun55iw3_r_bank_base[] = {
+	SUNXI_BANK_OFFSET('L', 'L'),
+	SUNXI_BANK_OFFSET('M', 'L'),
+};
+
+static u32 sun55iw3_vccio_sel_map(bool is_cpus_gpio, int bank)
+{
+	int i;
+
+	if (is_cpus_gpio)
+		return bank;
+
+	for (i = 0; i < ARRAY_SIZE(sun55iw3_vccio_banks); i++) {
+		if (sun55iw3_vccio_banks[i] == bank)
+			return 12;
+	}
+	return bank;
+}
+
+static u32 sun55iw3_vccio_val_map(bool is_cpus_gpio, int bank)
+{
+	int i;
+
+	if (is_cpus_gpio)
+		return bank;
+
+	for (i = 0; i < ARRAY_SIZE(sun55iw3_vccio_banks); i++) {
+		if (sun55iw3_vccio_banks[i] == bank)
+			return 16;
+	}
+	return bank;
+}
+
+void sun55iw3_pinctrl_fix_over_voltage(bool is_cpus_gpio)
+{
+	u32 mod_val, mod_sel, val, bank, i, vccio_sel_bank, vccio_val_bank, reg;
+	unsigned long flags;
+	int cur_uV, mod_uV, banks;
+	void __iomem *membase;
+	const u32 *bank_base;
+	u32 power_mode_sel_reg, power_mode_val_reg;
+	static u32 power_mon_print_once, r_power_mon_print_once;
+
+	if (is_cpus_gpio) {
+		membase = ioremap(0x7022000, 0x800);
+		banks = ARRAY_SIZE(sun55iw3_r_bank_base);
+		bank_base = sun55iw3_r_bank_base;
+
+		power_mode_sel_reg = 0x340;
+		power_mode_val_reg = 0x348;
+	} else {
+		membase = ioremap(0x2000000, 0x800);
+		banks = ARRAY_SIZE(sun55iw3_bank_base);
+		bank_base = sun55iw3_bank_base;
+
+		power_mode_sel_reg = 0x380;
+		power_mode_val_reg = 0x388;
+	}
+
+
+	mod_val = readl(membase + power_mode_val_reg);
+	mod_sel = readl(membase + power_mode_sel_reg);
+
+	for (i = 0; i < banks; i++) {
+		bank = bank_base[i];
+
+		/* Skip PF */
+		if (i == 4)
+			continue;
+
+		vccio_sel_bank = sun55iw3_vccio_sel_map(is_cpus_gpio, bank);
+		vccio_val_bank = sun55iw3_vccio_val_map(is_cpus_gpio, bank);
+
+		mod_uV = mod_sel & BIT(vccio_sel_bank) ? 3300000 : 1800000;
+
+		cur_uV = mod_val & BIT(vccio_val_bank) ? 1800000 : 3300000;
+
+		if (is_cpus_gpio)
+			sunxi_debug(NULL, "bank[%c] power_val=%d, power_sel=%d\n", 'L' + bank, cur_uV, mod_uV);
+		else
+			sunxi_debug(NULL, "bank[%c] power_val=%d, power_sel=%d\n", 'A' + bank, cur_uV, mod_uV);
+
+		if (cur_uV > mod_uV) {
+			if (is_cpus_gpio)
+				sunxi_warn(NULL, "bank[%c] over voltage, we will correct it\n", 'L' + bank);
+			else
+				sunxi_warn(NULL, "bank[%c] over voltage, we will correct it\n", 'A' + bank);
+			/* We always set power sel 3.3v */
+			val = 1;
+			/* Set withstand voltage value */
+			spin_lock_irqsave(&sun55iw3_pinctrl_lock, flags);
+			reg = readl(membase + power_mode_sel_reg);
+			reg &= ~BIT(vccio_sel_bank);
+			writel(reg | (val << vccio_sel_bank), membase + power_mode_sel_reg);
+			spin_unlock_irqrestore(&sun55iw3_pinctrl_lock, flags);
+		} else if (cur_uV < mod_uV) {
+			/* We print power mode warning once for every bank */
+			if (is_cpus_gpio) {
+				if (!(r_power_mon_print_once & BIT(bank))) {
+					sunxi_warn(NULL, "bank[%c] power mode not correct, power_val=%d, power_sel=%d\n",
+							'L' + bank, cur_uV, mod_uV);
+					r_power_mon_print_once |= BIT(bank);
+				}
+			} else {
+				if (!(power_mon_print_once & BIT(bank))) {
+					sunxi_warn(NULL, "bank[%c] power mode not correct, power_val=%d, power_sel=%d\n",
+							'A' + bank, cur_uV, mod_uV);
+					power_mon_print_once |= BIT(bank);
+				}
+			}
+		} else {
+			/* Do nothing */
+		}
+	}
+
+	iounmap(membase);
+}
+EXPORT_SYMBOL_GPL(sun55iw3_pinctrl_fix_over_voltage);
+#endif
+
 static inline u32 sunxi_pintctrl_vccio_ctrl_map(struct sunxi_pinctrl *pctl, u32 bank)
 {
 	enum sunxi_pinctrl_hw_type hw_type = pctl->desc->hw_type;
@@ -696,17 +862,21 @@ static int sunxi_pinctrl_set_io_bias_cfg(struct sunxi_pinctrl *pctl,
 					 unsigned pin,
 					 struct regulator *supply)
 {
-	unsigned short bank = pin / PINS_PER_BANK;
-	unsigned long flags;
-	u32 val, reg;
+	unsigned short bank;
+	unsigned long flags, g_flags;
+	u32 val, reg, vccio_ctrl_bank, vccio_sel_bank;
 	int uV;
 	enum sunxi_pinctrl_hw_type hw_type = pctl->desc->hw_type;
 	bool power_mode_detect = sunxi_pinctrl_hw_info[hw_type].power_mode_detect;
-	u32 vccio_sel_bank = sunxi_pintctrl_vccio_sel_map(pctl, bank);
-	u32 vccio_ctrl_bank = sunxi_pintctrl_vccio_ctrl_map(pctl, bank);
 	u32 power_mode_sel_reg = sunxi_pinctrl_hw_info[hw_type].power_mode_sel_reg;
 	u32 power_mode_ctrl_reg = sunxi_pinctrl_hw_info[hw_type].power_mode_ctrl_reg;
 	bool power_mode_reverse = sunxi_pinctrl_hw_info[hw_type].power_mode_reverse;
+
+	pin -= pctl->desc->pin_base;
+	bank = pin / PINS_PER_BANK;
+
+	vccio_sel_bank = sunxi_pintctrl_vccio_sel_map(pctl, bank);
+	vccio_ctrl_bank = sunxi_pintctrl_vccio_ctrl_map(pctl, bank);
 
 	if (!pctl->desc->io_bias_cfg_variant)
 		return 0;
@@ -783,11 +953,14 @@ static int sunxi_pinctrl_set_io_bias_cfg(struct sunxi_pinctrl *pctl,
 			val = uV <= 1800000 ? 1 : 0;
 
 		/* Set withstand voltage value */
+		spin_lock_irqsave(&sun55iw3_pinctrl_lock, g_flags);
 		raw_spin_lock_irqsave(&pctl->lock, flags);
 		reg = readl(pctl->membase + power_mode_sel_reg);
 		reg &= ~BIT(vccio_sel_bank);
 		writel(reg | val << vccio_sel_bank, pctl->membase + power_mode_sel_reg);
+
 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
+		spin_unlock_irqrestore(&sun55iw3_pinctrl_lock, g_flags);
 
 		sunxi_debug(NULL, "!pf-withstand: bank[%d-%d]=%duV set modesel[0x%x=0x%x]\n",
 			    bank, vccio_sel_bank, uV, power_mode_sel_reg,
@@ -1007,7 +1180,7 @@ static void sunxi_power_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin, u32 
 {
 	u32 val, reg;
 	u32 current_mV;
-	unsigned long flags;
+	unsigned long flags, g_flags;
 	unsigned short bank = pin / PINS_PER_BANK;
 	enum sunxi_pinctrl_hw_type hw_type = pctl->desc->hw_type;
 	void __iomem *pow_val_addr = pctl->membase + sunxi_pinctrl_hw_info[hw_type].power_mode_val_reg;
@@ -1027,6 +1200,7 @@ static void sunxi_power_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin, u32 
 		else
 			val = 0;
 
+		spin_lock_irqsave(&sun55iw3_pinctrl_lock, g_flags);
 		raw_spin_lock_irqsave(&pctl->lock, flags);
 		/* 1.Set withstand voltage value */
 		reg = readl(pctl->membase + power_mode_sel_reg);
@@ -1046,6 +1220,7 @@ static void sunxi_power_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin, u32 
 		val = 1;
 		writel(val, pctl->membase + pio_pow_ctrl_reg);
 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
+		spin_unlock_irqrestore(&sun55iw3_pinctrl_lock, g_flags);
 
 		/* Wait for voltage increasing. Double check! */
 		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !(reg & BIT(bank)), 100, 10000));
@@ -1071,6 +1246,7 @@ static void sunxi_power_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin, u32 
 		sunxi_debug(NULL, "pf-switch-decrease: 1.Wait for voltage decrease done[0x%x=0x%x]\n",
 			    power_mode_val_reg, readl(pctl->membase + power_mode_val_reg));
 
+		spin_lock_irqsave(&sun55iw3_pinctrl_lock, g_flags);
 		raw_spin_lock_irqsave(&pctl->lock, flags);
 		if (power_mode_reverse)
 			val = 0;
@@ -1090,6 +1266,7 @@ static void sunxi_power_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin, u32 
 		reg &= ~BIT(bank);
 		writel(reg | val << bank, pctl->membase + power_mode_ctrl_reg);
 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
+		spin_unlock_irqrestore(&sun55iw3_pinctrl_lock, g_flags);
 
 		sunxi_debug(NULL, "pf-switch-decrease: 3.Disable self-adaption[0x%x=0x%x]\n",
 			    power_mode_ctrl_reg, readl(pctl->membase + power_mode_ctrl_reg));
@@ -2347,5 +2524,5 @@ gpiochip_error:
 }
 EXPORT_SYMBOL_GPL(sunxi_bsp_pinctrl_init_with_variant);
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.2.6");
+MODULE_VERSION("1.2.7");
 MODULE_AUTHOR("lvda@allwinnertech.com");

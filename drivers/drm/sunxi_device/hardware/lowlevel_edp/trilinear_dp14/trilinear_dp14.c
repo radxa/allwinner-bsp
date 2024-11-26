@@ -28,6 +28,61 @@ struct edp_aux_request {
 	int data[16];
 };
 
+struct edp_audio_mn_aud {
+	int link_bw;
+	int data_rate;
+	int maud;
+	int naud;
+};
+
+#define EDP_AUD_DEFINE(bw, rate, m, n) \
+	.link_bw = bw, \
+	.data_rate = rate, \
+	.maud = m, \
+	.naud = n,
+
+struct edp_audio_mn_aud aud_tbl[] = {
+	{ EDP_AUD_DEFINE(162, 32000, 1024, 10125) },
+	{ EDP_AUD_DEFINE(162, 44100, 784, 5625) },
+	{ EDP_AUD_DEFINE(162, 48000, 512, 3375) },
+	{ EDP_AUD_DEFINE(162, 64000, 2048, 10125) },
+	{ EDP_AUD_DEFINE(162, 88200, 1568, 5625) },
+	{ EDP_AUD_DEFINE(162, 90600, 1024, 3375) },
+	{ EDP_AUD_DEFINE(162, 128000, 4096, 10125) },
+	{ EDP_AUD_DEFINE(162, 176400, 3136, 5625) },
+	{ EDP_AUD_DEFINE(162, 192000, 2048, 3375) },
+
+	{ EDP_AUD_DEFINE(270, 32000, 1024, 16875) },
+	{ EDP_AUD_DEFINE(270, 44100, 784, 9375) },
+	{ EDP_AUD_DEFINE(270, 48000, 512, 5625) },
+	{ EDP_AUD_DEFINE(270, 64000, 2048, 16875) },
+	{ EDP_AUD_DEFINE(270, 88200, 1568, 9375) },
+	{ EDP_AUD_DEFINE(270, 90600, 1024, 5625) },
+	{ EDP_AUD_DEFINE(270, 128000, 4096, 16875) },
+	{ EDP_AUD_DEFINE(270, 176400, 3136, 9375) },
+	{ EDP_AUD_DEFINE(270, 192000, 2048, 5625) },
+
+	{ EDP_AUD_DEFINE(540, 32000, 1024, 33750) },
+	{ EDP_AUD_DEFINE(540, 44100, 784, 18750) },
+	{ EDP_AUD_DEFINE(540, 48000, 512, 11250) },
+	{ EDP_AUD_DEFINE(540, 64000, 2048, 33750) },
+	{ EDP_AUD_DEFINE(540, 88200, 1568, 18750) },
+	{ EDP_AUD_DEFINE(540, 90600, 1024, 11250) },
+	{ EDP_AUD_DEFINE(540, 128000, 4096, 33750) },
+	{ EDP_AUD_DEFINE(540, 176400, 3136, 18750) },
+	{ EDP_AUD_DEFINE(540, 192000, 2048, 11250) },
+
+	{ EDP_AUD_DEFINE(810, 32000, 1024, 50625) },
+	{ EDP_AUD_DEFINE(810, 44100, 784, 28125) },
+	{ EDP_AUD_DEFINE(810, 48000, 512, 16875) },
+	{ EDP_AUD_DEFINE(810, 64000, 2048, 50625) },
+	{ EDP_AUD_DEFINE(810, 88200, 1568, 28125) },
+	{ EDP_AUD_DEFINE(810, 90600, 1024, 16875) },
+	{ EDP_AUD_DEFINE(810, 128000, 4096, 50625) },
+	{ EDP_AUD_DEFINE(810, 176400, 3136, 28125) },
+	{ EDP_AUD_DEFINE(810, 192000, 2048, 16875) },
+};
+
 u32 TR_READ(struct sunxi_edp_hw_desc *edp_hw, u32 addr)
 {
 	return readl(edp_hw->reg_base + addr);
@@ -754,38 +809,155 @@ void trilinear_dsc_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 		TR_SET_BITS(edp_hw, TR_DSC_COMPRESSION_EN, 0, 1, 0x0);
 }
 
+static void trilinear_audio_set_interface(struct sunxi_edp_hw_desc *edp_hw, int interface)
+{
+	switch (interface) {
+	case HDMI_SPDIF:
+		TR_SET_BITS(edp_hw, TR_SEC0_AUDIO_INPUT_SEL, 0, 2, 0x3);
+		break;
+	default:
+	case HDMI_I2S:
+		TR_SET_BITS(edp_hw, TR_SEC0_AUDIO_INPUT_SEL, 0, 2, 0x0);
+		break;
+	}
+}
+
+static void trilinear_audio_set_channel_cnt(struct sunxi_edp_hw_desc *edp_hw, int chn_cnt)
+{
+	switch (chn_cnt) {
+	case 2:
+		TR_SET_BITS(edp_hw, TR_SEC0_CHANNEL_CNT, 0, 32, 0x2);
+		break;
+	case 5:
+		TR_SET_BITS(edp_hw, TR_SEC0_CHANNEL_CNT, 0, 32, 0x6);
+		break;
+	default:
+	case 8:
+		TR_SET_BITS(edp_hw, TR_SEC0_CHANNEL_CNT, 0, 32, 0x8);
+		break;
+	}
+
+}
+
+static void trilinear_audio_set_mn_aud(struct sunxi_edp_hw_desc *edp_hw,
+				       int link_bw, int audio_data_rate)
+{
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(aud_tbl); i++) {
+		if ((aud_tbl[i].link_bw == link_bw) &&
+		    (aud_tbl[i].data_rate == audio_data_rate)) {
+			TR_SET_BITS(edp_hw, TR_SEC0_MAUD, 0, 32, aud_tbl[i].maud);
+			TR_SET_BITS(edp_hw, TR_SEC0_NAUD, 0, 32, aud_tbl[i].naud);
+			break;
+		}
+	}
+}
+
+static void trilinear_audio_set_data_rate(struct sunxi_edp_hw_desc *edp_hw, int audio_data_rate)
+{
+	int link_bw = 0;
+
+	link_bw = TR_READ(edp_hw, TR_LINK_BW_SET) * 27;
+
+	/* set audio clock mode to synchronous mode */
+	TR_SET_BITS(edp_hw, TR_SEC0_AUDIO_CLOCK_MODE, 0, 32, 0x1);
+
+	/* set MAUD NAUD */
+	trilinear_audio_set_mn_aud(edp_hw, link_bw, audio_data_rate);
+}
+
 s32 trilinear_audio_enable(struct sunxi_edp_hw_desc *edp_hw)
 {
+	TR_SET_BITS(edp_hw, TR_SEC0_AUDIO_ENABLE, 0, 1, 0x1);
+
 	return RET_OK;
 }
 
 s32 trilinear_audio_disable(struct sunxi_edp_hw_desc *edp_hw)
 {
+	TR_SET_BITS(edp_hw, TR_SEC0_AUDIO_ENABLE, 0, 1, 0x0);
+
+	return RET_OK;
+}
+
+s32 trilinear_audio_mute(struct sunxi_edp_hw_desc *edp_hw,
+			 bool enable, int direction)
+{
+	TR_SET_BITS(edp_hw, TR_SEC0_AUDIO_ENABLE, 1, 1, enable ? 0x1 : 0x0);
+
+	return RET_OK;
+}
+
+s32 trilinear_audio_config(struct sunxi_edp_hw_desc *edp_hw, int interface,
+		      int chn_cnt, int data_width, int data_rate)
+{
+	trilinear_audio_set_interface(edp_hw, interface);
+	trilinear_audio_set_channel_cnt(edp_hw, chn_cnt);
+	trilinear_audio_set_data_rate(edp_hw, data_rate);
+//	trilinear_audio_set_data_width(edp_hw, data_width);
 	return RET_OK;
 }
 
 bool trilinear_audio_is_enabled(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return false;
+	int reg_val = 0;
+
+	reg_val = TR_GET_BITS(edp_hw, TR_SEC0_AUDIO_ENABLE, 0, 1);
+
+	return reg_val ? true : false;
 }
 
-s32 trilinear_get_audio_if(struct sunxi_edp_hw_desc *edp_hw)
+u32 trilinear_get_audio_if(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return RET_OK;
+	int reg_val = 0;
+
+	reg_val = TR_GET_BITS(edp_hw, TR_SEC0_AUDIO_INPUT_SEL, 0, 2);
+
+	switch (reg_val) {
+	case 0x3:
+		return 0;
+	default:
+	case 0x0:
+		return 1;
+	}
+
+	return 1;
 }
 
-s32 trilinear_audio_is_muted(struct sunxi_edp_hw_desc *edp_hw)
+bool trilinear_audio_is_muted(struct sunxi_edp_hw_desc *edp_hw)
 {
-	return RET_OK;
+	int reg_val = 0;
+
+	reg_val = TR_GET_BITS(edp_hw, TR_SEC0_AUDIO_ENABLE, 1, 1);
+
+	return reg_val ? true : false;
 }
 
-s32 trilinear_get_audio_chn_cnt(struct sunxi_edp_hw_desc *edp_hw)
+u32 trilinear_get_audio_max_channel(struct sunxi_edp_hw_desc *edp_hw)
 {
-	//TODO
+	return 8;
+}
+
+u32 trilinear_get_audio_chn_cnt(struct sunxi_edp_hw_desc *edp_hw)
+{
+	int reg_val = 0;
+
+	reg_val = TR_GET_BITS(edp_hw, TR_SEC0_CHANNEL_CNT, 0, 32);
+
+	switch (reg_val) {
+	case 2:
+		return 2;
+	case 6:
+		return 5;
+	case 8:
+		return 8;
+	}
+
 	return 0;
 }
 
-s32 trilinear_get_audio_date_width(struct sunxi_edp_hw_desc *edp_hw)
+u32 trilinear_get_audio_date_width(struct sunxi_edp_hw_desc *edp_hw)
 {
 	//TODO
 	return 0;
@@ -1537,15 +1709,8 @@ static struct sunxi_edp_hw_video_ops trilinear_dp14_video_ops = {
 	.get_hotplug_change = trilinear_get_hotplug_change,
 	.get_hotplug_state = trilinear_get_hotplug_state,
 	.irq_handle = trilinear_irq_handler,
-	.audio_is_enabled = trilinear_audio_is_enabled,
-	.get_audio_if = trilinear_get_audio_if,
-	.audio_is_muted = trilinear_audio_is_muted,
-	.audio_enable = trilinear_audio_enable,
-	.audio_disable = trilinear_audio_disable,
 	.get_pattern = trilinear_get_pattern,
 	.set_pattern = trilinear_set_pattern,
-	.get_audio_data_width = trilinear_get_audio_date_width,
-	.get_audio_chn_cnt = trilinear_get_audio_chn_cnt,
 	.aux_read = trilinear_aux_read,
 	.aux_write = trilinear_aux_write,
 	.aux_i2c_read = trilinear_aux_i2c_read,
@@ -1575,17 +1740,12 @@ static struct sunxi_edp_hw_video_ops trilinear_dp14_video_ops = {
 	.support_max_lane = trilinear_get_max_lane,
 	.support_tps3 = trilinear_support_tps3,
 	.support_fast_training = trilinear_support_fast_train,
-	.support_audio = trilinear_support_audio,
 	.support_psr = trilinear_support_psr,
 	.support_psr2 = trilinear_support_psr2,
 	.support_ssc = trilinear_support_ssc,
 	.support_mst = trilinear_support_mst,
 	.support_fec = trilinear_support_fec,
 	.support_assr = trilinear_support_assr,
-	.support_hdcp1x = trilinear_support_hdcp1x,
-	.support_hdcp2x = trilinear_support_hdcp2x,
-	.support_hw_hdcp1x = trilinear_support_hardware_hdcp1x,
-	.support_hw_hdcp2x = trilinear_support_hardware_hdcp2x,
 	.support_lane_remap = trilinear_support_lane_remap,
 	.support_lane_invert = trilinear_support_lane_invert,
 	.support_enhance_frame = trilinear_support_enhance_frame,
@@ -1596,7 +1756,24 @@ struct sunxi_edp_hw_video_ops *sunxi_edp_get_hw_video_ops(void)
 	return &trilinear_dp14_video_ops;
 }
 
+static struct sunxi_edp_hw_audio_ops trilinear_dp14_audio_ops = {
+	.support_audio = trilinear_support_audio,
+	.audio_enable = trilinear_audio_enable,
+	.audio_disable = trilinear_audio_disable,
+	.audio_config = trilinear_audio_config,
+	.audio_mute = trilinear_audio_mute,
+	.audio_is_enabled = trilinear_audio_is_enabled,
+	.get_audio_if = trilinear_get_audio_if,
+	.audio_is_muted = trilinear_audio_is_muted,
+	.get_audio_data_width = trilinear_get_audio_date_width,
+	.get_audio_chn_cnt = trilinear_get_audio_chn_cnt,
+	.get_audio_max_channel = trilinear_get_audio_max_channel,
+};
 
+struct sunxi_edp_hw_audio_ops *sunxi_edp_get_hw_audio_ops(void)
+{
+	return &trilinear_dp14_audio_ops;
+}
 
 void trilinear_hdcp_set_mode(struct sunxi_edp_hw_desc *edp_hw,
 			     enum dp_hdcp_mode mode)
@@ -1713,6 +1890,10 @@ u64 trilinear_hdcp1_get_m0(struct sunxi_edp_hw_desc *edp_hw)
 }
 
 struct sunxi_edp_hw_hdcp_ops trilinear_dp14_dpcd_ops = {
+	.support_hdcp1x = trilinear_support_hdcp1x,
+	.support_hdcp2x = trilinear_support_hdcp2x,
+	.support_hw_hdcp1x = trilinear_support_hardware_hdcp1x,
+	.support_hw_hdcp2x = trilinear_support_hardware_hdcp2x,
 	.hdcp1_get_an = trilinear_hdcp1_get_an,
 	.hdcp1_get_aksv = trilinear_hdcp1_get_aksv,
 	.hdcp1_write_bksv = trilinear_hdcp1_write_bksv,
