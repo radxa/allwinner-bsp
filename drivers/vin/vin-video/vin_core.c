@@ -1337,7 +1337,6 @@ static irqreturn_t vin_isr(int irq, void *priv)
 
 	if (status.line_miss) {
 		csic_dma_int_clear_status(vinc->vipp_sel, DMA_INT_LINE_MISS);
-		cap->frame_delay_cnt++;
 		vin_err("vinc%d input lines in one frame is less than execpted, frame lost!\n", vinc->id);
 	}
 #endif
