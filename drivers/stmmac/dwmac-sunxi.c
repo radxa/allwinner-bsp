@@ -859,7 +859,7 @@ static int __init sunxi_dwmac_set_mac_addr(char *str)
 
 	return 0;
 }
-__setup("mac_addr=", sunxi_dwmac_set_mac_addr);
+__setup("mac1_addr=", sunxi_dwmac_set_mac_addr);
 #endif /* MODULE */
 
 MODULE_DESCRIPTION("Allwinner DWMAC driver");
