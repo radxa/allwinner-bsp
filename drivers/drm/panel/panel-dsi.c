@@ -582,6 +582,7 @@ static int panel_dsi_probe(struct mipi_dsi_device *dsi)
 {
 	struct panel_dsi *dsi_panel;
 	struct device *dev = &dsi->dev, *panel_dev;
+	struct device_driver *panel_drv;
 	const struct panel_desc_dsi *desc;
 	struct panel_desc_dsi *d;
 	const struct of_device_id *id;
@@ -597,6 +598,13 @@ static int panel_dsi_probe(struct mipi_dsi_device *dsi)
 
 	panel_dev = sunxi_of_get_child_panel(dev);
 	if (panel_dev) {
+		panel_drv = panel_dev->driver;
+		if (panel_drv && try_module_get(panel_drv->owner))
+			module_put(panel_drv->owner);
+		else {
+			DRM_ERROR("[DSI-PANEL] panel-dsi driver not probe\n");
+			return -EPROBE_DEFER;
+		}
 		np = panel_dev->of_node;
 		dsi_panel->panel_dev = panel_dev;
 	} else {
@@ -633,10 +641,14 @@ static int panel_dsi_probe(struct mipi_dsi_device *dsi)
 	/* Register the panel. */
 	drm_panel_init(&dsi_panel->panel, dev, &panel_dsi_funcs,
 			DRM_MODE_CONNECTOR_DSI);
-
+	/* Give the dev of panel-dsi to virtual-panel to obtain backlight,
+	 * After obtaining it, restore the dev of virtual-panel.
+	 */
+	dsi_panel->panel.dev = dsi_panel->panel_dev;
 	ret = drm_panel_of_backlight(&dsi_panel->panel);
 	if (ret)
 		return ret;
+	dsi_panel->panel.dev = dev;
 
 	drm_panel_add(&dsi_panel->panel);
 
