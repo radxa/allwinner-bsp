@@ -918,7 +918,6 @@ static int panel_dsi_probe(struct mipi_dsi_device *dsi)
 			DRM_ERROR("[DSI-PANEL] panel-dsi driver not probe\n");
 			return -EPROBE_DEFER;
 		}
-
 		np = panel_dev->of_node;
 		dsi_panel->panel_dev = panel_dev;
 	} else {
@@ -960,7 +959,6 @@ static int panel_dsi_probe(struct mipi_dsi_device *dsi)
 	/* Register the panel. */
 	drm_panel_init(&dsi_panel->panel, dev, &panel_dsi_funcs,
 			DRM_MODE_CONNECTOR_DSI);
-
 	/* Give the dev of panel-dsi to virtual-panel to obtain backlight,
 	 * After obtaining it, restore the dev of virtual-panel.
 	 */
