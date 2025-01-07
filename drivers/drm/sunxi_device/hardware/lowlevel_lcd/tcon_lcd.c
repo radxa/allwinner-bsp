@@ -275,7 +275,6 @@ s32 tcon_dsi_open(struct sunxi_tcon_lcd *tcon, struct disp_dsi_para *dsi_para)
 		tcon->reg->tcon0_dclk.bits.tcon0_dclk_en = 0xf;
 
 	tcon->reg->tcon0_ctl.bits.tcon0_en = 1;
-	msleep(100);
 	return 0;
 }
 

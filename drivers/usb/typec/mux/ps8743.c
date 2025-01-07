@@ -9,6 +9,7 @@
 #include <linux/i2c.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/mutex.h>
 #include <linux/usb/typec_dp.h>
 #include <linux/usb/typec_mux.h>
@@ -37,8 +38,13 @@
 struct ps8743 {
 	struct i2c_client *client;
 	struct mutex lock; /* protects the cached conf register */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
 	struct typec_switch *sw;
 	struct typec_mux *mux;
+#else
+	struct typec_switch_dev *sw;
+	struct typec_mux_dev *mux;
+#endif
 	u16 revision;
 	u16 chip;
 	u8 conf;
@@ -219,8 +225,13 @@ static int ps8743_set_conf(struct ps8743 *pi, u8 new_conf)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
 static int ps8743_sw_set(struct typec_switch *sw,
 			      enum typec_orientation orientation)
+#else
+static int ps8743_sw_set(struct typec_switch_dev *sw,
+			      enum typec_orientation orientation)
+#endif
 {
 	struct ps8743 *pi = typec_switch_get_drvdata(sw);
 	u8 new_conf;
@@ -254,7 +265,11 @@ static int ps8743_sw_set(struct typec_switch *sw,
 }
 
 static int
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
 ps8743_mux_set(struct typec_mux *mux, struct typec_mux_state *state)
+#else
+ps8743_mux_set(struct typec_mux_dev *mux, struct typec_mux_state *state)
+#endif
 {
 	struct ps8743 *pi = typec_mux_get_drvdata(mux);
 	u8 new_conf;
@@ -390,6 +405,7 @@ static int ps8743_probe(struct i2c_client *client)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 static int ps8743_remove(struct i2c_client *client)
 {
 	struct ps8743 *pi = i2c_get_clientdata(client);
@@ -398,6 +414,15 @@ static int ps8743_remove(struct i2c_client *client)
 	typec_switch_unregister(pi->sw);
 	return 0;
 }
+#else
+static void ps8743_remove(struct i2c_client *client)
+{
+	struct ps8743 *pi = i2c_get_clientdata(client);
+
+	typec_mux_unregister(pi->mux);
+	typec_switch_unregister(pi->sw);
+}
+#endif
 
 static const struct i2c_device_id ps8743_table[] = {
 	{ "ps8743", 0 },
@@ -417,7 +442,11 @@ static struct i2c_driver ps8743_driver = {
 		.of_match_table = ps8743_of_match,
 		.dev_groups = ps8743_groups,
 	},
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
 	.probe_new	= ps8743_probe,
+#else
+	.probe		= ps8743_probe,
+#endif
 	.remove		= ps8743_remove,
 	.id_table	= ps8743_table,
 };

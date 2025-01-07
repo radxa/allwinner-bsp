@@ -261,7 +261,7 @@ enum __dsi_inst_packet_t {
 
 #define MIPI_DSI_EN_3DFIFO		BIT(21)
 #define MIPI_DSI_SLAVE_MODE		BIT(22)
-s32 dsi_open(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *dsi_para);
+s32 dsi_open_hs_mode(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *dsi_para);
 s32 dsi_dcs_wr(struct sunxi_dsi_lcd *dsi, u8 *para_p, u32 para_num);
 s32 dsi_dcs_rd(struct sunxi_dsi_lcd *dsi, u8 *para_p, u32 num_p);
 void dsi_enable_vblank(struct sunxi_dsi_lcd *dsi, bool enable);
@@ -274,7 +274,6 @@ s32 dsi_inst_busy(struct sunxi_dsi_lcd *dsi);
 s32 dsi_tri_start(struct sunxi_dsi_lcd *dsi);
 u32 dsi_get_start_delay(struct sunxi_dsi_lcd *dsi);
 u32 dsi_get_cur_line(struct sunxi_dsi_lcd *dsi);
-s32 dsi_clk_enable(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *para, u32 en);
 s32 dsi_irq_enable(struct sunxi_dsi_lcd *dsi, enum __dsi_irq_id_t id);
 s32 dsi_irq_disable(struct sunxi_dsi_lcd *dsi, enum __dsi_irq_id_t id);
 s32 dsi_dcs_rd_memory(struct sunxi_dsi_lcd *dsi, u32 *p_data, u32 length);

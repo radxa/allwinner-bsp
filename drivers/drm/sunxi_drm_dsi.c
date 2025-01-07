@@ -304,9 +304,9 @@ static int sunxi_dsi_enable_output(struct sunxi_drm_dsi *dsi)
 	struct disp_dsi_para *dsi_para = &dsi->dsi_para;
 
 	sunxi_tcon_dsi_enable_output(dsi->sdrm.tcon_dev);
-	dsi_open(&dsi->dsi_lcd, dsi_para);
+	dsi_open_hs_mode(&dsi->dsi_lcd, dsi_para);
 	if (dsi->slave)
-		dsi_open(&dsi->slave->dsi_lcd, dsi_para);
+		dsi_open_hs_mode(&dsi->slave->dsi_lcd, dsi_para);
 
 	return 0;
 }
@@ -442,9 +442,6 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 			}
 		}
 		drm_panel_prepare(dsi->sdrm.panel);
-		dsi_clk_enable(&dsi->dsi_lcd, &dsi->dsi_para, 1);
-		if (dsi->slave)
-			dsi_clk_enable(&dsi->slave->dsi_lcd, &dsi->dsi_para, 1);
 
 		ret = sunxi_dsi_enable_output(dsi);
 		if (ret < 0)

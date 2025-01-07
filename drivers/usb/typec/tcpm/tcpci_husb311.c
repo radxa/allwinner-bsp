@@ -13,6 +13,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/pm_wakeirq.h>
 #include <linux/version.h>
 #include <linux/ktime.h>
 #include <linux/regmap.h>
@@ -38,11 +39,13 @@
 #define HUSB311_REG_DRP_TOGGLE_CYCLE		0xA2
 #define HUSB311_REG_DRP_DUTY_CTRL		0xA3
 
+#define TCPC_CMD_RESETTRANSMITBUFFER		0xDD
 #define TCPC_ROLE_CTRL_SET(drp, rp, cc1, cc2) \
 	((drp) << 6 | (rp) << 4 | (cc2) << 2 | (cc1))
 #define HUSB311_REG_ENEXTMSG			BIT(4)
 #define HUSB311_REG_IDLE_SET(ck300, ship_dis, auto_idle, tout) \
 	((ck300 << 7) | (ship_dis << 5) | (auto_idle << 3) | (tout & 0x07) | HUSB311_REG_ENEXTMSG)
+#define HUSB311_TCPM_DEBOUNCE_MS		500 /* ms */
 
 struct tcpci {
 	struct device *dev;
@@ -60,12 +63,12 @@ struct husb311_chip {
 	struct regulator *vbus;
 	struct power_supply *usb_psy;
 	struct usb_role_switch *role_sw;
-	struct work_struct otg_work;
+	unsigned long debounce_jiffies;
+	struct delayed_work wq_detcable;
+
 	bool vbus_on;
 	bool vbus_debounce_quirk;
-	bool vbus_wakeup_quirk;
 	bool port_reset_quirk;
-	bool otg_detect_quirk;
 	bool battery_exist;
 	u32 vbus_tryon_debounce;
 	u32 vbus_check_debounce;
@@ -92,7 +95,12 @@ static const char * const typec_cc_status_name[] = {
 	[TYPEC_CC_RP_3_0]	= "Rp-3.0",
 };
 
-/* */
+static const char * const usb_role_name[] = {
+	[USB_ROLE_NONE]		= "NONE",
+	[USB_ROLE_HOST]		= "HOST",
+	[USB_ROLE_DEVICE]	= "DEVICE",
+};
+
 #define tcpci_cc_is_sink(cc) \
 	((cc) == TYPEC_CC_RP_DEF || (cc) == TYPEC_CC_RP_1_5 || \
 	 (cc) == TYPEC_CC_RP_3_0)
@@ -120,6 +128,16 @@ static int husb311_write8(struct husb311_chip *chip, unsigned int reg, u8 val)
 static int husb311_write16(struct husb311_chip *chip, unsigned int reg, u16 val)
 {
 	return regmap_raw_write(chip->data.regmap, reg, &val, sizeof(u16));
+}
+
+static int tcpci_read16(struct tcpci *tcpci, unsigned int reg, u16 *val)
+{
+	return regmap_raw_read(tcpci->regmap, reg, val, sizeof(u16));
+}
+
+static int tcpci_write16(struct tcpci *tcpci, unsigned int reg, u16 val)
+{
+	return regmap_raw_write(tcpci->regmap, reg, &val, sizeof(u16));
 }
 
 static const struct regmap_config husb311_regmap_config = {
@@ -216,6 +234,7 @@ static int husb311_set_vbus(struct tcpci *tcpci, struct tcpci_data *tdata,
 {
 	struct husb311_chip *chip = tdata_to_husb311(tdata);
 	int ret = 0;
+	union power_supply_propval temp;
 
 	mod_try_vbus_check(chip, on);
 	if (chip->vbus_on == on) {
@@ -226,6 +245,12 @@ static int husb311_set_vbus(struct tcpci *tcpci, struct tcpci_data *tdata,
 		dev_warn(chip->dev, "Refuse Set Vbus On");
 		goto done;
 	}
+
+	if (chip->usb_psy) {
+		temp.intval = on ? 1 : 0;
+		power_supply_set_property(chip->usb_psy, POWER_SUPPLY_PROP_ONLINE, &temp);
+	}
+
 	dev_info(chip->dev, "set vbus %s", on ? "On" : "Off");
 
 	if (on)
@@ -389,11 +414,105 @@ static void husb311_init_tcpci_data_late(struct husb311_chip *chip)
 		chip->vbus_tryon_debounce, chip->vbus_check_debounce);
 }
 
+irqreturn_t tcpci_irq_override(struct tcpci *tcpci)
+{
+	u16 status;
+	int ret;
+	unsigned int raw;
+
+	tcpci_read16(tcpci, TCPC_ALERT, &status);
+
+	/*
+	 * Clear alert status for everything except RX_STATUS, which shouldn't
+	 * be cleared until we have successfully retrieved message.
+	 */
+	if (status & ~TCPC_ALERT_RX_STATUS)
+		tcpci_write16(tcpci, TCPC_ALERT,
+			      status & ~TCPC_ALERT_RX_STATUS);
+
+	if (status & TCPC_ALERT_CC_STATUS)
+		tcpm_cc_change(tcpci->port);
+
+	if (status & TCPC_ALERT_POWER_STATUS) {
+		regmap_read(tcpci->regmap, TCPC_POWER_STATUS_MASK, &raw);
+		/*
+		 * If power status mask has been reset, then the TCPC
+		 * has reset.
+		 */
+		if (raw == 0xff)
+			tcpm_tcpc_reset(tcpci->port);
+		else
+			tcpm_vbus_change(tcpci->port);
+	}
+
+	if (status & TCPC_ALERT_RX_STATUS) {
+		struct pd_message msg;
+		unsigned int cnt, payload_cnt;
+		u16 header;
+
+		regmap_read(tcpci->regmap, TCPC_RX_BYTE_CNT, &cnt);
+		/*
+		 * 'cnt' corresponds to READABLE_BYTE_COUNT in section 4.4.14
+		 * of the TCPCI spec [Rev 2.0 Ver 1.0 October 2017] and is
+		 * defined in table 4-36 as one greater than the number of
+		 * bytes received. And that number includes the header. So:
+		 */
+		if (cnt > 3)
+			payload_cnt = cnt - (1 + sizeof(msg.header));
+		else
+			payload_cnt = 0;
+
+		tcpci_read16(tcpci, TCPC_RX_HDR, &header);
+		msg.header = cpu_to_le16(header);
+
+		if (WARN_ON(payload_cnt > sizeof(msg.payload)))
+			payload_cnt = sizeof(msg.payload);
+
+		if (payload_cnt > 0)
+			regmap_raw_read(tcpci->regmap, TCPC_RX_DATA,
+					&msg.payload, payload_cnt);
+
+		/* Read complete, clear RX status alert bit */
+		tcpci_write16(tcpci, TCPC_ALERT, TCPC_ALERT_RX_STATUS);
+
+		tcpm_pd_receive(tcpci->port, &msg);
+	}
+
+	if (tcpci->data->vbus_vsafe0v && (status & TCPC_ALERT_EXTENDED_STATUS)) {
+		ret = regmap_read(tcpci->regmap, TCPC_EXTENDED_STATUS, &raw);
+		if (!ret && (raw & TCPC_EXTENDED_STATUS_VSAFE0V))
+			tcpm_vbus_change(tcpci->port);
+	}
+
+	if (status & TCPC_ALERT_RX_HARD_RST)
+		tcpm_pd_hard_reset(tcpci->port);
+
+	if (status & TCPC_ALERT_TX_SUCCESS)
+		tcpm_pd_transmit_complete(tcpci->port, TCPC_TX_SUCCESS);
+	else if (status & TCPC_ALERT_TX_DISCARDED)
+		tcpm_pd_transmit_complete(tcpci->port, TCPC_TX_DISCARDED);
+	else if (status & TCPC_ALERT_TX_FAILED)
+		tcpm_pd_transmit_complete(tcpci->port, TCPC_TX_FAILED);
+
+	if (status & TCPC_ALERT_TX_DISCARDED || status & TCPC_ALERT_TX_FAILED)
+		regmap_write(tcpci->regmap, TCPC_COMMAND, TCPC_CMD_RESETTRANSMITBUFFER);
+
+	return IRQ_HANDLED;
+}
+
 static irqreturn_t husb311_irq(int irq, void *dev_id)
 {
 	struct husb311_chip *chip = dev_id;
 
-	return tcpci_irq(chip->tcpci);
+	/**
+	 * NOTE:
+	 * We provide tcpci_irq_override instead of tcpci_irq for vendor hooks.
+	 */
+
+	queue_delayed_work(system_power_efficient_wq, &chip->wq_detcable,
+			   chip->debounce_jiffies);
+
+	return tcpci_irq_override(chip->tcpci);
 }
 
 static int husb311_init_gpio_optional(struct i2c_client *client)
@@ -405,7 +524,7 @@ static int husb311_init_gpio_optional(struct i2c_client *client)
 
 	ret = of_get_named_gpio(np, "power_gpios", 0);
 	if (ret < 0) {
-		dev_err(dev, "no power_gpios info, ret = %d\n", ret);
+		dev_dbg(dev, "no power_gpios info, ret = %d\n", ret);
 		return ret;
 	}
 	gpio_int_n = ret;
@@ -490,30 +609,49 @@ static int husb311_check_revision(struct i2c_client *i2c)
 	return 0;
 }
 
-static void husb311_otg_work(struct work_struct *work)
+static void husb311_detect_cable(struct work_struct *work)
 {
+	struct husb311_chip *chip = container_of(to_delayed_work(work), struct husb311_chip,
+						 wq_detcable);
 	enum typec_cc_status cc1, cc2;
-	struct husb311_chip *chip = container_of(work, struct husb311_chip, otg_work);
-
-	/* Wait for CC pin stable in order to initialize usb default mode. */
-	set_current_state(TASK_INTERRUPTIBLE);
-	schedule_timeout(msecs_to_jiffies(2000));
+	union power_supply_propval temp;
 
 	chip->tcpci->tcpc.get_cc(&chip->tcpci->tcpc, &cc1, &cc2);
 
-	dev_info(chip->dev, "cc1: %d - %s, cc2: %d - %s\n",
+	dev_info(chip->dev, "CC1: %d - %s, CC2: %d - %s\n",
 		 cc1, typec_cc_status_name[cc1], cc2, typec_cc_status_name[cc2]);
 
-	if (tcpci_port_is_sink(cc1, cc2))
-		usb_role_switch_set_role(chip->role_sw, USB_ROLE_DEVICE);
-	else if (tcpci_port_is_source(cc1, cc2))
-		usb_role_switch_set_role(chip->role_sw, USB_ROLE_HOST);
-	else
+	/**
+	 * FIXME:
+	 * 1. Support double Rp to Vbus cable as sink and device.
+	 * 2. Update symbol list for 'usb_role_switch_get_role' function.
+	 */
+	if (!tcpci_port_is_sink(cc1, cc2) && !tcpci_port_is_source(cc1, cc2)) {
+
+		dev_dbg(chip->dev, "Setting Role [%s]\n", usb_role_name[USB_ROLE_NONE]);
+		if (chip->usb_psy) {
+			temp.intval = 0;
+			power_supply_set_property(chip->usb_psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &temp);
+		}
 		usb_role_switch_set_role(chip->role_sw, USB_ROLE_NONE);
+
+	} else if (tcpci_cc_is_sink(cc1) && tcpci_cc_is_sink(cc2)) {
+
+		dev_dbg(chip->dev, "Setting Role [%s]\n", usb_role_name[USB_ROLE_DEVICE]);
+		if (chip->usb_psy) {
+			temp.intval = 500;
+			power_supply_set_property(chip->usb_psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &temp);
+		}
+		usb_role_switch_set_role(chip->role_sw, USB_ROLE_DEVICE);
+	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
 static int husb311_probe(struct i2c_client *client,
 			 const struct i2c_device_id *i2c_id)
+#else
+static int husb311_probe(struct i2c_client *client)
+#endif
 {
 	int ret;
 	struct husb311_chip *chip;
@@ -561,9 +699,10 @@ static int husb311_probe(struct i2c_client *client,
 	chip->vbus_debounce_quirk = device_property_read_bool(chip->dev, "aw,vbus-debounce-quirk");
 	device_property_read_u32(chip->dev, "aw,vbus-tryon-debounce", &chip->vbus_tryon_debounce);
 	device_property_read_u32(chip->dev, "aw,vbus-check-debounce", &chip->vbus_check_debounce);
-	chip->vbus_wakeup_quirk = device_property_read_bool(chip->dev, "aw,vbus-wakeup-quirk");
 	chip->port_reset_quirk = device_property_read_bool(chip->dev, "aw,port-reset-quirk");
-	chip->otg_detect_quirk = device_property_read_bool(chip->dev, "aw,otg-detect-quirk");
+
+	chip->debounce_jiffies = msecs_to_jiffies(HUSB311_TCPM_DEBOUNCE_MS);
+	INIT_DELAYED_WORK(&chip->wq_detcable, husb311_detect_cable);
 
 	ret = husb311_sw_reset(chip);
 	if (ret < 0) {
@@ -571,57 +710,78 @@ static int husb311_probe(struct i2c_client *client,
 		return ret;
 	}
 
-	if (!client->irq) {
+	if (client->irq) {
+		chip->gpio_int_n_irq = client->irq;
+	} else {
 		ret = husb311_init_gpio(chip);
 		if (ret < 0)
 			return ret;
 		client->irq = chip->gpio_int_n_irq;
 	}
-	INIT_WORK(&chip->otg_work, husb311_otg_work);
-	chip->role_sw = usb_role_switch_get(chip->dev);
-	if (IS_ERR(chip->role_sw)) {
-		ret = PTR_ERR(chip->role_sw);
-		return ret;
-	}
 
 	husb311_init_tcpci_data(chip);
+
 	chip->tcpci = tcpci_register_port(chip->dev, &chip->data);
 	if (IS_ERR(chip->tcpci)) {
 		dev_err(chip->dev, "fail to register tcpci port, %ld\n", PTR_ERR(chip->tcpci));
-		usb_role_switch_put(chip->role_sw);
 		return PTR_ERR(chip->tcpci);
 	}
+
 	husb311_init_tcpci_data_late(chip);
+
+	chip->role_sw = usb_role_switch_get(chip->dev);
+	if (IS_ERR(chip->role_sw)) {
+		ret = PTR_ERR(chip->role_sw);
+		dev_err(chip->dev, "fail to get usb role switch, %ld\n", PTR_ERR(chip->role_sw));
+		return ret;
+	}
+
 	ret = devm_request_threaded_irq(chip->dev, client->irq, NULL,
 					husb311_irq,
 					IRQF_ONESHOT | IRQF_TRIGGER_LOW,
 					client->name, chip);
 	if (ret < 0) {
 		dev_err(chip->dev, "fail to request irq %d, ret = %d\n", client->irq, ret);
-		tcpci_unregister_port(chip->tcpci);
 		usb_role_switch_put(chip->role_sw);
+		tcpci_unregister_port(chip->tcpci);
 		return ret;
 	}
 
-	if (chip->vbus_wakeup_quirk) {
-		dev_info(chip->dev, "enable irq wakeup\n");
-		enable_irq_wake(client->irq);
+	if (!device_property_read_bool(chip->dev, "wakeup-source")) {
+		dev_info(chip->dev, "wakeup source is disabled!\n");
+	} else {
+		if (chip->gpio_int_n) {
+			ret = dev_pm_set_wake_irq(chip->dev, client->irq);
+			if (ret < 0) {
+				dev_err(chip->dev, "failed to set wake IRQ %d: %d\n", client->irq, ret);
+				return ret;
+			}
+		}
 	}
 
 	dev_info(chip->dev, "Vendor ID:0x%04x, Product ID:0x%04x, probe success\n", HUSB311_VENDOR_ID, HUSB311_PRODUCT_ID);
-	if (chip->otg_detect_quirk)
-		schedule_work(&chip->otg_work);
 
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 static int husb311_remove(struct i2c_client *client)
+#else
+static void husb311_remove(struct i2c_client *client)
+#endif
 {
 	struct husb311_chip *chip = i2c_get_clientdata(client);
 
+	if (device_may_wakeup(chip->dev)) {
+		dev_pm_clear_wake_irq(chip->dev);
+		device_init_wakeup(chip->dev, false);
+	}
+	cancel_delayed_work_sync(&chip->wq_detcable);
 	usb_role_switch_put(chip->role_sw);
 	tcpci_unregister_port(chip->tcpci);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	return 0;
+#endif
 }
 
 /*
@@ -633,6 +793,7 @@ static void husb311_shutdown(struct i2c_client *client)
 	int ret;
 	struct husb311_chip *chip = i2c_get_clientdata(client);
 
+	disable_irq(chip->gpio_int_n_irq);
 	if (!chip->battery_exist) {
 		dev_dbg(chip->dev, "no battery, hardreset forbidden");
 		return;
@@ -650,7 +811,13 @@ static int husb311_pm_suspend(struct device *dev)
 	int ret = 0;
 	u8 pwr;
 
-	disable_irq(chip->gpio_int_n_irq);
+	cancel_delayed_work_sync(&chip->wq_detcable);
+	/*
+	 * When system suspend, disable irq to prevent interrupt trigger
+	 * during I2C bus suspend
+	 */
+	if (!device_may_wakeup(chip->dev))
+		disable_irq(chip->gpio_int_n_irq);
 	/*
 	 * Disable 12M oscillator to save power consumption, and it will be
 	 * enabled automatically when INT occur after system resume.
@@ -673,7 +840,12 @@ static int husb311_pm_resume(struct device *dev)
 	int ret = 0;
 	u8 pwr;
 
-	enable_irq(chip->gpio_int_n_irq);
+	/* Enable irq after I2C bus already resume */
+	if (!device_may_wakeup(chip->dev))
+		enable_irq(chip->gpio_int_n_irq);
+
+	queue_delayed_work(system_power_efficient_wq,
+			   &chip->wq_detcable, chip->debounce_jiffies);
 
 	if (!chip->port_reset_quirk) {
 		dev_info(chip->dev, "disable reset this port\n");
@@ -736,4 +908,4 @@ MODULE_ALIAS("platform:husb311-i2c-driver");
 MODULE_DESCRIPTION("Husb311 USB Type-C Port Controller Interface Driver");
 MODULE_AUTHOR("kanghoupeng<kanghoupeng@allwinnertech.com>");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.12");
+MODULE_VERSION("1.0.19");

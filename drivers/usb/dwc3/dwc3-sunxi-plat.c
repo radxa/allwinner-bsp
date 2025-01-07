@@ -25,9 +25,11 @@
 #include <linux/clk.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/extcon.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
 #include <linux/usb.h>
+#include <linux/usb/typec.h>
 #include <linux/regulator/consumer.h>
 #include <linux/power_supply.h>
 #include <linux/of_gpio.h>
@@ -57,7 +59,8 @@ typedef enum dwc3_side {
 /* 0: pmu detect, 1: tcpc detect */
 enum dwc3_detect_type {
 	DWC3_DETECT_TYPE_PMU = 0,
-	DWC3_DETECT_TYPE_TCPC,
+	DWC3_DETECT_TYPE_TCPM,
+	DWC3_DETECT_TYPE_GPIO,
 	DWC3_DETECT_TYPE_UNKNOWN,
 };
 
@@ -65,6 +68,7 @@ enum dwc3_detect_type {
 enum dwc3_detect_mode {
 	DWC3_DETECT_MODE_NOTIFY = 0,
 	DWC3_DETECT_MODE_THREAD,
+	DWC3_DETECT_MODE_EXTCON,
 	DWC3_DETECT_MODE_UNKNOWN,
 };
 
@@ -104,9 +108,12 @@ struct dwc3_sunxi_plat {
 	struct notifier_block	pm_nb;
 	struct work_struct	pm_work;
 	atomic_t		pm_flag;
+	struct extcon_dev	*edev;
+	struct notifier_block	extcon_nb;
 	bool			vbus_shared_quirk;
 	bool			hcgen2_phygen1_quirk;
 	bool			u2drd_u3host_quirk;
+	bool			inv_sync_hdr_quirk;
 	dwc3_side_t		old_side;
 	dwc3_mode_t		old_mode;
 	dwc3_cfg_t		cfg;
@@ -117,15 +124,30 @@ static int dwc3_mode_stop_flag;
 static int dwc3_side_stop_flag;
 static atomic_t dwc3_thread_suspend_flag;
 
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+static void dwc3_set_host(struct dwc3_sunxi_plat *dwc3, bool enable);
+#include "dwc3-debug.c"
+#include "xhci-debug.c"
+#else
+static inline void dwc3_sunxi_debug_init(struct dwc3_sunxi_plat *dwc3) { }
+static inline void dwc3_sunxi_debug_exit(struct dwc3_sunxi_plat *dwc3) { }
+static inline void dwc3_debug_init(struct dwc3 *dwc) { }
+static inline void dwc3_debug_exit(struct dwc3 *dwc) { }
+static inline void xhci_debug_init(struct dwc3 *dwc) { }
+static inline void xhci_debug_exit(struct dwc3 *dwc) { }
+#endif
+
 static void dwc3_hw_init(struct dwc3_sunxi_plat *dwc3)
 {
 	struct dwc3 *dwc = dwc3->dwc;
 	u32 reg;
 
-	reg = dwc3_readl(dwc->regs, DWC3_LLUCTL);
+	reg = dwc3_sunxi_readl(dwc->regs, DWC3_LLUCTL);
 	if (dwc3->hcgen2_phygen1_quirk)
 		reg |= DWC3_LLUCTL_FORCE_GEN1;
-	dwc3_writel(dwc->regs, DWC3_LLUCTL, reg);
+	if (dwc3->inv_sync_hdr_quirk)
+		reg |= DWC3_LLUCTL_INV_SYNC_HDR;
+	dwc3_sunxi_writel(dwc->regs, DWC3_LLUCTL, reg);
 }
 
 static void dwc3_typec_det_event(struct dwc3_sunxi_plat *dwc3);
@@ -136,16 +158,21 @@ static void dwc3_sunxi_resume_work(struct work_struct *work)
 	u32 count = 0;
 	bool need_loop = false;
 
-	if (dwc3->hcgen2_phygen1_quirk)
-		need_loop = true;
+	if (dwc->gadget || dwc->xhci) {
+		if (dwc3->hcgen2_phygen1_quirk || dwc3->inv_sync_hdr_quirk)
+			need_loop = true;
+	}
 
 	while (need_loop) {
-		u32 reg = dwc3_readl(dwc->regs, DWC3_GUID);
+		u32 reg = dwc3_sunxi_readl(dwc->regs, DWC3_GUID);
 
 		/* NOTE: The dwc3_core_init Write Linux Version Code to our GUID register. */
 		if (reg == LINUX_VERSION_CODE) {
-			dwc3_hw_init(dwc3);
-			break;
+			/* Condition 1: Wait for DWC3 Core Restore LLUCTL register. */
+			if (dwc3_sunxi_readl(dwc->regs, DWC3_LLUCTL)) {
+				dwc3_hw_init(dwc3);
+				break;
+			}
 		}
 
 		usleep_range(1, 2);
@@ -174,14 +201,35 @@ static void dwc3_sunxi_resume_work(struct work_struct *work)
 #if IS_MODULE(CONFIG_DWC3_SUNXI_PLAT) && (IS_ENABLED(CONFIG_USB_DWC3_HOST) \
 	|| IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE))
 #include "host.c"
+void dwc3_enable_susphy(struct dwc3 *dwc, bool enable)
+{
+	u32 reg;
+
+	reg = dwc3_sunxi_readl(dwc->regs, DWC3_GUSB3PIPECTL(0));
+	if (enable && !dwc->dis_u3_susphy_quirk)
+		reg |= DWC3_GUSB3PIPECTL_SUSPHY;
+	else
+		reg &= ~DWC3_GUSB3PIPECTL_SUSPHY;
+
+	dwc3_sunxi_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
+
+	reg = dwc3_sunxi_readl(dwc->regs, DWC3_GUSB2PHYCFG(0));
+	if (enable && !dwc->dis_u2_susphy_quirk)
+		reg |= DWC3_GUSB2PHYCFG_SUSPHY;
+	else
+		reg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
+
+	dwc3_sunxi_writel(dwc->regs, DWC3_GUSB2PHYCFG(0), reg);
+}
+
 void dwc3_set_prtcap(struct dwc3 *dwc, u32 mode)
 {
 	u32 reg;
 
-	reg = dwc3_readl(dwc->regs, DWC3_GCTL);
+	reg = dwc3_sunxi_readl(dwc->regs, DWC3_GCTL);
 	reg &= ~(DWC3_GCTL_PRTCAPDIR(DWC3_GCTL_PRTCAP_OTG));
 	reg |= DWC3_GCTL_PRTCAPDIR(mode);
-	dwc3_writel(dwc->regs, DWC3_GCTL, reg);
+	dwc3_sunxi_writel(dwc->regs, DWC3_GCTL, reg);
 
 	dwc->current_dr_role = mode;
 }
@@ -205,6 +253,9 @@ static void dwc3_set_host(struct dwc3_sunxi_plat *dwc3, bool enable)
 #endif
 				phy_init(dwc3->dwc->usb2_generic_phy);
 				phy_init(dwc3->dwc->usb3_generic_phy);
+				ret = phy_power_on(dwc3->dwc->usb2_generic_phy);
+				if (ret)
+					sunxi_err(dwc3->dev, "failed to set phy power on\n");
 				ret = phy_power_on(dwc3->dwc->usb3_generic_phy);
 				if (ret)
 					sunxi_err(dwc3->dev, "failed to set phy power on\n");
@@ -216,14 +267,17 @@ static void dwc3_set_host(struct dwc3_sunxi_plat *dwc3, bool enable)
 					sunxi_err(dwc3->dev, "failed to initialize host\n");
 				else
 					dwc3_hw_init(dwc3);
+				xhci_debug_init(dwc3->dwc);
 			}
 		} else {
 			if (dwc3->dwc->xhci) {
+				xhci_debug_exit(dwc3->dwc);
 				dwc3_host_exit(dwc3->dwc);
 				dwc3->dwc->xhci = NULL;
+				phy_power_off(dwc3->dwc->usb3_generic_phy);
+				phy_power_off(dwc3->dwc->usb2_generic_phy);
 				phy_exit(dwc3->dwc->usb2_generic_phy);
 				phy_exit(dwc3->dwc->usb3_generic_phy);
-				phy_power_off(dwc3->dwc->usb3_generic_phy);
 #if IS_ENABLED(CONFIG_AW_INNO_COMBOPHY)
 				atomic_notifier_call_chain(&inno_subsys_notifier_list, 0, NULL);
 				pm_runtime_put_sync(dwc3->dwc->usb3_generic_phy->dev.parent);
@@ -402,9 +456,9 @@ static void dwc3_gma340_config(struct dwc3_sunxi_plat *dwc3, int is_on)
 	dwc3_cfg_t *cfg = &dwc3->cfg;
 
 	if (cfg->gma340_oe_gpio_valid)
-		__gpio_set_value(cfg->gma340_oe_gpio_set.gpio, 0); /* 0: switch on, 1: switch off */
+		gpio_set_value(cfg->gma340_oe_gpio_set.gpio, 0); /* 0: switch on, 1: switch off */
 	if (cfg->gma340_sel_gpio_valid)
-		__gpio_set_value(cfg->gma340_sel_gpio_set.gpio, is_on); /* 0: SW1, 1:SW2 */
+		gpio_set_value(cfg->gma340_sel_gpio_set.gpio, is_on); /* 0: SW1, 1:SW2 */
 
 }
 
@@ -457,6 +511,8 @@ static void dwc3_typec_side_scan(struct dwc3_sunxi_plat *dwc3)
 		dwc3_gma340_config(dwc3, 0);
 	else
 		dwc3_gma340_config(dwc3, 1);
+	phy_set_mode_ext(dwc3->dwc->usb3_generic_phy, PHY_MODE_USB_HOST_SS,
+			 side == DWC3_CC1_SIDE ? TYPEC_ORIENTATION_NORMAL : TYPEC_ORIENTATION_REVERSE);
 
 	dwc3->old_side = side;
 }
@@ -580,6 +636,76 @@ static void dwc3_typec_pm_work(struct work_struct *work)
 	mutex_unlock(&dwc3->det_lock);
 }
 
+static void dwc3_extcon_set_mailbox(struct dwc3_sunxi_plat *dwc3,
+				    enum dwc3_mode mode)
+{
+	dev_dbg(dwc3->dev, " mode %d\n", mode);
+
+	if (dwc3->old_mode == mode)
+		return;
+
+	switch (mode) {
+	case DWC3_HOST_MODE:
+		dwc3_set_host(dwc3, true);
+		dwc3_set_vbus(dwc3, 1);
+		break;
+	case DWC3_DEVICE_MODE:
+		dwc3_set_vbus(dwc3, 0);
+		dwc3_set_host(dwc3, false);
+		break;
+	case DWC3_UNKNOWN_MODE:
+		break;
+	default:
+		dev_WARN(dwc3->dev, "invalid mode\n");
+	}
+	dwc3->old_mode = mode;
+}
+
+static int dwc3_extcon_mode_notifier(struct notifier_block *nb,
+				     unsigned long event, void *ptr)
+{
+	struct dwc3_sunxi_plat *dwc3 = container_of(nb, struct dwc3_sunxi_plat, extcon_nb);
+
+	dev_dbg(dwc3->dev, " mode event %lu\n", event);
+
+	if (event)
+		dwc3_extcon_set_mailbox(dwc3, DWC3_HOST_MODE);
+	else
+		dwc3_extcon_set_mailbox(dwc3, DWC3_DEVICE_MODE);
+
+	return NOTIFY_DONE;
+}
+
+static int dwc3_sunxi_extcon_register(struct dwc3_sunxi_plat *dwc3)
+{
+	int			ret;
+	struct device_node	*node = dwc3->dev->of_node;
+	struct extcon_dev	*edev;
+
+	if (of_property_read_bool(node, "extcon")) {
+		edev = extcon_get_edev_by_phandle(dwc3->dev, 0);
+		if (IS_ERR_OR_NULL(edev)) {
+			dev_vdbg(dwc3->dev, "couldn't get extcon device\n");
+			return -EPROBE_DEFER;
+		}
+
+		dwc3->extcon_nb.notifier_call = dwc3_extcon_mode_notifier;
+		ret = devm_extcon_register_notifier(dwc3->dev, edev,
+						    EXTCON_USB_HOST, &dwc3->extcon_nb);
+		if (ret < 0)
+			dev_vdbg(dwc3->dev, "failed to register notifier for USB-HOST\n");
+
+		if (extcon_get_state(edev, EXTCON_USB_HOST) == true)
+			dwc3_extcon_set_mailbox(dwc3, DWC3_HOST_MODE);
+		else
+			dwc3_extcon_set_mailbox(dwc3, DWC3_DEVICE_MODE);
+
+		dwc3->edev = edev;
+	}
+
+	return 0;
+}
+
 static __s32 dwc3_script_parse(struct device_node *np, dwc3_cfg_t *cfg)
 {
 	int ret = -1;
@@ -600,20 +726,20 @@ static __s32 dwc3_script_parse(struct device_node *np, dwc3_cfg_t *cfg)
 	ret = of_property_read_u32(np, KEY_USB_DETECT_TYPE, &cfg->detect_type);
 	if (ret) {
 		cfg->detect_type = DWC3_DETECT_TYPE_UNKNOWN;
-		sunxi_info(NULL, "get usb_detect_type is fail, %d\n", -ret);
+		sunxi_debug(NULL, "get usb_detect_type is fail, %d\n", -ret);
 	}
 
 	/* usbc detect mode */
 	ret = of_property_read_u32(np, KEY_USB_DETECT_MODE, &cfg->detect_mode);
 	if (ret) {
 		cfg->detect_mode = DWC3_DETECT_MODE_UNKNOWN;
-		sunxi_info(NULL, "get usb_detect_mode is fail, %d\n", -ret);
+		sunxi_debug(NULL, "get usb_detect_mode is fail, %d\n", -ret);
 	}
 
 	/* usbc gma340-oe */
 	ret = of_property_read_string(np, KEY_USB_GMA340_OE_GPIO, &cfg->gma340_oe_name);
 	if (ret) {
-		sunxi_info(NULL, "get gma340-oe is fail, %d\n", -ret);
+		sunxi_debug(NULL, "get gma340-oe is fail, %d\n", -ret);
 		cfg->gma340_oe_gpio_valid = 0;
 	} else {
 		/* get gma340-oe gpio */
@@ -627,7 +753,7 @@ static __s32 dwc3_script_parse(struct device_node *np, dwc3_cfg_t *cfg)
 	/* usbc gma340-sel */
 	ret = of_property_read_string(np, KEY_USB_GMA340_SEL_GPIO, &cfg->gma340_sel_name);
 	if (ret) {
-		sunxi_info(NULL, "get gma340-sel is fail, %d\n", -ret);
+		sunxi_debug(NULL, "get gma340-sel is fail, %d\n", -ret);
 		cfg->gma340_sel_gpio_valid = 0;
 	} else {
 		/* get gma340-sel gpio */
@@ -686,6 +812,8 @@ static int dwc3_sunxi_init(struct dwc3_sunxi_plat *dwc3)
 {
 	struct device *dev = dwc3->dev;
 	struct device_node *np = dev->of_node;
+	struct dwc3 __maybe_unused *dwc = dwc3->dwc;
+	const char __maybe_unused *usb_psy_name;
 	int ret = 0;
 
 	/* Init default config */
@@ -708,6 +836,22 @@ static int dwc3_sunxi_init(struct dwc3_sunxi_plat *dwc3)
 			ret = -EPROBE_DEFER;
 		}
 	}
+
+	/**
+	 * NOTE:
+	 * The power supply description referenced by DT property 'usb-psy-name' is likely to have
+	 * been registered late, we'd better try to get the power supply if DT property exists.
+	 */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
+	if (!device_property_read_string(dwc->dev, "usb-psy-name", &usb_psy_name) &&
+	    !dwc->usb_psy) {
+		dwc->usb_psy = power_supply_get_by_name(usb_psy_name);
+		if (IS_ERR_OR_NULL(dwc->usb_psy)) {
+			dev_err(dev, "couldn't get usb power supply\n");
+			ret = -EPROBE_DEFER;
+		}
+	}
+#endif
 
 	/* Here are some compatible issues for Controller. */
 	dwc3_hw_init(dwc3);
@@ -757,12 +901,11 @@ static int dwc3_sunxi_plat_probe(struct platform_device *pdev)
 	dwc3->vbus_shared_quirk = device_property_read_bool(dev, "aw,vbus-shared-quirk");
 	dwc3->hcgen2_phygen1_quirk = device_property_read_bool(dev, "aw,hcgen2-phygen1-quirk");
 	dwc3->u2drd_u3host_quirk = device_property_read_bool(dev, "aw,u2drd-u3host-quirk");
+	dwc3->inv_sync_hdr_quirk = device_property_read_bool(dev, "aw,inv-sync-hdr-quirk");
 	/*
 	 * Some controllers need to toggle the usb3-otg reset before trying to
 	 * initialize the PHY, otherwise the PHY times out.
 	 */
-	if (of_device_is_compatible(np, "rockchip,rk3399-dwc3"))
-		dwc3->need_reset = true;
 
 	dwc3->resets = of_reset_control_array_get(np, false, true,
 						    true);
@@ -776,7 +919,7 @@ static int dwc3_sunxi_plat_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_resetc_put;
 
-	ret = clk_bulk_get_all(dwc3->dev, &dwc3->clks);
+	ret = devm_clk_bulk_get_all(dwc3->dev, &dwc3->clks);
 	if (ret < 0)
 		goto err_resetc_assert;
 
@@ -813,7 +956,7 @@ static int dwc3_sunxi_plat_probe(struct platform_device *pdev)
 		dwc3->det_nb.notifier_call = dwc3_typec_det_notifier;
 		dwc3->pm_nb.notifier_call = dwc3_typec_pm_notifier;
 
-#if IS_ENABLED(CONFIG_AW_AXP2202_POWER)
+#if IS_ENABLED(CONFIG_AW_AXP2202_POWER) || IS_ENABLED(CONFIG_AW_AXP515_POWER)
 		/* register dwc3 power notifier */
 		atomic_notifier_chain_register(&usb_power_notifier_list, &dwc3->det_nb);
 #endif
@@ -835,6 +978,12 @@ static int dwc3_sunxi_plat_probe(struct platform_device *pdev)
 		}
 		wake_up_process(ts_mode);
 		wake_up_process(ts_side);
+	} else if (dwc3->cfg.detect_mode == DWC3_DETECT_MODE_EXTCON) {
+		ret = dwc3_sunxi_extcon_register(dwc3);
+		if (ret) {
+			dev_err(dev, "failed to register dwc3 extcon\n");
+			goto err_clk_put;
+		}
 	} else {
 		dwc3_set_vbus(dwc3, 1);
 		sunxi_debug(dev, "don't support full-featured Type-C\n");
@@ -845,11 +994,13 @@ static int dwc3_sunxi_plat_probe(struct platform_device *pdev)
 	pm_runtime_enable(dev);
 	pm_runtime_get_sync(dev);
 
+	dwc3_sunxi_debug_init(dwc3);
+	dwc3_debug_init(dwc3->dwc);
+	xhci_debug_init(dwc3->dwc);
 	return 0;
 
 err_clk_put:
 	clk_bulk_disable_unprepare(dwc3->num_clocks, dwc3->clks);
-	clk_bulk_put_all(dwc3->num_clocks, dwc3->clks);
 
 err_resetc_assert:
 	reset_control_assert(dwc3->resets);
@@ -863,10 +1014,12 @@ err_resetc_put:
 
 static void __dwc3_sunxi_teardown(struct dwc3_sunxi_plat *dwc3)
 {
+	xhci_debug_exit(dwc3->dwc);
+	dwc3_debug_exit(dwc3->dwc);
+	dwc3_sunxi_debug_exit(dwc3);
 	of_platform_depopulate(dwc3->dev);
 
 	clk_bulk_disable_unprepare(dwc3->num_clocks, dwc3->clks);
-	clk_bulk_put_all(dwc3->num_clocks, dwc3->clks);
 	dwc3->num_clocks = 0;
 
 	reset_control_assert(dwc3->resets);
@@ -879,7 +1032,7 @@ static void __dwc3_sunxi_teardown(struct dwc3_sunxi_plat *dwc3)
 		/* unregister dwc3 pm notifier */
 		atomic_notifier_chain_unregister(&usb_pm_notifier_list, &dwc3->pm_nb);
 #endif
-#if IS_ENABLED(CONFIG_AW_AXP2202_POWER)
+#if IS_ENABLED(CONFIG_AW_AXP2202_POWER) || IS_ENABLED(CONFIG_AW_AXP515_POWER)
 		/* unregister dwc3 power notifier */
 		atomic_notifier_chain_unregister(&usb_power_notifier_list, &dwc3->det_nb);
 #endif
@@ -1002,4 +1155,4 @@ MODULE_ALIAS("platform:sunxi-plat-dwc3");
 MODULE_DESCRIPTION("DesignWare USB3 Allwinner Glue Layer");
 MODULE_AUTHOR("kanghoupeng<kanghoupeng@allwinnertech.com>");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.14");
+MODULE_VERSION("1.0.23");

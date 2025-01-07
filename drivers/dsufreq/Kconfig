@@ -19,4 +19,10 @@ config AW_SUNXI_DSUFREQ_TEST
 
           If in doubt, say N.
 
+config AW_SUNXI_DSUFREQ_ADJUST
+	bool "trigger dsu frequency scaling"
+	default n
+	help
+	  perform a cpu frequency adjustment.
+
 endmenu

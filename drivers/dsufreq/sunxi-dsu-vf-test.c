@@ -97,6 +97,7 @@ static int sunxi_dsu_vf_test_remove(struct platform_device *pdev)
 
 static const struct of_device_id sunxi_dsu_vf_test_of_match[] = {
 	{ .compatible = "allwinner,sun55iw3-dsufreq", },
+	{ .compatible = "allwinner,dsufreq", },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, sunxi_dsu_vf_test_of_match);

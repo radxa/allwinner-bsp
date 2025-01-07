@@ -25,7 +25,7 @@
 #include <linux/pci.h>
 #include <linux/pci-epc.h>
 #include <linux/pci-epf.h>
-
+#include <linux/version.h>
 #include "pcie-sunxi-dma.h"
 
 #define PCIE_PORT_LINK_CONTROL			0x710
@@ -115,6 +115,18 @@
 #define PCIE_MEMORY_MASK			0xfff00000
 
 #define PCIE_CPU_BASE				0x20000000
+
+#define PCIE_TYPE0_STATUS_COMMAND_REG		0x4
+
+#define PCIE_DBI2_BASE				0x100000
+#define DBI2_FUNC_OFFSET			0x10000
+#define BAR_ENABLE					0x1
+
+#define RESBAR_CAP_REG				0x4 /* from PCIe spec4.0 7.8.6  */
+#define RESBAR_SIZE_MASK			0xfffff0
+#define RESBAR_CTL_REG				0x8
+#define RESBAR_NEXT_BAR				0x8
+#define SIZE_OF_1MB					20 /* 2^20 = 0x100000 */
 
 #define PCIE_COMBO_PHY_BGR		0x04
 #define PHY_ACLK_EN			BIT(17)
@@ -209,6 +221,27 @@
 #define PCIE_PHY_FUNC_CFG		(PCIE_CTRL_MGMT_BASE + 0x2c0)
 #define PCIE_RC_BAR_CONF		(PCIE_CTRL_MGMT_BASE + 0x300)
 
+//ECC
+#define PCIE_RASDP_ERR_PROT_CTRL_OFF			0X1F0
+#define PCIE_RASDP_ERR_INJ_CTRL_OFF			0X204
+#define PCIE_RASDP_UNCORR_COUNTER_CTRL_OFF		0X1FC
+#define PCIE_RASDP_UNCORR_COUNTER_REPORT_OFF		0X200
+#define PCIE_RASDP_UNCORR_ERROR_LOCATION_OFF		0X20C
+#define PCIE_RASDP_ERROR_MODR_CLEAR_OFF			0X214
+
+#define PCIE_RASDP_CORR_COUNTER_CTRL_OFF		0X1F4
+#define PCIE_RASDP_CORR_COUNTER_REPORT_OFF		0X1F8
+#define PCIE_RASDP_CORR_ERROR_LOCATION_OFF		0X208
+
+#define PCIE_SII_INT_MASK_RES2				0XE10
+#define PCIE_SII_INT_RES2				0XE18
+#define APP_PARITY_ERRS2_MASK				BIT(12)
+#define APP_PARITY_ERRS1_MASK				BIT(11)
+#define APP_PARITY_ERRS0_MASK				BIT(10)
+#define SLV_RASDP_ERR_MODE_MASK				BIT(9)
+#define MATR_RASDP_ERR_MODE_MASK			BIT(8)
+#define RASDP_ERR_PENDING 				(BIT(8) | BIT(9) | BIT(10) | BIT(11) | BIT(12))
+#define PCIE_SII_INT_RES2_ECC_MASK 			GENMASK(12, 8)
 enum sunxi_pcie_device_mode {
 	SUNXI_PCIE_EP_TYPE,
 	SUNXI_PCIE_RC_TYPE,
@@ -221,6 +254,8 @@ struct sunxi_pcie_of_data {
 	bool cpu_pcie_addr_quirk;
 	bool has_pcie_slv_clk;
 	bool need_pcie_rst;
+	bool pcie_slv_clk_400m;
+	bool has_pcie_its_clk;
 };
 
 struct sunxi_pcie_ep_func {
@@ -293,12 +328,15 @@ struct sunxi_pcie {
 	struct sunxi_pcie_ep	ep;
 	struct clk		*pcie_aux;
 	struct clk		*pcie_slv;
+	struct clk		*pcie_its;
 	struct reset_control    *pcie_rst;
 	struct reset_control    *pwrup_rst;
+	struct reset_control    *pcie_its_rst;
 	struct phy		*phy;
 	struct dma_trx_obj	*dma_obj;
 	const struct sunxi_pcie_of_data *drvdata;
 	struct gpio_desc	*rst_gpio;
+	struct gpio_desc	*wake_gpio;
 	u32			lanes;
 	u32			num_edma;
 	unsigned long		*rd_edma_map;
@@ -343,9 +381,9 @@ void sunxi_pcie_host_setup_rc(struct sunxi_pcie_port *pp);
 #else
 static inline int sunxi_pcie_host_add_port(struct sunxi_pcie *pci, struct platform_device *pdev) {return 0; }
 static inline void sunxi_pcie_host_remove_port(struct sunxi_pcie *pci) {}
-static inline int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen) {}
-static inline int sunxi_pcie_host_wr_own_conf(struct sunxi_pcie_port *pp, int where, int size, u32 val) {}
-static inline int sunxi_pcie_establish_link(struct sunxi_pcie *pci) {}
+static inline int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen) {return 0; }
+static inline int sunxi_pcie_host_wr_own_conf(struct sunxi_pcie_port *pp, int where, int size, u32 val) {return 0; }
+static inline int sunxi_pcie_host_establish_link(struct sunxi_pcie *pci) {return 0; }
 static inline void sunxi_pcie_host_setup_rc(struct sunxi_pcie_port *pp) {}
 #endif
 

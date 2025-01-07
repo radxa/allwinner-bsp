@@ -27,11 +27,11 @@
 
 #include <linux/pm_wakeirq.h>
 #include <linux/regulator/consumer.h>
+#include <linux/phy/phy.h>
 
 #include <../sunxi_usb/include/sunxi_usb_debug.h>
 
 extern int usb_disabled(void);
-extern atomic_t hci_thread_suspend_flag;
 extern struct atomic_notifier_head usb_pm_notifier_list;
 
 
@@ -56,15 +56,21 @@ extern struct atomic_notifier_head usb_pm_notifier_list;
  */
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW15) || IS_ENABLED(CONFIG_ARCH_SUN50IW9) \
 	|| IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) \
-	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21)  || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 #define SUNXI_USB_STANDBY_LOW_POW_MODE		1
 #endif
 
 #if IS_ENABLED(CONFIG_ARCH_SUN50IW9) || IS_ENABLED(CONFIG_ARCH_SUN50IW10) \
-	|| IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	|| IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN8IW21) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 #define SUNXI_USB_STANDBY_NEW_MODE		1
 #endif
 
+/* Note: Some platform not configure SIDDQ when USB Standby */
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+#define SUNXI_USB_STANDBY_SIDDQ_BYPASS		1
+#endif
 
 #define  USBC_Readb(reg)                        readb(reg)
 #define  USBC_Readw(reg)                        readw(reg)
@@ -100,6 +106,7 @@ extern struct atomic_notifier_head usb_pm_notifier_list;
 #define SUNXI_HCI_PHY_CTRL                      0x810
 #define SUNXI_HCI_PHY_TUNE                      0x818
 #define SUNXI_HCI_UTMI_PHY_STATUS               0x824
+#define SUNXI_HCI_CTRL_3_FORCE_SUSPEND		9
 #define SUNXI_HCI_CTRL_3_REMOTE_WAKEUP		3
 #define SUNXI_HCI_RC16M_CLK_ENBALE		2
 #define SUNXI_HCI_USB_CTRL                      0x800
@@ -114,7 +121,9 @@ extern struct atomic_notifier_head usb_pm_notifier_list;
 	|| IS_ENABLED(CONFIG_ARCH_SUN50IW11) || IS_ENABLED(CONFIG_ARCH_SUN8IW20) \
 	|| IS_ENABLED(CONFIG_ARCH_SUN20IW1) || IS_ENABLED(CONFIG_ARCH_SUN50IW12) \
 	|| IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2) \
-	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN65IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 #define SUNXI_HCI_PHY_CTRL_SIDDQ                3
 #else
 #define SUNXI_HCI_PHY_CTRL_SIDDQ                1
@@ -191,7 +200,6 @@ extern struct atomic_notifier_head usb_pm_notifier_list;
 
 #define  SUNXI_USB_HCI_DEBUG
 
-#define  KEY_USB_ID_GPIO                "usb_id_gpio"
 #define  KEY_USB_GMA340_OE_GPIO         "usb_gma340_oe_gpio"
 #define  KEY_USB_DRVVBUS_EN_GPIO        "usb_drvvbus_en_gpio"
 #define  KEY_USB_WAKEUP_SUSPEND         "usb_wakeup_suspend"
@@ -285,11 +293,13 @@ extern struct atomic_notifier_head usb_pm_notifier_list;
 /* PHY RANGE: bit field */
 #define PHY_RANGE_MODE_MASK			0x1000		/* bit12, mod_type */
 #define PHY_RANGE_COMM_MASK			0xE00		/* bit11:9, common_data */
-#if IS_ENABLED(CONFIG_ARCH_SUN8IW21)
-#define PHY_RANGE_TRAN_MASK			0x3C0		/* bit8:6, trancevie_data */
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+#define PHY_RANGE_TRAN_MASK			0x3C0		/* bit9:6, trancevie_data */
 #else
 #define PHY_RANGE_TRAN_MASK			0x1C0		/* bit8:6, trancevie_data */
 #endif
+#define PHY_RANGE_RISE_MASK			0xc00		/* bit11:10, rise_data */
 #define PHY_RANGE_PREE_MASK			0x30		/* bit5:4, preemphasis_data */
 #define PHY_RANGE_RESI_MASK			0xF		/* bit3:0, resistance_data */
 
@@ -297,20 +307,27 @@ extern struct atomic_notifier_head usb_pm_notifier_list;
 #define SUNXI_SYS_CFG_BASE		0x03000000
 /* Resister Calibration Control Register */
 #define RESCAL_CTRL_REG		0x0160
-#define   USBPHY2_RES200_SEL		BIT(6)
+#define   USBPHY2_RES200_SEL		BIT(6) /* Note: AW1903 Not use */
 #define   USBPHY1_RES200_SEL		BIT(5)
 #define   USBPHY0_RES200_SEL		BIT(4)
 #define   PHY_o_RES200_SEL(n)		(BIT(4) << n)
 #define   RESCAL_MODE			BIT(2)
 #define   CAL_ANA_EN			BIT(1)
 #define   CAL_EN			BIT(0)
-/* 200ohms Resister Manual Control Register */
+/* Resister 200ohms Manual Control Register */
 #define RES200_CTRL_REG		0x0164
 #define   USBPHY2_RES200_CTRL		GENMASK(21, 16)
 #define   USBPHY1_RES200_CTRL		GENMASK(13, 8)
 #define   USBPHY0_RES200_CTRL		GENMASK(5, 0)
 #define   PHY_o_RES200_CTRL(n)		(GENMASK(5, 0) << (8 * n))
 #define   PHY_o_RES200_CTRL_DEFAULT(n)		(0x33 << (8 * n))
+
+/* Resister RES0 ohms Manual Control Register */
+#define RES0_CTRL_REG		0x0164
+#define   USBPHY1_RES200_TRIM		GENMASK(15, 8)
+#define   USBPHY0_RES200_TRIM		GENMASK(7, 0)
+#define   PHY_o_RES200_TRIM(n)		(GENMASK(7, 0) << (8 * n))
+#define   PHY_o_RES200_TRIM_DEFAULT(n)		(0xC8 << (8 * n))
 
 #define syscfg_reg(offset)		(SUNXI_SYS_CFG_BASE + (offset))
 
@@ -348,13 +365,8 @@ enum usb_port_type {
 enum usb_wakeup_source_type {
 	SUPER_STANDBY = 0,
 	USB_STANDBY,
+	NORMAL_STANDBY,
 };
-
-typedef enum usb_id_state {
-	USB_ID_CONNECT = 0, /* low */
-	USB_ID_DISCONNECT,  /* high */
-	USB_ID_UNKNOWN,
-} id_state_t;
 
 struct sunxi_hci_hcd {
 	__u32 usbc_no;                          /* usb controller number */
@@ -412,13 +424,23 @@ struct sunxi_hci_hcd {
 
 	struct platform_device *pdev;
 	struct usb_hcd *hcd;
+	struct phy *usb2_generic_phy;           /* pointer to USB2 PHY */
 
+	struct clk 	*clk_msi_lite;		/* msi-lite */
+	struct clk 	*clk_usb_sys_ahb;	/* usb-sys-ahb */
+	struct clk 	*clk_res;		/* res_dcap-24m */
 	struct clk	*clk_hosc;		/* usb-24m */
 	struct clk	*clk_bus_hci;
 	struct clk	*clk_ohci;
 	struct clk	*clk_phy;
+	struct clk	*clk_mbus;
+	struct clk	*clk_hclk;
+	struct clk	*clk_rate;		/* for some SOC,get the clk freq*/
 
 						/* legacy, fix me */
+	struct clk	*ahb;                   /* ahb clock handle */
+	struct clk	*mod_usbphy;            /* PHY0 clock handle */
+
 	struct clk	*mod_usb;               /* mod_usb otg clock handle */
 	struct clk	*hsic_usbphy;           /* hsic clock handle */
 	struct clk	*pll_hsic;              /* pll_hsic clock handle */
@@ -429,15 +451,18 @@ struct sunxi_hci_hcd {
 
 	struct reset_control	*reset_hci;
 	struct reset_control	*reset_phy;
+	struct reset_control	*reset_usb;
 
 	int phy_range;
+	int rate_clk;
+	bool rext_cal_bypass;			/* Hardware: the USB0/1-REXT is floating ? */
+	bool extcon_supported;
 
 	__u32 clk_is_open;                      /* is usb clock open */
 
 	struct gpio_config drv_vbus_gpio_set;
 	struct gpio_config drvvbus_en_gpio_set;
 	struct gpio_config gma340_oe_gpio_set;
-	struct gpio_config id_gpio_set;         /* e.g, kd-eint pin */
 
 	const char  *regulator_io;
 	const char  *used_status;
@@ -448,20 +473,13 @@ struct sunxi_hci_hcd {
 	enum usb_drvvbus_en_type drvvbus_en_type;
 	const char *drvvbus_en_name;
 	const char *gma340_oe_name;
-	const char *id_name;
 	const char *det_vbus_name;
 	u32 drvvbus_en_gpio_valid;
 	u32 gma340_oe_gpio_valid;
-	u32 id_gpio_valid;
 	u32 usb_restrict_valid;
 	__u8 power_flag;                        /* flag. power on or not */
 	struct regulator *supply;
 	struct regulator *hci_regulator;        /* hci regulator: VCC_USB */
-	struct regulator *vbusin;
-	int vbusin_on;
-	int thread_scan_flag;
-	int thread_active_flag;
-	id_state_t old_id_state;                /* last id state */
 
 	int used;                               /* flag. in use or not */
 	__u8 probe;                             /* hc initialize */
@@ -471,7 +489,6 @@ struct sunxi_hci_hcd {
 
 	int wakeup_source_flag;
 
-	int is_suspend_flag;
 						/* HSIC device susport */
 	u32 hsic_flag;                          /* flag. hsic usbed */
 	const char *hsic_regulator_io;
@@ -520,7 +537,6 @@ int exit_sunxi_hci(struct sunxi_hci_hcd *sunxi_hci);
 int sunxi_get_hci_num(struct platform_device *pdev);
 void sunxi_set_host_hisc_rdy(struct sunxi_hci_hcd *sunxi_hci, int is_on);
 void sunxi_set_host_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on);
-void sunxi_hci_set_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on);
 int usb_phyx_tp_write(struct sunxi_hci_hcd *sunxi_hci,
 		int addr, int data, int len);
 int usb_phyx_write(struct sunxi_hci_hcd *sunxi_hci, int data);
@@ -530,6 +546,8 @@ int sunxi_usb_enable_xhci(void);
 int sunxi_usb_disable_xhci(void);
 void enter_usb_standby(struct sunxi_hci_hcd *sunxi_hci);
 void exit_usb_standby(struct sunxi_hci_hcd *sunxi_hci);
+void sunxi_hci_force_suspend(struct sunxi_hci_hcd *sunxi_hci, bool enter_standby);
+bool sunxi_hci_ehci_enabled(struct sunxi_hci_hcd *sunxi_hci);
 #if IS_ENABLED(SUNXI_USB_STANDBY_LOW_POW_MODE)
 void sunxi_hci_set_siddq(struct sunxi_hci_hcd *sunxi_hci, int is_on);
 void sunxi_hci_set_wakeup_ctrl(struct sunxi_hci_hcd *sunxi_hci, int is_on);
@@ -539,7 +557,7 @@ void sunxi_hci_clean_standby_irq(struct sunxi_hci_hcd *sunxi_hci);
 #endif
 void usb_new_phyx_write(struct sunxi_hci_hcd *sunxi_hci, u32 data);
 u32 usb_new_phyx_read(struct sunxi_hci_hcd *sunxi_hci);
-void usb_phyx_res_cal(__u32 usbc_no, bool enable);
+void usb_phyx_res_cal(__u32 usbc_no, bool enable, bool bypass);
 #if IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 void sunxi_hci_common_set_rc_clk(struct sunxi_hci_hcd *sunxi_hci,
 					int is_on);

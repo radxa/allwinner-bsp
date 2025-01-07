@@ -63,3 +63,8 @@ endif
 endif #clang
 
 usb_sunxi_f_hid-objs += $(sunxi_f_hid_o)
+
+usb_sunxi_f_uvc-y				:= f_uvc.o uvc_queue.o uvc_v4l2.o uvc_video.o uvc_configfs.o
+obj-$(CONFIG_USB_SUNXI_F_UVC)			+= usb_sunxi_f_uvc.o
+usb_sunxi_f_uac1-y				:= f_uac1.o u_audio.o
+obj-$(CONFIG_USB_SUNXI_F_UAC1)			+= usb_sunxi_f_uac1.o

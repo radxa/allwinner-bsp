@@ -143,7 +143,7 @@ int sunxi_pcie_dma_get_chan(struct platform_device *pdev)
 	pci->dma_wr_chn = devm_kcalloc(&pdev->dev, pci->num_edma, sizeof(sunxi_pci_edma_chan_t), GFP_KERNEL);
 	pci->dma_rd_chn = devm_kcalloc(&pdev->dev, pci->num_edma, sizeof(sunxi_pci_edma_chan_t), GFP_KERNEL);
 	if (!pci->dma_wr_chn || !pci->dma_rd_chn) {
-		sunxi_err(&pdev->dev, "PCIe edma kzalloc failed\n");
+		sunxi_err(&pdev->dev, "PCIe edma init failed\n");
 		return -EINVAL;
 	}
 
@@ -185,13 +185,13 @@ int sunxi_pcie_edma_config_start(struct sunxi_pci_edma_chan *edma_chan)
 }
 EXPORT_SYMBOL_GPL(sunxi_pcie_edma_config_start);
 
-int sunxi_pcie_dma_mem_read(phys_addr_t src_addr, phys_addr_t dst_addr, unsigned int size)
+int sunxi_pcie_dma_mem_read(phys_addr_t src_addr, phys_addr_t dst_addr, unsigned int size, void *chan)
 {
 	struct dma_table read_table = {0};
 	int ret;
 
 	if (likely(obj_global->config_dma_trx_func)) {
-		ret = obj_global->config_dma_trx_func(&read_table, src_addr, dst_addr, size, PCIE_DMA_READ, NULL);
+		ret = obj_global->config_dma_trx_func(&read_table, src_addr, dst_addr, size, PCIE_DMA_READ, chan);
 
 		if (ret < 0) {
 			sunxi_err(obj_global->dev, "pcie dma mem read error ! \n");
@@ -208,13 +208,13 @@ int sunxi_pcie_dma_mem_read(phys_addr_t src_addr, phys_addr_t dst_addr, unsigned
 }
 EXPORT_SYMBOL_GPL(sunxi_pcie_dma_mem_read);
 
-int sunxi_pcie_dma_mem_write(phys_addr_t src_addr, phys_addr_t dst_addr, unsigned int size)
+int sunxi_pcie_dma_mem_write(phys_addr_t src_addr, phys_addr_t dst_addr, unsigned int size, void *chan)
 {
 	struct dma_table write_table = {0};
 	int ret;
 
 	if (likely(obj_global->config_dma_trx_func)) {
-		ret = obj_global->config_dma_trx_func(&write_table, src_addr, dst_addr, size, PCIE_DMA_WRITE, NULL);
+		ret = obj_global->config_dma_trx_func(&write_table, src_addr, dst_addr, size, PCIE_DMA_WRITE, chan);
 
 		if (ret < 0) {
 			sunxi_err(obj_global->dev, "pcie dma mem write error ! \n");

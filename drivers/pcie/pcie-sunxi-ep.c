@@ -78,6 +78,24 @@ static u8 sunxi_pcie_ep_find_capability(struct sunxi_pcie_ep *ep, u8 func_no, u8
 	return __sunxi_pcie_ep_find_next_cap(ep, func_no, next_cap_ptr, cap);
 }
 
+static unsigned int sunxi_pcie_ep_find_ext_capability(struct sunxi_pcie *pci, int cap)
+{
+	u32 header;
+	int pos = PCI_CFG_SPACE_SIZE;
+
+	while (pos) {
+		header = sunxi_pcie_readl_dbi(pci, pos);
+		if (PCI_EXT_CAP_ID(header) == cap)
+			return pos;
+
+		pos = PCI_EXT_CAP_NEXT(header);
+		if (!pos)
+			break;
+	}
+
+	return 0;
+}
+
 struct sunxi_pcie_ep_func *sunxi_pcie_ep_get_func_from_ep(struct sunxi_pcie_ep *ep, u8 func_no)
 {
 	struct sunxi_pcie_ep_func *ep_func;
@@ -246,8 +264,13 @@ static const struct of_device_id sunxi_pcie_ep_of_match[] = {
 	{},
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static int sunxi_pcie_ep_write_header(struct pci_epc *epc, u8 func_no,
+					 struct pci_epf_header *hdr)
+#else
 static int sunxi_pcie_ep_write_header(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 					 struct pci_epf_header *hdr)
+#endif
 {
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
@@ -274,8 +297,13 @@ static int sunxi_pcie_ep_write_header(struct pci_epc *epc, u8 func_no, u8 vfunc_
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static int sunxi_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no,
+					struct pci_epf_bar *epf_bar)
+#else
 static int sunxi_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 					struct pci_epf_bar *epf_bar)
+#endif
 {
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
@@ -283,17 +311,22 @@ static int sunxi_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	size_t size = epf_bar->size;
 	int flags = epf_bar->flags;
 	unsigned int func_offset = 0;
-	int ret, type;
-	u32 reg;
+	unsigned int offset;
+	int ret, type, value;
+	u32 reg, dbi2_reg;
 
 	func_offset = sunxi_pcie_ep_func_select(ep, func_no);
 
 	reg = PCI_BASE_ADDRESS_0 + (4 * bar) + func_offset;
+	dbi2_reg = PCI_BASE_ADDRESS_0 + (4 * bar) + func_no * DBI2_FUNC_OFFSET;
 
-	if (!(flags & PCI_BASE_ADDRESS_SPACE))
+	if (!(flags & PCI_BASE_ADDRESS_SPACE)) {
 		type = PCIE_ATU_TYPE_MEM;
-	else
+	} else {
 		type = PCIE_ATU_TYPE_IO;
+		sunxi_info(pci->dev, "IO type is not currently supported.");
+		return -1;
+	}
 
 	ret = sunxi_pcie_ep_inbound_atu(ep, func_no, type, epf_bar->phys_addr, bar);
 	if (ret)
@@ -304,11 +337,46 @@ static int sunxi_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 
 	sunxi_pcie_dbi_ro_wr_en(pci);
 
-	sunxi_pcie_writel_dbi(pci, reg, flags | lower_32_bits(size - 1));
+	sunxi_pcie_writel_dbi(pci, PCIE_TYPE0_STATUS_COMMAND_REG, 0x6);
+
+	offset = sunxi_pcie_ep_find_ext_capability(pci, PCI_EXT_CAP_ID_REBAR);
+	offset += func_offset;
+
+	value = fls64(size - 1);
+	if (value <= SIZE_OF_1MB) {
+		value = 0;
+		sunxi_info(pci->dev, "The min size default is 1MB, set 1MB for func%d bar%d\n",
+				func_no, bar);
+	} else {
+		value -= SIZE_OF_1MB;
+		sunxi_info(pci->dev, "Only supports power-of-2 MB alignment, so func%d bar%d is set to %dMB",
+				func_no, bar, 1 << value);
+	}
+
+	value = (value << PCI_REBAR_CTRL_BAR_SHIFT) & PCI_REBAR_CTRL_BAR_SIZE;
 
 	if (flags & PCI_BASE_ADDRESS_MEM_TYPE_64) {
-		sunxi_pcie_writel_dbi(pci, reg + 4, upper_32_bits(size - 1));
+		sunxi_pcie_writel_dbi(pci, reg, PCI_BASE_ADDRESS_MEM_TYPE_64);
+		if (bar == 0) {
+			sunxi_pcie_writel_dbi(pci, offset + RESBAR_CAP_REG, RESBAR_SIZE_MASK);
+			sunxi_pcie_writel_dbi(pci, offset + RESBAR_CTL_REG, value);
+		} else if (bar == 4) {
+			sunxi_pcie_writel_dbi(pci, offset + RESBAR_CAP_REG + (3 * RESBAR_NEXT_BAR), RESBAR_SIZE_MASK);
+			sunxi_pcie_writel_dbi(pci, offset + RESBAR_CTL_REG + (3 * RESBAR_NEXT_BAR), value);
+		} else {
+			sunxi_info(pci->dev, "No free 64bit bar.");
+		}
+	} else {
+		/* 32bit and mem space mode. */
+		sunxi_pcie_writel_dbi(pci, reg, 0x0);
+		if (bar == 2 || bar == 3) {
+			bar -= 1;
+			sunxi_pcie_writel_dbi(pci, offset + RESBAR_CAP_REG + (bar * RESBAR_NEXT_BAR), RESBAR_SIZE_MASK);
+			sunxi_pcie_writel_dbi(pci, offset + RESBAR_CTL_REG + (bar * RESBAR_NEXT_BAR), value);
+		}
 	}
+
+	sunxi_pcie_writel_dbi(pci, PCIE_DBI2_BASE + dbi2_reg, BAR_ENABLE);
 
 	ep->epf_bar[bar] = epf_bar;
 	sunxi_pcie_dbi_ro_wr_dis(pci);
@@ -316,8 +384,13 @@ static int sunxi_pcie_ep_set_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static void sunxi_pcie_ep_clear_bar(struct pci_epc *epc, u8 func_no,
+				       struct pci_epf_bar *epf_bar)
+#else
 static void sunxi_pcie_ep_clear_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 				       struct pci_epf_bar *epf_bar)
+#endif
 {
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
@@ -332,8 +405,13 @@ static void sunxi_pcie_ep_clear_bar(struct pci_epc *epc, u8 func_no, u8 vfunc_no
 	ep->bar_to_atu[bar] = 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static void sunxi_pcie_ep_unmap_addr(struct pci_epc *epc, u8 func_no,
+				  phys_addr_t addr)
+#else
 static void sunxi_pcie_ep_unmap_addr(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 				  phys_addr_t addr)
+#endif
 {
 	int ret;
 	u32 atu_index;
@@ -348,8 +426,13 @@ static void sunxi_pcie_ep_unmap_addr(struct pci_epc *epc, u8 func_no, u8 vfunc_n
 	clear_bit(atu_index, ep->ob_window_map);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static int sunxi_pcie_ep_map_addr(struct pci_epc *epc, u8 func_no,
+			       phys_addr_t cpu_addr, u64 pci_addr, size_t size)
+#else
 static int sunxi_pcie_ep_map_addr(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 			       phys_addr_t cpu_addr, u64 pci_addr, size_t size)
+#endif
 {
 	int ret;
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
@@ -364,8 +447,13 @@ static int sunxi_pcie_ep_map_addr(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static int sunxi_pcie_ep_set_msi(struct pci_epc *epc, u8 func_no,
+				    u8 interrupts)
+#else
 static int sunxi_pcie_ep_set_msi(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 				    u8 interrupts)
+#endif
 {
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
@@ -390,7 +478,11 @@ static int sunxi_pcie_ep_set_msi(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static int sunxi_pcie_ep_get_msi(struct pci_epc *epc, u8 func_no)
+#else
 static int sunxi_pcie_ep_get_msi(struct pci_epc *epc, u8 func_no, u8 vfunc_no)
+#endif
 {
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
@@ -453,21 +545,34 @@ static int sunxi_pcie_ep_send_msi_irq(struct sunxi_pcie_ep *ep, u8 func_no,
 	aligned_offset = msg_addr_lower & (epc->mem->window.page_size - 1);
 	msg_addr = ((u64)msg_addr_upper) << 32 |
 			(msg_addr_lower & ~aligned_offset);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+	ret = sunxi_pcie_ep_map_addr(epc, func_no, ep->msi_mem_phys, msg_addr,
+				  epc->mem->window.page_size);
+#else
 	ret = sunxi_pcie_ep_map_addr(epc, func_no, 0, ep->msi_mem_phys, msg_addr,
 				  epc->mem->window.page_size);
+#endif
 	if (ret)
 		return ret;
 
 	writel(msg_data | (interrupt_num - 1), ep->msi_mem + aligned_offset);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+	sunxi_pcie_ep_unmap_addr(epc, func_no, ep->msi_mem_phys);
+#else
 	sunxi_pcie_ep_unmap_addr(epc, func_no, 0, ep->msi_mem_phys);
-
+#endif
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static int sunxi_pcie_ep_raise_irq(struct pci_epc *epc, u8 fn,
+				      enum pci_epc_irq_type type, u16 interrupt_num)
+#else
 static int sunxi_pcie_ep_raise_irq(struct pci_epc *epc, u8 fn, u8 vfn,
-				      enum pci_epc_irq_type type,
-				      u16 interrupt_num)
+				      enum pci_epc_irq_type type, u16 interrupt_num)
+#endif
 {
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 
@@ -484,7 +589,6 @@ static int sunxi_pcie_ep_start(struct pci_epc *epc)
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
 
-	/* Whether to enable a bit. Need to pay more attention to it. */
 	sunxi_pcie_start_link(pci);
 
 	return 0;
@@ -495,17 +599,23 @@ static void sunxi_pcie_ep_stop(struct pci_epc *epc)
 	struct sunxi_pcie_ep *ep = epc_get_drvdata(epc);
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
 
-	/* Whether to disable a bit. Need to pay more attention to it. */
 	sunxi_pcie_stop_link(pci);
 }
 
 static const struct pci_epc_features sunxi_pcie_epc_features = {
-	.linkup_notifier = false,
-	.msi_capable     = true,
-	.msix_capable    = false,
+	.linkup_notifier	= false,
+	.msi_capable		= true,
+	.msix_capable		= false,
+	.reserved_bar		= BIT(BAR_2),
+	.bar_fixed_64bit	= BIT(BAR_0) | BIT(BAR_4),
+	.align			= SZ_1M,
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static const struct pci_epc_features *sunxi_pcie_ep_get_features(struct pci_epc *epc, u8 func_no)
+#else
 static const struct pci_epc_features *sunxi_pcie_ep_get_features(struct pci_epc *epc, u8 func_no, u8 vfunc_no)
+#endif
 {
 	return &sunxi_pcie_epc_features;
 }
@@ -543,7 +653,7 @@ static int sunxi_pcie_parse_ep_dts(struct sunxi_pcie_ep *ep)
 
 	ep->phys_base = res->start;
 	ep->addr_size = resource_size(res);
-	ep->page_size = SZ_16K;
+	ep->page_size = SZ_4K;
 
 	ret = of_property_read_u32(np, "num-ib-windows",
 					&ep->num_ib_windows);
@@ -578,32 +688,12 @@ static int sunxi_pcie_parse_ep_dts(struct sunxi_pcie_ep *ep)
 	return 0;
 }
 
-static unsigned int sunxi_pcie_ep_find_ext_capability(struct sunxi_pcie *pci, int cap)
-{
-	u32 header;
-	int pos = PCI_CFG_SPACE_SIZE;
 
-	while (pos) {
-		header = sunxi_pcie_readl_dbi(pci, pos);
-		if (PCI_EXT_CAP_ID(header) == cap)
-			return pos;
-
-		pos = PCI_EXT_CAP_NEXT(header);
-		if (!pos)
-			break;
-	}
-
-	return 0;
-}
 
 int sunxi_plat_ep_init_end(struct sunxi_pcie_ep *ep)
 {
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_ep(ep);
-	unsigned int offset;
-	unsigned int nbars;
 	u8 hdr_type;
-	u32 reg;
-	int i;
 
 	hdr_type = sunxi_pcie_readb_dbi(pci, PCI_HEADER_TYPE) &
 							PCI_HEADER_TYPE_MASK;
@@ -612,19 +702,6 @@ int sunxi_plat_ep_init_end(struct sunxi_pcie_ep *ep)
 			"PCIe controller is not set to EP mode (hdr_type:0x%x)!\n",
 			hdr_type);
 		return -EIO;
-	}
-
-	offset = sunxi_pcie_ep_find_ext_capability(pci, PCI_EXT_CAP_ID_REBAR);
-
-	sunxi_pcie_dbi_ro_wr_en(pci);
-
-	if (offset) {
-		reg = sunxi_pcie_readl_dbi(pci, offset + PCI_REBAR_CTRL);
-		nbars = (reg & PCI_REBAR_CTRL_NBAR_MASK) >>
-			PCI_REBAR_CTRL_NBAR_SHIFT;
-
-		for (i = 0; i < nbars; i++, offset += PCI_REBAR_CTRL)
-			sunxi_pcie_writel_dbi(pci, offset + PCI_REBAR_CAP, PCIE_EP_REBAR_SIZE_32M);
 	}
 
 	sunxi_pcie_setup_ep(pci);

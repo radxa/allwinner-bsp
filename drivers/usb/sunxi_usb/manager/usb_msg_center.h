@@ -44,6 +44,7 @@ typedef struct usb_msg_center_info {
 	enum sw_usb_role role;
 
 	u32 skip;			/* if skip, not enter msg process */
+	struct gpio_desc	*bcten_gpiod; /* for some ICs, there is bcten, sunch as A537 */
 	/* mainly to omit invalid msg */
 } usb_msg_center_info_t;
 
@@ -61,7 +62,7 @@ enum sw_usb_role get_usb_role(void);
 void set_usb_role_ex(enum sw_usb_role role);
 void usb_msg_center(struct usb_cfg *cfg);
 
-s32 usb_msg_center_init(void);
+s32 usb_msg_center_init(struct device *dev);
 s32 usb_msg_center_exit(void);
 
 #endif /* __USB_MSG_CENTER_H__ */

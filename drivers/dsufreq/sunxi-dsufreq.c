@@ -28,9 +28,8 @@
 #define DSU_MIN_FREQ_THRESHOLD           200000000     //200MHz
 #define DSU_MAX_FREQ_THRESHOLD           2000000000    //2GHz
 
-struct dsufreq_soc_data {
-	void (*nvmem_xlate)(char *name);
-};
+#define CPUL_CORE_NUM			(0)
+#define FREQUENCY_SCALING_TRIGGER_MIN	(1000000)
 
 typedef enum {
 	DSUFREQ_NOT_SCALING = 0,
@@ -49,6 +48,7 @@ struct sunxi_dsufreq_dev {
 	struct clk                    *clk;
 	char                          opp_table_name[MAX_NAME_LEN];
 	struct opp_table              *opp_table;
+	struct opp_table              *reg_opp_table;
 	struct dsu_opp_table          *opp;
 	int                           opp_count;
 	unsigned long                 max_f_by_min_v;
@@ -198,8 +198,24 @@ static unsigned long get_dsu_max_freq_by_cur_volt(struct sunxi_dsufreq_dev *dsuf
 	return dsu_max_freq;
 }
 
-static unsigned long get_dsu_next_freq(struct sunxi_dsufreq_dev *dsufreq_dev,
-	struct cpufreq_policy *policy, unsigned long freq, unsigned long *bit_core_next_freq)
+static unsigned long sunxi_get_dsu_next_freq(struct sunxi_dsufreq_dev *dsufreq_dev,
+	struct cpufreq_policy *policy, unsigned long freq, unsigned long *big_core_next_freq)
+{
+	unsigned long dsu_next_freq = 0;
+	unsigned long dsu_max_freq = 0;
+
+	*big_core_next_freq = 0;
+	dsu_next_freq = (freq * 3)/4;
+	if (dsu_next_freq % 24000000)
+		dsu_next_freq -= (dsu_next_freq % 24000000);
+
+	dsu_max_freq = get_dsu_max_freq_by_cur_volt(dsufreq_dev, freq);
+
+	return min(dsu_next_freq, dsu_max_freq);
+}
+
+static unsigned long sunxi_big_little_get_dsu_next_freq(struct sunxi_dsufreq_dev *dsufreq_dev,
+	struct cpufreq_policy *policy, unsigned long freq, unsigned long *big_core_next_freq)
 {
 	unsigned long dsu_next_freq = 0;
 	unsigned long max_next_freq = 0;
@@ -224,11 +240,11 @@ static unsigned long get_dsu_next_freq(struct sunxi_dsufreq_dev *dsufreq_dev,
 	if (policy == dsufreq_dev->policy[0]) {
 		max_next_freq = max(freq, big_core_cur_freq);
 		little_core_next_freq = freq;
-		*bit_core_next_freq = big_core_cur_freq;
+		*big_core_next_freq = big_core_cur_freq;
 	} else {
 		max_next_freq = max(freq, little_core_cur_freq);
 		little_core_next_freq = little_core_cur_freq;
-		*bit_core_next_freq = freq;
+		*big_core_next_freq = freq;
 	}
 
 	dsu_next_freq = (max_next_freq * 3)/4;
@@ -250,10 +266,10 @@ static int set_dsufreq_scaling_down(struct cpufreq_policy *policy, unsigned long
 		return -ENODEV;
 	}
 
-	if (dsufreq_dev->policy_cnt != POLICY_NUM)
-		return -EINVAL;
-
-	dsufreq_dev->next_freq = get_dsu_next_freq(dsufreq_dev, policy, freq, &big_core_next_freq);
+	if (dsufreq_dev->policy_cnt == 1)
+		dsufreq_dev->next_freq = sunxi_get_dsu_next_freq(dsufreq_dev, policy, freq, &big_core_next_freq);
+	else
+		dsufreq_dev->next_freq = sunxi_big_little_get_dsu_next_freq(dsufreq_dev, policy, freq, &big_core_next_freq);
 	/*
 	 * When big core run at a high frequency and little core run at a low frequency,
 	 * the minimum dsu frequency is limited.
@@ -312,7 +328,7 @@ static int set_dsufreq_scaling_up(struct cpufreq_policy *policy,
 	return 0;
 }
 
-static void sun55iw3_dsu_nvmem_xlate(char *name)
+static void sunxi_dsu_nvmem(char *name)
 {
 	u32 index = 0x0100;
 
@@ -321,53 +337,58 @@ static void sun55iw3_dsu_nvmem_xlate(char *name)
 	sunxi_warn(NULL, "dsu dvfs: %s\n", name);
 }
 
-static struct dsufreq_soc_data sun55iw3_soc_data = {
-	.nvmem_xlate = sun55iw3_dsu_nvmem_xlate,
-};
-
 static int dsu_init_freq_table(struct sunxi_dsufreq_dev *dsufreq_dev)
 {
 	struct device *dev = dsufreq_dev->dev;
-	struct dsufreq_soc_data *pri_data = NULL;
 	int i, ret;
 	int idx;
 	unsigned long min_volt = 0;
 	unsigned long freq = 0;
 	char *opp_table_name = dsufreq_dev->opp_table_name;
 	struct opp_table *opp_table = NULL;
+	struct opp_table *reg_opp_table = NULL;
 	struct dev_pm_opp *opp = NULL;
 	struct cpufreq_policy *policy = dsufreq_dev->policy[0];
 	unsigned long min_freq = policy->cpuinfo.min_freq * 1000;
 	unsigned long l_min_volt = 0;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)
+	reg_opp_table = dev_pm_opp_set_regulators(dev, (const char *[]){ "dsu" }, 1);
+	if (IS_ERR(reg_opp_table)) {
+		ret = PTR_ERR(reg_opp_table);
+	} else {
+		ret = 0;
+		dsufreq_dev->reg_opp_table = reg_opp_table;
+	}
+#else
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	ret = devm_pm_opp_set_regulators(dev, (const char *[]){ "dsu" }, 1);
 #else
 	ret = devm_pm_opp_set_regulators(dev, (const char *[]){ "dsu" });
+#endif
 #endif
 	if (ret) {
 		sunxi_err(dev, "failed to set OPP regulator\n");
 		return ret;
 	}
 
-	pri_data = (struct dsufreq_soc_data *)of_device_get_match_data(dev);
-	if (!pri_data)
-		return -EINVAL;
-
-	if (pri_data->nvmem_xlate)
-		pri_data->nvmem_xlate(opp_table_name);
+	sunxi_dsu_nvmem(opp_table_name);
 
 	if (strlen(opp_table_name)) {
 		opp_table = dev_pm_opp_set_prop_name(dev, opp_table_name);
 		if (IS_ERR(opp_table)) {
 			ret = PTR_ERR(opp_table);
 			sunxi_err(dev, "Failed to set prop name, use default vf\n");
-			return ret;
+			goto reg_put;
 		}
 		dsufreq_dev->opp_table = opp_table;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)
+	ret = dev_pm_opp_of_add_table(dev);
+#else
 	ret = devm_pm_opp_of_add_table(dev);
+#endif
 	if (ret < 0) {
 		sunxi_err(dev, "Failed to get OPP table\n");
 		goto opp_put;
@@ -378,7 +399,7 @@ static int dsu_init_freq_table(struct sunxi_dsufreq_dev *dsufreq_dev)
 		sizeof(struct dsu_opp_table), GFP_KERNEL);
 	if (!dsufreq_dev->opp) {
 		ret = -ENOMEM;
-		goto opp_put;
+		goto table_put;
 	}
 
 	idx = dsufreq_dev->opp_count - 1;
@@ -386,7 +407,7 @@ static int dsu_init_freq_table(struct sunxi_dsufreq_dev *dsufreq_dev)
 		opp = dev_pm_opp_find_freq_floor(dev, &freq);
 		if (IS_ERR(opp)) {
 			ret = PTR_ERR(opp);
-			goto opp_put;
+			goto table_put;
 		}
 
 		dsufreq_dev->opp[idx - i].freq_hz = freq;
@@ -400,7 +421,7 @@ static int dsu_init_freq_table(struct sunxi_dsufreq_dev *dsufreq_dev)
 	if (IS_ERR(opp)) {
 		sunxi_err(NULL, "Failed to recommended min opp: %lu\n", min_freq);
 		ret = PTR_ERR(opp);
-		goto opp_put;
+		goto table_put;
 	}
 
 	l_min_volt = dev_pm_opp_get_voltage(opp);
@@ -420,9 +441,18 @@ static int dsu_init_freq_table(struct sunxi_dsufreq_dev *dsufreq_dev)
 
 	return 0;
 
+table_put:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)
+	dev_pm_opp_of_remove_table(dev);
+#endif
+
 opp_put:
 	if (strlen(opp_table_name))
 		dev_pm_opp_put_prop_name(opp_table);
+
+reg_put:
+	if (reg_opp_table)
+		dev_pm_opp_put_regulators(reg_opp_table);
 
 	return ret;
 }
@@ -435,7 +465,9 @@ static int sunxi_dsufreq_probe(struct platform_device *pdev)
 	int err = 0;
 	struct cpufreq_policy *policy = NULL;
 	struct cpufreq_policy *policy_bak = policy;
-
+#ifdef CONFIG_AW_SUNXI_DSUFREQ_ADJUST
+	struct freq_qos_request qos_req;
+#endif
 	dsufreq_dev = devm_kzalloc(dev, sizeof(*dsufreq_dev), GFP_KERNEL);
 	if (!dsufreq_dev)
 		return -ENOMEM;
@@ -457,11 +489,6 @@ static int sunxi_dsufreq_probe(struct platform_device *pdev)
 				return -EINVAL;
 			}
 		}
-	}
-
-	if (dsufreq_dev->policy_cnt != POLICY_NUM) {
-		sunxi_warn(dev, "policy num = %d\n", dsufreq_dev->policy_cnt);
-		return -EPROBE_DEFER;
 	}
 
 	dsufreq_dev->dev = dev;
@@ -496,18 +523,47 @@ static int sunxi_dsufreq_probe(struct platform_device *pdev)
 		return err;
 	}
 
+#ifdef CONFIG_AW_SUNXI_DSUFREQ_ADJUST
+	policy = cpufreq_cpu_get(CPUL_CORE_NUM);
+	if (!policy) {
+		sunxi_warn(NULL, "Cpufreq policy not found cpu0\n");
+		err = -EPROBE_DEFER;
+		return err;
+	}
+	memset(&qos_req, 0, sizeof(qos_req));
+	err = freq_qos_add_request(&policy->constraints, &qos_req, FREQ_QOS_MAX,
+				   policy->cpuinfo.max_freq);
+	if (err < 0) {
+		sunxi_err(NULL, "Failed to add freq constraint %d\n", err);
+		cpufreq_cpu_put(policy);
+		return err;
+	}
+	cpufreq_cpu_put(policy);
+	freq_qos_update_request(&qos_req, FREQUENCY_SCALING_TRIGGER_MIN);
+	freq_qos_update_request(&qos_req, INT_MAX);
+	freq_qos_remove_request(&qos_req);
+#endif
+
 	return 0;
 }
 
 static int sunxi_dsufreq_remove(struct platform_device *pdev)
 {
 	struct sunxi_dsufreq_dev *dsufreq_dev = platform_get_drvdata(pdev);
+	struct device __maybe_unused *dev = &pdev->dev;
 
 	class_unregister(&dsufreq_class);
 	set_dsufreq_cb(NULL, NULL);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)
+	dev_pm_opp_of_remove_table(dev);
+#endif
+
 	if (strlen(dsufreq_dev->opp_table_name))
 		dev_pm_opp_put_prop_name(dsufreq_dev->opp_table);
+
+	if (dsufreq_dev->reg_opp_table)
+		dev_pm_opp_put_regulators(dsufreq_dev->reg_opp_table);
 
 	clk_disable_unprepare(dsufreq_dev->clk);
 	iounmap((char __iomem *)clus_ctrl_base);
@@ -516,7 +572,8 @@ static int sunxi_dsufreq_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id sunxi_dsufreq_of_match[] = {
-	{ .compatible = "allwinner,sun55iw3-dsufreq", .data = &sun55iw3_soc_data, },
+	{ .compatible = "allwinner,sun55iw3-dsufreq", },
+	{ .compatible = "allwinner,dsufreq", },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, sunxi_dsufreq_of_match);

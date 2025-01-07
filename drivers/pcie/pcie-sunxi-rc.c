@@ -581,6 +581,10 @@ static irqreturn_t sunxi_pcie_host_msi_irq_handler(int irq, void *arg)
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
 	unsigned long val;
 	int i, pos;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+	u32 hwirq;
+	u32 virq;
+#endif
 	u32 status;
 	irqreturn_t ret = IRQ_NONE;
 
@@ -595,7 +599,14 @@ static irqreturn_t sunxi_pcie_host_msi_irq_handler(int irq, void *arg)
 		val = status;
 		while ((pos = find_next_bit(&val, MAX_MSI_IRQS_PER_CTRL, pos)) != MAX_MSI_IRQS_PER_CTRL) {
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+			hwirq = i * MAX_MSI_IRQS_PER_CTRL + pos;
+			virq = irq_find_mapping(pp->irq_domain, hwirq);
+			generic_handle_irq(virq);
+#else
+
 			generic_handle_domain_irq(pp->irq_domain, (i * MAX_MSI_IRQS_PER_CTRL) + pos);
+#endif
 
 			sunxi_pcie_writel_dbi(pci,
 					PCIE_MSI_INTR_STATUS + (i * MSI_REG_CTRL_BLOCK_SIZE), 1 << pos);

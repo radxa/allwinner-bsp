@@ -64,6 +64,7 @@ static ssize_t otg_enable(struct device *dev,
 
 	mutex_lock(&g_usb_cfg.lock);
 	/* restart usb scan */
+	atomic_set(&rolesw_suspend_flag, 0);
 	atomic_set(&thread_suspend_flag, 0);
 	atomic_set(&notify_suspend_flag, 0);
 	set_cc_status(POWER_SUPPLY_SCOPE_UNKNOWN);
@@ -75,7 +76,7 @@ static ssize_t otg_enable(struct device *dev,
 		usb_hw_scan(&g_usb_cfg);
 		usb_msg_center(&g_usb_cfg);
 
-		msleep(100);
+		msleep(1000);
 		usb_hw_scan(&g_usb_cfg);
 		usb_msg_center(&g_usb_cfg);
 		/* restore det_flag for auto detect */
@@ -91,6 +92,7 @@ static ssize_t device_chose(struct device *dev,
 {
 	mutex_lock(&g_usb_cfg.lock);
 	/* stop usb scan */
+	atomic_set(&rolesw_suspend_flag, 1);
 	atomic_set(&thread_suspend_flag, 1);
 	atomic_set(&notify_suspend_flag, 1);
 
@@ -111,6 +113,7 @@ static ssize_t host_chose(struct device *dev,
 {
 	mutex_lock(&g_usb_cfg.lock);
 	/* stop usb scan */
+	atomic_set(&rolesw_suspend_flag, 1);
 	atomic_set(&thread_suspend_flag, 1);
 	atomic_set(&notify_suspend_flag, 1);
 
@@ -131,6 +134,7 @@ static ssize_t null_chose(struct device *dev,
 {
 	mutex_lock(&g_usb_cfg.lock);
 	/* stop usb scan */
+	atomic_set(&rolesw_suspend_flag, 1);
 	atomic_set(&thread_suspend_flag, 1);
 	atomic_set(&notify_suspend_flag, 1);
 

@@ -243,6 +243,14 @@ static void rmmod_device_driver(struct usb_msg_center_info *center_info)
 static void do_usb_role_null(struct usb_msg_center_info *center_info)
 {
 	if (center_info->msg.hw_insmod_host) {
+
+		/*
+		 * If the current SOC has bcten-gpio,
+		 * need to set this gpio to `HIGH` for the host driver to work properly.
+		 */
+		if (center_info->bcten_gpiod)
+			gpiod_set_value(center_info->bcten_gpiod, 1);
+
 		insmod_host_driver(center_info);
 		center_info->msg.hw_insmod_host = 0;
 		atomic_set(&center_info->cfg->det_flag, 0);
@@ -268,6 +276,13 @@ static void do_usb_role_host(struct usb_msg_center_info *center_info)
 		rmmod_host_driver(center_info);
 		center_info->msg.hw_rmmod_host = 0;
 		atomic_set(&center_info->cfg->det_flag, 0);
+
+		/*
+		 * If the current SOC has bcten-gpio,
+		 * neet to set this gpio to `LOW`, device driver can be loaded.
+		 */
+		if (center_info->bcten_gpiod)
+			gpiod_set_value(center_info->bcten_gpiod, 0);
 
 		goto end;
 	}
@@ -323,11 +338,16 @@ void usb_msg_center(struct usb_cfg *cfg)
 	}
 }
 
-s32 usb_msg_center_init(void)
+s32 usb_msg_center_init(struct device *dev)
 {
 	struct usb_msg_center_info *center_info = &g_center_info;
 
 	memset(center_info, 0, sizeof(struct usb_msg_center_info));
+
+	center_info->bcten_gpiod = devm_gpiod_get_optional(dev, "bcten", GPIOD_OUT_LOW);
+	if (IS_ERR_OR_NULL(center_info->bcten_gpiod))
+		DMSG_INFO("OTG can't find bcten-gpio, use default mode.\n");
+
 	return 0;
 }
 

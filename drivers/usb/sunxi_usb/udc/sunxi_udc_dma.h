@@ -24,7 +24,11 @@
 #endif
 
 /* dma channel total */
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+#define DMA_CHAN_TOTAL			(16)
+#else
 #define DMA_CHAN_TOTAL			(8)
+#endif
 typedef int *dm_hdl_t;
 
 /* define dma channel struct */
@@ -40,6 +44,7 @@ extern dma_channel_t dma_chnl[DMA_CHAN_TOTAL];
 
 /* dma config information */
 struct dma_config_t {
+	bool		dma_addr_ext_enable;
 	spinlock_t	lock;		/* dma channel lock */
 	u32		dma_num;
 	u32		dma_working;
@@ -50,6 +55,8 @@ struct dma_config_t {
 	u32		dma_sdram_str_addr;
 	u32		dma_bc;
 	u32		dma_residual_bc;
+	u32		dma_sdram_str_addr_ext;
+	u32		dma_wordaddr_bypass;
 };
 
 extern int g_dma_debug;
@@ -64,9 +71,9 @@ dm_hdl_t sunxi_udc_dma_request(void);
 int sunxi_udc_dma_release(dm_hdl_t dma_hdl);
 int sunxi_udc_dma_chan_disable(dm_hdl_t dma_hdl);
 void sunxi_udc_dma_set_config(struct sunxi_udc_ep *ep,
-		struct sunxi_udc_request *req, __u32 buff_addr, __u32 len);
+		struct sunxi_udc_request *req, __u64 buff_addr, __u32 len);
 void sunxi_udc_dma_start(struct sunxi_udc_ep *ep,
-		void __iomem  *fifo, __u32 buffer, __u32 len);
+		void __iomem  *fifo, __u64 buffer, __u32 len);
 void sunxi_udc_dma_stop(struct sunxi_udc_ep *ep);
 __u32 sunxi_udc_dma_transmit_length(struct sunxi_udc_ep *ep);
 __u32 sunxi_udc_dma_is_busy(struct sunxi_udc_ep *ep);

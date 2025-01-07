@@ -280,6 +280,42 @@ static void __USBC_Dev_Tx_ClearEpDma(void __iomem *usbc_base_addr)
 	USBC_Writeb(ep_csr, (USBC_REG_TXCSR(usbc_base_addr) + 1));
 }
 
+/* *
+ * The AutoSet and AutoClear functions cannot be used to set and clear these bits
+ * in High-Bandwidth transactions (For details, see The MUSB Spec Chapter 25.3).
+ * */
+static void __USBC_Dev_Tx_ManualConfigEpDma(void __iomem *usbc_base_addr)
+{
+	__u16 ep_csr = 0;
+
+	/* auto_set not support, tx_mode, dma_tx_en, mode1 */
+	ep_csr = USBC_Readb(USBC_REG_TXCSR(usbc_base_addr) + 1);
+	ep_csr |= (1 << USBC_BP_TXCSR_D_MODE) >> 8;
+	ep_csr |= (1 << USBC_BP_TXCSR_D_DMA_REQ_EN) >> 8;
+	ep_csr |= (1 << USBC_BP_TXCSR_D_DMA_REQ_MODE) >> 8;
+	USBC_Writeb(ep_csr, (USBC_REG_TXCSR(usbc_base_addr) + 1));
+}
+
+static void __USBC_Dev_Tx_ManualClearEpDma(void __iomem *usbc_base_addr)
+{
+	__u16 ep_csr = 0;
+
+	ep_csr = USBC_Readw(USBC_REG_TXCSR(usbc_base_addr));
+	ep_csr |= 1 << USBC_BP_TXCSR_D_TX_READY;
+	ep_csr &= ~(1 << USBC_BP_TXCSR_D_UNDER_RUN);
+	USBC_Writew(ep_csr, USBC_REG_TXCSR(usbc_base_addr));
+
+	/* auto_set not support, dma_tx_en, mode1 */
+	ep_csr = USBC_Readb(USBC_REG_TXCSR(usbc_base_addr) + 1);
+	ep_csr &= ~((1 << USBC_BP_TXCSR_D_DMA_REQ_EN) >> 8);
+	USBC_Writeb(ep_csr, (USBC_REG_TXCSR(usbc_base_addr) + 1));
+
+	/* DMA_REQ_EN and DMA_REQ_MODE cannot be cleared in the same cycle */
+	ep_csr = USBC_Readb(USBC_REG_TXCSR(usbc_base_addr) + 1);
+	ep_csr &= ~((1 << USBC_BP_TXCSR_D_DMA_REQ_MODE) >> 8);
+	USBC_Writeb(ep_csr, (USBC_REG_TXCSR(usbc_base_addr) + 1));
+}
+
 static __u32 __USBC_Dev_Tx_IsWriteDataReady(void __iomem *usbc_base_addr)
 {
 	__u32 temp = 0;
@@ -760,7 +796,7 @@ EXPORT_SYMBOL(USBC_Dev_ConfigEp_Default);
  *
  * return: 0 - success, !0 - failed
  */
-__s32 USBC_Dev_ConfigEpDma(__hdle hUSB, __u32 ep_type)
+__s32 USBC_Dev_ConfigEpDma(__hdle hUSB, __u32 ep_type, __u32 mult)
 {
 	__usbc_otg_t *usbc_otg = (__usbc_otg_t *)hUSB;
 
@@ -773,7 +809,10 @@ __s32 USBC_Dev_ConfigEpDma(__hdle hUSB, __u32 ep_type)
 		return -1;
 
 	case USBC_EP_TYPE_TX:
-		__USBC_Dev_Tx_ConfigEpDma(usbc_otg->base_addr);
+		if (mult == 3)
+			__USBC_Dev_Tx_ManualConfigEpDma(usbc_otg->base_addr);
+		else
+			__USBC_Dev_Tx_ConfigEpDma(usbc_otg->base_addr);
 		__USBC_Dev_ConfigDma_Trans(usbc_otg->base_addr);
 	break;
 
@@ -798,7 +837,7 @@ EXPORT_SYMBOL(USBC_Dev_ConfigEpDma);
  *
  * return: 0 - success, !0 - failed
  */
-__s32 USBC_Dev_ClearEpDma(__hdle hUSB, __u32 ep_type)
+__s32 USBC_Dev_ClearEpDma(__hdle hUSB, __u32 ep_type, __u32 mult)
 {
 	__usbc_otg_t *usbc_otg = (__usbc_otg_t *)hUSB;
 
@@ -811,7 +850,10 @@ __s32 USBC_Dev_ClearEpDma(__hdle hUSB, __u32 ep_type)
 		return -1;
 
 	case USBC_EP_TYPE_TX:
-		__USBC_Dev_Tx_ClearEpDma(usbc_otg->base_addr);
+		if (mult == 3)
+			__USBC_Dev_Tx_ManualClearEpDma(usbc_otg->base_addr);
+		else
+			__USBC_Dev_Tx_ClearEpDma(usbc_otg->base_addr);
 		__USBC_Dev_ClearDma_Trans(usbc_otg->base_addr);
 		break;
 

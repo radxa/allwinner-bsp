@@ -272,8 +272,8 @@ struct dma_trx_obj *sunxi_pcie_dma_obj_probe(struct device *dev);
 int sunxi_pcie_dma_obj_remove(struct device *dev);
 sunxi_pci_edma_chan_t *sunxi_pcie_dma_chan_request(enum dma_dir dma_trx, void *cb, void *data);
 int sunxi_pcie_dma_chan_release(struct sunxi_pci_edma_chan *edma_chan, enum dma_dir dma_trx);
-int sunxi_pcie_dma_mem_read(phys_addr_t sar_addr, phys_addr_t dar_addr, unsigned int size);
-int sunxi_pcie_dma_mem_write(phys_addr_t sar_addr, phys_addr_t dar_addr, unsigned int size);
+int sunxi_pcie_dma_mem_read(phys_addr_t sar_addr, phys_addr_t dar_addr, unsigned int size, void *chan);
+int sunxi_pcie_dma_mem_write(phys_addr_t sar_addr, phys_addr_t dar_addr, unsigned int size, void *chan);
 int sunxi_pcie_dma_get_chan(struct platform_device *pdev);
 
 #endif

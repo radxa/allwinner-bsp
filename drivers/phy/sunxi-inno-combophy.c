@@ -87,6 +87,8 @@ struct sunxi_combophy_of_data {
 	bool has_pcie_axi_clk;
 	bool has_u2_phy_mux;
 	bool need_noppu_rst;
+	bool has_u3_phy_data_quirk;
+	bool need_optimize_jitter;
 };
 
 struct sunxi_combphy {
@@ -97,7 +99,6 @@ struct sunxi_combphy {
 	struct reset_control *reset;
 	struct reset_control *noppu_reset;
 
-	struct clk *clk;
 	struct clk *phyclk_ref;
 	struct clk *refclk_par;
 	struct clk *phyclk_cfg;
@@ -112,6 +113,9 @@ struct sunxi_combphy {
 	enum phy_refclk_sel ref;
 	struct notifier_block pwr_nb;
 	const struct sunxi_combophy_of_data *drvdata;
+
+	struct regulator *select3v3_supply;
+	bool initialized;
 };
 
 ATOMIC_NOTIFIER_HEAD(inno_subsys_notifier_list);
@@ -223,28 +227,29 @@ static int pcie_usb3_sub_system_init(struct platform_device *pdev)
 	struct sunxi_combphy *combphy = platform_get_drvdata(pdev);
 	int ret;
 
-	if (!IS_ERR(combphy->clk)) {
-		ret = clk_prepare_enable(combphy->clk);
-		if (ret)
-			return ret;
-	}
+	if (combphy->initialized)
+		return 0;
 
 	ret = reset_control_deassert(combphy->reset);
-	if (ret) {
-		if (!IS_ERR(combphy->clk))
-			clk_disable_unprepare(combphy->clk);
+	if (ret)
 		return ret;
-	}
 
 	if (combphy->drvdata->need_noppu_rst) {
 		ret = reset_control_deassert(combphy->noppu_reset);
 		if (ret) {
-			if (!IS_ERR(combphy->clk))
-				clk_disable_unprepare(combphy->clk);
+			if (!IS_ERR(combphy->reset))
+				reset_control_assert(combphy->reset);
 			return ret;
 		}
 	}
-	if (combphy->user == PHY_USE_BY_PCIE || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
+
+	if (combphy->user == PHY_USE_BY_USB3) {
+		if (!IS_ERR(combphy->phyclk_ref)) {
+			ret = clk_prepare_enable(combphy->phyclk_ref);
+			if (ret)
+				return ret;
+		}
+	} else if (combphy->user == PHY_USE_BY_PCIE || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
 		ret = clk_set_rate(combphy->phyclk_ref, 100000000);
 		if (ret) {
 			dev_err(dev, "failed to set phyclk_ref freq 100M!\n");
@@ -299,6 +304,8 @@ static int pcie_usb3_sub_system_init(struct platform_device *pdev)
 	if (combphy->vernum == COMBO_VERSION_ANY)
 		dev_err(dev, "this is unknown version number\n");
 
+	combphy->initialized = true;
+
 	return 0;
 }
 
@@ -306,15 +313,14 @@ static int pcie_usb3_sub_system_exit(struct platform_device *pdev)
 {
 	struct sunxi_combphy *combphy = platform_get_drvdata(pdev);
 
+	if (!combphy->initialized)
+		return 0;
+
 	pcie_usb3_sub_system_disable(combphy);
 
-	if (combphy->drvdata->has_cfg_clk) {
-		if (!IS_ERR(combphy->phyclk_cfg))
-			clk_disable_unprepare(combphy->phyclk_cfg);
-	}
-	if (combphy->user == PHY_USE_BY_PCIE || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
-		if (!IS_ERR(combphy->phyclk_ref))
-			clk_disable_unprepare(combphy->phyclk_ref);
+	if (combphy->drvdata->has_phy_mbus_clk) {
+		if (!IS_ERR(combphy->phy_mclk))
+			clk_disable_unprepare(combphy->phy_mclk);
 	}
 
 	if (combphy->drvdata->has_pcie_axi_clk) {
@@ -322,15 +328,18 @@ static int pcie_usb3_sub_system_exit(struct platform_device *pdev)
 			clk_disable_unprepare(combphy->phy_axi);
 	}
 
-	if (combphy->drvdata->has_phy_mbus_clk) {
-		if (!IS_ERR(combphy->phy_mclk))
-			clk_disable_unprepare(combphy->phy_mclk);
-	}
-
 	if (combphy->drvdata->has_phy_ahb_clk) {
 		if (!IS_ERR(combphy->phy_hclk))
 			clk_disable_unprepare(combphy->phy_hclk);
 	}
+
+	if (combphy->drvdata->has_cfg_clk) {
+		if (!IS_ERR(combphy->phyclk_cfg))
+			clk_disable_unprepare(combphy->phyclk_cfg);
+	}
+
+	if (!IS_ERR(combphy->phyclk_ref))
+		clk_disable_unprepare(combphy->phyclk_ref);
 
 	if (combphy->drvdata->need_noppu_rst) {
 		if (!IS_ERR(combphy->noppu_reset))
@@ -340,8 +349,7 @@ static int pcie_usb3_sub_system_exit(struct platform_device *pdev)
 	if (!IS_ERR(combphy->reset))
 		reset_control_assert(combphy->reset);
 
-	if (!IS_ERR(combphy->clk))
-		clk_disable_unprepare(combphy->clk);
+	combphy->initialized = false;
 
 	return 0;
 }
@@ -352,8 +360,12 @@ static int sunxi_inno_combophy_power_event(struct notifier_block *nb, unsigned l
 	struct platform_device *pdev = to_platform_device(combphy->dev);
 
 	dev_dbg(combphy->dev, "event %s\n", event ? "on" : "off");
-	if (event)
+	if (event) {
+		if (combphy->initialized) {
+			pcie_usb3_sub_system_exit(pdev);
+		}
 		pcie_usb3_sub_system_init(pdev);
+	}
 	else
 		pcie_usb3_sub_system_exit(pdev);
 
@@ -474,6 +486,16 @@ static void sunxi_combphy_usb3_phy_set(struct sunxi_combphy *combphy, bool enabl
 		val &= ~BIT(1);
 	writel(val, combphy->phy_clk + 0x109c);
 
+	/* balance parm configure */
+	if (combphy->drvdata->has_u3_phy_data_quirk) {
+		val = readl(combphy->phy_clk + 0x0804);
+		if (enable)
+			val |= (0x6<<4);
+		else
+			val &= ~(0xf<<4);
+		writel(val, combphy->phy_clk + 0x0804);
+	}
+
 	/* SSC configure */
 	val = readl(combphy->phy_clk + 0x107c);
 	tmp = 0x3f << 12;
@@ -589,20 +611,40 @@ static void sunxi_combphy_pcie_phy_100M(struct sunxi_combphy *combphy)
 	val &= ~(0x0fffffff);
 	writel(val, combphy->phy_clk + 0x101c);
 
-	val = readl(combphy->phy_clk + 0x107c);
-	val &= ~(0x3ffff);
-	val |= (0x2<<12);
-	val |= 0x32;
-	writel(val, combphy->phy_clk + 0x107c);
+	/* if need optimize jitter parm*/
+	if (combphy->drvdata->need_optimize_jitter) {
+		val = readl(combphy->phy_clk + 0x107c);
+		val &= ~(0x3ffff);
+		val |= (0x4<<12);
+		val |= 0x64;
+		writel(val, combphy->phy_clk + 0x107c);
 
-	val = readl(combphy->phy_clk + 0x1030);
-	val &= ~(0x3<<20);
-	writel(val, combphy->phy_clk + 0x1030);
+		val = readl(combphy->phy_clk + 0x1030);
+		val &= ~(0x3<<20);
+		writel(val, combphy->phy_clk + 0x1030);
 
-	val = readl(combphy->phy_clk + 0x1050);
-	val &= ~(0x7<<5);
-	val |= (0x1<<5);
-	writel(val, combphy->phy_clk + 0x1050);
+		val = readl(combphy->phy_clk + 0x1050);
+		val &= ~(0x7<<0);
+		val &= ~(0x7<<5);
+		val &= ~(0x3<<3);
+		val |= (0x3<<3);
+		writel(val, combphy->phy_clk + 0x1050);
+	} else {
+		val = readl(combphy->phy_clk + 0x107c);
+		val &= ~(0x3ffff);
+		val |= (0x2<<12);
+		val |= 0x32;
+		writel(val, combphy->phy_clk + 0x107c);
+
+		val = readl(combphy->phy_clk + 0x1030);
+		val &= ~(0x3<<20);
+		writel(val, combphy->phy_clk + 0x1030);
+
+		val = readl(combphy->phy_clk + 0x1050);
+		val &= ~(0x7<<5);
+		val |= (0x1<<5);
+		writel(val, combphy->phy_clk + 0x1050);
+	}
 
 	val = readl(combphy->phy_clk + 0x1054);
 	val &= ~(0x7<<5);
@@ -672,14 +714,37 @@ static int sunxi_combphy_usb3_exit(struct sunxi_combphy *combphy)
 
 static int sunxi_combphy_usb3_power_on(struct sunxi_combphy *combphy)
 {
+	int ret;
+
 	sunxi_combphy_usb3_power_set(combphy, true);
 
+	if (!IS_ERR(combphy->select3v3_supply)) {
+		ret = regulator_set_voltage(combphy->select3v3_supply, 3300000, 3300000);
+		if (ret) {
+			dev_err(combphy->dev, "set select3v3-supply failed\n");
+			goto err0;
+		}
+
+		ret = regulator_enable(combphy->select3v3_supply);
+		if (ret) {
+			dev_err(combphy->dev, "enable select3v3-supply failed\n");
+			goto err0;
+		}
+	}
+
 	return 0;
+err0:
+	sunxi_combphy_usb3_power_set(combphy, false);
+
+	return ret;
 }
 
 static int sunxi_combphy_usb3_power_off(struct sunxi_combphy *combphy)
 {
 	sunxi_combphy_usb3_power_set(combphy, false);
+
+	if (!IS_ERR(combphy->select3v3_supply))
+		regulator_disable(combphy->select3v3_supply);
 
 	return 0;
 }
@@ -815,11 +880,9 @@ static int sunxi_combphy_parse_dt(struct platform_device *pdev,
 	if (ret)
 		dev_err(dev, "get phy_use_sel is fail, %d\n", ret);
 
-	combphy->clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(combphy->clk)) {
-		if (PTR_ERR(combphy->clk) != -EPROBE_DEFER)
-			dev_dbg(dev, "failed to get com clock\n");
-	}
+	combphy->phyclk_ref = devm_clk_get(&pdev->dev, "phyclk_ref");
+	if (IS_ERR(combphy->phyclk_ref))
+		dev_dbg(dev, "failed to get phyclk_ref\n");
 
 	combphy->reset = devm_reset_control_get(dev, "phy_rst");
 	if (IS_ERR(combphy->reset))
@@ -831,9 +894,6 @@ static int sunxi_combphy_parse_dt(struct platform_device *pdev,
 			dev_dbg(dev, "failed to get noppu_reset control\n");
 	}
 	if (combphy->user == PHY_USE_BY_PCIE || combphy->user == PHY_USE_BY_PCIE_USB3_U2) {
-		combphy->phyclk_ref = devm_clk_get(&pdev->dev, "phyclk_ref");
-		if (IS_ERR(combphy->phyclk_ref))
-			dev_dbg(dev, "failed to get phyclk_ref\n");
 
 		combphy->refclk_par = devm_clk_get(&pdev->dev, "refclk_par");
 		if (IS_ERR(combphy->refclk_par))
@@ -926,6 +986,11 @@ static int sunxi_combphy_parse_dt(struct platform_device *pdev,
 	ret = of_property_read_u32(np, KEY_PHY_REFCLK_SEL, &combphy->ref);
 	if (ret)
 		dev_err(dev, "get phy_refclk_sel is fail, %d\n", ret);
+
+	/* select ic supply */
+	combphy->select3v3_supply = devm_regulator_get_optional(&pdev->dev, "select3v3");
+	if (IS_ERR(combphy->select3v3_supply))
+		dev_err(dev, "get select3v3-supply fail\n");
 
 	return 0;
 }
@@ -1053,6 +1118,8 @@ static const struct sunxi_combophy_of_data sunxi_inno_v2_of_data = {
 	.has_pcie_axi_clk = true,
 	.has_u2_phy_mux = true,
 	.need_noppu_rst = true,
+	.has_u3_phy_data_quirk = true,
+	.need_optimize_jitter = true,
 };
 
 static const struct of_device_id sunxi_combphy_of_match[] = {

@@ -30,6 +30,11 @@
 #include <linux/clk.h>
 #include <linux/reset.h>
 #include <linux/gpio.h>
+#include <linux/version.h>
+
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(5, 4, 220))
+#include <linux/kthread.h>
+#endif
 
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
@@ -69,9 +74,6 @@ static struct sunxi_hci_hcd sunxi_ehci1;
 static struct sunxi_hci_hcd sunxi_ehci2;
 static struct sunxi_hci_hcd sunxi_ehci3;
 static struct sunxi_hci_hcd sunxi_xhci;
-static __u8 thread_run_flag[4] = {0, 0, 0, 0}; /* flag. current port is running? */
-atomic_t hci_thread_suspend_flag;
-EXPORT_SYMBOL(hci_thread_suspend_flag);
 
 #define  USBPHYC_REG_o_PHYCTL		    0x0404
 
@@ -86,6 +88,15 @@ static atomic_t usb2_enable_siddq_cnt = ATOMIC_INIT(0);
 static atomic_t usb3_enable_siddq_cnt = ATOMIC_INIT(0);
 
 static atomic_t usb_standby_cnt[4];
+
+/*
+ * In a specified platform, if only ohci is enabled, you need to add
+ * specified actions during suspend to reduce power consumption, so you
+ * need to add a check to see if ehci is enabled. If it is enabled, you
+ * do not need to add specified actions.
+ */
+atomic_t ehci_enable_flag[4];
+static bool init_flag;
 
 ATOMIC_NOTIFIER_HEAD(usb_pm_notifier_list);
 EXPORT_SYMBOL(usb_pm_notifier_list);
@@ -112,146 +123,6 @@ static s32 release_usb_regulator_io(struct sunxi_hci_hcd *sunxi_hci)
 	if (sunxi_hci->hsic_flag) {
 		if (sunxi_hci->hsic_regulator_io != NULL)
 			regulator_put(sunxi_hci->hsic_regulator_io_hdle);
-	}
-
-	return 0;
-}
-
-/**
- * filter the PIO burr
- * @gpio_set: .
- * @value:    store the value to be read
- *
- * try 10 times, if value is the same, then consider no shake. return any one.
- * if not the same, then the current read is invalid
- *
- * return: 0 - the value is the same, valid, 1 - the value change, invalid.
- */
-static __u32 PIODataIn_debounce(struct gpio_config *gpio_set, __u32 *value)
-{
-	__u32 retry  = 0;
-	__u32 time   = 10;
-	__u32 temp1  = 0;
-	__u32 cnt    = 0;
-	__u32 change = 0;	/* if have shake */
-
-	/**
-	 * try 10 times, if value is the same,
-	 * then current read is valid; otherwise invalid.
-	 */
-	retry = time;
-	while (retry--) {
-		temp1 = __gpio_get_value(gpio_set->gpio);
-		if (temp1)
-			cnt++;
-	}
-
-	/* 10 times, the value is all 0 or 1 */
-	if ((cnt == time) || (cnt == 0))
-		change = 0;
-	else
-		change = 1;
-
-	if (!change)
-		*value = temp1;
-
-	DMSG_DEBUG("cnt = %x, change= %d, temp1 = %x\n", cnt, change, temp1);
-
-	return change;
-}
-
-static __u32 sunxi_hci_get_id_state(struct sunxi_hci_hcd *sunxi_hci)
-{
-	enum usb_id_state id_state = USB_ID_DISCONNECT;
-	__u32 pin_data = 0;
-
-	if (!PIODataIn_debounce(&sunxi_hci->id_gpio_set, &pin_data)) {
-		if (pin_data)
-			id_state = USB_ID_DISCONNECT;
-		else
-			id_state = USB_ID_CONNECT;
-	} else {
-		id_state = sunxi_hci->old_id_state; /* last id state */
-	}
-
-	DMSG_DEBUG("old_id_state = %d, id_state:%d\n", sunxi_hci->old_id_state, id_state);
-
-	return id_state;
-}
-
-void sunxi_hci_set_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on)
-{
-	int ret = -1;
-
-	if (!sunxi_hci->thread_active_flag) {
-		DMSG_DEBUG("thread not active");
-		return;
-	}
-
-	if (sunxi_hci->vbusin_on == is_on) {
-		DMSG_DEBUG("vbus is already %s", is_on ? "On" : "Off");
-		return;
-	}
-
-	if (sunxi_hci->vbusin) {
-		if (is_on) {
-			if (sunxi_hci->old_id_state == USB_ID_DISCONNECT) {
-				DMSG_DEBUG("not need set vbus on");
-				return;
-			}
-			ret = regulator_enable(sunxi_hci->vbusin);
-			if (ret)
-				DMSG_ERR("enable vbusin failed\n");
-		} else {
-			if (regulator_is_enabled(sunxi_hci->vbusin)) {
-				ret = regulator_disable(sunxi_hci->vbusin);
-				if (ret)
-					DMSG_ERR("force disable vbusin failed\n");
-			}
-		}
-		sunxi_hci->vbusin_on = is_on;
-	}
-}
-EXPORT_SYMBOL(sunxi_hci_set_vbus);
-
-static void sunxi_hci_vbusin_scan(struct sunxi_hci_hcd *sunxi_hci)
-{
-	id_state_t id_state = USB_ID_UNKNOWN;
-
-	if (!sunxi_hci->id_gpio_valid)
-		return;
-
-	id_state = sunxi_hci_get_id_state(sunxi_hci);
-
-	/* NOTE: it's the core of sunxi_hci_vbusin_scan thread. */
-	if (sunxi_hci->old_id_state == id_state)
-		return;
-
-	DMSG_DEBUG("old:%d, id:%d, set vbus %s\n", sunxi_hci->old_id_state, id_state,
-		   id_state == USB_ID_CONNECT ? "on" : "off");
-
-	sunxi_hci->old_id_state = id_state;
-
-	if (id_state == USB_ID_CONNECT)
-		sunxi_hci_set_vbus(sunxi_hci, 1);
-	else
-		sunxi_hci_set_vbus(sunxi_hci, 0);
-}
-
-static int sunxi_hci_scan_thread(void *pArg)
-{
-	struct sunxi_hci_hcd *sunxi_hci = pArg;
-
-	while (thread_run_flag[sunxi_hci->usbc_no]) {
-		if (kthread_should_stop())
-			break;
-
-		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(msecs_to_jiffies(100));
-
-		if (atomic_read(&hci_thread_suspend_flag))
-			continue;
-		sunxi_hci_vbusin_scan(sunxi_hci);
 	}
 
 	return 0;
@@ -471,7 +342,8 @@ int usb_phyx_tp_read(struct sunxi_hci_hcd *sunxi_hci, int addr, int len)
 EXPORT_SYMBOL(usb_phyx_tp_read);
 
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW20) || IS_ENABLED(CONFIG_ARCH_SUN20IW1) \
-	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 /* for new phy */
 static int usb_new_phyx_tp_write(struct sunxi_hci_hcd *sunxi_hci,
 		int addr, int data, int len)
@@ -578,17 +450,28 @@ static int usb_new_phyx_tp_read(struct sunxi_hci_hcd *sunxi_hci, int addr, int l
 	return ret;
 }
 
-#if IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 void usb_new_phyx_write(struct sunxi_hci_hcd *sunxi_hci, u32 data)
 {
 	u32 temp = 0, ptmp = 0, rtmp = 0;
 
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+	u32 ristmp = 0;
+#endif
 	temp = data & PHY_RANGE_TRAN_MASK;
 	temp >>= (2 + 4);
 	ptmp = data & PHY_RANGE_PREE_MASK;
 	ptmp >>= 4;
 	rtmp = data & PHY_RANGE_RESI_MASK;
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+	ristmp = data & PHY_RANGE_RISE_MASK;
+	ristmp >>= 10;
 
+	usb_new_phyx_tp_write(sunxi_hci, 0x68, ristmp, 0x2);
+#endif
 	/* tranceive data */
 	usb_new_phyx_tp_write(sunxi_hci, 0x60, temp, 0x4);
 	DMSG_INFO("write to trancevie data: 0x%x\n", temp);
@@ -611,6 +494,7 @@ void usb_new_phyx_write(struct sunxi_hci_hcd *sunxi_hci, u32 data)
 u32 usb_new_phyx_read(struct sunxi_hci_hcd *sunxi_hci)
 {
 	u32 temp = 0, ptmp = 0, rtmp = 0, ret = 0;
+	u32 ristmp = 0, tune_temp = 0;
 
 	temp = usb_new_phyx_tp_read(sunxi_hci, 0x60, 0x4);
 
@@ -618,8 +502,13 @@ u32 usb_new_phyx_read(struct sunxi_hci_hcd *sunxi_hci)
 
 	rtmp = usb_new_phyx_tp_read(sunxi_hci, 0x44, 0x4);
 
-	DMSG_INFO("trancevie[9:6]:0x%x, preemphasis[5:4]:0x%x, resistance[3:0]:0x%x\n",
-			temp, ptmp, rtmp);
+	ristmp = usb_new_phyx_tp_read(sunxi_hci, 0x68, 0x2);
+
+	tune_temp =  usb_new_phyx_tp_read(sunxi_hci, 0x60, 0xe);
+
+
+	DMSG_INFO("tune[13:0]:0x%x, ristune[9:8]:0x%x, trancevie[9:6]:0x%x, preemphasis[5:4]:0x%x, \
+resistance[3:0]:0x%x \n", tune_temp, ristmp, temp, ptmp, rtmp);
 
 	temp <<= (2 + 4);
 	ptmp <<= 4;
@@ -648,6 +537,13 @@ static void usb_new_phy_init(struct sunxi_hci_hcd *sunxi_hci)
 	sunxi_debug(NULL, "addr:%x,len:%x,value:%x\n", 0x09, 0x03,
 			usb_new_phyx_tp_read(sunxi_hci, 0x09, 0x03));
 
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+	/* For 24Mhz crystal oscillator, you need to modify the phy pll
+	 * configuration, please refer to the spec.
+	 */
+	if (sunxi_hci->rate_clk == 24000000)
+		usb_new_phyx_tp_write(sunxi_hci, 0xb, 20, 0x8);
+#endif
 	sunxi_get_module_param_from_sid(&efuse_val, EFUSE_OFFSET, 4);
 	sunxi_debug(NULL, "efuse_val:0x%x\n", efuse_val);
 
@@ -753,6 +649,7 @@ void usb_new_phyx_write(struct sunxi_hci_hcd *sunxi_hci, u32 data)
 u32 usb_new_phyx_read(struct sunxi_hci_hcd *sunxi_hci)
 {
 	u32 mtmp = 0, ctmp = 0, temp = 0, ptmp = 0, rtmp = 0, ret = 0;
+	u32  tune_temp = 0;
 
 	mtmp = usb_new_phyx_tp_read(sunxi_hci, 0x60, 0x1);
 	if (mtmp == 1) {
@@ -764,8 +661,10 @@ u32 usb_new_phyx_read(struct sunxi_hci_hcd *sunxi_hci)
 	ptmp = usb_new_phyx_tp_read(sunxi_hci, 0x64, 0x2);
 	rtmp = usb_new_phyx_tp_read(sunxi_hci, 0x44, 0x4);
 
-	DMSG_INFO("mode[12]:0x%x, common[11:9]:0x%x, trancevie[8:6]:0x%x, preemphasis[5:4]:0x%x, resistance[3:0]:0x%x\n",
-		mtmp, ctmp, temp, ptmp, rtmp);
+	tune_temp =  usb_new_phyx_tp_read(sunxi_hci, 0x60, 0xe);
+
+	DMSG_INFO("tune[13:0]:0x%x,mode[12]:0x%x, common[11:9]:0x%x, trancevie[8:6]:0x%x, preemphasis[5:4]:0x%x, resistance[3:0]:0x%x\n",
+		tune_temp, mtmp, ctmp, temp, ptmp, rtmp);
 
 	mtmp <<= (3 + 3 + 2 + 4);
 	ctmp <<= (3 + 2 + 4);
@@ -865,15 +764,25 @@ static void usb_new_phy_init(struct sunxi_hci_hcd *sunxi_hci)
 
 #endif
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
-void usb_phyx_res_cal(__u32 usbc_no, bool enable)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+void usb_phyx_res_cal(__u32 usbc_no, bool enable, bool bypass)
 {
 	__u32 reg_val = 0;
 	void __iomem *rescal, *res200;
 	__u32 port = 0, tmp; /* port companion enable ? */
 
+	if (bypass) {
+		pr_info(" External Resistance Calibration already Bypass, not %s it\n",
+			enable ? "enable" : "disable");
+		return;
+	}
+
 	rescal = ioremap(syscfg_reg(RESCAL_CTRL_REG), 4);
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+	res200 = ioremap(syscfg_reg(RES0_CTRL_REG), 4);
+#else	/* CONFIG_ARCH_SUN55IW3 */
 	res200 = ioremap(syscfg_reg(RES200_CTRL_REG), 4);
+#endif
 
 	tmp = GENMASK(6, 4) & (~PHY_o_RES200_SEL(usbc_no));
 	reg_val = readl(rescal);
@@ -890,9 +799,17 @@ void usb_phyx_res_cal(__u32 usbc_no, bool enable)
 
 	reg_val = readl(res200);
 	if (enable)
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		reg_val &= ~PHY_o_RES200_TRIM(usbc_no);
+#else	/* CONFIG_ARCH_SUN55IW3 */
 		reg_val &= ~PHY_o_RES200_CTRL(usbc_no);
+#endif
 	else
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		reg_val |= PHY_o_RES200_TRIM_DEFAULT(usbc_no);
+#else	/* CONFIG_ARCH_SUN55IW3 */
 		reg_val |= PHY_o_RES200_CTRL_DEFAULT(usbc_no);
+#endif
 	writel(reg_val, res200);
 
 	iounmap(rescal);
@@ -907,6 +824,10 @@ static void usb_phyx_reassign(struct sunxi_hci_hcd *sunxi_hci, int val)
 		usb_new_phyx_write(sunxi_hci, val);
 #elif IS_ENABLED(CONFIG_ARCH_SUN8IW21)
 	if ((val >= 0) && (val <= 0x3ff))
+		usb_new_phyx_write(sunxi_hci, val);
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+	if ((val >= 0) && (val <= 0xfff))
 		usb_new_phyx_write(sunxi_hci, val);
 #elif IS_ENABLED(CONFIG_ARCH_SUN8IW17) || IS_ENABLED(CONFIG_ARCH_SUN8IW11)
 	if ((val >= 0) && (val <= 0x1f))
@@ -1034,7 +955,8 @@ void sunxi_hci_common_set_rcgating(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 				+ SUNXI_USB_PMU_IRQ_ENABLE));
 }
 #endif
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 static void sunxi_hci_switch_clk(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 {
 	int val = 0;
@@ -1220,6 +1142,30 @@ void sunxi_hci_clean_standby_irq(struct sunxi_hci_hcd *sunxi_hci)
 }
 #endif
 
+static int __maybe_unused usb_rescal_clock_set(struct sunxi_hci_hcd *sunxi_hci, bool enable)
+{
+	int ret = 0;
+
+	if (sunxi_hci->rext_cal_bypass) {
+		DMSG_DEBUG("external resistance calibration bypass, skip set clk_res\n");
+		return 0;
+	}
+
+	if (enable) {
+		if (sunxi_hci->clk_res) {
+			ret = clk_prepare_enable(sunxi_hci->clk_res);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "enable clk_res err, return %d\n", ret);
+				return ret;
+			}
+		}
+	} else {
+		if (sunxi_hci->clk_res)
+			clk_disable_unprepare(sunxi_hci->clk_res);
+	}
+	return 0;
+}
+
 static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 {
 	int ret;
@@ -1238,9 +1184,6 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 			DMSG_ERR("ERR:%s hci regulator enable failed\n",
 					sunxi_hci->hci_name);
 	}
-	/* otg and hci0 Controller Shared phy in SUN50I */
-	if (sunxi_hci->usbc_no == HCI0_USBC_NO)
-		USBC_SelectPhyToHci(sunxi_hci);
 
 	/* To fix hardware design issue. */
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW12) || IS_ENABLED(CONFIG_ARCH_SUN50IW3) \
@@ -1261,17 +1204,76 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 #if IS_ENABLED(CONFIG_ARCH_SUN50IW9)
 	usb_hci_utmi_phy_tune(sunxi_hci, SUNXI_TX_PREEMPAMP_TUNE, SUNXI_TX_PREEMPAMP_TUNE_OFFSET, 0x2);
 #endif
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
-	usb_phyx_res_cal(sunxi_hci->usbc_no, true);
-#endif
 
 	if (!sunxi_hci->clk_is_open) {
 		sunxi_hci->clk_is_open = 1;
+
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		usb_rescal_clock_set(sunxi_hci, true);
+		usb_phyx_res_cal(sunxi_hci->usbc_no, true, sunxi_hci->rext_cal_bypass);
+#endif
+		if (sunxi_hci->ahb) {
+			ret = clk_prepare_enable(sunxi_hci->ahb);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "ERR:try to prepare_enable %s_ahb failed!", sunxi_hci->hci_name);
+				mutex_unlock(&usb_clock_lock);
+				return ret;
+			}
+		}
+
+		if (sunxi_hci->clk_msi_lite) {
+			ret = clk_prepare_enable(sunxi_hci->clk_msi_lite);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "enable clk_msi_lite err, return %d\n", ret);
+				mutex_unlock(&usb_clock_lock);
+				return ret;
+			}
+		}
+
+		if (sunxi_hci->clk_usb_sys_ahb) {
+			ret = clk_prepare_enable(sunxi_hci->clk_usb_sys_ahb);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "enable clk_usb_sys_ahb err, return %d\n", ret);
+				mutex_unlock(&usb_clock_lock);
+				return ret;
+			}
+		}
+
+		if (sunxi_hci->clk_mbus) {
+			ret = clk_prepare_enable(sunxi_hci->clk_mbus);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "enable clk_mbus err, return %d\n", ret);
+				mutex_unlock(&usb_clock_lock);
+				return ret;
+			}
+		}
+
+		if (sunxi_hci->clk_hclk) {
+			ret = clk_prepare_enable(sunxi_hci->clk_hclk);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "enable hclk err, return %d\n", ret);
+				mutex_unlock(&usb_clock_lock);
+				return ret;
+			}
+		}
 
 		if (sunxi_hci->clk_hosc) {
 			ret = clk_prepare_enable(sunxi_hci->clk_hosc);
 			if (ret) {
 				sunxi_err(&sunxi_hci->pdev->dev, "enable clk_hosc err, return %d\n", ret);
+				mutex_unlock(&usb_clock_lock);
+				return ret;
+			}
+		}
+
+		/**
+		 * NOTE: For some boards on sun55iw3's platform, the usb1 port can't enumerate USB device.
+		 * It's necessary to adjust clock order, especially for phy's reset clock.
+		 */
+		if (sunxi_hci->reset_hci) {
+			ret = reset_control_deassert(sunxi_hci->reset_hci);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "reset hci err, return %d\n", ret);
 				mutex_unlock(&usb_clock_lock);
 				return ret;
 			}
@@ -1360,22 +1362,25 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 					return ret;
 				}
 			}
+
+			if (sunxi_hci->mod_usbphy) {
+				ret = clk_prepare_enable(sunxi_hci->mod_usbphy);
+				if (ret) {
+					sunxi_err(&sunxi_hci->pdev->dev, "enable mod_usbphy err, return %d\n", ret);
+					mutex_unlock(&usb_clock_lock);
+					return ret;
+				}
+			}
 		}
 
 		udelay(10);
 
-		/**
-		 * NOTE: For some boards on sun55iw3's platform, the usb1 port can't enumerate USB device.
-		 * It's necessary to adjust clock order, especially for phy's reset clock.
-		 */
-		if (sunxi_hci->reset_hci) {
-			ret = reset_control_deassert(sunxi_hci->reset_hci);
-			if (ret) {
-				sunxi_err(&sunxi_hci->pdev->dev, "reset hci err, return %d\n", ret);
-				mutex_unlock(&usb_clock_lock);
-				return ret;
-			}
-		}
+		/* otg and hci0 Controller Shared phy in SUN50I */
+		if (sunxi_hci->usbc_no == HCI0_USBC_NO)
+			USBC_SelectPhyToHci(sunxi_hci);
+
+		if (!sunxi_hci->usb2_generic_phy)
+			USBC_Clean_SIDDP(sunxi_hci);
 
 		if (sunxi_hci->reset_phy) {
 			ret = reset_control_deassert(sunxi_hci->reset_phy);
@@ -1386,6 +1391,21 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 			}
 		}
 
+		if (sunxi_hci->reset_usb) {
+			ret = reset_control_deassert(sunxi_hci->reset_usb);
+			if (ret) {
+				sunxi_err(&sunxi_hci->pdev->dev, "reset usb err, return %d\n", ret);
+				mutex_unlock(&usb_clock_lock);
+				return ret;
+			}
+		}
+
+		ret = phy_init(sunxi_hci->usb2_generic_phy);
+		if (ret < 0) {
+			sunxi_err(&sunxi_hci->pdev->dev, "init phy err, return %d\n", ret);
+			mutex_unlock(&usb_clock_lock);
+			return ret;
+		}
 	} else {
 		DMSG_WARN("[%s]: wrn: open clock failed, (%d, 0x%p)\n",
 			sunxi_hci->hci_name,
@@ -1393,7 +1413,6 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 			sunxi_hci->mod_usb);
 	}
 
-	USBC_Clean_SIDDP(sunxi_hci);
 #if !IS_ENABLED(CONFIG_ARCH_SUN8IW12) && !IS_ENABLED(CONFIG_ARCH_SUN50IW3) \
 	&& !IS_ENABLED(CONFIG_ARCH_SUN8IW6) && !IS_ENABLED(CONFIG_ARCH_SUN50IW6) \
 	&& !IS_ENABLED(CONFIG_ARCH_SUN8IW15) && !IS_ENABLED(CONFIG_ARCH_SUN50IW8) \
@@ -1402,20 +1421,34 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 	&& !IS_ENABLED(CONFIG_ARCH_SUN8IW19) && !IS_ENABLED(CONFIG_ARCH_SUN50IW11) \
 	&& !IS_ENABLED(CONFIG_ARCH_SUN8IW20) && !IS_ENABLED(CONFIG_ARCH_SUN20IW1) \
 	&& !IS_ENABLED(CONFIG_ARCH_SUN50IW12) && !IS_ENABLED(CONFIG_ARCH_SUN55IW3) \
-	&& !IS_ENABLED(CONFIG_ARCH_SUN60IW2) && !IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	&& !IS_ENABLED(CONFIG_ARCH_SUN60IW2) && !IS_ENABLED(CONFIG_ARCH_SUN8IW21) \
+	&& !IS_ENABLED(CONFIG_ARCH_SUN55IW6) && !IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+	&& !IS_ENABLED(CONFIG_ARCH_SUN65IW1) && !IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 	usb_phyx_tp_write(sunxi_hci, 0x2a, 3, 2);
 #endif
 
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW20) || IS_ENABLED(CONFIG_ARCH_SUN20IW1) \
-	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1)
 	usb_new_phy_init(sunxi_hci);
 #endif
 
-#if IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 	/* Increase USB disconnection detection voltage */
 	usb_new_phyx_tp_write(sunxi_hci, 0x83, 0x6, 0x3);
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW21)
 	/* Adapt USB phy parameters */
 	usb_new_phyx_write(sunxi_hci, 0x22f);
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW6)
+	usb_new_phyx_write(sunxi_hci, 0x228);
+	/* Adapt USB phy bandwidth tuning parameters to optimize Jitter*/
+	usb_new_phyx_tp_write(sunxi_hci, 0x3, 0x3f, 0x6);
+#elif IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+	usb_new_phyx_write(sunxi_hci, 0x208);
+#elif IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+	usb_new_phyx_write(sunxi_hci, 0x2e8);
+#endif
 #endif
 
 	/* Modify the phy range parameter of USB Host
@@ -1429,8 +1462,11 @@ static int open_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 
 static int close_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 {
-	if (sunxi_hci->is_suspend_flag == 0)
+	if (sunxi_hci->usb2_generic_phy)
+		phy_exit(sunxi_hci->usb2_generic_phy);
+	else
 		USBC_Set_SIDDP(sunxi_hci);
+
 	if (sunxi_hci->clk_is_open) {
 		sunxi_hci->clk_is_open = 0;
 
@@ -1449,6 +1485,9 @@ static int close_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 		} else {
 			if (sunxi_hci->clk_phy)
 				clk_disable_unprepare(sunxi_hci->clk_phy);
+
+			if (sunxi_hci->mod_usbphy)
+				clk_disable_unprepare(sunxi_hci->mod_usbphy);
 
 #if IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 			if (sunxi_hci->usbc_no == HCI0_USBC_NO) {
@@ -1481,25 +1520,44 @@ static int close_clock(struct sunxi_hci_hcd *sunxi_hci, u32 ohci)
 		if (sunxi_hci->clk_bus_hci)
 			clk_disable_unprepare(sunxi_hci->clk_bus_hci);
 
+		if (sunxi_hci->reset_hci)
+			reset_control_assert(sunxi_hci->reset_hci);
+
 		if (sunxi_hci->clk_hosc)
 			clk_disable_unprepare(sunxi_hci->clk_hosc);
 
-		if (sunxi_hci->reset_hci)
-			reset_control_assert(sunxi_hci->reset_hci);
+		if (sunxi_hci->clk_hclk)
+			clk_disable_unprepare(sunxi_hci->clk_hclk);
+
+		if (sunxi_hci->clk_mbus)
+			clk_disable_unprepare(sunxi_hci->clk_mbus);
+
+		if (sunxi_hci->ahb)
+			clk_disable_unprepare(sunxi_hci->ahb);
 
 		if (sunxi_hci->reset_phy)
 			reset_control_assert(sunxi_hci->reset_phy);
 
+		if (sunxi_hci->reset_usb)
+			reset_control_assert(sunxi_hci->reset_usb);
+
+		if (sunxi_hci->clk_usb_sys_ahb)
+			clk_disable_unprepare(sunxi_hci->clk_usb_sys_ahb);
+
+		if (sunxi_hci->clk_msi_lite)
+			clk_disable_unprepare(sunxi_hci->clk_msi_lite);
+
 		udelay(10);
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		usb_phyx_res_cal(sunxi_hci->usbc_no, false, sunxi_hci->rext_cal_bypass);
+		usb_rescal_clock_set(sunxi_hci, false);
+#endif
 	} else {
 		DMSG_WARN("[%s]: wrn: open clock failed, (%d, 0x%p)\n",
 			sunxi_hci->hci_name,
 			sunxi_hci->clk_is_open,
 			sunxi_hci->mod_usb);
 	}
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
-	usb_phyx_res_cal(sunxi_hci->usbc_no, false);
-#endif
 	return 0;
 }
 
@@ -1532,8 +1590,19 @@ static void __usb_passby(struct sunxi_hci_hcd *sunxi_hci, u32 enable,
 		if (sunxi_hci->hsic_flag) {
 			reg_value = usb_get_hsic_phy_ctrl(reg_value, enable);
 		} else {
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+			/* bypass ohci bulk out changes */
+			reg_value |= (1 << 15);
+#endif
+
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+			/* AHB Master interface INCR16 enable */
+			reg_value |= (1 << 11);
+#else
 			/* AHB Master interface INCR8 enable */
 			reg_value |= (1 << 10);
+#endif
 			/* AHB Master interface burst type INCR4 enable */
 			reg_value |= (1 << 9);
 			/* AHB Master interface INCRX align enable */
@@ -1554,8 +1623,19 @@ static void __usb_passby(struct sunxi_hci_hcd *sunxi_hci, u32 enable,
 		if (sunxi_hci->hsic_flag) {
 			reg_value = usb_get_hsic_phy_ctrl(reg_value, enable);
 		} else {
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+			/* Not bypass ohci bulk out changes */
+			reg_value &= ~(1 << 15);
+#endif
+
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+			/* AHB Master interface INCR16 disable */
+			reg_value &= ~(1 << 11);
+#else
 			/* AHB Master interface INCR8 disable */
 			reg_value &= ~(1 << 10);
+#endif
 			/* AHB Master interface burst type INCR4 disable */
 			reg_value &= ~(1 << 9);
 			/* AHB Master interface INCRX align disable */
@@ -1607,17 +1687,6 @@ static void usb_passby(struct sunxi_hci_hcd *sunxi_hci, u32 enable)
 static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 {
 	u32 ret = 1;
-
-	if (sunxi_hci->id_gpio_valid) {
-		ret = gpio_request(sunxi_hci->id_gpio_set.gpio, NULL);
-		if (ret != 0) {
-			DMSG_ERR("request %s gpio:%d\n", sunxi_hci->hci_name,
-				   sunxi_hci->id_gpio_set.gpio);
-		} else {
-			gpio_direction_input(sunxi_hci->id_gpio_set.gpio);
-			__gpio_set_value(sunxi_hci->id_gpio_set.gpio, 1);
-		}
-	}
 
 	if (sunxi_hci->gma340_oe_gpio_valid) {
 		ret = gpio_request(sunxi_hci->gma340_oe_gpio_set.gpio, NULL);
@@ -1698,11 +1767,6 @@ static int alloc_pin(struct sunxi_hci_hcd *sunxi_hci)
 
 static void free_pin(struct sunxi_hci_hcd *sunxi_hci)
 {
-	if (sunxi_hci->id_gpio_valid) {
-		gpio_free(sunxi_hci->id_gpio_set.gpio);
-		sunxi_hci->id_gpio_valid = 0;
-	}
-
 	if (sunxi_hci->gma340_oe_gpio_valid) {
 		gpio_free(sunxi_hci->gma340_oe_gpio_set.gpio);
 		sunxi_hci->gma340_oe_gpio_valid = 0;
@@ -1768,12 +1832,12 @@ void sunxi_set_host_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 	}
 
 	if (sunxi_hci->gma340_oe_gpio_valid)
-		__gpio_set_value(sunxi_hci->gma340_oe_gpio_set.gpio,
+		gpio_set_value(sunxi_hci->gma340_oe_gpio_set.gpio,
 				 is_on);
 
 	if (sunxi_hci->drvvbus_en_type == USB_DRVVBUS_EN_TYPE_GPIO) {
 		if (sunxi_hci->drvvbus_en_gpio_valid)
-			__gpio_set_value(sunxi_hci->drvvbus_en_gpio_set.gpio,
+			gpio_set_value(sunxi_hci->drvvbus_en_gpio_set.gpio,
 					 is_on);
 	}
 }
@@ -1816,12 +1880,12 @@ static void __sunxi_set_vbus(struct sunxi_hci_hcd *sunxi_hci, int is_on)
 	}
 
 	if (sunxi_hci->gma340_oe_gpio_valid)
-		__gpio_set_value(sunxi_hci->gma340_oe_gpio_set.gpio,
+		gpio_set_value(sunxi_hci->gma340_oe_gpio_set.gpio,
 				 is_on);
 
 	if (sunxi_hci->drvvbus_en_type == USB_DRVVBUS_EN_TYPE_GPIO) {
 		if (sunxi_hci->drvvbus_en_gpio_valid)
-			__gpio_set_value(sunxi_hci->drvvbus_en_gpio_set.gpio,
+			gpio_set_value(sunxi_hci->drvvbus_en_gpio_set.gpio,
 					 is_on);
 	}
 
@@ -1950,22 +2014,104 @@ err1:
 	return -EINVAL;
 }
 
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW17)
+static int sunxi_get_ohci_clock_src(struct platform_device *pdev,
+		struct sunxi_hci_hcd *sunxi_hci)
+{
+	struct device_node *np = pdev->dev.of_node;
+
+	sunxi_hci->clk_usbohci12m = of_clk_get(np, 2);
+	if (IS_ERR(sunxi_hci->clk_usbohci12m)) {
+		sunxi_hci->clk_usbohci12m = NULL;
+		DMSG_INFO("%s get usb clk_usbohci12m clk failed.\n",
+			sunxi_hci->hci_name);
+	}
+
+	sunxi_hci->clk_hoscx2 = of_clk_get(np, 3);
+	if (IS_ERR(sunxi_hci->clk_hoscx2)) {
+		sunxi_hci->clk_hoscx2 = NULL;
+		DMSG_INFO("%s get usb clk_hoscx2 clk failed.\n",
+			 sunxi_hci->hci_name);
+	}
+
+	sunxi_hci->clk_hosc = of_clk_get(np, 4);
+	if (IS_ERR(sunxi_hci->clk_hosc)) {
+		sunxi_hci->clk_hosc = NULL;
+		DMSG_INFO("%s get usb clk_hosc failed.\n",
+			 sunxi_hci->hci_name);
+	}
+
+	sunxi_hci->clk_losc = of_clk_get(np, 5);
+	if (IS_ERR(sunxi_hci->clk_losc)) {
+		sunxi_hci->clk_losc = NULL;
+		DMSG_INFO("%s get usb clk_losc clk failed.\n",
+			 sunxi_hci->hci_name);
+	}
+
+	return 0;
+}
+#endif
+
 static int sunxi_get_hci_clock(struct platform_device *pdev,
 		struct sunxi_hci_hcd *sunxi_hci)
 {
 	struct device_node *np = pdev->dev.of_node;
 	int ret = 0;
 
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW17)
+	sunxi_hci->ahb = of_clk_get(np, 1);
+	if (IS_ERR(sunxi_hci->ahb)) {
+		sunxi_hci->ahb = NULL;
+		sunxi_err(&pdev->dev, "ERR: %s get usb ahb_otg clk failed.\n",
+				sunxi_hci->hci_name);
+		return -EINVAL;
+	}
+
+	sunxi_hci->mod_usbphy = of_clk_get(np, 0);
+	if (IS_ERR(sunxi_hci->mod_usbphy)) {
+		sunxi_hci->mod_usbphy = NULL;
+		sunxi_err(&pdev->dev, "ERR: %s get usb mod_usbphy failed.\n",
+				sunxi_hci->hci_name);
+		return -EINVAL;
+	}
+#else
+	sunxi_hci->clk_bus_hci = devm_clk_get(&pdev->dev, "bus_hci");
+	if (IS_ERR(sunxi_hci->clk_bus_hci)) {
+		sunxi_err(&pdev->dev, "Could not get bus_hci clock\n");
+		return PTR_ERR(sunxi_hci->clk_bus_hci);
+	}
+
+	sunxi_hci->reset_hci = devm_reset_control_get(&pdev->dev, "hci");
+	if (IS_ERR(sunxi_hci->reset_hci))
+		sunxi_warn(&pdev->dev, "Could not get hci rst\n");
+
 	if (strstr(sunxi_hci->hci_name, "ehci")) {
 		if (sunxi_hci->usbc_no == HCI0_USBC_NO) {
+#if !IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 			sunxi_hci->reset_phy = devm_reset_control_get_shared(&pdev->dev, "phy");
 			if (IS_ERR(sunxi_hci->reset_phy))
 				sunxi_warn(&pdev->dev, "Could not get phy rst share\n");
+#endif
+
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+			sunxi_hci->clk_hclk = devm_clk_get(&pdev->dev, "hclk");
+			if (IS_ERR(sunxi_hci->clk_hclk)) {
+				sunxi_err(&pdev->dev, "Could not get hclk clock\n");
+				return PTR_ERR(sunxi_hci->clk_hclk);
+			}
+#endif
 		} else {
+#if !IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 			sunxi_hci->reset_phy = devm_reset_control_get_optional_shared(&pdev->dev, "phy");
 			if (IS_ERR(sunxi_hci->reset_phy))
 				sunxi_warn(&pdev->dev, "Could not get phy rst\n");
+#endif
 		}
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+		sunxi_hci->reset_usb = devm_reset_control_get_shared(&pdev->dev, "usb_rst");
+		if (IS_ERR(sunxi_hci->reset_usb))
+			sunxi_warn(&pdev->dev, "Could not get usb_rst share\n");
+#endif
 	}
 
 	if (strstr(sunxi_hci->hci_name, "ohci")) {
@@ -1975,12 +2121,22 @@ static int sunxi_get_hci_clock(struct platform_device *pdev,
 			return PTR_ERR(sunxi_hci->clk_ohci);
 		}
 
+#if !IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 		sunxi_hci->reset_phy = devm_reset_control_get_shared(&pdev->dev, "phy");
 		if (IS_ERR(sunxi_hci->reset_phy))
 			sunxi_warn(&pdev->dev, "Could not get phy rst share\n");
-	}
+#endif
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+		sunxi_hci->reset_usb = devm_reset_control_get_shared(&pdev->dev, "usb_rst");
+		if (IS_ERR(sunxi_hci->reset_usb))
+			sunxi_warn(&pdev->dev, "Could not get usb_rst share\n");
+#endif
+	}
+#endif
+
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	sunxi_hci->clk_hosc = devm_clk_get(&pdev->dev, "hosc");
 	if (IS_ERR(sunxi_hci->clk_hosc)) {
 		sunxi_err(&pdev->dev, "Could not get hosc clock\n");
@@ -1988,14 +2144,45 @@ static int sunxi_get_hci_clock(struct platform_device *pdev,
 	}
 #endif
 
-	sunxi_hci->clk_bus_hci = devm_clk_get(&pdev->dev, "bus_hci");
-	if (IS_ERR(sunxi_hci->clk_bus_hci)) {
-		sunxi_err(&pdev->dev, "Could not get bus_hci clock\n");
-		return PTR_ERR(sunxi_hci->clk_bus_hci);
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+	sunxi_hci->clk_res = devm_clk_get(&pdev->dev, "res_dcap");
+	if (IS_ERR(sunxi_hci->clk_res)) {
+		sunxi_err(&pdev->dev, "Could not get res dcap clock\n");
+		return PTR_ERR(sunxi_hci->clk_res);
 	}
 
+	sunxi_hci->clk_msi_lite = devm_clk_get(&pdev->dev, "msi_lite");
+	if (IS_ERR(sunxi_hci->clk_msi_lite)) {
+		dev_err(&pdev->dev, "Could not get msi-lite clock\n");
+		return PTR_ERR(sunxi_hci->clk_msi_lite);
+	}
+#endif
+
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	sunxi_hci->clk_usb_sys_ahb = devm_clk_get(&pdev->dev, "usb_sys_ahb");
+	if (IS_ERR(sunxi_hci->clk_usb_sys_ahb)) {
+		dev_err(&pdev->dev, "Could not get usb-sys-ahb clock\n");
+		return PTR_ERR(sunxi_hci->clk_usb_sys_ahb);
+	}
+#endif
+
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+	sunxi_hci->clk_mbus = devm_clk_get(&pdev->dev, "mbus");
+	if (IS_ERR(sunxi_hci->clk_mbus)) {
+		sunxi_err(&pdev->dev, "Could not get mbus clock\n");
+		return PTR_ERR(sunxi_hci->clk_mbus);
+	}
+
+	sunxi_hci->clk_rate = devm_clk_get(&pdev->dev, "clk_rate");
+	if (sunxi_hci->clk_rate)
+		sunxi_hci->rate_clk = clk_get_rate(sunxi_hci->clk_rate);
+#endif
+
+
 #if !IS_ENABLED(CONFIG_ARCH_SUN8IW20) && !IS_ENABLED(CONFIG_ARCH_SUN20IW1) && !IS_ENABLED(CONFIG_ARCH_SUN50IW12) \
-	&& !IS_ENABLED(CONFIG_ARCH_SUN55IW3) && !IS_ENABLED(CONFIG_ARCH_SUN60IW2) && !IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	&& !IS_ENABLED(CONFIG_ARCH_SUN55IW3) && !IS_ENABLED(CONFIG_ARCH_SUN60IW2) && !IS_ENABLED(CONFIG_ARCH_SUN8IW21) \
+	&& !IS_ENABLED(CONFIG_ARCH_SUN55IW6) && !IS_ENABLED(CONFIG_ARCH_SUN300IW1) && !IS_ENABLED(CONFIG_ARCH_SUN8IW17) \
+	&& !IS_ENABLED(CONFIG_ARCH_SUN65IW1) && !IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 
 	sunxi_hci->clk_phy = devm_clk_get(&pdev->dev, "phy");
 	if (IS_ERR(sunxi_hci->clk_phy)) {
@@ -2003,9 +2190,6 @@ static int sunxi_get_hci_clock(struct platform_device *pdev,
 		return PTR_ERR(sunxi_hci->clk_phy);
 	}
 #endif
-	sunxi_hci->reset_hci = devm_reset_control_get(&pdev->dev, "hci");
-	if (IS_ERR(sunxi_hci->reset_hci))
-		sunxi_warn(&pdev->dev, "Could not get hci rst\n");
 
 
 	if (sunxi_hci->hsic_flag) {
@@ -2030,6 +2214,19 @@ static int sunxi_get_hci_clock(struct platform_device *pdev,
 				sunxi_hci->hci_name);
 		}
 	}
+
+	sunxi_hci->rext_cal_bypass = device_property_read_bool(&pdev->dev, "aw,rext_cal_bypass");
+
+#if IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	sunxi_hci->usb2_generic_phy = devm_phy_get(&pdev->dev, "usb2-phy");
+	if (IS_ERR(sunxi_hci->usb2_generic_phy)) {
+		ret = PTR_ERR(sunxi_hci->usb2_generic_phy);
+		if (ret == -ENOSYS || ret == -ENODEV)
+			sunxi_hci->usb2_generic_phy = NULL;
+		else
+			return dev_err_probe(&pdev->dev, ret, "no usb2 phy configured\n");
+	}
+#endif
 
 	/* get phy parameters from device-tree */
 	ret = of_property_read_u32(pdev->dev.of_node, "phy_range", &sunxi_hci->phy_range);
@@ -2204,7 +2401,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 			KEY_USB_DRVVBUS_EN_GPIO,
 			&sunxi_hci->drvvbus_en_name);
 	if (ret) {
-		DMSG_ERR("get drvvbus-en is fail, %d\n", -ret);
+		DMSG_DEBUG("get drvvbus-en is fail, %d\n", -ret);
 		sunxi_hci->drvvbus_en_gpio_valid = 0;
 	} else {
 		/* get drvvbus-en gpio */
@@ -2223,7 +2420,7 @@ static int get_usb_cfg(struct platform_device *pdev,
 			KEY_USB_GMA340_OE_GPIO,
 			&sunxi_hci->gma340_oe_name);
 	if (ret) {
-		DMSG_ERR("get gma340-oe is fail, %d\n", -ret);
+		DMSG_DEBUG("get gma340-oe is fail, %d\n", -ret);
 		sunxi_hci->gma340_oe_gpio_valid = 0;
 	} else {
 		/* get gma340-oe gpio */
@@ -2236,34 +2433,16 @@ static int get_usb_cfg(struct platform_device *pdev,
 		}
 	}
 
-	/* Only non-usb0 support */
-	if (sunxi_hci->usbc_no != HCI0_USBC_NO) {
-		/* usbc id */
-		ret = of_property_read_string(usbc_np, KEY_USB_ID_GPIO, &sunxi_hci->id_name);
-		if (ret) {
-			DMSG_INFO("get id is fail, %d\n", ret);
-			sunxi_hci->id_gpio_valid = 0;
-		} else {
-			/* get id gpio */
-			sunxi_hci->id_gpio_set.gpio = of_get_named_gpio(usbc_np, KEY_USB_ID_GPIO, 0);
-			if (gpio_is_valid(sunxi_hci->id_gpio_set.gpio)) {
-				sunxi_hci->id_gpio_valid = 1;
-				sunxi_hci->old_id_state = USB_ID_UNKNOWN;
-				sunxi_hci->thread_scan_flag = 1;
-			} else {
-				sunxi_hci->id_gpio_valid = 0;
-			}
-		}
-	}
-
 	/* wakeup-source */
 	if (of_property_read_bool(usbc_np, KEY_WAKEUP_SOURCE)) {
 		sunxi_hci->wakeup_source_flag = 1;
 	} else {
-		DMSG_ERR("get %s wakeup-source is fail.\n",
-				sunxi_hci->hci_name);
+		DMSG_DEBUG("get %s wakeup-source is fail.\n", sunxi_hci->hci_name);
 		sunxi_hci->wakeup_source_flag = 0;
 	}
+
+	/* extcon supported */
+	sunxi_hci->extcon_supported = of_property_read_bool(usbc_np, "extcon");
 
 	return 0;
 }
@@ -2311,6 +2490,49 @@ static int hci_wakeup_source_init(struct platform_device *pdev,
 
 	return 0;
 }
+
+/*
+ * In a specified platform, if only ohci is enabled, you need to add
+ * specified actions during suspend to reduce power consumption, so you
+ * need to add a check to see if ehci is enabled. If it is enabled, you
+ * do not need to add specified actions.
+ */
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6)
+void sunxi_hci_force_suspend(struct sunxi_hci_hcd *sunxi_hci, bool enter_standby)
+{
+	int reg_value = 0;
+
+	if (!atomic_read(&ehci_enable_flag[sunxi_hci->usbc_no]) && enter_standby) {
+		reg_value = USBC_Readl(sunxi_hci->usb_vbase + SUNXI_HCI_CTRL_3);
+
+		reg_value |= 0x01 << SUNXI_HCI_CTRL_3_FORCE_SUSPEND;
+
+		USBC_Writel(reg_value, (sunxi_hci->usb_vbase + SUNXI_HCI_CTRL_3));
+	}
+
+	if (!atomic_read(&ehci_enable_flag[sunxi_hci->usbc_no]) && !enter_standby) {
+		reg_value = USBC_Readl(sunxi_hci->usb_vbase + SUNXI_HCI_CTRL_3);
+
+		reg_value &= ~(0x01 << SUNXI_HCI_CTRL_3_FORCE_SUSPEND);
+
+		USBC_Writel(reg_value, (sunxi_hci->usb_vbase + SUNXI_HCI_CTRL_3));
+	}
+}
+
+bool sunxi_hci_ehci_enabled(struct sunxi_hci_hcd *sunxi_hci)
+{
+	if (!atomic_read(&ehci_enable_flag[sunxi_hci->usbc_no]))
+		return false;
+	return true;
+}
+#else
+void sunxi_hci_force_suspend(struct sunxi_hci_hcd *sunxi_hci, bool enter_standby) {}
+bool sunxi_hci_ehci_enabled(struct sunxi_hci_hcd *sunxi_hci) { return true; }
+#endif
+EXPORT_SYMBOL(ehci_enable_flag);
+EXPORT_SYMBOL(sunxi_hci_force_suspend);
+EXPORT_SYMBOL(sunxi_hci_ehci_enabled);
+
 void enter_usb_standby(struct sunxi_hci_hcd *sunxi_hci)
 {
 	mutex_lock(&usb_standby_lock);
@@ -2340,7 +2562,7 @@ void enter_usb_standby(struct sunxi_hci_hcd *sunxi_hci)
 #endif
 		/* phy reg, offset:0x808 bit3, set 1, remote enable */
 		sunxi_hci_set_wakeup_ctrl(sunxi_hci, 1);
-#if !IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if !IS_ENABLED(SUNXI_USB_STANDBY_SIDDQ_BYPASS)
 		/* phy reg, offset:0x810 bit3 set 1, clean siddq */
 		sunxi_hci_set_siddq(sunxi_hci, 1);
 #endif
@@ -2350,7 +2572,8 @@ void enter_usb_standby(struct sunxi_hci_hcd *sunxi_hci)
 #endif
 #endif
 #endif
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		/* phy reg, offset:0x0 bit31, set 1 */
 		sunxi_hci_switch_clk(sunxi_hci, 1);
 		/* phy reg, offset:0x0 bit3, set 1 */
@@ -2379,7 +2602,8 @@ void exit_usb_standby(struct sunxi_hci_hcd *sunxi_hci)
 			sunxi_hci_common_set_rc_clk(sunxi_hci, 0);
 		}
 #endif
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		/* phy reg, offset:0x0 bit3, set 0 */
 		sunxi_hci_set_rcgating(sunxi_hci, 0);
 		/* phy reg, offset:0x0 bit31, set 0 */
@@ -2390,7 +2614,7 @@ void exit_usb_standby(struct sunxi_hci_hcd *sunxi_hci)
 		sunxi_hci_set_clk(sunxi_hci, 0);
 		sunxi_hci_set_vc_cfg(sunxi_hci, 0);
 #endif
-#if !IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if !IS_ENABLED(SUNXI_USB_STANDBY_SIDDQ_BYPASS)
 		/* phy reg, offset:0x10 bit3 set 0, enable siddq */
 		sunxi_hci_set_siddq(sunxi_hci, 0);
 #endif
@@ -2808,7 +3032,6 @@ int init_sunxi_hci(struct platform_device *pdev, int usbc_type)
 	int usbc_no = 0;
 	int hci_num = -1;
 	int ret = -1;
-	struct task_struct *ts_scan = NULL;
 
 #if IS_ENABLED(CONFIG_OF)
 	pdev->dev.dma_mask = &sunxi_hci_dmamask;
@@ -2880,22 +3103,21 @@ int init_sunxi_hci(struct platform_device *pdev, int usbc_type)
 	if (ret != 0)
 		return ret;
 
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW17)
+	if (usbc_type == SUNXI_USB_OHCI)
+		ret = sunxi_get_ohci_clock_src(pdev, sunxi_hci);
+#endif
+
 	/* Initialize the atomic array */
 	atomic_set(&usb_standby_cnt[usbc_no], 0);
 
-	if (sunxi_hci->thread_scan_flag) {
-		if (thread_run_flag[hci_num])
-			return 0;
-
-		ts_scan = kthread_create(sunxi_hci_scan_thread, sunxi_hci, "usb%d_scan_thread", hci_num);
-		if (IS_ERR_OR_NULL(ts_scan)) {
-			sunxi_err(&pdev->dev, "ERR: create sunxi_hci_scan_thread kthread failed\n");
-			return -EINVAL;
-		}
-
-		wake_up_process(ts_scan);
-		thread_run_flag[hci_num] = 1;
-		sunxi_hci->thread_active_flag = 1;
+	/*
+	 * Initialize the atomic array,
+	 * And it can only be initialized once!!!
+	 */
+	if (!init_flag) {
+		atomic_set(&ehci_enable_flag[usbc_no], 0);
+		init_flag = true;
 	}
 
 	return ret;
@@ -2922,7 +3144,11 @@ static int __parse_hci_str(const char *buf, size_t size)
 }
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+ehci_reg_show(const struct class *class, const struct class_attribute *attr, char *buf)
+#else
 ehci_reg_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
 	sunxi_hci_dump_reg_all(SUNXI_USB_EHCI);
 
@@ -2930,8 +3156,13 @@ ehci_reg_show(struct class *class, struct class_attribute *attr, char *buf)
 }
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+ehci_reg_store(const struct class *class, const struct class_attribute *attr,
+		const char *buf, size_t count)
+#else
 ehci_reg_store(struct class *class, struct class_attribute *attr,
 		const char *buf, size_t count)
+#endif
 {
 	int usbc_no;
 
@@ -2946,7 +3177,11 @@ ehci_reg_store(struct class *class, struct class_attribute *attr,
 static CLASS_ATTR_RW(ehci_reg);
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+ohci_reg_show(const struct class *class, const struct class_attribute *attr, char *buf)
+#else
 ohci_reg_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
 	sunxi_hci_dump_reg_all(SUNXI_USB_OHCI);
 
@@ -2954,8 +3189,13 @@ ohci_reg_show(struct class *class, struct class_attribute *attr, char *buf)
 }
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+ohci_reg_store(const struct class *class, const struct class_attribute *attr,
+		const char *buf, size_t count)
+#else
 ohci_reg_store(struct class *class, struct class_attribute *attr,
 		const char *buf, size_t count)
+#endif
 {
 	int usbc_no;
 
@@ -2970,7 +3210,11 @@ ohci_reg_store(struct class *class, struct class_attribute *attr,
 static CLASS_ATTR_RW(ohci_reg);
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+phy_reg_show(const struct class *class, const struct class_attribute *attr, char *buf)
+#else
 phy_reg_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
 	sunxi_hci_dump_reg_all(SUNXI_USB_PHY);
 
@@ -2978,8 +3222,13 @@ phy_reg_show(struct class *class, struct class_attribute *attr, char *buf)
 }
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+phy_reg_store(const struct class *class, const struct class_attribute *attr,
+		const char *buf, size_t count)
+#else
 phy_reg_store(struct class *class, struct class_attribute *attr,
 		const char *buf, size_t count)
+#endif
 {
 	int usbc_no;
 
@@ -2994,7 +3243,11 @@ phy_reg_store(struct class *class, struct class_attribute *attr,
 static CLASS_ATTR_RW(phy_reg);
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+all_reg_show(const struct class *class, const struct class_attribute *attr, char *buf)
+#else
 all_reg_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
 	sunxi_hci_dump_reg_all(SUNXI_USB_ALL);
 
@@ -3002,8 +3255,13 @@ all_reg_show(struct class *class, struct class_attribute *attr, char *buf)
 }
 
 static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+all_reg_store(const struct class *class, const struct class_attribute *attr,
+		const char *buf, size_t count)
+#else
 all_reg_store(struct class *class, struct class_attribute *attr,
 		const char *buf, size_t count)
+#endif
 {
 	int usbc_no;
 
@@ -3029,7 +3287,9 @@ ATTRIBUTE_GROUPS(hci_class);
 
 static struct class hci_class = {
 	.name		= "hci_reg",
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
 	.owner		= THIS_MODULE,
+#endif
 	.class_groups	= hci_class_groups,
 };
 
@@ -3058,4 +3318,4 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:" SUNXI_HCI_NAME);
 MODULE_AUTHOR("javen");
-MODULE_VERSION("1.1.2");
+MODULE_VERSION("1.1.4");

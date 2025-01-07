@@ -57,11 +57,13 @@ typedef struct __usbc_otg {
 /* PHY RANGE: bit field */
 #define PHY_RANGE_MODE_MASK			0x1000		/* bit12, mod_type */
 #define PHY_RANGE_COMM_MASK			0xE00		/* bit11:9, common_data */
-#if IS_ENABLED(CONFIG_ARCH_SUN8IW21)
-#define PHY_RANGE_TRAN_MASK			0x3C0		/* bit8:6, trancevie_data */
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+#define PHY_RANGE_TRAN_MASK			0x3C0		/* bit9:6, trancevie_data */
 #else
 #define PHY_RANGE_TRAN_MASK			0x1C0		/* bit8:6, trancevie_data */
 #endif
+#define PHY_RANGE_RISE_MASK			0xc00		/* bit11:10, rise_data */
 #define PHY_RANGE_PREE_MASK			0x30		/* bit5:4, preemphasis_data */
 #define PHY_RANGE_RESI_MASK			0xF		/* bit3:0, resistance_data */
 
@@ -69,20 +71,27 @@ typedef struct __usbc_otg {
 #define SUNXI_SYS_CFG_BASE		0x03000000
 /* Resister Calibration Control Register */
 #define RESCAL_CTRL_REG		0x0160
-#define   USBPHY2_RES200_SEL		BIT(6)
+#define   USBPHY2_RES200_SEL		BIT(6) /* Note: AW1903 Not use */
 #define   USBPHY1_RES200_SEL		BIT(5)
 #define   USBPHY0_RES200_SEL		BIT(4)
 #define   PHY_o_RES200_SEL(n)		(BIT(4) << n)
 #define   RESCAL_MODE			BIT(2)
 #define   CAL_ANA_EN			BIT(1)
 #define   CAL_EN			BIT(0)
-/* 200ohms Resister Manual Control Register */
+/* Resister 200ohms Manual Control Register */
 #define RES200_CTRL_REG		0x0164
 #define   USBPHY2_RES200_CTRL		GENMASK(21, 16)
 #define   USBPHY1_RES200_CTRL		GENMASK(13, 8)
 #define   USBPHY0_RES200_CTRL		GENMASK(5, 0)
 #define   PHY_o_RES200_CTRL(n)		(GENMASK(5, 0) << (8 * n))
 #define   PHY_o_RES200_CTRL_DEFAULT(n)		(0x33 << (8 * n))
+
+/* Resister RES0 ohms Manual Control Register */
+#define RES0_CTRL_REG		0x0164
+#define   USBPHY1_RES200_TRIM		GENMASK(15, 8)
+#define   USBPHY0_RES200_TRIM		GENMASK(7, 0)
+#define   PHY_o_RES200_TRIM(n)		(GENMASK(7, 0) << (8 * n))
+#define   PHY_o_RES200_TRIM_DEFAULT(n)		(0xC8 << (8 * n))
 
 #define syscfg_reg(offset)		(SUNXI_SYS_CFG_BASE + (offset))
 

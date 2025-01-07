@@ -22,6 +22,10 @@ source "$(BSP_TOP)drivers/usb/typec/Kconfig"
 
 source "$(BSP_TOP)drivers/usb/gadget/Kconfig"
 
+source "$(BSP_TOP)drivers/usb/extcon/Kconfig"
+
+source "$(BSP_TOP)drivers/usb/phy/Kconfig"
+
 endif # USB_SUPPORT
 
 endmenu

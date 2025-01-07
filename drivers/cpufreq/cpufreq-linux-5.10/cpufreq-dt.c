@@ -22,6 +22,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/thermal.h>
+#include <linux/time.h>
 
 #include "cpufreq-dt.h"
 
@@ -43,6 +44,61 @@ static struct freq_attr *cpufreq_dt_attr[] = {
 	NULL,
 };
 
+#define CPUFREQ_CDEV_NUM 2
+
+struct cdev_info {
+	unsigned int           uevent_suppress:1;
+	unsigned int           reserve:7;
+	struct cpufreq_policy  *policy;
+};
+
+struct cpufreq_cdev_info {
+	unsigned int     suspend_policy_cnt;
+	unsigned int     resume_policy_cnt;
+	struct cdev_info uevent_info[CPUFREQ_CDEV_NUM];
+};
+
+static struct cpufreq_cdev_info cdev_info = {
+	.suspend_policy_cnt = 0,
+	.resume_policy_cnt = 0,
+	.uevent_info = {
+		{
+			.uevent_suppress = 0,
+			.reserve = 0,
+			.policy = NULL,
+		},
+		{
+			.uevent_suppress = 0,
+			.reserve = 0,
+			.policy = NULL,
+		},
+	},
+};
+
+#if IS_ENABLED(CONFIG_AW_SUNXI_DSUFREQ)
+static DEFINE_MUTEX(set_dsufreq_mutex);
+
+struct dsufreq_scaling_info {
+	int (*scaling_down_cb)(struct cpufreq_policy *policy, unsigned long freq);
+	int (*scaling_up_cb)(struct cpufreq_policy *policy, unsigned long freq, int set_opp_fail);
+};
+
+static struct dsufreq_scaling_info dsufreq_scaling = {
+	.scaling_down_cb = NULL,
+	.scaling_up_cb   = NULL,
+};
+
+void set_dsufreq_cb(int (*scaling_down_cb)(struct cpufreq_policy *, unsigned long),
+	int (*scaling_up_cb)(struct cpufreq_policy *, unsigned long, int))
+{
+	mutex_lock(&set_dsufreq_mutex);
+	dsufreq_scaling.scaling_down_cb = scaling_down_cb;
+	dsufreq_scaling.scaling_up_cb = scaling_up_cb;
+	mutex_unlock(&set_dsufreq_mutex);
+}
+EXPORT_SYMBOL_GPL(set_dsufreq_cb);
+#endif /* #if IS_ENABLD(CONFIG_AW_SUNXI_DSUFREQ) */
+
 static struct private_data *cpufreq_dt_find_data(int cpu)
 {
 	struct private_data *priv;
@@ -55,13 +111,49 @@ static struct private_data *cpufreq_dt_find_data(int cpu)
 	return NULL;
 }
 
+#if IS_ENABLED(CONFIG_AW_SUNXI_DSUFREQ)
 static int set_target(struct cpufreq_policy *policy, unsigned int index)
 {
 	struct private_data *priv = policy->driver_data;
 	unsigned long freq = policy->freq_table[index].frequency;
+	u64 start_time;
+	u64 end_time;
+	int ret = 0;
 
-	return dev_pm_opp_set_rate(priv->cpu_dev, freq * 1000);
+	mutex_lock(&set_dsufreq_mutex);
+
+	if (dsufreq_scaling.scaling_down_cb)
+		dsufreq_scaling.scaling_down_cb(policy, freq * 1000);
+
+	start_time = ktime_get();
+	ret = dev_pm_opp_set_rate(priv->cpu_dev, freq * 1000);
+	end_time = ktime_get();
+	//sunxi_get_freq_info(get_cpu_device(policy->cpu), policy, start_time, end_time, freq * 1000, policy->cur * 1000);
+
+	if (dsufreq_scaling.scaling_up_cb)
+		dsufreq_scaling.scaling_up_cb(policy, freq * 1000, ret);
+
+	mutex_unlock(&set_dsufreq_mutex);
+
+	return ret;
 }
+#else /* #if IS_ENABLD(CONFIG_AW_SUNXI_DSUFREQ) */
+static int set_target(struct cpufreq_policy *policy, unsigned int index)
+{
+	int ret = 0;
+	struct private_data *priv = policy->driver_data;
+	unsigned long freq = policy->freq_table[index].frequency;
+	u64 start_time;
+	u64 end_time;
+
+	start_time = ktime_get();
+	ret = dev_pm_opp_set_rate(priv->cpu_dev, freq * 1000);
+	end_time = ktime_get();
+	//sunxi_get_freq_info(get_cpu_device(policy->cpu), policy, start_time, end_time, freq * 1000, policy->cur * 1000);
+
+	return ret;
+}
+#endif /* #if IS_ENABLED(CONFIG_AW_SUNXI_DSUFREQ) */
 
 /*
  * An earlier version of opp-v1 bindings used to name the regulator
@@ -218,6 +310,66 @@ static int cpufreq_exit(struct cpufreq_policy *policy)
 	return 0;
 }
 
+static int sunxi_cpufreq_suspend(struct cpufreq_policy *policy)
+{
+	struct device *dev = NULL;
+	struct cpufreq_cdev_info *info = &cdev_info;
+	unsigned int suspend_policy_cnt = info->suspend_policy_cnt;
+
+	cpufreq_generic_suspend(policy);
+
+	if (!policy->cdev)
+		return 0;
+
+	dev = &(policy->cdev->device);
+	++suspend_policy_cnt;
+	if (suspend_policy_cnt > CPUFREQ_CDEV_NUM) {
+		sunxi_err(NULL, "%s, unsupport policy num!\n", __func__);
+		return -EINVAL;
+	} else {
+		info->uevent_info[suspend_policy_cnt - 1].uevent_suppress =
+			dev_get_uevent_suppress(dev);
+		info->uevent_info[suspend_policy_cnt - 1].policy = policy;
+	}
+
+	info->suspend_policy_cnt = suspend_policy_cnt;
+	dev_set_uevent_suppress(dev, true);
+
+	return 0;
+}
+
+static int sunxi_cpufreq_resume(struct cpufreq_policy *policy)
+{
+	struct device *dev = NULL;
+	unsigned int i = 0;
+	struct cpufreq_cdev_info *info = &cdev_info;
+	unsigned int suspend_policy_cnt = info->suspend_policy_cnt;
+
+	if (!policy->cdev)
+		return 0;
+
+	dev = &(policy->cdev->device);
+
+	for (i = 0; i < suspend_policy_cnt; i++) {
+		if (policy == info->uevent_info[i].policy) {
+			dev_set_uevent_suppress(dev,
+				info->uevent_info[i].uevent_suppress);
+			break;
+		}
+	}
+
+	if (i >= suspend_policy_cnt) {
+		sunxi_err(NULL, "%s, policy err!\n", __func__);
+		return -EINVAL;
+	}
+
+	++info->resume_policy_cnt;
+	if (suspend_policy_cnt == info->resume_policy_cnt)
+		memset(info, 0x00, sizeof(*info));
+
+	return 0;
+}
+
 static struct cpufreq_driver dt_cpufreq_driver = {
 	.flags = CPUFREQ_STICKY | CPUFREQ_NEED_INITIAL_FREQ_CHECK |
 		 CPUFREQ_IS_COOLING_DEV,
@@ -230,7 +382,8 @@ static struct cpufreq_driver dt_cpufreq_driver = {
 	.offline = cpufreq_offline,
 	.name = "cpufreq-dt",
 	.attr = cpufreq_dt_attr,
-	.suspend = cpufreq_generic_suspend,
+	.suspend = sunxi_cpufreq_suspend,
+	.resume = sunxi_cpufreq_resume,
 };
 
 static int dt_cpufreq_early_init(struct device *dev, int cpu)

@@ -38,7 +38,7 @@
 #include "pcie-sunxi-dma.h"
 #include "pcie-sunxi.h"
 
-#define SUNXI_PCIE_MODULE_VERSION	"1.0.11"
+#define SUNXI_PCIE_MODULE_VERSION	"1.1.2"
 
 void sunxi_pcie_writel(u32 val, struct sunxi_pcie *pcie, u32 offset)
 {
@@ -105,7 +105,7 @@ static void sunxi_pcie_plat_set_mode(struct sunxi_pcie *pci)
 	switch (pci->drvdata->mode) {
 	case SUNXI_PCIE_EP_TYPE:
 		val = sunxi_pcie_readl(pci, PCIE_LTSSM_CTRL);
-		val |= ~DEVICE_TYPE_MASK;
+		val &= ~DEVICE_TYPE_MASK;
 		sunxi_pcie_writel(val, pci, PCIE_LTSSM_CTRL);
 		break;
 	case SUNXI_PCIE_RC_TYPE:
@@ -319,11 +319,23 @@ static const struct sunxi_pcie_of_data sunxi_pcie_rc_v210_v2_of_data = {
 
 static const struct sunxi_pcie_of_data sunxi_pcie_rc_v300_of_data = {
 	.mode = SUNXI_PCIE_RC_TYPE,
+	.has_pcie_slv_clk = true,
+	.need_pcie_rst = true,
+	.pcie_slv_clk_400m = true,
+	.has_pcie_its_clk = true,
+};
+
+static const struct sunxi_pcie_of_data sunxi_pcie_ep_v210_of_data = {
+	.mode = SUNXI_PCIE_EP_TYPE,
+	.func_offset = 0x10000,
+	.ops = &sunxi_ep_ops,
+	.has_pcie_slv_clk = true,
+	.need_pcie_rst = true,
 };
 
 static const struct sunxi_pcie_of_data sunxi_pcie_ep_v300_of_data = {
 	.mode = SUNXI_PCIE_EP_TYPE,
-	.func_offset = 0x1000,
+	.func_offset = 0x10000,
 	.ops = &sunxi_ep_ops,
 };
 
@@ -335,6 +347,10 @@ static const struct of_device_id sunxi_pcie_plat_of_match[] = {
 	{
 		.compatible = "allwinner,sunxi-pcie-v210-v2-rc",
 		.data = &sunxi_pcie_rc_v210_v2_of_data,
+	},
+	{
+		.compatible = "allwinner,sunxi-pcie-v210-ep",
+		.data = &sunxi_pcie_ep_v210_of_data,
 	},
 	{
 		.compatible = "allwinner,sunxi-pcie-v300-rc",
@@ -399,113 +415,130 @@ static void sunxi_pcie_plat_set_irqmask(struct sunxi_pcie *pci)
 	sunxi_pcie_writel(val, pci, PCIE_INT_ENABLE_CLR);
 }
 
-static int sunxi_pcie_plat_enable_power(struct sunxi_pcie *pci)
+static int sunxi_pcie_plat_power_on(struct sunxi_pcie *pci)
 {
 	struct device *dev = pci->dev;
 	int ret = 0;
 
-	if (IS_ERR_OR_NULL(pci->pcie3v3))
-		return 1;
+	if (!IS_ERR(pci->pcie3v3)) {
+		ret = regulator_set_voltage(pci->pcie3v3, 3300000, 3300000);
+		if (ret)
+			sunxi_warn(dev, "failed to set regulator voltage\n");
 
-	ret = regulator_set_voltage(pci->pcie3v3, 3300000, 3300000);
-	if (ret)
-		sunxi_warn(dev, "failed to set regulator voltage\n");
+		ret = regulator_enable(pci->pcie3v3);
+		if (ret)
+			sunxi_err(dev, "failed to enable pcie3v3 regulator\n");
+	}
 
-	ret = regulator_enable(pci->pcie3v3);
-	if (ret)
-		sunxi_err(dev, "failed to enable pcie3v3 regulator\n");
+	if (!IS_ERR(pci->pcie1v8)) {
+		ret = regulator_set_voltage(pci->pcie1v8, 1800000, 1800000);
+		if (ret)
+			sunxi_warn(dev, "failed to set regulator voltage\n");
 
-	if (IS_ERR_OR_NULL(pci->pcie1v8))
-		return 1;
-
-	ret = regulator_set_voltage(pci->pcie1v8, 1800000, 1800000);
-	if (ret)
-		sunxi_warn(dev, "failed to set regulator voltage\n");
-
-	ret = regulator_enable(pci->pcie1v8);
-	if (ret)
-		sunxi_err(dev, "failed to enable pcie1v8 regulator\n");
+		ret = regulator_enable(pci->pcie1v8);
+		if (ret)
+			sunxi_err(dev, "failed to enable pcie1v8 regulator\n");
+	}
 
 	return ret;
 }
 
-static int sunxi_pcie_plat_disable_power(struct sunxi_pcie *pci)
+static void sunxi_pcie_plat_power_off(struct sunxi_pcie *pci)
 {
-	int ret = 0;
-
-	if (IS_ERR_OR_NULL(pci->pcie3v3))
-		return ret;
-
-	ret = regulator_disable(pci->pcie3v3);
-	if (ret)
-		sunxi_err(pci->dev, "fail to disable pcie3v3 regulator\n");
-
-	if (IS_ERR_OR_NULL(pci->pcie1v8))
-		return ret;
-
-	ret = regulator_disable(pci->pcie1v8);
-	if (ret)
-		sunxi_err(pci->dev, "fail to disable pcie1v8 regulator\n");
-
-	return ret;
+	if (!IS_ERR(pci->pcie3v3))
+		regulator_disable(pci->pcie3v3);
+	if (!IS_ERR(pci->pcie1v8))
+		regulator_disable(pci->pcie1v8);
 }
 
 static int sunxi_pcie_plat_clk_setup(struct sunxi_pcie *pci)
 {
 	int ret;
 
-
-
-	ret = clk_prepare_enable(pci->pcie_aux);
-	if (ret) {
-		sunxi_err(pci->dev, "cannot prepare/enable aux clock\n");
-		return ret;
-	}
-
-
-	if (pci->drvdata->has_pcie_slv_clk) {
-		ret = clk_prepare_enable(pci->pcie_slv);
-		if (ret) {
-			sunxi_err(pci->dev, "cannot prepare/enable slv clock\n");
-			goto err0;
-		}
-	}
-
 	if (pci->drvdata->need_pcie_rst) {
 		ret = reset_control_deassert(pci->pcie_rst);
 		if (ret) {
 			sunxi_err(pci->dev, "cannot reset pcie\n");
-			goto err1;
+			return ret;
 		}
 
 		ret = reset_control_deassert(pci->pwrup_rst);
 		if (ret) {
 			sunxi_err(pci->dev, "cannot pwrup_reset pcie\n");
-			goto err1;
+			goto err0;
 		}
 	}
 
+	ret = clk_prepare_enable(pci->pcie_aux);
+	if (ret) {
+		sunxi_err(pci->dev, "cannot prepare/enable aux clock\n");
+		goto err1;
+	}
+
+	if (pci->drvdata->has_pcie_slv_clk) {
+		if (pci->drvdata->pcie_slv_clk_400m) {
+			ret = clk_set_rate(pci->pcie_slv, 400000000);
+			if (ret) {
+				sunxi_err(pci->dev, "cannot set slv clock\n");
+				goto err2;
+			}
+		}
+		ret = clk_prepare_enable(pci->pcie_slv);
+		if (ret) {
+			sunxi_err(pci->dev, "cannot prepare/enable slv clock\n");
+			goto err2;
+		}
+	}
+
+	if (pci->drvdata->has_pcie_its_clk) {
+		ret = reset_control_deassert(pci->pcie_its_rst);
+		if (ret) {
+			sunxi_err(pci->dev, "cannot reset pcie its\n");
+			goto err3;
+		}
+
+		ret = clk_prepare_enable(pci->pcie_its);
+		if (ret) {
+			sunxi_err(pci->dev, "cannot prepare/enable its clock\n");
+			goto err4;
+		}
+	}
 
 	return 0;
-
-err1:
+err4:
+	if (pci->drvdata->has_pcie_its_clk)
+		reset_control_assert(pci->pcie_its_rst);
+err3:
 	if (pci->drvdata->has_pcie_slv_clk)
 		clk_disable_unprepare(pci->pcie_slv);
-err0:
+err2:
 	clk_disable_unprepare(pci->pcie_aux);
+err1:
+	if (pci->drvdata->need_pcie_rst)
+		reset_control_assert(pci->pwrup_rst);
+err0:
+	if (pci->drvdata->need_pcie_rst)
+		reset_control_assert(pci->pcie_rst);
 
 	return ret;
 }
 
 static void sunxi_pcie_plat_clk_exit(struct sunxi_pcie *pci)
 {
+	if (pci->drvdata->has_pcie_its_clk) {
+		clk_disable_unprepare(pci->pcie_its);
+		reset_control_assert(pci->pcie_its_rst);
+	}
+
+	if (pci->drvdata->has_pcie_slv_clk)
+		clk_disable_unprepare(pci->pcie_slv);
+
+	clk_disable_unprepare(pci->pcie_aux);
+
 	if (pci->drvdata->need_pcie_rst) {
 		reset_control_assert(pci->pcie_rst);
 		reset_control_assert(pci->pwrup_rst);
 	}
-	if (pci->drvdata->has_pcie_slv_clk)
-		clk_disable_unprepare(pci->pcie_slv);
-	clk_disable_unprepare(pci->pcie_aux);
 }
 
 static int sunxi_pcie_plat_clk_get(struct platform_device *pdev, struct sunxi_pcie *pci)
@@ -538,6 +571,19 @@ static int sunxi_pcie_plat_clk_get(struct platform_device *pdev, struct sunxi_pc
 		}
 	}
 
+	if (pci->drvdata->has_pcie_its_clk) {
+		pci->pcie_its = devm_clk_get(&pdev->dev, "its");
+		if (IS_ERR(pci->pcie_its)) {
+			sunxi_err(&pdev->dev, "fail to get its clk\n");
+			return PTR_ERR(pci->pcie_its);
+		}
+
+		pci->pcie_its_rst = devm_reset_control_get(&pdev->dev, "its");
+		if (IS_ERR(pci->pcie_its_rst)) {
+			sunxi_err(&pdev->dev, "fail to get its rst\n");
+			return PTR_ERR(pci->pcie_its_rst);
+		}
+	}
 	return 0;
 }
 
@@ -903,6 +949,12 @@ static int sunxi_pcie_plat_parse_dts_res(struct platform_device *pdev, struct su
 	else
 		gpiod_direction_output(pci->rst_gpio, 1);
 
+	pci->wake_gpio = devm_gpiod_get(&pdev->dev, "wake", GPIOD_OUT_HIGH);
+	if (IS_ERR(pci->wake_gpio))
+		sunxi_warn(&pdev->dev, "Failed to get \"wake-gpios\"\n");
+	else
+		gpiod_direction_output(pci->wake_gpio, 1);
+
 	pci->pcie3v3 = devm_regulator_get_optional(&pdev->dev, "pcie3v3");
 	if (IS_ERR(pci->pcie3v3))
 		sunxi_warn(&pdev->dev, "no pcie3v3 regulator found\n");
@@ -936,7 +988,7 @@ static int sunxi_pcie_plat_hw_init(struct sunxi_pcie *pci)
 {
 	int ret;
 
-	ret = sunxi_pcie_plat_enable_power(pci);
+	ret = sunxi_pcie_plat_power_on(pci);
 	if (ret)
 		return ret;
 
@@ -953,7 +1005,7 @@ static int sunxi_pcie_plat_hw_init(struct sunxi_pcie *pci)
 err1:
 	sunxi_pcie_plat_clk_exit(pci);
 err0:
-	sunxi_pcie_plat_disable_power(pci);
+	sunxi_pcie_plat_power_off(pci);
 
 	return ret;
 }
@@ -961,7 +1013,7 @@ err0:
 static void sunxi_pcie_plat_hw_deinit(struct sunxi_pcie *pci)
 {
 	sunxi_pcie_plat_combo_phy_deinit(pci);
-	sunxi_pcie_plat_disable_power(pci);
+	sunxi_pcie_plat_power_off(pci);
 	sunxi_pcie_plat_clk_exit(pci);
 }
 

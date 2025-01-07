@@ -21,6 +21,7 @@
 #include <linux/usb/gadget.h>
 #include <linux/dma-mapping.h>
 #include <linux/regulator/consumer.h>
+#include <linux/phy/phy.h>
 
 #if 1
 typedef struct sunxi_udc_dma {
@@ -55,8 +56,15 @@ typedef struct sunxi_udc_ep {
 #else
 	sunxi_udc_dma_t			sunxi_udc_dma[6];
 #endif
+	bool			dma_addr_ext_enable; /* Feature: 16GB DDR Memory Access */
 	__u32			dma_working; /* flag. is dma busy? */
 	__u32			dma_transfer_len; /* dma want transfer length */
+	/**
+	 * Feature: dma word addr bypass.
+	 * 1 - config by byte addr and burst length alignment,
+	 * 0 - config by word addr and controller left shift 2 bit for word addr alignment.
+	 */
+	__u32			dma_wordaddr_bypass;
 } sunxi_udc_ep_t;
 
 /**
@@ -116,7 +124,9 @@ struct sw_udc_fifo {
 	|| IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN50IW9) \
 	|| IS_ENABLED(CONFIG_ARCH_SUN8IW20) || IS_ENABLED(CONFIG_ARCH_SUN20IW1) \
 	|| IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2) \
-	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN65IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 /**
  * fifo 8k
  *
@@ -233,15 +243,29 @@ typedef struct sunxi_udc_io {
 	__hdle usb_bsp_hdle;			/* usb bsp handle */
 
 	__u32 clk_is_open;			/* is usb clock open? */
+	struct clk 	*clk_msi_lite;		/* msi-lite */
+	struct clk 	*clk_usb_sys_ahb;	/* usb-sys-ahb */
+	struct clk 	*clk_res;		/* res_dcap-24m */
 	struct clk	*clk_hosc;		/* usb-24m */
 	struct clk	*clk_bus_otg;
 	struct clk	*clk_phy;
+	struct clk      *clk_usb;
+	struct clk      *clk_mbus;
+	struct clk      *clk_rate;
+	struct clk	*ahb_otg;		/* ahb clock handle */
+	struct clk	*mod_usbphy;		/* PHY0 clock handle */
 
 	struct reset_control	*reset_otg;
 	struct reset_control	*reset_phy;
+	struct reset_control	*reset_usb;
 
+	struct phy *usb2_generic_phy;		/* pointer to USB2 PHY */
 	int phy_range;
+	int rate_clk;
+	bool rext_cal_bypass; /* Hardware: the USB0/1-REXT is floating ? */
 
+	bool		dma_addr_ext_enable; /* Feature: 16GB DDR Memory Access */
+	__u32		dma_wordaddr_bypass;
 #if IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 /* for keep common circuit configuration */
 	void __iomem	*usb_common_phy_config;
@@ -303,6 +327,11 @@ enum sunxi_udc_cmd_e {
 	SW_UDC_P_RESET	= 3,		/* UDC reset, in case of */
 };
 
+enum sunxi_udc_data_e {
+	SW_UDC_D_DISABLE = 0,		/* Usb Data disable      */
+	SW_UDC_D_ENABLE	= 1,		/* Usb Data enable       */
+};
+
 typedef struct sunxi_udc_mach_info {
 	struct usb_port_info *port_info;
 	unsigned int usbc_base;
@@ -310,6 +339,7 @@ typedef struct sunxi_udc_mach_info {
 
 extern atomic_t thread_suspend_flag;
 extern atomic_t notify_suspend_flag;
+extern atomic_t rolesw_suspend_flag;
 extern int device_insmod_delay;
 
 extern atomic_t vfs_read_flag;

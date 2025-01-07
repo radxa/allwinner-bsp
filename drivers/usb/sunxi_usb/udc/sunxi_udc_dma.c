@@ -38,6 +38,7 @@
 #include "../sunxi_usb_trace.h"
 
 dma_channel_t dma_chnl[DMA_CHAN_TOTAL];
+extern int g_dma_ext_debug;
 
 /* switch usb bus for dma */
 void sunxi_udc_switch_bus_to_dma(struct sunxi_udc_ep *ep, u32 is_tx)
@@ -137,6 +138,12 @@ void sunxi_dma_set_config(dm_hdl_t dma_hdl, struct dma_config_t *pcfg)
 
 	pchan = (dma_channel_t *)dma_hdl;
 
+	if (g_dma_ext_debug) {
+		DMSG_INFO("num:%d, burst: %d, dir: %d, ep: %d, addr: 0x%08x, bc: %d, ext: %d, bypass: %d\n",
+			  pcfg->dma_num, pcfg->dma_bst_len, pcfg->dma_dir, pcfg->dma_for_ep, pcfg->dma_sdram_str_addr,
+			  pcfg->dma_bc, pcfg->dma_sdram_str_addr_ext, pcfg->dma_wordaddr_bypass);
+	}
+
 	spin_lock_irqsave(&pchan->lock, flags);
 
 	reg_value = USBC_Readl(USBC_REG_DMA_CHAN_CFN(pchan->reg_base,
@@ -158,6 +165,21 @@ void sunxi_dma_set_config(dm_hdl_t dma_hdl, struct dma_config_t *pcfg)
 	USBC_Writel(pcfg->dma_sdram_str_addr,
 		USBC_REG_DMA_SDRAM_ADD(pchan->reg_base, pcfg->dma_num));
 
+	/* extend address */
+	if (pcfg->dma_addr_ext_enable) {
+		if (pcfg->dma_num < USBC_DMA_ADD_EXT0_MAX_CHAN) {
+			reg_value = USBC_Readl(USBC_REG_DMA_SDRAM_ADD_EXT0(pchan->reg_base));
+			reg_value &= ~(USBC_DMA_ADD_EXT0_MASK(pcfg->dma_num));
+			reg_value |= (pcfg->dma_sdram_str_addr_ext << USBC_DMA_ADD_EXT0(pcfg->dma_num));
+			USBC_Writel(reg_value, USBC_REG_DMA_SDRAM_ADD_EXT0(pchan->reg_base));
+		} else {
+			reg_value = USBC_Readl(USBC_REG_DMA_SDRAM_ADD_EXT1(pchan->reg_base));
+			reg_value &= ~(USBC_DMA_ADD_EXT1_MASK(pcfg->dma_num));
+			reg_value |= (pcfg->dma_sdram_str_addr_ext << USBC_DMA_ADD_EXT1(pcfg->dma_num));
+			USBC_Writel(reg_value, USBC_REG_DMA_SDRAM_ADD_EXT1(pchan->reg_base));
+		}
+	}
+
 	/* transport len */
 	USBC_Writel((pcfg->dma_bc),
 		USBC_REG_DMA_BC(pchan->reg_base, pcfg->dma_num));
@@ -177,7 +199,7 @@ void sunxi_dma_set_config(dm_hdl_t dma_hdl, struct dma_config_t *pcfg)
 }
 
 void sunxi_udc_dma_set_config(struct sunxi_udc_ep *ep,
-		struct sunxi_udc_request *req, __u32 buff_addr, __u32 len)
+		struct sunxi_udc_request *req, __u64 buff_addr, __u32 len)
 {
 	dm_hdl_t dma_hdl = NULL;
 	dma_channel_t *pchan = NULL;
@@ -208,19 +230,28 @@ void sunxi_udc_dma_set_config(struct sunxi_udc_ep *ep,
 
 	trace_sunxi_udc_dma_set_config(req, ep, pchan);
 
+	DmaConfig.dma_addr_ext_enable = ep->dma_addr_ext_enable;
 	DmaConfig.dma_bst_len = packet_size;
 	DmaConfig.dma_dir = !is_tx;
 	DmaConfig.dma_for_ep = ep->num;
 	DmaConfig.dma_bc = len;
 	DmaConfig.dma_sdram_str_addr = buff_addr;
 	DmaConfig.dma_num = pchan->channel_num;
+	DmaConfig.dma_sdram_str_addr_ext = (u32)(buff_addr >> 32);
+	DmaConfig.dma_wordaddr_bypass = ep->dma_wordaddr_bypass;
+
+	if (g_dma_ext_debug) {
+		DMSG_INFO("buf: 0x%llx, len: %d, addr: 0x%08x, ext: %d, bypass: %d, en: [%s]\n",
+			  buff_addr, len, DmaConfig.dma_sdram_str_addr, DmaConfig.dma_sdram_str_addr_ext,
+			  DmaConfig.dma_wordaddr_bypass, DmaConfig.dma_addr_ext_enable ? "Y" : "N");
+	}
 
 	sunxi_dma_set_config(dma_hdl, &DmaConfig);
 }
 EXPORT_TRACEPOINT_SYMBOL_GPL(sunxi_udc_dma_set_config);
 /* start dma transfer */
 void sunxi_udc_dma_start(struct sunxi_udc_ep *ep,
-		void __iomem  *fifo, __u32 buffer, __u32 len)
+		void __iomem  *fifo, __u64 buffer, __u32 len)
 {
 }
 
@@ -430,7 +461,7 @@ int sunxi_udc_dma_release(dm_hdl_t dma_hdl)
 }
 
 void sunxi_udc_dma_set_config(struct sunxi_udc_ep *ep,
-		struct sunxi_udc_request *req, __u32 buff_addr, __u32 len)
+		struct sunxi_udc_request *req, __u64 buff_addr, __u32 len)
 {
 	__u32 is_tx = 0;
 	void __iomem	*fifo_addr = NULL;
@@ -502,7 +533,7 @@ void sunxi_udc_dma_set_config(struct sunxi_udc_ep *ep,
 }
 
 void sunxi_udc_dma_start(struct sunxi_udc_ep *ep,
-		void __iomem  *fifo, __u32 buffer, __u32 len)
+		void __iomem  *fifo, __u64 buffer, __u32 len)
 {
 	struct dma_async_tx_descriptor *dma_desc = NULL;
 	__u32 is_tx = 0;

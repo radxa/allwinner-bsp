@@ -110,6 +110,8 @@ static const struct of_device_id blacklist[] __initconst = {
 	{ .compatible = "arm,sun8iw20p1", },
 	{ .compatible = "arm,sun20iw1p1", },
 	{ .compatible = "arm,sun8iw18p1", },
+	{ .compatible = "arm,sun55iw3p1", },
+	{ .compatible = "arm,sun55iw6p1", },
 
 	{ .compatible = "arm,vexpress", },
 
@@ -205,3 +207,6 @@ create_pdev:
 }
 core_initcall(cpufreq_dt_platdev_init);
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Sunxi cpufreq driver");
+MODULE_AUTHOR("liufeng <liufeng@allwinnertech.com>");
+MODULE_VERSION("1.0.0");

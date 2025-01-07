@@ -53,7 +53,7 @@ static void (*__usb_hw_scan)(struct usb_scan_info *);
 #ifndef SUNXI_USB_FPGA
 static __u32 get_pin_data(struct usb_gpio *usb_gpio)
 {
-	return __gpio_get_value(usb_gpio->gpio_set.gpio);
+	return gpio_get_value(usb_gpio->gpio_set.gpio);
 }
 
 #if IS_ENABLED(CONFIG_USB_G_ANDROID) || IS_ENABLED(CONFIG_USB_MASS_STORAGE)
@@ -744,7 +744,7 @@ __s32 usb_hw_scan_init(struct usb_cfg *cfg)
 				/* set config, input */
 				gpio_direction_input(
 						port_info->id.gpio_set.gpio);
-				__gpio_set_value(
+				gpio_set_value(
 						port_info->id.gpio_set.gpio,
 						1);
 			}

@@ -29,6 +29,8 @@
 #include <linux/usb/typec.h>
 #endif
 #include <linux/notifier.h>
+#include <linux/usb/role.h>
+#include <linux/extcon-provider.h>
 
 #define  SET_USB_PARA				"usb_para"
 #define  SET_USB0				"usbc0"
@@ -150,7 +152,9 @@ typedef struct usb_cfg {
 	struct mutex det_lock;
 	atomic_t det_flag;
 	struct work_struct resume_work;
+	enum usb_role desired_role;
 	struct usb_role_switch *role_sw;
+	struct extcon_dev *edev;
 
 	struct usb_port_info port;
 } usb_cfg_t;

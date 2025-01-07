@@ -144,7 +144,11 @@
 		|| IS_ENABLED(CONFIG_ARCH_SUN8IW21) \
 		|| IS_ENABLED(CONFIG_ARCH_SUN20IW1) \
 		|| IS_ENABLED(CONFIG_ARCH_SUN55IW3) \
-		|| IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		|| IS_ENABLED(CONFIG_ARCH_SUN60IW2) \
+		|| IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+		|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+		|| IS_ENABLED(CONFIG_ARCH_SUN65IW1) \
+		|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 #define  USBPHYC_REG_o_PHYCTL	0x0410
 #else
 #define  USBPHYC_REG_o_PHYCTL	0x0404
@@ -157,6 +161,14 @@
 #define  USBC_REG_o_DMA_SDRAM_ADD(n)	(0x0544 + (0x10 * n))
 #define  USBC_REG_o_DMA_BC(n)		(0x0548 + (0x10 * n))
 #define  USBC_REG_o_DMA_RESIDUAL_BC(n)	(0x054c + (0x10 * n))
+#define  USBC_REG_o_DMA_SDRAM_ADD_EXT0	0x0640
+#define  USBC_REG_o_DMA_SDRAM_ADD_EXT1	0x0644
+
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+#define  USBC_REG_o_DMA_WORDADD_BYPASS	0x05c0	// reference spec
+#else
+#define  USBC_REG_o_DMA_WORDADD_BYPASS	0x0648
+#endif
 
 /* registers */
 #define  USBC_REG_FADDR(usbc_base_addr)		((usbc_base_addr) \
@@ -306,6 +318,21 @@
 			((usbc_base_addr) + USBC_REG_o_DMA_BC(n))
 #define  USBC_REG_DMA_RESIDUAL_BC(usbc_base_addr, n)	\
 			((usbc_base_addr) + USBC_REG_o_DMA_RESIDUAL_BC(n))
+#define  USBC_REG_DMA_SDRAM_ADD_EXT0(usbc_base_addr)	\
+			((usbc_base_addr) + USBC_REG_o_DMA_SDRAM_ADD_EXT0)
+#define  USBC_REG_DMA_SDRAM_ADD_EXT1(usbc_base_addr)	\
+			((usbc_base_addr) + USBC_REG_o_DMA_SDRAM_ADD_EXT1)
+#define  USBC_REG_DMA_WORDADD_BYPASS(usbc_base_addr)	\
+			((usbc_base_addr) + USBC_REG_o_DMA_WORDADD_BYPASS)
+
+/* DMA Feature Registers */
+#define  USBC_DMA_ADD_EXT0(n)		(0x3 * n)
+#define  USBC_DMA_ADD_EXT0_MASK(n)	GENMASK(USBC_DMA_ADD_EXT0(n) + 2, USBC_DMA_ADD_EXT0(n))
+#define  USBC_DMA_ADD_EXT0_MAX_CHAN	10
+#define  USBC_DMA_ADD_EXT1(n)		(0x3 * (n - USBC_DMA_ADD_EXT0_MAX_CHAN))
+#define  USBC_DMA_ADD_EXT1_MASK(n)	GENMASK(USBC_DMA_ADD_EXT1(n) + 2, USBC_DMA_ADD_EXT1(n))
+#define  USBC_BP_DMA_WORDADD_ALIGN	0
+#define  USBC_BP_DMA_BYTEADD_ALIGN	1
 
 /* registers extern */
 #define  USBC_REG_EX_USB_EPFIFOn(usbc_base_addr)	\
@@ -817,8 +844,8 @@ __s32 USBC_Dev_ConfigEp(__hdle hUSB,
 				__u32 ep_MaxPkt,
 				__u32 mult);
 __s32 USBC_Dev_ConfigEp_Default(__hdle hUSB, __u32 ep_type);
-__s32 USBC_Dev_ConfigEpDma(__hdle hUSB, __u32 ep_type);
-__s32 USBC_Dev_ClearEpDma(__hdle hUSB, __u32 ep_type);
+__s32 USBC_Dev_ConfigEpDma(__hdle hUSB, __u32 ep_type, __u32 mult);
+__s32 USBC_Dev_ClearEpDma(__hdle hUSB, __u32 ep_type, __u32 mult);
 
 __s32 USBC_Dev_IsEpStall(__hdle hUSB, __u32 ep_type);
 __s32 USBC_Dev_EpSendStall(__hdle hUSB, __u32 ep_type);
@@ -939,11 +966,13 @@ void UsbPhyEndReset(__u32 usbc_no);
 void usb_otg_phy_txtune(void __iomem *regs);
 void usbc_new_phy_res_cal(void __iomem *regs);
 void usbc_new_phy_init(void __iomem *regs);
+void usbc_new_phy_pll_set(void __iomem *regs, int val);
 void usbc_new_phy_reassign(void __iomem *regs, int val);
 void usbc_new_phyx_write(void __iomem *regs, u32 data);
 u32 usbc_new_phyx_read(void __iomem *regs);
-void usbc_phyx_res_cal(__u32 usbc_no, bool enable);
+void usbc_phyx_res_cal(__u32 usbc_no, bool enable, bool bypass);
 void usbc_phy_reassign(void __iomem *regs, __hdle hUSB, int val);
+void usbc_phy_bandwidth_tuning(void __iomem *regs, __hdle hUSB, int val);
 
 /* usb test mode */
 void USBC_EnterMode_TestPacket(__hdle hUSB);

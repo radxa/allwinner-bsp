@@ -34,6 +34,7 @@
 #include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
 #include <linux/power_supply.h>
+#include <linux/version.h>
 
 #include <linux/usb/otg.h>
 #include <linux/usb/role.h>
@@ -54,6 +55,7 @@ __u32 thread_run_flag = 1;
 int thread_stopped_flag = 1;
 atomic_t thread_suspend_flag;
 atomic_t notify_suspend_flag;
+atomic_t rolesw_suspend_flag;
 atomic_t resume_work_flag;
 
 static void usb_msleep(unsigned int msecs)
@@ -61,6 +63,11 @@ static void usb_msleep(unsigned int msecs)
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(msecs_to_jiffies(msecs));
 }
+
+static const unsigned int usb_extcon_cable[] = {
+	EXTCON_USB_HOST,
+	EXTCON_NONE,
+};
 
 #if IS_ENABLED(CONFIG_TYPEC)
 static int sunxi_dr_set(struct typec_port *p, enum typec_data_role data)
@@ -237,9 +244,16 @@ static void sunxi_usb_set_mode(enum sw_usb_role sw_role, bool callback)
 	mutex_unlock(&g_usb_cfg.lock);
 }
 
+/* add linux version judgment, applicable to linux-5.4 version of sunxi-dev-andes branch. */
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(5, 4, 220))
+static int sunxi_usb_role_switch_set(struct device *dev, enum usb_role role)
+{
+	struct usb_cfg __maybe_unused *cfg = dev_get_drvdata(dev);
+#else
 static int sunxi_usb_role_switch_set(struct usb_role_switch *sw, enum usb_role role)
 {
 	struct usb_cfg __maybe_unused *cfg = usb_role_switch_get_drvdata(sw);
+#endif
 	enum sw_usb_role current_role = get_usb_role();
 	enum sw_usb_role sw_role = to_sw_usb_role(role);
 
@@ -249,14 +263,30 @@ static int sunxi_usb_role_switch_set(struct usb_role_switch *sw, enum usb_role r
 	if (current_role == sw_role)
 		return 0;
 
+	cfg->desired_role = role;
+	/* Disable usb role switch when suspend. */
+	if (atomic_read(&rolesw_suspend_flag))
+		return 0;
+
+	if (sw_role == SW_USB_ROLE_HOST)
+		extcon_set_state_sync(cfg->edev, EXTCON_USB_HOST, true);
+	else
+		extcon_set_state_sync(cfg->edev, EXTCON_USB_HOST, false);
+
 	sunxi_usb_set_mode(sw_role, true);
 
 	return 0;
 }
 
+/* add linux version judgment, applicable to linux-5.4 version of sunxi-dev-andes branch. */
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(5, 4, 220))
+static enum usb_role sunxi_usb_role_switch_get(struct device *dev)
+{
+#else
 static enum usb_role sunxi_usb_role_switch_get(struct usb_role_switch *sw)
 {
 	struct usb_cfg __maybe_unused *cfg = usb_role_switch_get_drvdata(sw);
+#endif
 	enum sw_usb_role sw_role = get_usb_role();
 
 	return to_usb_role(sw_role);
@@ -270,7 +300,11 @@ int sunxi_setup_role_switch(struct usb_cfg *cfg)
 	role_sw_desc.fwnode = dev_fwnode(dev);
 	role_sw_desc.set = sunxi_usb_role_switch_set;
 	role_sw_desc.get = sunxi_usb_role_switch_get;
+/* add linux version judgment, applicable to linux-5.4 version of sunxi-dev-andes branch. */
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(5, 4, 220))
+#else
 	role_sw_desc.driver_data = cfg;
+#endif
 	cfg->role_sw = usb_role_switch_register(dev, &role_sw_desc);
 	if (IS_ERR(cfg->role_sw))
 		return PTR_ERR(cfg->role_sw);
@@ -279,7 +313,10 @@ int sunxi_setup_role_switch(struct usb_cfg *cfg)
 }
 #else
 #define ROLE_SWITCH 0
-#define sunxi_setup_role_switch(x) 0
+int __maybe_unused sunxi_setup_role_switch(struct usb_cfg *cfg)
+{
+	return 0;
+}
 #endif
 
 static int usb_device_scan_thread(void *pArg)
@@ -478,24 +515,39 @@ static void usb_manager_resume_work(struct work_struct *work)
 	struct usb_cfg *cfg = container_of(work, struct usb_cfg, det_work);
 	unsigned int count = 0;
 
-	atomic_set(&resume_work_flag, 1);
-	/* handle peripheral plugged or unplugged during hibernation. */
-	if (g_usb_cfg.port.detect_mode == USB_DETECT_MODE_NOTIFY) {
-		while (atomic_read(&cfg->det_flag)) {
-			if (++count > 10) {
-				DMSG_DEBUG("wait for OTG resume 1s timeout!\n");
-				break;
+	if (g_usb_cfg.port.port_type == USB_PORT_TYPE_OTG) {
+		atomic_set(&resume_work_flag, 1);
+		/* handle peripheral plugged or unplugged during hibernation. */
+		if (g_usb_cfg.port.detect_mode == USB_DETECT_MODE_NOTIFY) {
+			while (atomic_read(&cfg->det_flag)) {
+				if (++count > 10) {
+					DMSG_DEBUG("wait for OTG resume 1s timeout!\n");
+					break;
+				}
+				if (atomic_read(&notify_suspend_flag))
+					break;
+				usb_msleep(100); /* 1s ??? maybe 100 ms is better */
+				usb_pmu_det_scan(cfg);
 			}
-			if (atomic_read(&notify_suspend_flag))
-				break;
-			usb_msleep(100); /* 1s ??? maybe 100 ms is better */
-			usb_pmu_det_scan(cfg);
-		}
 
-		/* restore det_flag for auto detect */
-		atomic_set(&cfg->det_flag, 1);
+			/* restore det_flag for auto detect */
+			atomic_set(&cfg->det_flag, 1);
+		} else if (g_usb_cfg.port.detect_type == USB_DETECT_TYPE_ROLE_SW) {
+#if IS_ENABLED(CONFIG_USB_ROLE_SWITCH)
+			enum sw_usb_role current_role = get_usb_role();
+			enum sw_usb_role sw_role = to_sw_usb_role(g_usb_cfg.desired_role);
+
+			if (sw_role == SW_USB_ROLE_HOST)
+				extcon_set_state_sync(g_usb_cfg.edev, EXTCON_USB_HOST, true);
+			else
+				extcon_set_state_sync(g_usb_cfg.edev, EXTCON_USB_HOST, false);
+
+			if (current_role != sw_role)
+				sunxi_usb_set_mode(sw_role, false);
+#endif
+		}
+		atomic_set(&resume_work_flag, 0);
 	}
-	atomic_set(&resume_work_flag, 0);
 }
 
 static int sunxi_det_vbus_gpio_enable_power(struct usb_cfg *cfg)
@@ -636,7 +688,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 	memset(&g_usb_cfg, 0, sizeof(struct usb_cfg));
 	g_usb_cfg.usb_global_enable = 1;
 	g_usb_cfg.pdev = pdev;
-	usb_msg_center_init();
+	usb_msg_center_init(&pdev->dev);
 
 	ret = usb_script_parse(np, &g_usb_cfg);
 	if (ret != 0) {
@@ -678,7 +730,8 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 #endif
 
 #if IS_ENABLED(CONFIG_TYPEC)
-	g_usb_cfg.port.typec_caps.type = TYPEC_PORT_SNK;
+	g_usb_cfg.port.typec_caps.type = TYPEC_PORT_DRP;
+	g_usb_cfg.port.typec_caps.data = TYPEC_PORT_DRD;
 	g_usb_cfg.port.typec_caps.ops = &sunxi_usb_ops;
 	g_usb_cfg.port.typec_port = typec_register_port(&pdev->dev, &g_usb_cfg.port.typec_caps);
 #endif
@@ -775,7 +828,7 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 				INIT_WORK(&g_usb_cfg.det_work, usb_pmu_det_work);
 				g_usb_cfg.det_nb.notifier_call = usb_pmu_det_notifier;
 
-#if IS_ENABLED(CONFIG_AW_AXP2202_POWER)
+#if IS_ENABLED(CONFIG_AW_AXP2202_POWER) || IS_ENABLED(CONFIG_AW_AXP515_POWER)
 				/* register otg power notifier */
 				atomic_notifier_chain_register(&usb_power_notifier_list, &g_usb_cfg.det_nb);
 #endif
@@ -785,8 +838,19 @@ static int sunxi_otg_manager_probe(struct platform_device *pdev)
 			}
 #endif
 		} else if (g_usb_cfg.port.detect_type == USB_DETECT_TYPE_ROLE_SW) {
+			atomic_set(&rolesw_suspend_flag, 0);
 			if (ROLE_SWITCH && device_property_read_bool(&pdev->dev, "usb-role-switch"))
 				sunxi_setup_role_switch(&g_usb_cfg);
+			g_usb_cfg.edev = devm_extcon_dev_allocate(&pdev->dev, usb_extcon_cable);
+			if (IS_ERR(g_usb_cfg.edev)) {
+				dev_err(&pdev->dev, "failed to allocate extcon device\n");
+				return -ENOMEM;
+			}
+			ret = devm_extcon_dev_register(&pdev->dev, g_usb_cfg.edev);
+			if (ret < 0) {
+				dev_err(&pdev->dev, "failed to register extcon device\n");
+				return ret;
+			}
 		}
 	}
 	INIT_WORK(&g_usb_cfg.resume_work, usb_manager_resume_work);
@@ -824,7 +888,7 @@ static int sunxi_otg_manager_remove(struct platform_device *pdev)
 					&& g_usb_cfg.port.id_irq_num)
 				free_irq(g_usb_cfg.port.id_irq_num, &g_usb_cfg);
 		if (g_usb_cfg.port.detect_mode == USB_DETECT_MODE_NOTIFY) {
-#if IS_ENABLED(CONFIG_AW_AXP2202_POWER)
+#if IS_ENABLED(CONFIG_AW_AXP2202_POWER) || IS_ENABLED(CONFIG_AW_AXP515_POWER)
 			/* unregister otg power notifier */
 			atomic_notifier_chain_unregister(&usb_power_notifier_list, &g_usb_cfg.det_nb);
 #endif
@@ -885,6 +949,7 @@ static int sunxi_otg_manager_resume(struct device *dev)
 
 static int sunxi_otg_manager_prepare(struct device *dev)
 {
+	atomic_set(&rolesw_suspend_flag, 1);
 	atomic_set(&notify_suspend_flag, 1);
 	cancel_work_sync(&g_usb_cfg.resume_work);
 	return 0;
@@ -893,6 +958,7 @@ static int sunxi_otg_manager_prepare(struct device *dev)
 static void sunxi_otg_manager_complete(struct device *dev)
 {
 	atomic_set(&notify_suspend_flag, 0);
+	atomic_set(&rolesw_suspend_flag, 0);
 	schedule_work(&g_usb_cfg.resume_work);
 }
 
@@ -943,4 +1009,4 @@ MODULE_AUTHOR("wangjx<wangjx@allwinnertech.com>");
 MODULE_DESCRIPTION("Driver for Allwinner usb otg manager");
 MODULE_ALIAS("platform: usb manager for host and udc");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.1.1");
+MODULE_VERSION("1.1.3");

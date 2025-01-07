@@ -20,6 +20,7 @@
 #include <linux/time.h>
 #include <linux/timer.h>
 #include <linux/clk.h>
+#include <linux/dma-mapping.h>
 #include <linux/notifier.h>
 #include <linux/suspend.h>
 #include <linux/kernel.h>
@@ -358,6 +359,11 @@ static ssize_t show_phy_range(struct device *dev,
 	DMSG_INFO("PHY's rate and range:0x0~0x3ff\n");
 	return sprintf(buf, "rate:0x%x\n",
 		usb_new_phyx_read(sunxi_ehci));
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+	DMSG_INFO("PHY's rate and range:0x0~0xfff\n");
+	return sprintf(buf, "rate:0x%x\n",
+		usb_new_phyx_read(sunxi_ehci));
 #elif IS_ENABLED(CONFIG_ARCH_SUN8IW17) | IS_ENABLED(CONFIG_ARCH_SUN8IW11)
 	DMSG_INFO("PHY's rate and range:0x0~0x1f\n");
 	return sprintf(buf, "rate:0x%x\n",
@@ -376,11 +382,15 @@ static ssize_t ehci_phy_range(struct device *dev, struct device_attribute *attr,
 	int err;
 
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW20) || IS_ENABLED(CONFIG_ARCH_SUN20IW1) \
-	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21)
+	|| IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN251IW1)
 	int val = 0, range = 0;
 
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW21)
 	range = 0x3ff;
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN251IW1)
+	range = 0xfff;
 #else
 	range = 0x1fff;
 #endif
@@ -581,6 +591,7 @@ static struct notifier_block sunxi_ehci_pm_nb = {
 };
 
 static struct hc_driver sunxi_ehci_hc_driver;
+extern atomic_t ehci_enable_flag[4];
 
 static int sunxi_insmod_ehci(struct platform_device *pdev)
 {
@@ -618,6 +629,15 @@ static int sunxi_insmod_ehci(struct platform_device *pdev)
 				return 0;
 			}
 		}
+	} else if (sunxi_ehci->usbc_no == HCI1_USBC_NO) {
+		if (sunxi_ehci->extcon_supported) {
+			if (ehci_first_probe[sunxi_ehci->usbc_no]) {
+				ehci_first_probe[sunxi_ehci->usbc_no] = 0;
+				DMSG_INFO("[%s%d]: Not init ehci1\n",
+					  ehci_name, sunxi_ehci->usbc_no);
+				return 0;
+			}
+		}
 	}
 
 	/* creat a usb_hcd for the ehci controller */
@@ -645,12 +665,6 @@ static int sunxi_insmod_ehci(struct platform_device *pdev)
 	if (IS_ERR(sunxi_ehci->hci_regulator)) {
 		DMSG_WARN("%s()%d WARN: get hci regulator failed\n", __func__, __LINE__);
 		sunxi_ehci->hci_regulator = NULL;
-	}
-
-	sunxi_ehci->vbusin = regulator_get(dev, "vbusin");
-	if (IS_ERR(sunxi_ehci->vbusin)) {
-		DMSG_WARN("%s()%d WARN: get vbusin failed\n", __func__, __LINE__);
-		sunxi_ehci->vbusin = NULL;
 	}
 	/* echi start to work */
 	sunxi_start_ehci(sunxi_ehci);
@@ -685,6 +699,8 @@ static int sunxi_insmod_ehci(struct platform_device *pdev)
 	if (!sunxi_ehci->wakeup_suspend)
 		INIT_WORK(&sunxi_ehci->resume_work, sunxi_ehci_resume_work);
 #endif
+
+	atomic_add(1, &ehci_enable_flag[sunxi_ehci->usbc_no]);
 
 	sunxi_ehci->probe = 1;
 
@@ -773,8 +789,7 @@ static int sunxi_rmmod_ehci(struct platform_device *pdev)
 	if (sunxi_ehci->hci_regulator)
 		regulator_put(sunxi_ehci->hci_regulator);
 
-	if (sunxi_ehci->vbusin)
-		regulator_put(sunxi_ehci->vbusin);
+	atomic_sub(1, &ehci_enable_flag[sunxi_ehci->usbc_no]);
 
 	sunxi_ehci->hcd = NULL;
 
@@ -800,6 +815,13 @@ static int sunxi_ehci_hcd_probe(struct platform_device *pdev)
 	ret = init_sunxi_hci(pdev, SUNXI_USB_EHCI);
 	if (ret != 0) {
 		sunxi_err(&pdev->dev, "init_sunxi_hci is fail\n");
+		return -1;
+	}
+
+	/* Initialize dma_mask and coherent_dma_mask to 32-bits */
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+	if (ret) {
+		sunxi_err(&pdev->dev, "set dma mask and coherent fail\n");
 		return -1;
 	}
 
@@ -949,8 +971,6 @@ static int sunxi_ehci_hcd_suspend(struct device *dev)
 		DMSG_ERR("ERR: ehci is null\n");
 		return 0;
 	}
-	atomic_set(&hci_thread_suspend_flag, 1);
-	sunxi_ehci->is_suspend_flag = 1;
 
 	if (sunxi_ehci->wakeup_suspend == USB_STANDBY) {
 		DMSG_INFO("[%s] usb suspend\n", sunxi_ehci->hci_name);
@@ -969,13 +989,17 @@ static int sunxi_ehci_hcd_suspend(struct device *dev)
 #endif
 		enter_usb_standby(sunxi_ehci);
 
+	} else if (sunxi_ehci->wakeup_suspend == NORMAL_STANDBY) {
+		DMSG_INFO("[%s]: normal suspend\n", sunxi_ehci->hci_name);
+		val = ehci_readl(ehci, &ehci->regs->intr_enable);
+		val |= (0x7 << 0);
+		ehci_writel(ehci, val, &ehci->regs->intr_enable);
 	} else {
 		DMSG_INFO("[%s]super suspend\n", sunxi_ehci->hci_name);
 
 		ehci_suspend(hcd, device_may_wakeup(dev));
 		cancel_work_sync(&sunxi_ehci->resume_work);
 		sunxi_stop_ehci(sunxi_ehci);
-		sunxi_hci_set_vbus(sunxi_ehci, 0);
 	}
 
 	return 0;
@@ -988,7 +1012,6 @@ static void sunxi_ehci_resume_work(struct work_struct *work)
 	sunxi_ehci = container_of(work, struct sunxi_hci_hcd, resume_work);
 
 	sunxi_hcd_board_set_vbus(sunxi_ehci, 1);
-	sunxi_hci_set_vbus(sunxi_ehci, 1);
 }
 
 static int sunxi_ehci_hcd_resume(struct device *dev)
@@ -1038,6 +1061,8 @@ static int sunxi_ehci_hcd_resume(struct device *dev)
 
 #endif
 		enable_irq(sunxi_ehci->irq_no);
+	} else if (sunxi_ehci->wakeup_suspend == NORMAL_STANDBY) {
+		DMSG_INFO("[%s]:normal resume\n", sunxi_ehci->hci_name);
 	} else {
 		DMSG_INFO("[%s]super resume\n", sunxi_ehci->hci_name);
 
@@ -1058,8 +1083,6 @@ static int sunxi_ehci_hcd_resume(struct device *dev)
 
 		schedule_work(&sunxi_ehci->resume_work);
 	}
-	atomic_set(&hci_thread_suspend_flag, 0);
-	sunxi_ehci->is_suspend_flag = 0;
 
 	return 0;
 }
@@ -1187,4 +1210,4 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:" SUNXI_EHCI_NAME);
 MODULE_AUTHOR("javen");
-MODULE_VERSION("1.1.1");
+MODULE_VERSION("1.1.5");

@@ -218,12 +218,12 @@ s32 dsi_inst_busy(struct sunxi_dsi_lcd *dsi)
 	return dsi->reg->dsi_basic_ctl0.bits.inst_st;
 }
 
-s32 dsi_open(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *para)
+s32 dsi_open_hs_mode(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *para)
 {
-//	dsi_irq_enable(dsi, DSI_IRQ_VIDEO_VBLK);
-	dsi_start(dsi, DSI_START_HSD);
 	if (para->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
 		dsi_start(dsi, DSI_START_HSTX_CLK_BREAK);
+	else
+		dsi_start(dsi, DSI_START_HSTX);
 	return 0;
 }
 
@@ -393,17 +393,6 @@ s32 dsi_dcs_rd_memory(struct sunxi_dsi_lcd *dsi, u32 *p_data, u32 length)
 }
 
 #endif
-s32 dsi_clk_enable(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *para, u32 en)
-{
-	if (en) {
-		if (para->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
-			dsi_start(dsi, DSI_START_HSTX_CLK_BREAK);
-		else
-			dsi_start(dsi, DSI_START_HSC);
-	}
-
-	return 0;
-}
 
 static s32 dsi_basic_cfg(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *para)
 {
