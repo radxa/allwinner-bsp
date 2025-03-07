@@ -576,18 +576,14 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 {
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
 
-	//sunxi_pcie_plat_ltssm_disable(pci);
-	// if (sunxi_pcie_host_link_up(pp))
-	// 	sunxi_info(pci->dev, "pcie is already link up\n");
-	// else
-	// 	sunxi_pcie_plat_ltssm_disable(pci);
-	if (!sunxi_pcie_host_is_link_up(pp))
+	if (!sunxi_pcie_host_is_link_up(pp)) {
 		sunxi_pcie_plat_ltssm_disable(pci);
-	if (!IS_ERR(pci->rst_gpio))
-		gpiod_set_value(pci->rst_gpio, 0);
-	msleep(100);
-	if (!IS_ERR(pci->rst_gpio))
-		gpiod_set_value(pci->rst_gpio, 1);
+		if (!IS_ERR(pci->rst_gpio)) {
+			gpiod_set_raw_value(pci->rst_gpio, 0);
+			msleep(100);
+			gpiod_set_raw_value(pci->rst_gpio, 1);
+		}
+	}
 
 	sunxi_pcie_host_setup_rc(pp);
 
