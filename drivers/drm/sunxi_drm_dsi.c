@@ -435,7 +435,11 @@ static int sunxi_dsi_clk_config_disable(struct sunxi_drm_dsi *dsi)
 {
 	int ret = 0;
 
-	/* Since the registers were not saved, changes are made here to update the registers when enabled next time. */
+	if (dsi->displl_hs)
+		clk_set_rate(dsi->displl_hs, 24000000);
+	if (dsi->displl_ls)
+		clk_set_rate(dsi->displl_ls, 24000000);
+
 	clk_disable_unprepare(dsi->clk_bus);
 	clk_disable_unprepare(dsi->clk);
 	if (dsi->combphy)
