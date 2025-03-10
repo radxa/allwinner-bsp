@@ -20,6 +20,7 @@
 #define __LINUX_SUNXI_MBUS_H
 
 #include <linux/types.h>
+#include <linux/cdev.h>
 
 /* MBUS PMU ids */
 enum nsi_pmu {
@@ -163,6 +164,8 @@ static const char *const pmu_name[] = {
 extern int nsi_port_setpri(enum nsi_pmu port, unsigned int pri);
 extern int nsi_port_setqos(enum nsi_pmu port, unsigned int qos);
 extern bool nsi_probed(void);
+extern int notrace nsi_port_set_abs_bwl(enum nsi_pmu port, unsigned int bwl);
+extern int notrace nsi_port_set_abs_bwlen(enum nsi_pmu port, bool en);
 #endif
 
 #if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
