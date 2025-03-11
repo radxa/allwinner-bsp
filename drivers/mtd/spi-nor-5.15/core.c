@@ -3596,7 +3596,10 @@ static int spi_nor_probe(struct spi_mem *spimem)
 	const struct spi_nor_hwcaps hwcaps = { .mask = SNOR_HWCAPS_ALL };
 	char *flash_name;
 	int ret;
-	const char *type = "sunxipart";
+	const char * const type[] = {
+		"sunxipart",
+		NULL
+	};
 
 	nor = devm_kzalloc(&spi->dev, sizeof(*nor), GFP_KERNEL);
 	if (!nor)
@@ -3654,7 +3657,7 @@ static int spi_nor_probe(struct spi_mem *spimem)
 	if (ret)
 		return ret;
 
-	return mtd_device_parse_register(&nor->mtd, &type, NULL, NULL, 0);
+	return mtd_device_parse_register(&nor->mtd, type, NULL, NULL, 0);
 }
 
 static int spi_nor_remove(struct spi_mem *spimem)
