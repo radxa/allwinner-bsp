@@ -264,8 +264,13 @@ struct sunxi_pcie_ep {
 
 struct sunxi_pcie_ep_ops {
 	void	(*ep_init)(struct sunxi_pcie_ep *ep);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 	int	(*raise_irq)(struct sunxi_pcie_ep *ep, u8 func_no,
 			     enum pci_epc_irq_type type, u16 interrupt_num);
+#else
+	int	(*raise_irq)(struct sunxi_pcie_ep *ep, u8 func_no,
+			     unsigned int type, u16 interrupt_num);
+#endif
 	const struct pci_epc_features *(*get_features)(struct sunxi_pcie_ep *ep);
 	unsigned int (*func_conf_select)(struct sunxi_pcie_ep *ep, u8 func_no);
 };
