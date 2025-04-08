@@ -28,6 +28,18 @@ inline void ss_writel(u32 offset, u32 val)
 	writel(val, ss_membase() + offset);
 }
 
+#ifdef CE_DBL_ENT_SRC_EN
+void ss_trng_dbl_ent_en(void)
+{
+	u32 reg_val;
+
+	reg_val = ss_readl(CE_REG_TRNG_ENT);
+	/* enable double entropy source */
+	reg_val |= CE_DBL_ENT_SRC_EN;
+	ss_writel(CE_REG_TRNG_ENT, reg_val);
+}
+#endif
+
 u32 ss_reg_rd(u32 offset)
 {
 	return ss_readl(offset);
@@ -378,8 +390,15 @@ void ss_ctrl_start(ce_task_desc_t *task, int type, int mode)
 
 	if (type == SS_METHOD_RAES)
 		ss_writel(CE_REG_TLR, 0x1 << CE_REG_TLR_RAES_TYPE_SHIFT);
-	else if (CE_METHOD_IS_AES(type) && (mode == SS_AES_MODE_XTS))
+#ifdef SS_METHOD_AES_XTS
+	else if (CE_METHOD_IS_AES(type) && (mode == SS_AES_MODE_XTS)) {
+		ss_writel(CE_REG_TLR, 0x1 << CE_REG_TLR_SYMM_TYPE_SHIFT);
+	}
+#else
+	else if (CE_METHOD_IS_AES(type) && (mode == SS_AES_MODE_XTS)) {
 		ss_writel(CE_REG_TLR, 0x1 << CE_REG_TLR_RAES_TYPE_SHIFT);
+	}
+#endif
 	else if (CE_METHOD_IS_AES(type) && (mode != SS_AES_MODE_XTS))
 		ss_writel(CE_REG_TLR, 0x1 << CE_REG_TLR_SYMM_TYPE_SHIFT);
 	else
@@ -510,6 +529,16 @@ void ss_hash_rng_ctrl_start(ce_new_task_desc_t *task)
 
 	ss_writel(CE_REG_TLR, 0x1 << CE_REG_TLR_HASH_RBG_TYPE_SHIFT);
 	task->task_phy_addr = task_phy;
+}
+
+void ss_hash_total_data_len_set(u64 len, ce_new_task_desc_t *task)
+{
+	if (len > 0xffffffff) {
+		task->reserved[2] = len & 0xffffffff;
+		task->reserved[1] = len >> 32;
+	} else {
+		task->reserved[2] = len;
+	}
 }
 
 void ss_hash_data_len_set(int len, ce_new_task_desc_t *task)

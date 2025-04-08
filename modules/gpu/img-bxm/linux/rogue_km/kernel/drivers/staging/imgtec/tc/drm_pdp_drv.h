@@ -52,13 +52,13 @@
 #include <drm/drmP.h>
 #endif
 
-#include <drm/drm_crtc.h>
-#include <drm/drm_crtc_helper.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_mm.h>
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
 #include <drm/drm_plane.h>
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0))
+#include <drm/drm_framebuffer.h>
 #endif
 
 #include "pdp_common.h"
@@ -97,7 +97,7 @@ struct pdp_drm_private {
 	enum pdp_output_device outdev;
 	uint32_t pdp_interrupt;
 
-	/* PDP FBC Decompression module support  */
+	/* PDP FBC Decompression module support */
 	bool pfim_capable;
 
 	/* initialised by pdp_modeset_early_init */
@@ -167,7 +167,6 @@ struct pdp_fbdev {
 	struct drm_fb_helper helper;
 	struct pdp_framebuffer fb;
 	struct pdp_drm_private *priv;
-	u8 preferred_bpp;
 };
 #endif
 
@@ -210,9 +209,6 @@ void pdp_crtc_set_plane_enabled(struct drm_crtc *crtc, bool enable);
 void pdp_crtc_set_vblank_enabled(struct drm_crtc *crtc, bool enable);
 void pdp_crtc_irq_handler(struct drm_crtc *crtc);
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0))
-void pdp_crtc_flip_event_cancel(struct drm_crtc *crtc, struct drm_file *file);
-#endif
 
 struct drm_connector *pdp_dvi_connector_create(struct drm_device *dev);
 

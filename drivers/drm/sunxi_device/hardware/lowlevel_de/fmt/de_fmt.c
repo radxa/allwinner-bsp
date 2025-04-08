@@ -3,35 +3,35 @@
 /*
  * Allwinner SoCs display driver.
  *
- * Copyright (C) 2017 Allwinner.
+ * Copyright (C) 2023 Allwinner.
  *
  * This file is licensed under the terms of the GNU General Public
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  */
 
-#include "de_fmt_type.h"
-#include "../../include.h"
-#include "de_feat.h"
-#include "de_top.h"
-#include "de_rtmx.h"
+#include <linux/kernel.h>
 #include "de_fmt.h"
+#include "de_fmt_type.h"
+#include "de_fmt_platform.h"
 
 enum {
 	FMT_FMT_REG_BLK = 0,
 	FMT_REG_BLK_NUM,
 };
 
-struct de_fmt_private {
-	struct de_reg_mem_info reg_mem_info;
-	u32 reg_blk_num;
-	struct de_reg_block reg_blks[FMT_REG_BLK_NUM];
-
-	void (*set_blk_dirty)(struct de_fmt_private *priv,
-		u32 blk_id, u32 dirty);
+struct fmt_debug_info {
+	bool enable;
+	struct de_fmt_info info;
 };
 
-static struct de_fmt_private fmt_priv[DE_NUM];
+struct de_fmt_private {
+	struct de_reg_mem_info reg_mem_info;
+	const struct de_fmt_desc *dsc;
+	struct fmt_debug_info debug;
+	u32 reg_blk_num;
+	struct de_reg_block reg_blks[FMT_REG_BLK_NUM];
+};
 
 static inline struct fmt_reg *get_fmt_reg(struct de_fmt_private *priv)
 {
@@ -42,67 +42,68 @@ static void fmt_set_block_dirty(
 	struct de_fmt_private *priv, u32 blk_id, u32 dirty)
 {
 	priv->reg_blks[blk_id].dirty = dirty;
+	if (priv->reg_blks[blk_id].rcq_hd)
+		priv->reg_blks[blk_id].rcq_hd->dirty.dwval = dirty;
 }
 
-static void fmt_set_rcq_head_dirty(
-	struct de_fmt_private *priv, u32 blk_id, u32 dirty)
+void de_fmt_dump_state(struct drm_printer *p, struct de_fmt_handle *hdl)
 {
-	if (priv->reg_blks[blk_id].rcq_hd) {
-		priv->reg_blks[blk_id].rcq_hd->dirty.dwval = dirty;
-	} else {
-		DE_WARN("rcq_head is null ! blk_id=%d\n", blk_id);
+	struct fmt_debug_info *debug = &hdl->private->debug;
+	unsigned long base = (unsigned long)hdl->private->reg_blks[0].reg_addr;
+	unsigned long de_base = (unsigned long)hdl->cinfo.de_reg_base;
+
+	drm_printf(p, "\tfmt@%8x: %sable\n", (unsigned int)(base - de_base),
+		   debug->enable ? "en" : "dis");
+	if (debug->enable) {
+		drm_printf(p, "\t\twxh: %dx%d colorfmt: %d yuv_sampling: %d bits: %d\n",
+			   debug->info.width, debug->info.height,
+			   debug->info.px_fmt_space,
+			   debug->info.yuv_sampling,
+			   debug->info.bits);
 	}
 }
 
-s32 de_fmt_set_para(u32 disp)
+s32 de_fmt_apply(struct de_fmt_handle *hdl, const struct de_fmt_info *out_info)
 {
-	struct de_rtmx_context *ctx = de_rtmx_get_context(disp);
-	struct de_output_info *output = &(ctx->output);
-
-	struct de_fmt_private *priv = &fmt_priv[disp];
+	struct de_fmt_private *priv = hdl->private;
 	struct fmt_reg *reg = get_fmt_reg(priv);
 	u32 dwval;
 
-	if (output->px_fmt_space == DE_FORMAT_SPACE_YUV)
-		reg->ctl.dwval = 1;
-	else
+	if (out_info->px_fmt_space != DE_FORMAT_SPACE_YUV) {
 		reg->ctl.dwval = 0;
+		fmt_set_block_dirty(priv, FMT_FMT_REG_BLK, 1);
+		priv->debug.enable = false;
+		return 0;
+	}
 
-	dwval = (output->scn_width ?
-		((output->scn_width - 1) & 0x1FFF) : 0)
-		| (output->scn_height ?
-		(((output->scn_height - 1) & 0x1FFF) << 16) : 0);
+	reg->ctl.dwval = 1;
+	priv->debug.enable = true;
+	memcpy(&priv->debug.info, out_info, sizeof(priv->debug.info));
+
+	dwval = (out_info->width ?
+		((out_info->width - 1) & 0x1FFF) : 0)
+		| (out_info->height ?
+		(((out_info->height - 1) & 0x1FFF) << 16) : 0);
 	reg->size.dwval = dwval;
 
 	reg->swap.dwval = 0;
 
-	reg->bitdepth.dwval = (output->data_bits == DE_DATA_8BITS) ? 0 : 1;
+	reg->bitdepth.dwval = (out_info->bits == DE_DATA_8BITS) ? 0 : 1;
 
 	dwval = 0;
-	if (output->px_fmt_space == DE_FORMAT_SPACE_YUV) {
-		if (output->yuv_sampling == DE_YUV422) {
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
-			if (output->tcon_id != 2) /* use hdmi csc for 444->422 */
-				dwval = 1;
-#else
+	if (out_info->px_fmt_space == DE_FORMAT_SPACE_YUV) {
+		if (out_info->yuv_sampling == DE_YUV422)
 			dwval = 1;
-#endif
-		} else if (output->yuv_sampling == DE_YUV420)
+		else if (out_info->yuv_sampling == DE_YUV420)
 			dwval = 2;
 	}
 	reg->fmt_type.dwval = dwval;
 
 	reg->coeff.dwval = 0;
 
-	if ((output->px_fmt_space == DE_FORMAT_SPACE_RGB)
-		|| ((output->px_fmt_space == DE_FORMAT_SPACE_YUV)
-		&& (output->yuv_sampling == DE_YUV444))
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
-		|| ((output->px_fmt_space == DE_FORMAT_SPACE_YUV)
-		&& (output->yuv_sampling == DE_YUV422)
-		&& (output->tcon_id == 2))
-#endif
-		) {
+	if (out_info->px_fmt_space == DE_FORMAT_SPACE_RGB ||
+	    (out_info->px_fmt_space == DE_FORMAT_SPACE_YUV &&
+	     out_info->yuv_sampling == DE_YUV444)) {
 		reg->limit_y.dwval = 0x0fff0000;
 		reg->limit_c0.dwval = 0x0fff0000;
 		reg->limit_c1.dwval = 0x0fff0000;
@@ -112,30 +113,42 @@ s32 de_fmt_set_para(u32 disp)
 		reg->limit_c1.dwval = 0xf000100;
 	}
 
-	priv->set_blk_dirty(priv, FMT_FMT_REG_BLK, 1);
+	fmt_set_block_dirty(priv, FMT_FMT_REG_BLK, 1);
 
 	return 0;
 }
 
-s32 de_fmt_init(u32 disp, u8 __iomem *de_reg_base)
+struct de_fmt_handle *de_fmt_create(struct module_create_info *info)
 {
-
-	u8 __iomem *reg_base = de_reg_base
-		+ DE_DISP_OFFSET(disp) + DISP_FMT_OFFSET;
-	u32 rcq_used = de_feat_is_using_rcq(disp);
-
-	struct de_fmt_private *priv = &fmt_priv[disp];
-	struct de_reg_mem_info *reg_mem_info = &(priv->reg_mem_info);
+	int i;
+	struct de_fmt_handle *hdl;
 	struct de_reg_block *block;
+	struct de_reg_mem_info *reg_mem_info;
+	struct de_fmt_private *priv;
+	u8 __iomem *reg_base;
+	const struct de_fmt_desc *dsc;
+
+	dsc = get_fmt_dsc(info);
+	if (!dsc)
+		return NULL;
+	hdl = kmalloc(sizeof(*hdl), GFP_KERNEL | __GFP_ZERO);
+	hdl->private = kmalloc(sizeof(*hdl->private), GFP_KERNEL | __GFP_ZERO);
+	hdl->disp_reg_base = dsc->disp_base;
+	memcpy(&hdl->cinfo, info, sizeof(*info));
+
+	hdl->private->dsc = dsc;
+	reg_base = info->de_reg_base + dsc->disp_base + dsc->fmt_offset;
+	priv = hdl->private;
+	reg_mem_info = &priv->reg_mem_info;
 
 	reg_mem_info->size = sizeof(struct fmt_reg);
-	reg_mem_info->vir_addr = (u8 *)de_top_reg_memory_alloc(
+	reg_mem_info->vir_addr = (u8 *)sunxi_de_reg_buffer_alloc(hdl->cinfo.de,
 		reg_mem_info->size, (void *)&(reg_mem_info->phy_addr),
-		rcq_used);
+		info->update_mode == RCQ_MODE);
 	if (NULL == reg_mem_info->vir_addr) {
-		DE_WARN("alloc bld[%d] mm fail!size=0x%x\n",
-		     disp, reg_mem_info->size);
-		return -1;
+		DRM_ERROR("alloc fmt[%d] mm fail!size=0x%x\n",
+			  info->id, reg_mem_info->size);
+		return ERR_PTR(-ENOMEM);
 	}
 
 	block = &(priv->reg_blks[FMT_FMT_REG_BLK]);
@@ -146,47 +159,10 @@ s32 de_fmt_init(u32 disp, u8 __iomem *de_reg_base)
 
 	priv->reg_blk_num = FMT_REG_BLK_NUM;
 
-	if (rcq_used)
-		priv->set_blk_dirty = fmt_set_rcq_head_dirty;
-	else
-		priv->set_blk_dirty = fmt_set_block_dirty;
+	hdl->block_num = priv->reg_blk_num;
+	hdl->block = kmalloc_array(hdl->block_num, sizeof(block[0]), GFP_KERNEL | __GFP_ZERO);
+	for (i = 0; i < hdl->private->reg_blk_num; i++)
+		hdl->block[i] = &priv->reg_blks[i];
 
-	return 0;
-}
-
-s32 de_fmt_exit(u32 disp)
-{
-
-	struct de_fmt_private *priv = &fmt_priv[disp];
-	struct de_reg_mem_info *reg_mem_info = &(priv->reg_mem_info);
-
-	if (reg_mem_info->vir_addr != NULL)
-		de_top_reg_memory_free(reg_mem_info->vir_addr,
-			reg_mem_info->phy_addr, reg_mem_info->size);
-
-	return 0;
-}
-
-s32 de_fmt_get_reg_blocks(u32 disp,
-	struct de_reg_block **blks, u32 *blk_num)
-{
-	struct de_fmt_private *priv = &(fmt_priv[disp]);
-	u32 i, num;
-
-	if (blks == NULL) {
-		*blk_num = priv->reg_blk_num;
-		return 0;
-	}
-
-	if (*blk_num >= priv->reg_blk_num) {
-		num = priv->reg_blk_num;
-	} else {
-		num = *blk_num;
-		DE_WARN("should not happen\n");
-	}
-	for (i = 0; i < num; ++i)
-		blks[i] = priv->reg_blks + i;
-
-	*blk_num = i;
-	return 0;
+	return hdl;
 }

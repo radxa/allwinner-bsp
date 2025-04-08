@@ -53,11 +53,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <asm/page.h>
 
 #if defined(CONFIG_X86)
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,2,0))
-#include <asm/fpu/internal.h>
-#else
-#include <asm/i387.h>
-#endif
+#include <asm/fpu/api.h>
 #endif
 
 #define MAX_DRVNAME 128
@@ -329,7 +325,7 @@ PVRSRV_ERROR DC_OSPVRServicesSetupFuncs(IMG_HANDLE hPVRServicesConnection, DC_SE
 	psServicesFuncs->pfnDCImportBufferAcquire = DCImportBufferAcquire;
 	psServicesFuncs->pfnDCImportBufferRelease = DCImportBufferRelease;
 
-	psServicesFuncs->pfnPhysHeapAcquireByUsage = PhysHeapAcquireByUsage;
+	psServicesFuncs->pfnPhysHeapAcquireByID = PhysHeapAcquireByID;
 	psServicesFuncs->pfnPhysHeapRelease = PhysHeapRelease;
 	psServicesFuncs->pfnPhysHeapGetType = PhysHeapGetType;
 	psServicesFuncs->pfnPhysHeapGetSize = PhysHeapGetSize;

@@ -111,6 +111,12 @@ enum cmb_mipi_yuv_seq {
 };
 
 enum phy_link_mode {
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+	TWO_1LANE = 0x0, /* 2x1lane, default */
+	ONE_2LANE = 0x1, /* 1x2lane */
+#elif IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+	TWO_4LANE_ONE_2LANE = 0x0, /*2x4-lane(phya+phyb) + 1x2-lane)*/
+#else /* CONFIG_ARCH_SUN55IW3 CONFIG_ARCH_SUN55IW6 */
 	FOUR_2LANE = 0x0, /*4x2lane, 4x1lane, default*/
 	ONE_4LANE_PHYA = 0x1, /*2x2lane+1x4lane(phya+phyb)*/
 	ONE_4LANE_PHYC = 0x2, /*2x2lane+1x4lane(phyc+phyd)*/
@@ -118,6 +124,7 @@ enum phy_link_mode {
 	TWO_4LANE_ONE_2LANE = 0x4, /*2x4lane+1x2lane*/
 	LANE_2 = 0xfffe,
 	LANE_4 = 0xffff,
+#endif
 };
 
 /*
@@ -207,7 +214,7 @@ void cmb_phy0_work_mode(unsigned int sel, unsigned int mode);
 void cmb_phy0_ofscal_cfg(unsigned int sel);
 void cmb_phy_deskew_en(unsigned int sel, struct phy_lane_cfg phy_lane_cfg);
 void cmb_term_ctl(unsigned int sel, struct phy_lane_cfg phy_lane_cfg);
-void cmb_phy_deskew1_cfg(unsigned int sel);
+void cmb_phy_deskew1_cfg(unsigned int sel, unsigned int deskew, bool deskew_lane_cfg);
 unsigned int cmb_phy_deskew1_cfg_get(unsigned int sel);
 void cmb_hs_ctl(unsigned int sel, struct phy_lane_cfg phy_lane_cfg);
 void cmb_s2p_ctl(unsigned int sel, unsigned int dly, struct phy_lane_cfg phy_lane_cfg);

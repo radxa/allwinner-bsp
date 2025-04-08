@@ -18,16 +18,8 @@
  * Margarita Olaya Cabrera <magi@slimlogic.co.uk>
  */
 
-#include <linux/err.h>
-#include <linux/init.h>
-#include <linux/module.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
-#include <linux/platform_device.h>
-#include <linux/regmap.h>
-#include <power/pmu-ext.h>
-#include <linux/regulator/driver.h>
-#include <linux/regulator/of_regulator.h>
+#include "sunxi-power-regulator.h"
+#include "pmu-ext.h"
 
 #define PMU_EXT_REGULATOR_STEP_DELAY(_family, _id, _match, _supply, _min, _max, _step, _vreg,	\
 		 _vmask, _ereg, _emask)								\
@@ -129,6 +121,36 @@
 		.ops		= &axp1530_ext_sw_dvm_ops_range_step_delay,				\
 	}
 
+#define AW37501_DESC_SW(_family, _id, _match, _supply)		\
+	[_family##_##_id] = {							\
+		.name		= (_match),					\
+		.supply_name	= (_supply),					\
+		.of_match	= of_match_ptr(_match),				\
+		.regulators_node = of_match_ptr("regulators"),			\
+		.type		= REGULATOR_VOLTAGE,				\
+		.id		= _family##_##_id,				\
+		.owner		= THIS_MODULE,					\
+		.ops		= &aw37501_ops_sw,				\
+	}
+
+#define OCP2131_REGULATOR_VOL_DELAY(_family, _id, _match, _supply, _min, _max, _step, _vreg,	\
+		 _vmask)								\
+	[_family##_##_id] = {									\
+		.name		= (_match),							\
+		.supply_name	= (_supply),							\
+		.of_match	= of_match_ptr(_match),						\
+		.regulators_node = of_match_ptr("regulators"),					\
+		.type		= REGULATOR_VOLTAGE,						\
+		.id		= _family##_##_id,						\
+		.n_voltages	= (((_max) - (_min)) / (_step) + 1),				\
+		.owner		= THIS_MODULE,							\
+		.min_uV		= (_min) * 1000,						\
+		.uV_step	= (_step) * 1000,						\
+		.vsel_reg	= (_vreg),							\
+		.vsel_mask	= (_vmask),							\
+		.ops		= &ocp2131_ops_vol_delay,					\
+	}
+
 struct regulator_delay {
 	u32 step;
 	u32 final;
@@ -140,7 +162,10 @@ static int pmu_ext_set_voltage_time_sel(struct regulator_dev *rdev,
 	struct regulator_delay *delay = (struct regulator_delay *)rdev->reg_data;
 	int delay_time;
 
-	delay_time = (abs(new_selector - old_selector) * delay->step + delay->final + 999) / 1000;
+	if (abs(new_selector - old_selector))
+		delay_time = (abs(new_selector - old_selector) * delay->step + delay->final + 999) / 1000;
+	else
+		delay_time = 0;
 
 	return delay_time * 1000;
 };
@@ -317,6 +342,40 @@ static int axp1530_ext_sw_dvm_set_voltage_sel_regmap
 	return ret;
 }
 
+static int regulator_is_enabled_regmap_aw37501(struct regulator_dev *rdev)
+{
+	unsigned int val;
+	int ret;
+
+	ret = regmap_read(rdev->regmap, AW37501_OUTPUT_EN, &val);
+	if (ret)
+		return ret;
+
+	return ((val & 0x18) == 0x18);
+}
+
+static int regulator_enable_regmap_aw37501(struct regulator_dev *rdev)
+{
+	int ret = 0;
+
+	regmap_write(rdev->regmap, AW37501_WRITE_PROTECT, 0x4c);
+	regmap_update_bits(rdev->regmap, AW37501_OUTPUT_EN, 0x18, 0x18);
+	regmap_write(rdev->regmap, AW37501_WRITE_PROTECT, 0);
+
+	return ret;
+}
+
+static int regulator_disable_regmap_aw37501(struct regulator_dev *rdev)
+{
+	int ret = 0;
+
+	regmap_write(rdev->regmap, AW37501_WRITE_PROTECT, 0x4c);
+	regmap_update_bits(rdev->regmap, AW37501_OUTPUT_EN, 0x18, 0);
+	regmap_write(rdev->regmap, AW37501_WRITE_PROTECT, 0);
+
+	return ret;
+}
+
 static struct regulator_ops pmu_ext_ops_step_delay = {
 	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
 	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
@@ -364,6 +423,18 @@ static struct regulator_ops pmu_ext_ops_range_vol_delay = {
 	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
 	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
 	.list_voltage		= regulator_list_voltage_linear_range,
+};
+
+static struct regulator_ops aw37501_ops_sw = {
+	.enable			= regulator_enable_regmap_aw37501,
+	.disable		= regulator_disable_regmap_aw37501,
+	.is_enabled		= regulator_is_enabled_regmap_aw37501,
+};
+
+static struct regulator_ops ocp2131_ops_vol_delay = {
+	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
+	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
+	.list_voltage		= regulator_list_voltage_linear,
 };
 
 static const struct linear_range axp1530_dcdc1_ranges[] = {
@@ -427,6 +498,17 @@ static const struct regulator_desc sy8827g_regulators[] = {
 			0x40, SY8827G_VSEL1, GENMASK(5, 0), SY8827G_VSEL1, BIT(7)),
 };
 
+static const struct regulator_desc aw37501_regulators[] = {
+	AW37501_DESC_SW(AW37501, LDO, "ldo", "vin1"),
+};
+
+static const struct regulator_desc ocp2131_regulators[] = {
+	OCP2131_REGULATOR_VOL_DELAY(OCP2131, AVDD, "avdd", "avddin", 4000, 6000, 100,
+		OCP2131_POS_OUTPUT_AVDD, 0x1f),
+	OCP2131_REGULATOR_VOL_DELAY(OCP2131, AVEE, "avee", "aveein", 4000, 6000, 100,
+		OCP2131_NEG_OUTPUT_AVEE, 0x1f),
+};
+
 static int pmu_ext_regulator_probe(struct platform_device *pdev)
 {
 	struct regulator_dev *rdev;
@@ -453,6 +535,14 @@ static int pmu_ext_regulator_probe(struct platform_device *pdev)
 	case SY8827G_ID:
 		regulators = sy8827g_regulators;
 		nregulators = SY8827G_REG_ID_MAX;
+		break;
+	case AW37501_ID:
+		regulators = aw37501_regulators;
+		nregulators = AW37501_REG_ID_MAX;
+		break;
+	case OCP2131_ID:
+		regulators = ocp2131_regulators;
+		nregulators = OCP2131_REG_ID_MAX;
 		break;
 	default:
 		PMIC_DEV_ERR(&pdev->dev, "Unsupported pmu_ext variant: %ld\n",
@@ -497,9 +587,16 @@ static int pmu_ext_regulator_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static struct of_device_id pmu_ext_match_table[] = {
+	{ .compatible = "ext,aw37501-regulator" },
+	{ .compatible = "ext,ocp2131-regulator" },
+	{ /* sentinel */ },
+};
+
 static struct platform_driver pmu_ext_regulator_driver = {
 	.driver = {
 		.name = "pmu-ext-regulator",
+		.of_match_table = pmu_ext_match_table,
 	},
 	.probe = pmu_ext_regulator_probe,
 	.remove	= pmu_ext_regulator_remove,

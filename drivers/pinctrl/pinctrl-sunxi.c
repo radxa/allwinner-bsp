@@ -11,8 +11,6 @@
  * License version 2.  This program is licensed "as is" without any
  * warranty of any kind, whether express or implied.
  */
-
-#include <sunxi-log.h>
 #include <linux/io.h>
 #include <linux/clk.h>
 #include <linux/gpio/driver.h>
@@ -39,7 +37,7 @@
 #if IS_ENABLED(CONFIG_SUNXI_RPROC_SHARE_IRQ)
 #include <linux/irqnr.h>
 #include <linux/irq.h>
-#include <remoteproc/sunxi_remoteproc.h>
+#include <linux/remoteproc/sunxi_remoteproc.h>
 #endif
 #if IS_ENABLED(CONFIG_RISCV)
 #include <asm/sbi.h>
@@ -48,6 +46,7 @@
 #include "core.h"
 #include "pinctrl-sunxi.h"
 
+#define SUNXI_PINCTRL_CORE_VERSION	"1.4.8"
 #define SUNXI_PINCTRL_I2S0_ROUTE_PAD
 /* Indexed by `enum sunxi_pinctrl_hw_type` */
 struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
@@ -156,6 +155,8 @@ struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
 		.initial_bank_offset	= 0x80,
 		.mux_regs_offset	= 0x0,
 		.data_regs_offset	= 0x10,
+		.data_set_regs_offset	= 0x14,
+		.data_clr_regs_offset	= 0x18,
 		.dlevel_regs_offset	= 0x20,
 		.bank_mem_size		= 0x80,
 		.pull_regs_offset	= 0x30,
@@ -175,6 +176,7 @@ struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
 		.power_mode_val_reg	= 0x48,
 		.pio_pow_ctrl_reg	= 0x70,
 		.power_mode_reverse	= false,
+		.data_set_mode_select	= false,
 	},
 	{
 		.initial_bank_offset	= 0x0,
@@ -224,6 +226,81 @@ struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
 		.power_mode_val_reg	= 0x348,
 		.pio_pow_ctrl_reg	= 0x350,
 		.power_mode_reverse	= true,
+		.power_mode_detect	= true,
+	},
+	{
+		.initial_bank_offset	= 0x0,
+		.mux_regs_offset	= 0x0,
+		.data_regs_offset	= 0x500,
+		.data_reg_irregular	= true,
+		.data_mem_size		= 0x10,
+		.data_set_regs_offset	= 0x504,
+		.data_clr_regs_offset	= 0x508,
+		.dlevel_regs_offset	= 0x14,
+		.bank_mem_size          = 0x30,
+		.pull_regs_offset       = 0x24,
+		.dlevel_pins_per_reg    = 8,
+		.dlevel_pins_bits       = 4,
+		.dlevel_pins_mask       = 0xF,
+		.irq_mux_val         	= 0xE,
+		.irq_cfg_reg		= 0x200,
+		.irq_ctrl_reg		= 0x210,
+		.irq_status_reg		= 0x214,
+		.irq_debounce_reg	= 0x218,
+		.irq_mem_base		= 0x200,
+		.irq_mem_size		= 0x20,
+		.irq_mem_used		= 0x20,
+		.power_mode_sel_reg	= 0x340,
+		.power_mode_ctrl_reg	= 0x344,
+		.power_mode_val_reg	= 0x348,
+		.pio_pow_ctrl_reg	= 0x350,
+		.power_mode_reverse	= true,
+		.power_mode_detect	= true,
+		.data_set_mode_select	= false,
+	},
+	{
+		.initial_bank_offset	= 0x0,
+		.mux_regs_offset	= 0x0,
+		.data_regs_offset	= 0x10,
+		.data_mem_size		= 0x30,
+		.dlevel_regs_offset	= 0x14,
+		.bank_mem_size          = 0x30,
+		.pull_regs_offset       = 0x24,
+		.dlevel_pins_per_reg    = 8,
+		.dlevel_pins_bits       = 4,
+		.dlevel_pins_mask       = 0xF,
+		.irq_mux_val         	= 0xE,
+		.irq_cfg_reg		= 0x40,
+		.irq_ctrl_reg		= 0x50,
+		.irq_status_reg		= 0x54,
+		.irq_debounce_reg	= 0x58,
+		.irq_mem_base		= 0x40,
+		.irq_mem_size		= 0x20,
+		.irq_mem_used		= 0x20,
+	},
+	{
+		.initial_bank_offset	= 0x0,
+		.mux_regs_offset	= 0x0,
+		.data_regs_offset	= 0x10,
+		.dlevel_regs_offset	= 0x14,
+		.bank_mem_size          = 0x30,
+		.pull_regs_offset       = 0x24,
+		.dlevel_pins_per_reg    = 8,
+		.dlevel_pins_bits       = 4,
+		.dlevel_pins_mask       = 0xF,
+		.irq_mux_val         	= 0xE,
+		.irq_cfg_reg		= 0x200,
+		.irq_ctrl_reg		= 0x210,
+		.irq_status_reg		= 0x214,
+		.irq_debounce_reg	= 0x218,
+		.irq_mem_base		= 0x200,
+		.irq_mem_size		= 0x20,
+		.irq_mem_used		= 0x20,
+		.power_mode_sel_reg	= 0x340,
+		.power_mode_ctrl_reg	= 0x344,
+		.power_mode_val_reg	= 0x348,
+		.pio_pow_ctrl_reg	= 0x350,
+		.power_mode_reverse	= false,
 		.power_mode_detect	= true,
 	},
 };
@@ -1176,6 +1253,56 @@ static int sunxi_pconf_group_get(struct pinctrl_dev *pctldev,
 	return sunxi_pconf_get(pctldev, g->pin, config);
 }
 
+static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin, u32 target_mV)
+{
+	u32 val, reg;
+	u32 current_mV;
+	unsigned long flags;
+	unsigned short bank = pin / PINS_PER_BANK;
+	enum sunxi_pinctrl_hw_type hw_type = pctl->desc->hw_type;
+	void __iomem *pow_val_addr = pctl->membase + sunxi_pinctrl_hw_info[hw_type].power_mode_val_reg;
+	u32 pio_pow_ctrl_reg = sunxi_pinctrl_hw_info[hw_type].pio_pow_ctrl_reg;
+	u32 power_mode_val_reg = sunxi_pinctrl_hw_info[hw_type].power_mode_val_reg;
+
+	current_mV = readl(pctl->membase + pio_pow_ctrl_reg);
+	current_mV = current_mV == 0 ? 1800 : 3300;
+
+	sunxi_debug(NULL, "pf-switch to %d from %d\n", target_mV, current_mV);
+	if (current_mV < target_mV) { /* Increase the voltage */
+		raw_spin_lock_irqsave(&pctl->lock, flags);
+		val = 1;
+		writel(val, pctl->membase + pio_pow_ctrl_reg);
+		raw_spin_unlock_irqrestore(&pctl->lock, flags);
+
+		/* Wait for voltage increasing. Double check! */
+		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, reg & BIT(bank * 2), 100, 10000));
+		udelay(10);
+
+		sunxi_debug(NULL, "pf-switch-increase: Wait for voltage increase done[0x%x=0x%x] pf[0x%x=0x%x]\n",
+				power_mode_val_reg, readl(pctl->membase + power_mode_val_reg),
+				pio_pow_ctrl_reg, readl(pctl->membase + pio_pow_ctrl_reg));
+		if (!(readl(pow_val_addr) & BIT(bank * 2)))
+			panic("PF voltage switching failed, please be aware!");
+	} else if (current_mV > target_mV) { /* Decrease the voltage */
+		raw_spin_lock_irqsave(&pctl->lock, flags);
+		/* Decrease the voltage */
+		val = 0;
+		writel(val, pctl->membase + pio_pow_ctrl_reg);
+		raw_spin_unlock_irqrestore(&pctl->lock, flags);
+
+		/* Wait for voltage decreasing. Double check! */
+		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !(reg & BIT(bank * 2)), 100, 10000));
+		udelay(10);
+
+		sunxi_debug(NULL, "pf-switch-decrease: Wait for voltage decrease done[0x%x=0x%x] pf[0x%x=0x%x]\n",
+				power_mode_val_reg, readl(pctl->membase + power_mode_val_reg),
+				pio_pow_ctrl_reg, readl(pctl->membase + pio_pow_ctrl_reg));
+
+		if (readl(pow_val_addr) & BIT(bank * 2))
+			panic("PF voltage switching failed, please be aware!");
+	}
+	sunxi_debug(NULL, "pf-switch to %d from %d ok\n", target_mV, current_mV);
+}
 static void sunxi_power_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin, u32 target_mV)
 {
 	u32 val, reg;
@@ -1334,7 +1461,10 @@ static int sunxi_pconf_set(struct pinctrl_dev *pctldev, unsigned pin,
 			 * Only PF port as SDIO supports power source setting,
 			 * configure pio group withstand voltage mode for PF.
 			 */
-			sunxi_power_switch_pf(pctl, pin, arg);
+			if (pctl->desc->auto_power_source_switch)
+				sunxi_power_auto_switch_pf(pctl, pin, arg);
+			else
+				sunxi_power_switch_pf(pctl, pin, arg);
 
 			break;
 		case PIN_CONFIG_INPUT_DEBOUNCE:
@@ -1515,6 +1645,11 @@ static int sunxi_pmx_request(struct pinctrl_dev *pctldev, unsigned offset)
 	char supply_name[16];
 	int ret;
 
+	if (pctl->desc->auto_power_source_switch) {
+		sunxi_info_once(pctl->dev, "Auto power withstand voltage configuration detected, automatically exit!\n");
+		return 0;
+	}
+
 	if (refcount_read(&s_reg->refcount)) {
 		sunxi_debug(pctl->dev, "bank P%c regulator has been opened\n",
 			'A' + bank);
@@ -1604,7 +1739,7 @@ static int sunxi_pmx_request(struct pinctrl_dev *pctldev, unsigned offset)
 	}
 
 	/* Skip bank PF because we don't know which voltage to use now */
-	if (!(pctl->desc->pf_power_source_switch && bank == 5))
+	if (!(pctl->desc->pf_power_source_switch && bank == 5) && !(pctl->desc->auto_power_source_switch))
 		sunxi_pinctrl_set_io_bias_cfg(pctl, offset, reg);
 
 	s_reg->regulator = reg;
@@ -1630,6 +1765,11 @@ static int sunxi_pmx_free(struct pinctrl_dev *pctldev, unsigned offset)
 	unsigned short bank_offset = bank - pctl->desc->pin_base /
 					    PINS_PER_BANK;
 	struct sunxi_pinctrl_regulator *s_reg = &pctl->regulators[bank_offset];
+
+	if (pctl->desc->auto_power_source_switch) {
+		sunxi_info_once(pctl->dev, "Auto power withstand voltage configuration detected, automatically exit!\n");
+		return 0;
+	}
 
 	if (!refcount_dec_and_test(&s_reg->refcount))
 		return 0;
@@ -1683,23 +1823,60 @@ static void sunxi_pinctrl_gpio_set(struct gpio_chip *chip,
 				unsigned offset, int value)
 {
 	struct sunxi_pinctrl *pctl = gpiochip_get_data(chip);
+	enum sunxi_pinctrl_hw_type hw_type = pctl->desc->hw_type;
 	u32 reg = sunxi_data_reg(offset, pctl->desc->hw_type);
 	u8 index = sunxi_data_offset(offset);
 	unsigned long flags;
-	u32 regval;
+	u32 regval, set_reg, clr_reg, set_regval, clr_regval;
 
 	raw_spin_lock_irqsave(&pctl->lock, flags);
 
-	regval = readl(pctl->membase + reg);
+	sunxi_debug(pctl->dev, "data_set_mode_select is %d", sunxi_pinctrl_hw_info[hw_type].data_set_mode_select);
+	if (sunxi_pinctrl_hw_info[hw_type].data_set_mode_select) {
+		set_reg = sunxi_set_data_reg(offset, pctl->desc->hw_type);
+		clr_reg = sunxi_clr_data_reg(offset, pctl->desc->hw_type);
+		set_regval = readl(pctl->membase + set_reg);
+		clr_regval = readl(pctl->membase + clr_reg);
 
-	if (value)
-		regval |= BIT(index);
-	else
-		regval &= ~(BIT(index));
+		if (value) {
+			set_regval |= BIT(index);
+			writel(set_regval, pctl->membase + set_reg);
+		} else {
+			clr_regval |= BIT(index);
+			writel(clr_regval, pctl->membase + clr_reg);
+		}
 
-	writel(regval, pctl->membase + reg);
+		sunxi_debug(pctl->dev, "value is %d setreg[0x%x=0x%x] clearreg[0x%x=0x%x]\n",
+			 value, set_reg, readl(pctl->membase + set_reg), clr_reg, readl(pctl->membase + clr_reg));
+	} else {
+		regval = readl(pctl->membase + reg);
+
+		if (value)
+			regval |= BIT(index);
+		else
+			regval &= ~(BIT(index));
+
+		writel(regval, pctl->membase + reg);
+	}
+	raw_spin_unlock_irqrestore(&pctl->lock, flags);
+}
+
+static int sunxi_pinctrl_gpio_get_direction(struct gpio_chip *chip,
+					unsigned offset)
+{
+	struct sunxi_pinctrl *pctl = gpiochip_get_data(chip);
+	unsigned long flags;
+	u32 val, mask;
+
+	raw_spin_lock_irqsave(&pctl->lock, flags);
+
+	val = readl(pctl->membase + sunxi_mux_reg(offset, pctl->desc->hw_type));
+	mask = MUX_PINS_MASK << sunxi_mux_offset(offset);
+	val = (val & mask) >> sunxi_mux_offset(offset);
 
 	raw_spin_unlock_irqrestore(&pctl->lock, flags);
+
+	return (val == 1) ? GPIO_LINE_DIRECTION_OUT : GPIO_LINE_DIRECTION_IN;
 }
 
 static int sunxi_pinctrl_gpio_direction_output(struct gpio_chip *chip,
@@ -1895,10 +2072,6 @@ static int sunxi_pinctrl_irq_set_wake(struct irq_data *d, unsigned int on)
 	invoke_scp_fn_smc(on ? SET_WAKEUP_SRC : CLEAR_WAKEUP_SRC,
 			  SET_SEC_WAKEUP_SOURCE(bank_irq_d->hwirq, d->hwirq),
 			  0, 0);
-#elif IS_ENABLED(CONFIG_RISCV)
-#if !IS_ENABLED(CONFIG_ARCH_SUN20IW5)
-	sbi_set_wakeup(bank_irq_d->hwirq, on);
-#endif
 #endif
 	return 0;
 }
@@ -1921,6 +2094,12 @@ static int sunxi_irq_set_affinity(struct irq_data *d,
 	return 0;
 }
 
+static int sunxi_irq_set_retrigger(struct irq_data *d)
+{
+	/* if return 0, irq will be retriggered by handle_edge_irq */
+	return 0;
+}
+
 static struct irq_chip sunxi_pinctrl_edge_irq_chip = {
 	.name		= "sunxi_pio_edge",
 	.irq_ack	= sunxi_pinctrl_irq_ack,
@@ -1932,6 +2111,7 @@ static struct irq_chip sunxi_pinctrl_edge_irq_chip = {
 	.flags		= IRQCHIP_MASK_ON_SUSPEND,
 	.irq_set_wake   = sunxi_pinctrl_irq_set_wake,
 	.irq_set_affinity = sunxi_irq_set_affinity,
+	.irq_retrigger = sunxi_irq_set_retrigger,
 };
 
 static struct irq_chip sunxi_pinctrl_level_irq_chip = {
@@ -1988,7 +2168,7 @@ static void sunxi_pinctrl_irq_handler(struct irq_desc *desc)
 	unsigned int irq = irq_desc_get_irq(desc);
 	struct irq_chip *chip = irq_desc_get_chip(desc);
 	struct sunxi_pinctrl *pctl = irq_desc_get_handler_data(desc);
-	unsigned long bank, reg, val;
+	unsigned long bank, reg, val, irq_ctrl_reg, irq_ctrl_val;
 
 	for (bank = 0; bank < pctl->desc->irq_banks; bank++)
 		if (irq == pctl->irq[bank])
@@ -2005,6 +2185,9 @@ static void sunxi_pinctrl_irq_handler(struct irq_desc *desc)
 
 	reg = sunxi_irq_status_reg_from_bank(pctl->desc, bank);
 	val = readl(pctl->membase + reg);
+
+	irq_ctrl_reg = sunxi_irq_ctrl_reg_from_bank(pctl->desc, bank);
+	irq_ctrl_val = readl(pctl->membase + irq_ctrl_reg);
 #if IS_ENABLED(CONFIG_SUNXI_RPROC_SHARE_IRQ)
 	val &= (~(sunxi_rproc_get_gpio_mask_by_hwirq(desc->irq_data.hwirq)));
 #endif
@@ -2015,7 +2198,8 @@ static void sunxi_pinctrl_irq_handler(struct irq_desc *desc)
 		for_each_set_bit(irqoffset, &val, IRQ_PER_BANK) {
 			int pin_irq = irq_find_mapping(pctl->domain,
 						       bank * IRQ_PER_BANK + irqoffset);
-			generic_handle_irq(pin_irq);
+			if (BIT(irqoffset) & irq_ctrl_val)
+				generic_handle_irq(pin_irq);
 		}
 	}
 
@@ -2105,7 +2289,7 @@ static int sunxi_pinctrl_build_state(struct platform_device *pdev)
 				continue;
 
 			/* Create interrupt mapping while we're at it */
-			if (!strcmp(func->name, "irq")) {
+			if (!strcmp(func->name, "irq") && pctl->desc->irq_banks) {
 				int irqnum = func->irqnum + func->irqbank * IRQ_PER_BANK;
 				pctl->irq_array[irqnum] = pin->pin.number;
 			}
@@ -2242,6 +2426,7 @@ int sunxi_bsp_pinctrl_init_with_variant(struct platform_device *pdev,
 	uint32_t banks_mask;
 	void __iomem *ctrl_reg, *sta_reg;
 #endif
+	bool withstand_auto_assert = false;
 
 	pctl = devm_kzalloc(&pdev->dev, sizeof(*pctl), GFP_KERNEL);
 	if (!pctl)
@@ -2326,6 +2511,7 @@ int sunxi_bsp_pinctrl_init_with_variant(struct platform_device *pdev,
 	pctl->chip->set_config = gpiochip_generic_config;
 	pctl->chip->direction_input = sunxi_pinctrl_gpio_direction_input;
 	pctl->chip->direction_output = sunxi_pinctrl_gpio_direction_output;
+	pctl->chip->get_direction = sunxi_pinctrl_gpio_get_direction;
 	pctl->chip->get = sunxi_pinctrl_gpio_get;
 	pctl->chip->set = sunxi_pinctrl_gpio_set;
 	pctl->chip->of_xlate = sunxi_pinctrl_gpio_of_xlate;
@@ -2512,7 +2698,13 @@ int sunxi_bsp_pinctrl_init_with_variant(struct platform_device *pdev,
 #endif
 	sunxi_pinctrl_setup_debounce(pctl, node);
 
-	sunxi_info(&pdev->dev, "initialized sunXi PIO driver\n");
+	if (pctl->desc->auto_power_source_switch || sunxi_pinctrl_hw_info[pctl->desc->hw_type].power_mode_detect)
+		withstand_auto_assert = true;
+
+	sunxi_info(&pdev->dev, "pinctrl withstand voltage config mode=%s\n",
+		withstand_auto_assert ? (pctl->desc->auto_power_source_switch ? "auto_hard" : "auto_soft") : "manual");
+
+	sunxi_info_once(NULL, "sunxi pinctrl core driver version: %s\n", SUNXI_PINCTRL_CORE_VERSION);
 
 	return 0;
 
@@ -2524,5 +2716,5 @@ gpiochip_error:
 }
 EXPORT_SYMBOL_GPL(sunxi_bsp_pinctrl_init_with_variant);
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.2.7");
+MODULE_VERSION(SUNXI_PINCTRL_CORE_VERSION);
 MODULE_AUTHOR("lvda@allwinnertech.com");

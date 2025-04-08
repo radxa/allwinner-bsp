@@ -17,6 +17,7 @@
 #include <sound/soc.h>
 
 #include "snd_sunxi_pcm.h"
+#include "snd_sunxi_adapter.h"
 
 #define DRV_NAME	"sunxi-snd-plat-aaudio"
 
@@ -39,7 +40,7 @@ static int sunxi_aaudio_dai_startup(struct snd_pcm_substream *substream, struct 
 	return 0;
 }
 
-static const struct snd_soc_dai_ops sunxi_aaudio_dai_ops = {
+static struct snd_soc_dai_ops sunxi_aaudio_dai_ops = {
 	.startup	= sunxi_aaudio_dai_startup,
 };
 
@@ -56,7 +57,6 @@ static int sunxi_aaudio_dai_probe(struct snd_soc_dai *dai)
 
 static struct snd_soc_dai_driver sunxi_aaudio_dai = {
 	.name = DRV_NAME,
-	.probe = sunxi_aaudio_dai_probe,
 	.playback = {
 		.stream_name	= "Playback",
 		.channels_min	= 1,
@@ -79,7 +79,6 @@ static struct snd_soc_dai_driver sunxi_aaudio_dai = {
 				| SNDRV_PCM_FMTBIT_S24_3LE
 				| SNDRV_PCM_FMTBIT_S32_LE,
 	},
-	.ops = &sunxi_aaudio_dai_ops,
 };
 
 static struct snd_soc_component_driver sunxi_aaudio_dev = {
@@ -135,11 +134,27 @@ static int sunxi_aaudio_parse_dma_param(struct device_node *np, struct sunxi_cpu
 		sunxi_cpudai->capture_dma_param.fifo_size = temp_val;
 	}
 
+	ret = of_property_read_u32(np, "dma-buf-mode", &temp_val);
+	if (ret != 0) {
+		sunxi_cpudai->playback_dma_param.dma_buf_mode = 0;
+		sunxi_cpudai->capture_dma_param.dma_buf_mode = 0;
+		SND_LOG_DEBUG("dma-buf-mode miss,using default value\n");
+	} else {
+		if (temp_val != 1 && temp_val != 0) {
+			sunxi_cpudai->playback_dma_param.dma_buf_mode = 0;
+			sunxi_cpudai->capture_dma_param.dma_buf_mode = 0;
+			SND_LOG_WARN("invalid dma-buf-mode value, using default value\n");
+		} else {
+			sunxi_cpudai->playback_dma_param.dma_buf_mode = temp_val;
+			sunxi_cpudai->capture_dma_param.dma_buf_mode = temp_val;
+		}
+	}
+
 	/* set data register */
 	ret = of_property_read_u32(np, "dac-txdata", &temp_val);
 	if (ret != 0) {
-		SND_LOG_ERR("dac-txdata miss, no aaudio platform\n");
-		return -1;
+		SND_LOG_WARN("dac-txdata miss, no aaudio platform\n");
+		sunxi_cpudai->playback_dma_param.dma_addr = 0x0;
 	} else {
 		sunxi_cpudai->playback_dma_param.dma_addr = temp_val; /* SUNXI_DAC_TXDATA */
 	}
@@ -148,8 +163,8 @@ static int sunxi_aaudio_parse_dma_param(struct device_node *np, struct sunxi_cpu
 
 	ret = of_property_read_u32(np, "adc-txdata", &temp_val);
 	if (ret != 0) {
-		SND_LOG_ERR("adc-txdata miss, no aaudio platform\n");
-		return -1;
+		SND_LOG_WARN("adc-txdata miss, no aaudio platform\n");
+		sunxi_cpudai->capture_dma_param.dma_addr = 0x0;
 	} else {
 		sunxi_cpudai->capture_dma_param.dma_addr = temp_val; /* SUNXI_ADC_RXDATA */
 	}
@@ -173,6 +188,7 @@ static int sunxi_aaudio_parse_dma_param(struct device_node *np, struct sunxi_cpu
 
 static int sunxi_aaudio_dev_probe(struct platform_device *pdev)
 {
+	struct sunxi_adapt_dai_ops_priv priv;
 	int ret;
 	struct device_node *np = pdev->dev.of_node;
 	struct sunxi_cpudai *sunxi_cpudai;
@@ -190,6 +206,10 @@ static int sunxi_aaudio_dev_probe(struct platform_device *pdev)
 		SND_LOG_ERR("parse dma param failed\n");
 		goto err_sunxi_aaudio_parse_dma_param;
 	}
+
+	priv.probe = sunxi_aaudio_dai_probe;
+	priv.remove = NULL;
+	sunxi_adpt_set_dai_ops(&sunxi_aaudio_dai, &sunxi_aaudio_dai_ops, &priv);
 
 	ret = snd_soc_register_component(&pdev->dev, &sunxi_aaudio_dev, &sunxi_aaudio_dai, 1);
 	if (ret) {
@@ -268,5 +288,5 @@ module_exit(sunxi_aaudio_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.1");
 MODULE_DESCRIPTION("sunxi soundcard platform of aaudio");

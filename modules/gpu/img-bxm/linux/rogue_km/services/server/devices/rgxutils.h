@@ -43,7 +43,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "device.h"
 #include "rgxdevice.h"
-#include "rgxdebug.h"
+#include "rgxdebug_common.h"
 #include "pvr_notifier.h"
 #include "pvrsrv.h"
 
@@ -179,7 +179,58 @@ PVRSRV_ERROR RGXSetDeviceFlags(PVRSRV_RGXDEV_INFO *psDevInfo,
 ******************************************************************************/
 const char* RGXStringifyKickTypeDM(RGX_KICK_TYPE_DM eKickTypeDM);
 
+/*************************************************************************/ /*!
+
+@Function       RGXPhysHeapGetLMAPolicy
+
+@Description    Returns the optimal LMA allocation policy based on a heap's
+                usage flags
+
+@Input          ui32UsageFlags Flags specifying a heap's intended use
+@Input          psDeviceNode The device node.
+
+@Return         PHYS_HEAP_POLICY The recommended LMA policy
+
+*/ /**************************************************************************/
+PHYS_HEAP_POLICY RGXPhysHeapGetLMAPolicy(PHYS_HEAP_USAGE_FLAGS ui32UsageFlags, PVRSRV_DEVICE_NODE *psDeviceNode);
+
 #define RGX_STRINGIFY_KICK_TYPE_DM_IF_SET(bitmask, eKickTypeDM) bitmask & eKickTypeDM ? RGXStringifyKickTypeDM(eKickTypeDM) : ""
+
+/*************************************************************************/ /*!
+@Function       RGXIsErrorAndDeviceRecoverable
+@Description    This function is used to check if device (and firmware) is in
+                a state that can be recovered from without a full reset of the
+                device.
+@Input          psDeviceNode The device node.
+@Input          peError      Pointer to error. Can be changed to retry type.
+@Return         IMG_BOOL   Return true if device is recoverable.
+*/ /**************************************************************************/
+IMG_BOOL RGXIsErrorAndDeviceRecoverable(PVRSRV_DEVICE_NODE *psDeviceNode, PVRSRV_ERROR *peError);
+
+/*
+ * To avoid repeated calls and avoid double frees, the error value is set to PVRSRV_OK
+ * if RGXIsErrorAndDeviceRecoverable is false.
+ */
+#define RGX_RETURN_IF_ERROR_AND_DEVICE_RECOVERABLE(psDeviceNode, eError, cleanupFunc) \
+	do \
+	{ \
+		if (RGXIsErrorAndDeviceRecoverable(psDeviceNode, &eError)) \
+		{ \
+			return eError; \
+		} \
+		else if (eError != PVRSRV_OK) \
+		{ \
+			PVR_LOG(("%s: Unexpected error from " #cleanupFunc "(%s)", \
+					__func__, \
+					PVRSRVGetErrorString(eError))); \
+			/* Device is dead. \
+			 * Change error type to make callers destroy the resource handle. \
+			 * This is to prevent repeated calls to this function. \
+			 */ \
+			eError = PVRSRV_OK; \
+		} \
+	} while (false)
+
 /******************************************************************************
  End of file (rgxutils.h)
 ******************************************************************************/

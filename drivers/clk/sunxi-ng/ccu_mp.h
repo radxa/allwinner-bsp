@@ -32,6 +32,26 @@ struct ccu_mp {
 	struct ccu_common	common;
 };
 
+
+#define SUNXI_CCU_MP_MIN_WITH_MUX_GATE_NO_INDEX(_struct, _name, _parents, _reg, \
+					   _mshift, _mwidth, _mmin,	\
+					   _pshift, _pwidth,		\
+					   _muxshift, _muxwidth,	\
+					   _gate, _flags)		\
+	struct ccu_mp _struct = {					\
+		.enable	= _gate,					\
+		.m	= _SUNXI_CCU_DIV_MIN(_mshift, _mwidth, _mmin),		\
+		.p	= _SUNXI_CCU_DIV(_pshift, _pwidth),		\
+		.mux	= _SUNXI_CCU_MUX(_muxshift, _muxwidth),		\
+		.common	= {						\
+			.reg		= _reg,				\
+			.features	= CCU_FEATURE_MP_NO_INDEX_MODE,	\
+			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\
+							      _parents, \
+							      &ccu_mp_ops, \
+							      _flags),	\
+		}							\
+	}
 #define SUNXI_CCU_MP_WITH_MUX_GATE_NO_INDEX(_struct, _name, _parents, _reg, \
 					   _mshift, _mwidth,		\
 					   _pshift, _pwidth,		\
@@ -44,6 +64,27 @@ struct ccu_mp {
 		.mux	= _SUNXI_CCU_MUX(_muxshift, _muxwidth),		\
 		.common	= {						\
 			.reg		= _reg,				\
+			.features	= CCU_FEATURE_MP_NO_INDEX_MODE,	\
+			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\
+							      _parents, \
+							      &ccu_mp_ops, \
+							      _flags),	\
+		}							\
+	}
+
+#define SUNXI_CCU_MP_WITH_MUX_GATE_NO_INDEX_KEY(_struct, _name, _parents, _reg, \
+					   _mshift, _mwidth,		\
+					   _pshift, _pwidth,		\
+					   _muxshift, _muxwidth,	\
+					   _gate, _flags, _key_value)		\
+	struct ccu_mp _struct = {					\
+		.enable	= _gate,					\
+		.m	= _SUNXI_CCU_DIV(_mshift, _mwidth),		\
+		.p	= _SUNXI_CCU_DIV(_pshift, _pwidth),		\
+		.mux	= _SUNXI_CCU_MUX(_muxshift, _muxwidth),		\
+		.common	= {						\
+			.reg		= _reg,				\
+			.key_value	= _key_value,			\
 			.features	= CCU_FEATURE_MP_NO_INDEX_MODE,	\
 			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\
 							      _parents, \
@@ -73,6 +114,28 @@ struct ccu_mp {
 		}							\
 	}
 
+#define SUNXI_CCU_MP_WITH_MUX_GATE_KEY(_struct, _name, _parents, _reg,	\
+				   _mshift, _mwidth,			\
+				   _pshift, _pwidth,			\
+				   _muxshift, _muxwidth,		\
+				   _key_value,				\
+				   _gate, _flags)			\
+	struct ccu_mp _struct = {					\
+		.enable	= _gate,					\
+		.m	= _SUNXI_CCU_DIV(_mshift, _mwidth),		\
+		.p	= _SUNXI_CCU_DIV(_pshift, _pwidth),		\
+		.mux	= _SUNXI_CCU_MUX(_muxshift, _muxwidth),		\
+		.common	= {						\
+			.features       = CCU_FEATURE_KEY_FIELD_MOD,	\
+			.key_value      = _key_value,			\
+			.key_reg        = _reg,				\
+			.reg		= _reg,				\
+			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\
+							      _parents, \
+							      &ccu_mp_ops, \
+							      _flags),	\
+		}							\
+	}
 #define SUNXI_CCU_MP_WITH_MUX_GATE(_struct, _name, _parents, _reg,	\
 				   _mshift, _mwidth,			\
 				   _pshift, _pwidth,			\

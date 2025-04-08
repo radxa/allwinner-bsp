@@ -43,23 +43,14 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */ /**************************************************************************/
 
 #include "scp.h"
-#include "allocmem.h"
-#include "pvr_notifier.h"
-#include "pvrsrv.h"
-#include "pvr_debug.h"
-#include "osfunc.h"
-#include "lock.h"
-#include "sync_server.h"
-#include "sync_internal.h"
-#include "rgxhwperf.h"
-
 #include "pvrsrv_sync_server.h"
+#include "allocmem.h"
 
 struct _SCP_CONTEXT_
 {
 	PVRSRV_DEVICE_NODE  *psDevNode;         /*<! Device node reference for SCP layer */
 	void				*pvCCB;             /*!< Pointer to the command circler buffer*/
-	volatile IMG_UINT32	ui32DepOffset;      /*!< Dependency offset  */
+	volatile IMG_UINT32	ui32DepOffset;      /*!< Dependency offset */
 	volatile IMG_UINT32	ui32ReadOffset;     /*!< Read offset */
 	volatile IMG_UINT32	ui32WriteOffset;    /*!< Write offset */
 	IMG_UINT32			ui32CCBSize;        /*!< CCB size */
@@ -314,15 +305,15 @@ static void _SCPDumpCommand(SCP_COMMAND *psCommand,
 
 	if (psCommand->ui32CmdType == SCP_COMMAND_CALLBACK)
 	{
-	if (SyncIsFenceObjValid(&psCommand->sAcquireFenceObj))
-	{
-		SyncDumpFence(&psCommand->sAcquireFenceObj, pfnDumpDebugPrintf, pvDumpDebugFile);
-	}
+		if (SyncIsFenceObjValid(&psCommand->sAcquireFenceObj))
+		{
+			SyncDumpFence(&psCommand->sAcquireFenceObj, pfnDumpDebugPrintf, pvDumpDebugFile);
+		}
 
-	if (SyncIsTimelineObjValid(&psCommand->sSWTimelineObj))
-	{
-		SyncSWDumpTimeline(&psCommand->sSWTimelineObj, pfnDumpDebugPrintf, pvDumpDebugFile);
-	}
+		if (SyncIsTimelineObjValid(&psCommand->sSWTimelineObj))
+		{
+			SyncSWDumpTimeline(&psCommand->sSWTimelineObj, pfnDumpDebugPrintf, pvDumpDebugFile);
+		}
 	}
 }
 
@@ -543,10 +534,6 @@ PVRSRV_ERROR SCPFlush(SCP_CONTEXT *psContext)
 	return PVRSRV_OK;
 }
 
-/* This looks like a reasonable value. Number of traced syncs should
- * not exceed 20. */
-#define MAX_TRACED_UFOS 20
-
 /*
 	SCPCommandComplete
 */
@@ -612,7 +599,7 @@ void SCPDumpStatus(SCP_CONTEXT *psContext,
 
 	/*
 		Acquire the lock to ensure that the SCP isn't run while
-		while we're dumping info
+		we're dumping info
 	*/
 	OSLockAcquire(psContext->hLock);
 

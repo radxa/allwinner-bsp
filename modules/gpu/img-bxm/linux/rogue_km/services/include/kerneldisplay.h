@@ -572,7 +572,7 @@ typedef void (*BufferUnmap)(IMG_HANDLE hBuffer);
 /*************************************************************************/ /*!
 @Function       BufferSystemAcquire
 
-@Description    DEPRICATED, please use BufferAlloc
+@Description    DEPRECATED, please use BufferAlloc
                 Acquire the system buffer from the display driver.
                 If the OS should trigger a mode change then it's not allowed to
                 free the previous buffer until Services has released it
@@ -605,7 +605,7 @@ typedef PVRSRV_ERROR (*BufferSystemAcquire)(IMG_HANDLE hDeviceData,
 /*************************************************************************/ /*!
 @Function       BufferSystemRelease
 
-@Description    DEPRICATED, please use BufferFree
+@Description    DEPRECATED, please use BufferFree
                 Release a display buffer acquired with BufferSystemAcquire.
                 Services calls this after it has no use for the buffer anymore.
                 The buffer must not be destroyed before Services releases it
@@ -635,7 +635,7 @@ typedef PVRSRV_ERROR (*ResetDevice)(IMG_HANDLE hDeviceData);
 #if defined(INTEGRITY_OS)
 typedef PVRSRV_ERROR (*AcquireKernelMappingData)(IMG_HANDLE hBuffer, IMG_HANDLE *phMapping, void **ppPhysAddr);
 
-#if (RGX_NUM_OS_SUPPORTED > 1)
+#if (RGX_NUM_DRIVERS_SUPPORTED > 1)
 typedef IMG_HANDLE (*GetPmr)(IMG_HANDLE hBuffer, size_t ulOffset);
 #endif
 #endif
@@ -685,7 +685,7 @@ typedef struct _DC_DEVICE_FUNCTIONS_
 	BufferMap               pfnBufferMap; /*!< See #BufferMap */
 	BufferUnmap             pfnBufferUnmap; /*!< See #BufferUnmap */
 
-	/* Optional - DEPRICATED */
+	/* Optional - DEPRECATED */
 	BufferSystemAcquire     pfnBufferSystemAcquire; /*!< See #BufferSystemAcquire */
 	BufferSystemRelease     pfnBufferSystemRelease; /*!< See #BufferSystemRelease */
 
@@ -695,7 +695,7 @@ typedef struct _DC_DEVICE_FUNCTIONS_
 	 */
 	AcquireKernelMappingData    pfnAcquireKernelMappingData;
 
-#if (RGX_NUM_OS_SUPPORTED > 1)
+#if (RGX_NUM_DRIVERS_SUPPORTED > 1)
 	GetPmr                      pfnGetPmr;
 #endif
 #endif

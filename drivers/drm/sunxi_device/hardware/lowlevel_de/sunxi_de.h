@@ -31,7 +31,9 @@ struct sunxi_de_info {
 	struct sunxi_de_out *de_out;
 	struct device_node *port;
 	unsigned int gamma_lut_len;
+	int hue_default_value;
 	unsigned long clk_freq;
+	struct de_disp_feature feat;
 	unsigned int hw_id;
 	unsigned int plane_cnt;
 	struct sunxi_plane_info *planes;
@@ -51,6 +53,9 @@ struct sunxi_de_out_cfg {
 	unsigned int hwdev_index;
 	unsigned int width, height;
 	unsigned int device_fps;
+	unsigned int max_device_fps;
+	unsigned int pixel_mode;
+	unsigned int interlaced;
 	enum de_format_space px_fmt_space;
 	enum de_yuv_sampling yuv_sampling;
 	enum de_eotf eotf;
@@ -64,6 +69,8 @@ struct sunxi_de_flush_cfg {
 	bool gamma_dirty;
 	unsigned int brightness, contrast, saturation, hue;
 	bool bcsh_dirty;
+	struct de_color_ctm *ctm;
+	bool ctm_dirty;
 };
 
 struct sunxi_de_channel_update {
@@ -75,6 +82,7 @@ struct sunxi_de_channel_update {
 	bool is_fbdev;
 	/* fbdev output in current de */
 	bool fbdev_output;
+	bool force;
 };
 
 #define FORCE_ATOMIC_FLUSH	0xffff
@@ -91,5 +99,13 @@ bool sunxi_de_format_mod_supported(struct sunxi_de_out *hwde, struct de_channel_
 int sunxi_de_backend_get_pqd_config(struct sunxi_de_out *hwde, struct de_backend_data *data);
 int sunxi_de_write_back(struct sunxi_de_out *hwde, struct sunxi_de_wb *wb, struct drm_framebuffer *fb);
 void sunxi_de_dump_channel_state(struct drm_printer *p, struct sunxi_de_out *hwde, struct de_channel_handle *hdl, const struct display_channel_state *state, bool state_only);
+void sunxi_de_dump_state(struct drm_printer *p, struct sunxi_de_out *hwde);
+
+bool sunxi_de_query_de_busy(struct sunxi_de_out *hwde);
+unsigned long sunxi_de_get_clk(void);
+void sunxi_de_set_devfreq_auto(bool en);
+int sunxi_de_set_clk(unsigned long clk);
+int sunxi_de_auto_calc_freq_and_apply(struct sunxi_de_out *hwde);
+int sunxi_de_div_calc_mn(unsigned long freq_in_kHZ, unsigned long freq_out_kHZ, unsigned int *m, unsigned int *n);
 
 #endif

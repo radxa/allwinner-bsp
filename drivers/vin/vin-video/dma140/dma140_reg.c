@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -659,6 +659,20 @@ static void __csic_dma_int_get_status(unsigned int sel, unsigned int ch,
 void csic_dma_int_get_status(unsigned int sel, struct dma_int_status *status)
 {
 	__csic_dma_int_get_status(sel, dma_virtual_find_ch[sel], status);
+}
+
+unsigned int csic_dma_get_pclk_cnt_line_min(unsigned int sel)
+{
+	unsigned int reg_val = vin_reg_readl(csic_dma_base[sel] + CSIC_DMA_PCLK_STAT_REG_OFF);
+
+	return ((reg_val & PCLK_CNT_LINE_MIN_MASK) >> PCLK_CNT_LINE_MIN);
+}
+
+unsigned int csic_dma_get_pclk_cnt_line_max(unsigned int sel)
+{
+	unsigned int reg_val = vin_reg_readl(csic_dma_base[sel] + CSIC_DMA_PCLK_STAT_REG_OFF);
+
+	return ((reg_val & PCLK_CNT_LINE_MAX_MASK) >> PCLK_CNT_LINE_MAX);
 }
 
 void csic_dma_int_get_status_and_chn(unsigned int sel,

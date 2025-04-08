@@ -104,6 +104,13 @@ struct display_channel_state {
 	enum de_eotf eotf;
 	enum de_color_space color_space;
 	enum de_color_range color_range;
+	/*
+	 * create image crop for afbc compressed buffer, top_crop and left_crop,
+	 *  top_crop : 0 ~ 15
+	 *  left_crop: 0 ~ 63
+	 *  value = (top_crop << 16) | left_crop
+	 */
+	uint32_t compressed_image_crop;
 };
 
 #define to_display_channel_state(x)		container_of(x, struct display_channel_state, base)
@@ -123,12 +130,18 @@ struct de_channel_handle {
 	struct de_reg_block **block;
 	bool is_video;
 	unsigned int type_hw_id;
+	struct de_chn_mod_support mod;
+	struct de_channel_linebuf_feature lbuf;
 };
 
 struct de_output_info {
 	unsigned int width;
 	unsigned int height;
+	unsigned int htotal;
+	unsigned int pclk_khz;
 	unsigned int device_fps;
+	unsigned int max_device_fps;
+	unsigned int interlaced;
 	unsigned long de_clk_freq;
 	enum de_format_space px_fmt_space;
 	enum de_yuv_sampling yuv_sampling;
@@ -152,5 +165,7 @@ struct de_channel_handle *de_channel_create(struct module_create_info *cinfo);
 bool channel_format_mod_supported(struct de_channel_handle *hdl, uint32_t format, uint64_t modifier);
 void dump_channel_state(struct drm_printer *p, struct de_channel_handle *hdl, const struct display_channel_state *state, bool state_only);
 int channel_get_pqd_config(struct de_channel_handle *hdl, struct display_channel_state *cstate);
+int get_size_by_chn(struct de_channel_handle *hdl, int *width, int *height);
+unsigned int get_chn_size_on_scn(struct de_channel_handle *hdl, int *width, int *height);
 
 #endif

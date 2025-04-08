@@ -7,6 +7,8 @@
 #ifndef _CCU_COMMON_H_
 #define _CCU_COMMON_H_
 
+#define SUNXI_MODNAME "ccu-ng"
+#include <sunxi-common.h>
 #include <linux/compiler.h>
 #include <linux/clk-provider.h>
 
@@ -43,6 +45,8 @@
 /* Calculate the frequency and save it in the list first */
 #define CCU_FEATURE_CLAC_CACHED		BIT(15)
 
+/* Gate config is reverse, 0 is enable, 1 is disable */
+#define CCU_FEATURE_GATE_IS_REVERSE	BIT(20)
 /*
  * bit16->bit19: used to describe ccu type
  * 1: NKMP
@@ -75,15 +79,17 @@ struct ccu_reg_dump {
 };
 
 struct ccu_common {
-	void __iomem	*base;
-	u16		reg;
-	u16		assoc_reg;
-	u16		lock_reg;
-	u16		ssc_reg;
+	void __iomem	*base;		/* base addr */
+	u16		reg;		/* first reg */
+	u16		key_reg;	/* first reg corresponding to the key_reg */
+	u16		assoc_reg;	/* second reg */
+	u16		lock_reg;	/* lock reg */
+	u16		ssc_reg;	/* ssc reg */
 	u32		prediv;
-	u32		key_value;
+	u32		key_value;	/* first reg corresponding to the key_value */
 	u32		clear;
-	u32		assoc_val;
+	u32		assoc_val;	/* second reg gate bit */
+	u32		assoc_key_value;	/* second reg corresponding to the key_value */
 
 	struct clk_sdm_info *sdm_info;
 	unsigned long	features;
@@ -136,5 +142,11 @@ void set_reg(char __iomem *addr, u32 val, u8 bw, u8 bs);
 void set_reg_key(char __iomem *addr,
 		 u32 key, u8 kbw, u8 kbs,
 		 u32 val, u8 bw, u8 bs);
+
+unsigned int ccu_get_table_div(const struct clk_div_table *table,
+			       unsigned int val);
+
+unsigned int ccu_get_table_val(const struct clk_div_table *table,
+			       unsigned int div);
 
 #endif /* _CCU_COMMON_H_ */

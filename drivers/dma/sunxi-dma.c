@@ -12,6 +12,7 @@
 #include <linux/delay.h>
 #include <linux/dmaengine.h>
 #include <linux/dmapool.h>
+#include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/of_dma.h>
@@ -23,7 +24,7 @@
 #include <virt-dma.h>
 #include "sunxi-dma.h"
 
-#define SUNXI_DMA_MODULE_VERSION	"1.0.13"
+#define SUNXI_DMA_MODULE_VERSION	"1.2.6"
 /*
  * Common registers
  */
@@ -57,14 +58,28 @@
 
 #define SUNXI_H3_SECURE_REG		0x20
 #define SUNXI_H3_DMA_GATE		0x28
+#define SUNXI_DMA_ECC_INJECT_LOCK			(BIT(31) | BIT(29) | BIT(24))
 #define SUNXI_H3_DMA_GATE_ENABLE	0x4
 
 #define SUNXI_DMA_ECC_CTRL		0x50
-#define ECC_IRQ_EN			BIT(16) /* 0:disable; 1:enable */
-#define ECC_EN				BIT(8)  /* 0:no correction; 1:correction */
+#define SUNXI_DMA_ECC_INJECT_TYPE_1_BIT		BIT(6)
+#define SUNXI_DMA_ECC_INJECT_TYPE_2_BIT		BIT(7)
+#define SUNXI_DMA_ECC_INJECT_TYPE_3_BIT		(BIT(6) | BIT(7))
+#define SUNXI_DMA_ECC_INJECT_MODE			BIT(4)
+#define SUNXI_DMA_ECC_INJECT_EN			BIT(0)
+#define SUNXI_DMA_ECC_IRQ_EN			BIT(16) /* 0:disable; 1:enable */
+#define SUNXI_DMA_ECC_EN				BIT(8)  /* 0:no correction; 1:correction */
 #define SUNXI_DMA_ECC_INT_CLR		0x54
-#define ECC_IRQ_CLR			BIT(0)  /* 0:no clean; 1:clean now */
+#define SUNXI_DMA_ECC_IRQ_CLR			BIT(0)  /* 0:no clean; 1:clean now */
 #define SUNXI_DMA_ECC_INT_STA		0x58	/* Error scene information */
+#define SUNXI_DMA_ECC_ERR_ADDR		GENMASK(11, 0)
+#define SUNXI_DMA_ECC_CHECK_CODE	GENMASK(20, 12)
+#define SUNXI_DMA_ECC_CHECK_CODE_BIT		12
+#define SUNXI_DMA_ECC_ERR_BIT		BIT(21)
+#define SUNXI_DMA_ECC_ERR_BITS		BIT(22)
+#define SUNXI_DMA_ECC_ERR_CODE		BIT(23)
+#define SUNXI_DMA_ECC_ERR_SITE		GENMASK(31, 24)
+#define SUNXI_DMA_ECC_ERR_SITE_BIT		24
 #define SUNXI_DMA_ECC_INJ_DATA_LO	0x5c
 #define SUNXI_DMA_ECC_INJ_DATA_HI	0x60
 #define SUNXI_DMA_ECC_ORI_DATA_LO	0x64
@@ -110,7 +125,7 @@
 
 #define DMA_CHAN_CUR_PARA		0x1c
 
-
+#define DMA_PKG_NUM_REG			0x30
 /*
  * Various hardware related defines
  */
@@ -137,7 +152,11 @@
 #define DMA_IRQ_MCU_EN_REG		0x38
 #define DMA_IRQ_CPU_ENABLE_MASK		0xFF
 #define DMA_IRQ_MCU_DISABLE_MASK 	0xFF00
+#define DMA_IRQ_SHARED_CPU_ENABLE	0xFFFF
+#define DMA_IRQ_SHARED_MCU_DISABLE	0x0
 
+#define DMA_PKG_NUM_MAX			0xffffffff /* The max count which register can store */
+#define DMA_PKG_STA_MOD_BUF_SIZE	4096 /* The buffer size which cyclic mode use */
 /* forward declaration */
 struct sun6i_dma_dev;
 
@@ -171,6 +190,7 @@ struct sun6i_dma_config {
 	u32 src_addr_widths;
 	u32 dst_addr_widths;
 	bool has_mbus_clk;
+	bool has_mbus_en_clk;
 	bool has_mcu_mbus_clk;
 	u32 channum_per_reg;
 	void (*irq_enable)(struct sun6i_dma_dev *sdev, u32 chan_num, u32 irq_val);
@@ -181,7 +201,11 @@ struct sun6i_dma_config {
 	bool has_io_speedup;
 	bool has_timeout;
 	bool has_multicore_shared;
+	bool has_irq_shared; /* Shared interrupt control with RV cpuX domain. */
 	bool has_support_32G;
+	bool has_ecc;
+	bool has_andes_cache;
+	bool has_rst;
 };
 
 /*
@@ -236,6 +260,9 @@ struct sun6i_vchan {
 	u8			irq_type;
 	bool			cyclic;
 	struct sunxi_dma_desc	*extend_desc;
+	u32 new_val;
+	u32 old_val;
+	u32 val;
 };
 
 struct sun6i_dma_dev {
@@ -243,6 +270,7 @@ struct sun6i_dma_dev {
 	void __iomem		*base;
 	struct clk		*clk;
 	struct clk		*clk_mbus;
+	struct clk		*clk_mbus_en;
 	struct clk		*clk_mcu_mbus;
 	int			irq;
 	int			ecc_irq;
@@ -468,6 +496,24 @@ static void sun6i_set_mode_h6(u32 *p_cfg, s8 src_mode, s8 dst_mode)
 		  DMA_CHAN_CFG_DST_MODE_H6(dst_mode);
 }
 
+static size_t sunxi_get_chan_pkg_status(struct sun6i_vchan *vchan)
+{
+	struct sun6i_pchan *pchan = vchan->phy;
+	size_t bytes;
+
+	vchan->new_val = readl(pchan->base + DMA_PKG_NUM_REG);
+	if (vchan->new_val < vchan->old_val)
+		vchan->val += DMA_PKG_NUM_MAX - vchan->old_val + 1 + vchan->new_val;
+	else
+		vchan->val += vchan->new_val - vchan->old_val;
+
+	vchan->old_val = vchan->new_val;
+	vchan->val = vchan->val % DMA_PKG_STA_MOD_BUF_SIZE;
+	bytes = DMA_PKG_STA_MOD_BUF_SIZE - vchan->val;
+
+	return bytes;
+}
+
 static size_t sun6i_get_chan_size(struct sun6i_pchan *pchan)
 {
 	struct sun6i_desc *txd = pchan->desc;
@@ -585,6 +631,12 @@ static int sun6i_dma_start_desc(struct sun6i_vchan *vchan)
 
 	vchan->irq_type = vchan->cyclic ? (DMA_IRQ_PKG | DMA_IRQ_TIMEOUT) : DMA_IRQ_QUEUE;
 
+	/*
+	 * Some drivers don't need interrupt in cyclic mode, like uart in hrtimer mode
+	 */
+	if (vchan->extend_desc && vchan->extend_desc->byte_per_pkg)
+		vchan->irq_type = DMA_IRQ_QUEUE;
+
 	irq_val = sdev->cfg->read_irq_enable(sdev, irq_reg);
 	irq_val &= ~((DMA_IRQ_HALF | DMA_IRQ_PKG | DMA_IRQ_QUEUE | DMA_IRQ_TIMEOUT) <<
 			(irq_offset * DMA_IRQ_CHAN_WIDTH));
@@ -691,7 +743,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
 		sdev->cfg->clear_irq_status(sdev, i, status);
 
 		for (j = 0; (j < sdev->cfg->channum_per_reg) && status; j++) {
-			pchan = sdev->pchans + j;
+			pchan = sdev->pchans + (i * sdev->cfg->channum_per_reg + j);
 			vchan = pchan->vchan;
 			if (!pchan->desc)
 				goto next;
@@ -737,6 +789,41 @@ next:
 	}
 
 	return ret;
+}
+
+static irqreturn_t sun6i_dma_ecc_interrupt(int irq, void *dev_id)
+{
+	struct sun6i_dma_dev *sdev = dev_id;
+	u32 status;
+
+	status = readl(sdev->base + SUNXI_DMA_ECC_INT_STA);
+
+	if (status & SUNXI_DMA_ECC_ERR_ADDR)
+		dev_err(sdev->slave.dev, "ECC error: the err addr is 0x%lx\n",
+				(status & SUNXI_DMA_ECC_ERR_ADDR));
+
+	if (status & SUNXI_DMA_ECC_CHECK_CODE)
+		dev_err(sdev->slave.dev, "ECC error: the err check code is 0x%lx\n",
+				(status & SUNXI_DMA_ECC_CHECK_CODE) >> SUNXI_DMA_ECC_CHECK_CODE_BIT);
+
+	if (status & SUNXI_DMA_ECC_ERR_BIT)
+		dev_err(sdev->slave.dev, "ECC error: there is a single bit error.\n");
+
+	if (status & SUNXI_DMA_ECC_ERR_BITS)
+		dev_err(sdev->slave.dev, "ECC error: there is a double bit error.\n");
+
+	if (status & SUNXI_DMA_ECC_ERR_CODE)
+		dev_err(sdev->slave.dev, "ECC error: check code error.\n");
+
+	if (status & SUNXI_DMA_ECC_ERR_SITE)
+		dev_err(sdev->slave.dev, "ECC error: the err check code is 0x%lx\n",
+				(status & SUNXI_DMA_ECC_ERR_SITE) >> SUNXI_DMA_ECC_ERR_SITE_BIT);
+
+	writel(SUNXI_DMA_ECC_IRQ_CLR, sdev->base + SUNXI_DMA_ECC_INT_CLR);
+	/* set 0 to enable the next interrupt*/
+	writel(0, sdev->base + SUNXI_DMA_ECC_INT_CLR);
+
+	return IRQ_HANDLED;
 }
 
 static int set_config(struct sun6i_dma_dev *sdev,
@@ -899,6 +986,11 @@ static struct dma_async_tx_descriptor *sun6i_dma_prep_slave_sg(
 	if (!txd)
 		return NULL;
 
+	if (dir == DMA_DEV_TO_MEM) {
+		if (sdev->cfg->has_andes_cache)
+			dma_sync_sg_for_device(chan2dev(chan), sgl, sg_len, DMA_TO_DEVICE);
+	}
+
 	for_each_sg(sgl, sg, sg_len, i) {
 		v_lli = dma_pool_alloc(sdev->pool, GFP_NOWAIT, &p_lli);
 		if (!v_lli)
@@ -1013,6 +1105,11 @@ static struct dma_async_tx_descriptor *sun6i_dma_prep_dma_cyclic(
 		vchan->extend_desc = chan->private;
 		is_bmode = vchan->extend_desc->is_bmode;
 		is_timeout = vchan->extend_desc->is_timeout;
+		if (vchan->extend_desc->byte_per_pkg) {
+			vchan->new_val = 0;
+			vchan->old_val = 0;
+			vchan->val = 0;
+		}
 	}
 	ret = set_config(sdev, sconfig, dir, &lli_cfg);
 	if (ret) {
@@ -1054,7 +1151,7 @@ static struct dma_async_tx_descriptor *sun6i_dma_prep_dma_cyclic(
 
 		} else {
 			v_lli->src = buf_addr + period_len * i;
-			v_lli->dst = sconfig->dst_addr;
+			v_lli->dst = sconfig->dst_addr + period_len * i;
 			v_lli->cfg = lli_cfg;
 
 			sdev->cfg->set_drq(&v_lli->cfg, DRQ_SDRAM, DRQ_SDRAM);
@@ -1093,6 +1190,9 @@ static struct dma_async_tx_descriptor *sun6i_dma_prep_dma_cyclic(
 	prev->p_lli_next = txd->p_lli;		/* cyclic list */
 
 	vchan->cyclic = true;
+	dev_dbg(chan2dev(chan), "First: %pad\n", &txd->p_lli);
+	for (prev = txd->v_lli; prev; prev = prev->v_lli_next)
+		sun6i_dma_dump_lli(vchan, prev);
 
 	return vchan_tx_prep(&vchan->vc, &txd->vd, flags);
 
@@ -1230,6 +1330,8 @@ static enum dma_status sun6i_dma_tx_status(struct dma_chan *chan,
 			bytes += lli->len;
 	} else if (!pchan || !pchan->desc) {
 		bytes = 0;
+	} else if (vchan->extend_desc && vchan->extend_desc->byte_per_pkg) {
+		bytes = sunxi_get_chan_pkg_status(vchan);
 	} else {
 		bytes = sun6i_get_chan_size(pchan);
 	}
@@ -1550,6 +1652,7 @@ static struct sun6i_dma_config sunxi_dma_v101 = {
 			     BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) |
 			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
 	.channum_per_reg  = DMA_IRQ_CHAN_NR,
+	.has_rst = true,
 };
 
 /*
@@ -1577,6 +1680,7 @@ static struct sun6i_dma_config sunxi_dma_v102 = {
 			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
 	.has_mbus_clk = true,
 	.channum_per_reg  = DMA_IRQ_CHAN_NR_V102,
+	.has_rst = true,
 };
 
 /*
@@ -1606,6 +1710,7 @@ static __maybe_unused struct sun6i_dma_config sunxi_dma_v103 = {
 	.has_mbus_clk = true,
 	.channum_per_reg  = DMA_IRQ_CHAN_NR,
 	.cannot_reset = true,
+	.has_rst = true,
 };
 
 /*
@@ -1634,6 +1739,7 @@ static __maybe_unused struct sun6i_dma_config sunxi_dma_v104 = {
 	.has_mbus_clk = true,
 	.has_mcu_mbus_clk = true,
 	.channum_per_reg  = DMA_IRQ_CHAN_NR,
+	.has_rst = true,
 };
 
 /*
@@ -1664,6 +1770,7 @@ static __maybe_unused struct sun6i_dma_config sunxi_dma_v105 = {
 	.has_io_speedup = true,
 	.has_timeout = true,
 	.has_multicore_shared = true,
+	.has_rst = true,
 };
 
 /*
@@ -1692,6 +1799,8 @@ static struct sun6i_dma_config sunxi_dma_v106 = {
 	.has_io_speedup = true,
 	.has_timeout = true,
 	.has_multicore_shared = true,
+	.has_support_32G = true,
+	.has_rst = true,
 };
 
 static struct sun6i_dma_config sunxi_dma_v107 = {
@@ -1715,8 +1824,103 @@ static struct sun6i_dma_config sunxi_dma_v107 = {
 	.channum_per_reg  = DMA_IRQ_CHAN_NR_V102,
 	.has_io_speedup = true,
 	.has_timeout = true,
-	.has_multicore_shared = true,
+	.has_irq_shared = true,
 	.has_support_32G = true,
+	.has_ecc = true,
+	.has_rst = true,
+};
+
+/*
+ * The dma IP V3.2, like sun300iw1 sys dma etc., uses the number of dma channels from the
+ * device tree node.
+ */
+static __maybe_unused struct sun6i_dma_config sunxi_dma_v108 = {
+	.clock_autogate_enable = sun6i_enable_clock_autogate_h3,
+	.set_burst_length = sun6i_set_burst_length_h3,
+	.set_drq          = sun6i_set_drq_h6,
+	.set_mode         = sun6i_set_mode_h6,
+	.irq_enable 	  = sunxi_irq_enable,
+	.get_irq_status   = sunxi_get_irq_status,
+	.read_irq_enable  = sunxi_read_irq_enable,
+	.clear_irq_status  = sunxi_clear_irq_status,
+	.src_burst_lengths = BIT(1) | BIT(4) | BIT(8) | BIT(16),
+	.dst_burst_lengths = BIT(1) | BIT(4) | BIT(8) | BIT(16),
+	.src_addr_widths   = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+			     BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
+	.dst_addr_widths   = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+			     BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
+	.has_mbus_clk = true,
+	.has_mbus_en_clk = true,
+	.channum_per_reg = DMA_IRQ_CHAN_NR,
+	.has_io_speedup = true,
+	.has_timeout = true,
+	.has_multicore_shared = true,
+	.has_andes_cache = true,
+	.has_rst = true,
+};
+
+/*
+ * The dma IP V3.2, like sun252iw1 sys dma etc., uses the number of dma channels from the
+ * device tree node.
+ */
+static __maybe_unused struct sun6i_dma_config sunxi_dma_v109 = {
+	.clock_autogate_enable = sun6i_enable_clock_autogate_h3,
+	.set_burst_length = sun6i_set_burst_length_h3,
+	.set_drq          = sun6i_set_drq_h6,
+	.set_mode         = sun6i_set_mode_h6,
+	.irq_enable 	  = sunxi_irq_enable,
+	.get_irq_status   = sunxi_get_irq_status,
+	.read_irq_enable  = sunxi_read_irq_enable,
+	.clear_irq_status  = sunxi_clear_irq_status,
+	.src_burst_lengths = BIT(1) | BIT(4) | BIT(8) | BIT(16),
+	.dst_burst_lengths = BIT(1) | BIT(4) | BIT(8) | BIT(16),
+	.src_addr_widths   = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+			     BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
+	.dst_addr_widths   = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+			     BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
+	.has_mbus_clk = true,
+	.has_mbus_en_clk = true,
+	.channum_per_reg = DMA_IRQ_CHAN_NR,
+	.has_io_speedup = true,
+	.has_timeout = true,
+	.has_multicore_shared = true,
+	.has_rst = true,
+};
+
+/*
+ * The dma IP V3.0, like sun8iw17 etc., uses the number of dma channels from the
+ * device tree node.
+ */
+static __maybe_unused struct sun6i_dma_config sunxi_dma_v110 = {
+	.clock_autogate_enable = sun6i_enable_clock_autogate_h3,
+	.set_burst_length = sun6i_set_burst_length_h3,
+	.set_drq          = sun6i_set_drq_h6,
+	.set_mode         = sun6i_set_mode_h6,
+	.irq_enable 	  = sunxi_irq_enable,
+	.get_irq_status   = sunxi_get_irq_status,
+	.read_irq_enable  = sunxi_read_irq_enable,
+	.clear_irq_status  = sunxi_clear_irq_status,
+	.src_burst_lengths = BIT(1) | BIT(4) | BIT(8) | BIT(16),
+	.dst_burst_lengths = BIT(1) | BIT(4) | BIT(8) | BIT(16),
+	.src_addr_widths   = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+			     BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
+	.dst_addr_widths   = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
+			     BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) |
+			     BIT(DMA_SLAVE_BUSWIDTH_8_BYTES),
+	.has_mbus_clk = false,
+	.has_rst = false,
+	.channum_per_reg  = DMA_IRQ_CHAN_NR,
 };
 
 static const struct of_device_id sun6i_dma_match[] = {
@@ -1728,9 +1932,69 @@ static const struct of_device_id sun6i_dma_match[] = {
 	{ .compatible = "allwinner,dma-v105", .data = &sunxi_dma_v105 },
 	{ .compatible = "allwinner,dma-v106", .data = &sunxi_dma_v106 },
 	{ .compatible = "allwinner,dma-v107", .data = &sunxi_dma_v107 },
+	{ .compatible = "allwinner,dma-v108", .data = &sunxi_dma_v108 },
+	{ .compatible = "allwinner,dma-v109", .data = &sunxi_dma_v109 },
+	{ .compatible = "allwinner,dma-v110", .data = &sunxi_dma_v110 },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, sun6i_dma_match);
+
+static ssize_t sun6i_dma_ecc_inject_enable(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct sun6i_dma_dev *sdc = dev_get_drvdata(dev);
+	u32 val;
+
+	/* release ecc inject lock */
+	val = readl(sdc->base + SUNXI_H3_DMA_GATE);
+	writel((val | SUNXI_DMA_ECC_INJECT_LOCK), sdc->base + SUNXI_H3_DMA_GATE);
+
+	/* inject type */
+	val = readl(sdc->base + SUNXI_DMA_ECC_CTRL);
+	writel((val | SUNXI_DMA_ECC_INJECT_TYPE_1_BIT), sdc->base + SUNXI_DMA_ECC_CTRL);
+
+	/* inject mode */
+	val = readl(sdc->base + SUNXI_DMA_ECC_CTRL);
+	writel((val | SUNXI_DMA_ECC_INJECT_MODE), sdc->base + SUNXI_DMA_ECC_CTRL);
+
+	/* inject err */
+	val = readl(sdc->base + SUNXI_DMA_ECC_CTRL);
+	writel((val | SUNXI_DMA_ECC_INJECT_EN), sdc->base + SUNXI_DMA_ECC_CTRL);
+
+	return count;
+}
+
+static ssize_t sun6i_dma_ecc_inject_disable(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct sun6i_dma_dev *sdc = dev_get_drvdata(dev);
+	u32 val;
+
+	val = readl(sdc->base + SUNXI_DMA_ECC_CTRL);
+	writel((val & ~SUNXI_DMA_ECC_INJECT_EN), sdc->base + SUNXI_DMA_ECC_CTRL);
+
+	return 0;
+}
+
+static struct device_attribute sun6i_dma_sysfs_attr[] = {
+	__ATTR(ecc, 0664, sun6i_dma_ecc_inject_disable, sun6i_dma_ecc_inject_enable),
+};
+
+static void sun6i_dma_sysfs_init(struct device *dev)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(sun6i_dma_sysfs_attr); i++)
+		device_create_file(dev, &sun6i_dma_sysfs_attr[i]);
+}
+
+static void sun6i_dma_sysfs_exit(struct device *dev)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(sun6i_dma_sysfs_attr); i++)
+		device_remove_file(dev, &sun6i_dma_sysfs_attr[i]);
+}
 
 static int sun6i_dma_probe(struct platform_device *pdev)
 {
@@ -1756,10 +2020,24 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 	if (sdc->irq < 0)
 		return sdc->irq;
 
+	if (sdc->cfg->has_ecc) {
+		sdc->ecc_irq = platform_get_irq(pdev, 1);
+		if (sdc->ecc_irq < 0)
+			return sdc->ecc_irq;
+	}
+
 	sdc->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(sdc->clk)) {
 		dev_err(&pdev->dev, "No clock specified\n");
 		return PTR_ERR(sdc->clk);
+	}
+
+	if (sdc->cfg->has_mbus_en_clk) {
+		sdc->clk_mbus_en = devm_clk_get(&pdev->dev, "mbus-en");
+		if (IS_ERR(sdc->clk_mbus_en)) {
+			dev_err(&pdev->dev, "No mbus-en clock specified\n");
+			return PTR_ERR(sdc->clk_mbus_en);
+		}
 	}
 
 	if (sdc->cfg->has_mbus_clk) {
@@ -1778,10 +2056,12 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 		}
 	}
 
-	sdc->rstc = devm_reset_control_get(&pdev->dev, NULL);
-	if (IS_ERR(sdc->rstc)) {
-		dev_err(&pdev->dev, "No reset controller specified\n");
-		return PTR_ERR(sdc->rstc);
+	if (sdc->cfg->has_rst) {
+		sdc->rstc = devm_reset_control_get(&pdev->dev, NULL);
+		if (IS_ERR(sdc->rstc)) {
+			dev_err(&pdev->dev, "No reset controller specified\n");
+			return PTR_ERR(sdc->rstc);
+		}
 	}
 
 	sdc->pool = dmam_pool_create(dev_name(&pdev->dev), &pdev->dev,
@@ -1816,7 +2096,8 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 	sdc->slave.src_addr_widths		= sdc->cfg->src_addr_widths;
 	sdc->slave.dst_addr_widths		= sdc->cfg->dst_addr_widths;
 	sdc->slave.directions			= BIT(DMA_DEV_TO_MEM) |
-						  BIT(DMA_MEM_TO_DEV);
+						  BIT(DMA_MEM_TO_DEV) |
+						  BIT(DMA_MEM_TO_MEM);
 	sdc->slave.residue_granularity		= DMA_RESIDUE_GRANULARITY_BURST;
 	sdc->slave.dev = &pdev->dev;
 
@@ -1838,11 +2119,11 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 	}
 
 	/*
-	 * If the number of vchans is not specified, derive it from the
-	 * highest port number, at most one channel per port and direction.
+	 * If the number of vchans is not specified, then 2 times the number
+	 * of physical channels will be allocated for peripheral application.
 	 */
 	if (!sdc->num_vchans)
-		sdc->num_vchans = 2 * (sdc->max_request + 1);
+		sdc->num_vchans = 2 * sdc->num_pchans;
 
 	sdc->pchans = devm_kcalloc(&pdev->dev, sdc->num_pchans,
 				   sizeof(struct sun6i_pchan), GFP_KERNEL);
@@ -1871,19 +2152,21 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 		vchan_init(&vchan->vc, &sdc->slave);
 	}
 
-	if (!sdc->cfg->cannot_reset) {
-		ret = reset_control_assert(sdc->rstc);
+	if (sdc->cfg->has_rst) {
+		if (!sdc->cfg->cannot_reset) {
+			ret = reset_control_assert(sdc->rstc);
+			if (ret) {
+				dev_err(&pdev->dev, "Couldn't assert the device from reset\n");
+				goto err_chan_free;
+			}
+			usleep_range(20, 25); /* ensure dma controller is reset */
+		}
+
+		ret = reset_control_deassert(sdc->rstc);
 		if (ret) {
-			dev_err(&pdev->dev, "Couldn't assert the device from reset\n");
+			dev_err(&pdev->dev, "Couldn't deassert the device from reset\n");
 			goto err_chan_free;
 		}
-		usleep_range(20, 25); /* ensure dma controller is reset */
-	}
-
-	ret = reset_control_deassert(sdc->rstc);
-	if (ret) {
-		dev_err(&pdev->dev, "Couldn't deassert the device from reset\n");
-		goto err_chan_free;
 	}
 
 	ret = clk_prepare_enable(sdc->clk);
@@ -1892,11 +2175,19 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 		goto err_reset_assert;
 	}
 
+	if (sdc->cfg->has_mbus_en_clk) {
+		ret = clk_prepare_enable(sdc->clk_mbus_en);
+		if (ret) {
+			dev_err(&pdev->dev, "Couldn't enable mbus-en clock\n");
+			goto err_clk_disable;
+		}
+	}
+
 	if (sdc->cfg->has_mbus_clk) {
 		ret = clk_prepare_enable(sdc->clk_mbus);
 		if (ret) {
 			dev_err(&pdev->dev, "Couldn't enable mbus clock\n");
-			goto err_clk_disable;
+			goto err_mbus_en_clk_disable;
 		}
 	}
 
@@ -1913,6 +2204,15 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "Cannot request IRQ\n");
 		goto err_mcu_mbus_clk_disable;
+	}
+
+	if (sdc->cfg->has_ecc) {
+		ret = devm_request_irq(&pdev->dev, sdc->ecc_irq, sun6i_dma_ecc_interrupt, 0,
+				       dev_name(&pdev->dev), sdc);
+		if (ret) {
+			dev_err(&pdev->dev, "Cannot request ECC IRQ\n");
+			goto err_mcu_mbus_clk_disable;
+		}
 	}
 
 	ret = dma_async_device_register(&sdc->slave);
@@ -1940,6 +2240,21 @@ static int sun6i_dma_probe(struct platform_device *pdev)
 		writel(DMA_IRQ_MCU_DISABLE_MASK, sdc->base + DMA_IRQ_MCU_EN_REG);
 	}
 
+	/*
+	 * When multi core,like ARM64 and RISCV, share a single controller.
+	 * But shared interrupt control with RV in cpuX domain.
+	 */
+	if (sdc->cfg->has_irq_shared) {
+		writel(DMA_IRQ_SHARED_CPU_ENABLE, sdc->base + DMA_IRQ_CPU_EN_REG);
+		writel(DMA_IRQ_SHARED_MCU_DISABLE, sdc->base + DMA_IRQ_MCU_EN_REG);
+	}
+
+	/* when everything is ready, open ECC. */
+	if (sdc->cfg->has_ecc)
+		writel((SUNXI_DMA_ECC_IRQ_EN | SUNXI_DMA_ECC_EN), sdc->base + SUNXI_DMA_ECC_CTRL);
+
+	sun6i_dma_sysfs_init(&pdev->dev);
+
 	dev_info(&pdev->dev, "sunxi dma probed, driver version: %s\n",
 			SUNXI_DMA_MODULE_VERSION);
 
@@ -1955,10 +2270,14 @@ err_mcu_mbus_clk_disable:
 err_mbus_clk_disable:
 	if (sdc->cfg->has_mbus_clk)
 		clk_disable_unprepare(sdc->clk_mbus);
+err_mbus_en_clk_disable:
+	if (sdc->cfg->has_mbus_en_clk)
+		clk_disable_unprepare(sdc->clk_mbus_en);
 err_clk_disable:
 	clk_disable_unprepare(sdc->clk);
 err_reset_assert:
-	reset_control_assert(sdc->rstc);
+	if (sdc->cfg->has_rst)
+		reset_control_assert(sdc->rstc);
 err_chan_free:
 	sun6i_dma_free(sdc);
 	return ret;
@@ -1968,6 +2287,7 @@ static int sun6i_dma_remove(struct platform_device *pdev)
 {
 	struct sun6i_dma_dev *sdc = platform_get_drvdata(pdev);
 
+	sun6i_dma_sysfs_exit(&pdev->dev);
 	of_dma_controller_free(pdev->dev.of_node);
 	dma_async_device_unregister(&sdc->slave);
 
@@ -1977,8 +2297,11 @@ static int sun6i_dma_remove(struct platform_device *pdev)
 		clk_disable_unprepare(sdc->clk_mcu_mbus);
 	if (sdc->cfg->has_mbus_clk)
 		clk_disable_unprepare(sdc->clk_mbus);
+	if (sdc->cfg->has_mbus_en_clk)
+		clk_disable_unprepare(sdc->clk_mbus_en);
 	clk_disable_unprepare(sdc->clk);
-	reset_control_assert(sdc->rstc);
+	if (sdc->cfg->has_rst)
+		reset_control_assert(sdc->rstc);
 
 	sun6i_dma_free(sdc);
 

@@ -284,6 +284,7 @@ void vipp_clear_status(unsigned int id, enum vipp_status_sel sel);
 void vipp_chn_cap_enable(unsigned int id);
 void vipp_chn_cap_disable(unsigned int id);
 void vipp_set_para_ready(unsigned int id, enum vipp_ready_flag flag);
+void vipp_chn_cap_disable_para_notready(unsigned int id);
 void vipp_chn_bypass_mode(unsigned int id, unsigned int mode);
 void vipp_set_reg_load_addr(unsigned int id, unsigned long dma_addr);
 

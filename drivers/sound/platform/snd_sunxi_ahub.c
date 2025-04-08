@@ -16,6 +16,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/regulator/consumer.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/of.h>
 #include <linux/clk.h>
 #include <linux/reset.h>
@@ -30,8 +31,46 @@
 #include "snd_sunxi_pcm.h"
 #include "snd_sunxi_common.h"
 #include "snd_sunxi_ahub.h"
+#include "snd_sunxi_adapter.h"
 
 #define DRV_NAME	"sunxi-snd-plat-ahub"
+
+static void sunxi_ahub_get_dai_ucfmt(struct snd_notifier_block *snd_nb)
+{
+	struct sunxi_ahub *ahub;
+	struct snd_sunxi_dai_ucfmt *i2s_dai_fmt;
+
+	if (!snd_nb) {
+		SND_LOG_ERR("snd_nb is null\n");
+		return;
+	}
+
+	ahub = snd_nb->cb_data;
+	i2s_dai_fmt = snd_nb->tx_data;
+
+	ahub->data_late = i2s_dai_fmt->data_late;
+	ahub->tx_lsb_first = i2s_dai_fmt->tx_lsb_first;
+	ahub->rx_lsb_first = i2s_dai_fmt->rx_lsb_first;
+}
+
+static void sunxi_ahub_get_hdmi_fmt(struct snd_notifier_block *snd_nb)
+{
+	struct sunxi_ahub *ahub;
+	enum HDMI_FORMAT *hdmi_fmt;
+
+	if (!snd_nb) {
+		SND_LOG_ERR("snd_nb is null\n");
+		return;
+	}
+
+	ahub = snd_nb->cb_data;
+	hdmi_fmt = snd_nb->tx_data;
+
+	if (ahub->dts.dai_type == SUNXI_DAI_HDMI_TYPE) {
+		ahub->playback_dma_param.hdmi_fmt = *hdmi_fmt;
+		SND_LOG_DEBUG("hdmi fmt -> %d\n", ahub->playback_dma_param.hdmi_fmt);
+	}
+}
 
 static int sunxi_ahub_dai_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
 {
@@ -293,7 +332,7 @@ static int sunxi_ahub_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	struct sunxi_ahub *ahub = snd_soc_dai_get_drvdata(dai);
 	struct regmap *regmap = NULL;
 	unsigned int tdm_num, tx_pin, rx_pin;
-	unsigned int mode, offset;
+	unsigned int mode;
 	unsigned int lrck_polarity, brck_polarity;
 
 	SND_LOG_DEBUG("\n");
@@ -313,19 +352,15 @@ static int sunxi_ahub_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
 	case SND_SOC_DAIFMT_I2S:
 		mode = 1;
-		offset = 1;
 		break;
 	case SND_SOC_DAIFMT_RIGHT_J:
 		mode = 2;
-		offset = 0;
 		break;
 	case SND_SOC_DAIFMT_LEFT_J:
 		mode = 1;
-		offset = 0;
 		break;
 	case SND_SOC_DAIFMT_DSP_A:
 		mode = 0;
-		offset = 1;
 		/* L data MSB after FRM LRC (short frame) */
 		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT0(tdm_num),
 				   0x1 << I2S_FMT0_LRCK_WIDTH,
@@ -333,7 +368,6 @@ static int sunxi_ahub_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 		break;
 	case SND_SOC_DAIFMT_DSP_B:
 		mode = 0;
-		offset = 0;
 		/* L data MSB during FRM LRC (long frame) */
 		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT0(tdm_num),
 				   0x1 << I2S_FMT0_LRCK_WIDTH,
@@ -349,15 +383,37 @@ static int sunxi_ahub_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	 *		   0x3 << I2S_OUT_OFFSET, offset << I2S_OUT_OFFSET);
 	 */
 	regmap_update_bits(regmap, SUNXI_AHUB_I2S_OUT_SLOT(tdm_num, 0),
-			   0x3 << I2S_OUT_OFFSET, offset << I2S_OUT_OFFSET);
+			   0x3 << I2S_OUT_OFFSET, ahub->data_late << I2S_OUT_OFFSET);
 	regmap_update_bits(regmap, SUNXI_AHUB_I2S_OUT_SLOT(tdm_num, 1),
-			   0x3 << I2S_OUT_OFFSET, offset << I2S_OUT_OFFSET);
+			   0x3 << I2S_OUT_OFFSET, ahub->data_late << I2S_OUT_OFFSET);
 	regmap_update_bits(regmap, SUNXI_AHUB_I2S_OUT_SLOT(tdm_num, 2),
-			   0x3 << I2S_OUT_OFFSET, offset << I2S_OUT_OFFSET);
+			   0x3 << I2S_OUT_OFFSET, ahub->data_late << I2S_OUT_OFFSET);
 	regmap_update_bits(regmap, SUNXI_AHUB_I2S_OUT_SLOT(tdm_num, 3),
-			   0x3 << I2S_OUT_OFFSET, offset << I2S_OUT_OFFSET);
+			   0x3 << I2S_OUT_OFFSET, ahub->data_late << I2S_OUT_OFFSET);
 	regmap_update_bits(regmap, SUNXI_AHUB_I2S_IN_SLOT(tdm_num),
-			   0x3 << I2S_IN_OFFSET, offset << I2S_IN_OFFSET);
+			   0x3 << I2S_IN_OFFSET, ahub->data_late << I2S_IN_OFFSET);
+
+	if (!ahub->rx_lsb_first && !ahub->tx_lsb_first) {
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_RX_LSB, 0 << I2S_FMT1_RX_LSB);
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_TX_LSB, 0 << I2S_FMT1_TX_LSB);
+	} else if (ahub->rx_lsb_first && !ahub->tx_lsb_first) {
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_RX_LSB, 1 << I2S_FMT1_RX_LSB);
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_TX_LSB, 0 << I2S_FMT1_TX_LSB);
+	} else if (!ahub->rx_lsb_first && ahub->tx_lsb_first) {
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_RX_LSB, 0 << I2S_FMT1_RX_LSB);
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_TX_LSB, 1 << I2S_FMT1_TX_LSB);
+	} else {
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_RX_LSB, 1 << I2S_FMT1_RX_LSB);
+		regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT1(tdm_num),
+				   1 << I2S_FMT1_TX_LSB, 1 << I2S_FMT1_TX_LSB);
+	}
 
 	/* set lrck & bclk polarity */
 	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
@@ -381,6 +437,9 @@ static int sunxi_ahub_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 		SND_LOG_ERR("invert clk setting failed\n");
 		return -EINVAL;
 	}
+
+	lrck_polarity ^= !mode;
+
 	regmap_update_bits(regmap, SUNXI_AHUB_I2S_FMT0(tdm_num),
 			   0x1 << I2S_FMT0_LRCK_POLARITY,
 			   lrck_polarity << I2S_FMT0_LRCK_POLARITY);
@@ -494,6 +553,9 @@ static int sunxi_ahub_dai_hw_params(struct snd_pcm_substream *substream,
 		0x0001, 0x0003, 0x0007, 0x000f, 0x001f, 0x003f, 0x007f, 0x00ff,
 		0x01ff, 0x03ff, 0x07ff, 0x0fff, 0x1fff, 0x3fff, 0x7fff, 0xffff
 	};
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct sunxi_dma_params *dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd),
+								       substream);
 
 	SND_LOG_DEBUG("\n");
 
@@ -507,18 +569,13 @@ static int sunxi_ahub_dai_hw_params(struct snd_pcm_substream *substream,
 	tx_pin = ahub->dts.tx_pin;
 	rx_pin = ahub->dts.rx_pin;
 
-	if (ahub->dts.dai_type == SUNXI_DAI_HDMI_TYPE) {
-		ahub->hdmi_fmt = snd_sunxi_hdmi_get_fmt();
-		SND_LOG_DEBUG("hdmi fmt -> %d\n", ahub->hdmi_fmt);
-	}
-
 	/* set bits */
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
 		/* apbifn bits */
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 			if (ahub->dts.dai_type == SUNXI_DAI_HDMI_TYPE) {
-				if (ahub->hdmi_fmt > HDMI_FMT_PCM) {
+				if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
 					regmap_update_bits(regmap,
 							   SUNXI_AHUB_APBIF_TX_CTL(apb_num),
 							   0x7 << APBIF_TX_WS,
@@ -559,7 +616,7 @@ static int sunxi_ahub_dai_hw_params(struct snd_pcm_substream *substream,
 		}
 		/* tdmn bits */
 		if (ahub->dts.dai_type == SUNXI_DAI_HDMI_TYPE) {
-			if (ahub->hdmi_fmt > HDMI_FMT_PCM) {
+			if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
 				regmap_update_bits(regmap,
 						   SUNXI_AHUB_I2S_FMT0(tdm_num),
 						   0x7 << I2S_FMT0_SR,
@@ -628,7 +685,7 @@ static int sunxi_ahub_dai_hw_params(struct snd_pcm_substream *substream,
 			regmap_write(regmap,
 				     SUNXI_AHUB_I2S_OUT_CHMAP0(tdm_num, 0),
 				     0x10);
-			if (ahub->hdmi_fmt > HDMI_FMT_PCM) {
+			if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
 				regmap_write(regmap,
 					     SUNXI_AHUB_I2S_OUT_CHMAP0(tdm_num, 1),
 					     0x32);
@@ -953,7 +1010,7 @@ static void sunxi_ahub_dai_shutdown(struct snd_pcm_substream *substream,
 	}
 }
 
-static const struct snd_soc_dai_ops sunxi_ahub_dai_ops = {
+static struct snd_soc_dai_ops sunxi_ahub_dai_ops = {
 	/* call by machine */
 	.set_pll	= sunxi_ahub_dai_set_pll,	/* set pllclk */
 	.set_sysclk	= sunxi_ahub_dai_set_sysclk,	/* set mclk */
@@ -1121,8 +1178,6 @@ static int sunxi_ahub_dai_remove(struct snd_soc_dai *dai)
 
 static struct snd_soc_dai_driver sunxi_ahub_dai = {
 	.name		= "ahub_plat",
-	.probe		= sunxi_ahub_dai_probe,
-	.remove		= sunxi_ahub_dai_remove,
 	.playback = {
 		.stream_name	= "Playback",
 		.channels_min	= 1,
@@ -1143,15 +1198,39 @@ static struct snd_soc_dai_driver sunxi_ahub_dai = {
 				| SNDRV_PCM_FMTBIT_S24_LE
 				| SNDRV_PCM_FMTBIT_S32_LE,
 	},
-	.ops = &sunxi_ahub_dai_ops,
 };
 
 static int sunxi_ahub_probe(struct snd_soc_component *component)
 {
-	(void)component;
+	int ret;
+	struct sunxi_ahub *ahub = snd_soc_component_get_drvdata(component);
+
 	SND_LOG_DEBUG("\n");
 
+	ret = snd_sunxi_extparam_register_cb(component->card->name, EXTPARAM_ID_DAI_UCFMT,
+					     sunxi_ahub_get_dai_ucfmt, (void *)ahub);
+	if (ret) {
+		SND_LOG_ERR("dai ucfmt callback register failed\n");
+		return -EINVAL;
+	}
+	ret = snd_sunxi_extparam_register_cb(component->card->name, EXTPARAM_ID_HDMI_FMT,
+					     sunxi_ahub_get_hdmi_fmt, (void *)ahub);
+	if (ret) {
+		SND_LOG_ERR("hdmi fmt callback register failed\n");
+		return -EINVAL;
+	}
+
 	return 0;
+}
+
+static void sunxi_ahub_remove(struct snd_soc_component *component)
+{
+	SND_LOG_DEBUG("\n");
+
+	snd_sunxi_extparam_unregister_cb(component->card->name, EXTPARAM_ID_DAI_UCFMT,
+					 sunxi_ahub_get_dai_ucfmt);
+	snd_sunxi_extparam_unregister_cb(component->card->name, EXTPARAM_ID_HDMI_FMT,
+					 sunxi_ahub_get_hdmi_fmt);
 }
 
 static int sunxi_ahub_suspend(struct snd_soc_component *component)
@@ -1240,6 +1319,7 @@ static const struct snd_kcontrol_new sunxi_ahub_controls[] = {
 static struct snd_soc_component_driver sunxi_ahub_dev = {
 	.name		= DRV_NAME,
 	.probe		= sunxi_ahub_probe,
+	.remove		= sunxi_ahub_remove,
 	.suspend	= sunxi_ahub_suspend,
 	.resume		= sunxi_ahub_resume,
 	.controls	= sunxi_ahub_controls,
@@ -1491,6 +1571,7 @@ static void snd_sunxi_dma_params_init(struct sunxi_ahub *ahub)
 	ahub->playback_dma_param.dma_addr = res->start + SUNXI_AHUB_APBIF_TXFIFO(dts->apb_num);
 	ahub->playback_dma_param.cma_kbytes = dts->playback_cma;
 	ahub->playback_dma_param.fifo_size = dts->playback_fifo_size;
+	ahub->playback_dma_param.hdmi_fmt = HDMI_FMT_PCM;
 
 	ahub->capture_dma_param.src_maxburst = 4;
 	ahub->capture_dma_param.dst_maxburst = 4;
@@ -1501,6 +1582,7 @@ static void snd_sunxi_dma_params_init(struct sunxi_ahub *ahub)
 
 static int sunxi_ahub_dev_probe(struct platform_device *pdev)
 {
+	struct sunxi_adapt_dai_ops_priv priv;
 	int ret;
 	struct device_node *np = pdev->dev.of_node;
 	struct sunxi_ahub *ahub = NULL;
@@ -1559,6 +1641,10 @@ static int sunxi_ahub_dev_probe(struct platform_device *pdev)
 	}
 
 	snd_sunxi_dma_params_init(ahub);
+
+	priv.probe = sunxi_ahub_dai_probe;
+	priv.remove = sunxi_ahub_dai_remove;
+	sunxi_adpt_set_dai_ops(&sunxi_ahub_dai, &sunxi_ahub_dai_ops, &priv);
 
 	ret = snd_soc_register_component(&pdev->dev, &sunxi_ahub_dev, &sunxi_ahub_dai, 1);
 	if (ret) {
@@ -1657,5 +1743,5 @@ module_exit(sunxi_ahub_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.2");
 MODULE_DESCRIPTION("sunxi soundcard platform of ahub");

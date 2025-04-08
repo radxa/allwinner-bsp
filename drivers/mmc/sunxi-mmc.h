@@ -48,10 +48,10 @@
 #define __SUNXI_MMC_H__
 
 #define DRIVER_NAME "sunxi-mmc"
-#define DRIVER_RIVISION "v5.39 2024-02-22 13:48 -- v5.48 2024-07-17 16:19"
+#define DRIVER_RIVISION "v5.59 2025-01-21 15:50"
 #define DRIVER_VERSION "SD/MMC/SDIO Host Controller Driver(" DRIVER_RIVISION ")"
 
-#if defined CONFIG_AW_FPGA_S4 || defined CONFIG_AW_FPGA_V7
+#if defined CONFIG_AW_FPGA_S4 || defined CONFIG_AW_FPGA_V7 || defined CONFIG_AW_FPGA_UV440
 #define MMC_FPGA
 #endif
 
@@ -88,6 +88,30 @@
 #define SDXC_REG_CHDA	(0x90)
 #define SDXC_REG_CBDA	(0x94)
 
+#define SDXC_REG_SKEW_D0	(0x160)
+#define SDXC_REG_SKEW_D1	(0x164)
+#define SDXC_REG_SKEW_D2	(0x168)
+#define SDXC_REG_SKEW_D3	(0x16c)
+#define SDXC_REG_SKEW_D4	(0x170)
+#define SDXC_REG_SKEW_D5	(0x174)
+#define SDXC_REG_SKEW_D6	(0x178)
+#define SDXC_REG_SKEW_D7	(0x17c)
+#define SDXC_REG_SKEW_CTRL	(0x184)
+
+/* shmc ecc */
+#define SDXC_REG_B2C_ECC_CTRL	(0x1b0)
+#define SDXC_REG_B2C_ECC_INT_CLEAR	(0x1b4)
+#define SDXC_REG_B2C_ECC_INT_STATUS	(0x1b8)
+#define SDXC_REG_B2C_ECC_ERR_INJECT	(0x1bc)
+#define SDXC_REG_B2C_ECC_ORI_ERR_DATA	(0x1c0)
+
+#define SDXC_REG_CQE_ECC_CTRL	(0x1c4)
+#define SDXC_REG_CQE_ECC_INT_CLEAR	(0x1c8)
+#define SDXC_REG_CQE_ECC_INT_STATUS	(0x1cc)
+#define SDXC_REG_CQE_ECC_ERR_INJECT_0	(0x1d0)
+#define SDXC_REG_CQE_ECC_ERR_INJECT_1	(0x1d4)
+#define SDXC_REG_CQE_ECC_ORI_ERR_DATA_0	(0x1d8)
+#define SDXC_REG_CQE_ECC_ORI_ERR_DATA_1	(0x1dc)
 
 #define SDXC_REG_CQE_CTRL (0x1A0) /* SMH CQE CONTROL Register */
 #define SDXC_REG_FIFO	(0x200)
@@ -273,6 +297,10 @@
 #define CARD_PWR_GPIO_AUTO	0	/* smhc driver will set card_pwr_gpio */
 #define CARD_PWR_GPIO_MANUAL	1	/* debug cmd will set card_pwr_gpio   */
 
+/* ECC ERROR */
+#define SDXC_B2C_ECC_DOUBIT_ERROR	BIT(1)
+#define SDXC_CQE_ECC_DOUBIT_ERROR	BIT(2)
+
 void sunxi_dump_reg(struct mmc_host *mmc);
 
 #define sunxi_r_op(__h, __op) (\
@@ -322,6 +350,8 @@ struct sunxi_mmc_ctrl_regs {
 	u32 idmacc;
 	u32 dlba;
 	u32 imask;
+	u32 ecc_ctrl;
+	u32 cqe_ecc_ctrl;
 
 	u32 cqcfg;
 	u32 cqtdlba;
@@ -372,8 +402,16 @@ struct sunxi_mmc_host {
 	struct clk *clk_ahb;
 	/* mbus gate(for mmc) is enabled by default. But v821 disabled it in boot0. So it need enable in kernel */
 	struct clk *clk_mbus;
+	/*on the A733, ensure sdmmc successfully completed the work,
+	 * it is applicable together with mbus matching.*/
+	struct clk *clk_store;
 	struct clk *clk_mmc;
+	struct clk *clk_msi_lite;
+#ifdef CONFIG_AW_CCU_LEGACY
+	struct clk *clk_rst;
+#else
 	struct reset_control *clk_rst;
+#endif
 
 	int (*sunxi_mmc_clk_set_rate)(struct sunxi_mmc_host *host,
 				struct mmc_ios *ios);
@@ -385,6 +423,7 @@ struct sunxi_mmc_host {
 	/* only used for read register serial */
 	spinlock_t read_lock;
 	int irq;
+	int irq_ecc;
 	u32 int_sum;
 	u32 sdio_imask;
 
@@ -500,6 +539,9 @@ struct sunxi_mmc_host {
 #define MMC_SUNXI_CAP3_RDPST	(1 << 3)
 #define MMC_SUNXI_CQE_ON		(1 << 4)
 #define MMC_SUNXI_INT_CLSC_ON		(1 << 5)
+#define MMC_SUNXI_CAP3_B2C_ECC		(1 << 6)
+#define MMC_SUNXI_CAP3_CQE_ECC		(1 << 7)
+
 	u32 sunxi_caps3;
 
 	struct sunxi_mmc_supply supply;
@@ -545,6 +587,7 @@ struct sunxi_mmc_host {
 	/* Used to prevent sending cmd8 in halt */
 	/* restore normal mmc host */
 	bool rstr_nrml;
+	u32 cqe_rdto_ms;
 
 	/* des phy address shift,use for over 4G phy ddrest */
 	size_t des_addr_shift;
@@ -568,6 +611,7 @@ struct sunxi_mmc_host {
 #define MMC_TUNING_RETRY_TIMES		20
 	u32 kernel_tuning_sample_dly;
 	u8 tuning_in_kernel;
+	u8 ecc_error;
 	u32 execute_tuning_runing;
 	void (*sunxi_mmc_set_samp_dl)(struct sunxi_mmc_host *host,
 					int sunxi_samp_dl);
@@ -601,6 +645,7 @@ struct mmc_gpio {
 						 MMC_CAP2_PACKED_WR)
 #define MMC_CAP2_HC_ERASE_SZ	(1 << 9)	/* High-capacity erase size */
 
+void sunxi_mmc_select_timing(struct mmc_host *mmc, int64_t value);
 void sunxi_mmc_set_a12a(struct sunxi_mmc_host *host);
 void sunxi_mmc_do_shutdown_com(struct platform_device *pdev);
 int mmc_wbclr(struct sunxi_mmc_host *host, void __iomem *addr, u32 bmap, u32 tms);

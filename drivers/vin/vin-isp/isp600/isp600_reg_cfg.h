@@ -35,7 +35,7 @@
 #endif
 #define ISP_LOAD_REG_SIZE			0x1000
 #define ISP_FE_TBL_SIZE				0x1800
-#define ISP_BAYER_TABLE_SIZE			0x2600
+#define ISP_BAYER_TABLE_SIZE		0x2600
 #define ISP_RGB_TABLE_SIZE			0x1200
 #if IS_ENABLED(CONFIG_ARCH_SUN55IW6)
 #define ISP_YUV_TABLE_SIZE			0x4F40
@@ -91,6 +91,25 @@
 /*save and load statistics*/
 #define ISP_STAT_PLTM_PKX_SIZE		0x3000
 #define ISP_STAT_D3D_K_SIZE			0x0300
+
+/*2in1 large_image mode save data*/
+#if IS_ENABLED(CONFIG_ARCH_SUN8IW21) || IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#define ISP_AHB0_MEM_OFS			0x20
+#define ISP_AHB1_MEM_OFS			0x40
+#define ISP_AHB_MEM_SIZE			0x20
+#else
+#define ISP_AHB0_MEM_OFS			0x20
+#define ISP_AHB1_MEM_OFS			0x50
+#define ISP_AHB_MEM_SIZE			0x30
+#endif
+#define ISP_AE_REG_OFS				0x650
+#define ISP_AF_REG_OFS				0x670
+#define ISP_AWB_REG_OFS				0x6e0
+#define ISP_HIST_REG_OFS			0x710
+#define ISP_AE_REG_SIZE				0x8
+#define ISP_AF_REG_SIZE				0xc
+#define ISP_AWB_REG_SIZE			0x8
+#define ISP_HIST_REG_SIZE			0x20
 
 #define LENS_UPDATE				(1 << 8)
 #define GAMMA_UPDATE			(1 << 9)
@@ -217,6 +236,25 @@
 /*
  *  ISP internal1 status
  */
+#define ISP_STATUS_IDLE				0
+#define ISP_STATUS_WAIT_ID_RDY		(1 << 0)
+#define ISP_STATUS_ID_REF			(1 << 1)
+#define ISP_STATUS_ID_CHECK			(1 << 2)
+#define ISP_STATUS_READ_SDRAM		(1 << 3)
+#define ISP_STATUS_INIT				(1 << 4)
+#define ISP_STATUS_RX_RDY			(1 << 5)
+#define ISP_STATUS_ISP_PRO_J		(1 << 6)
+#define ISP_STATUS_ISP_PRO0			(1 << 7)
+#define ISP_STATUS_ISP_PRO1			(1 << 8)
+#define ISP_STATUS_WRITE_SDRAM		(1 << 9)
+#define ISP_STATUS_FINISH_END_WAIT	(1 << 10)
+#define ISP_STATUS_FINISH_END		(1 << 11)
+#define ISP_STATUS_CSI_END			(1 << 12)
+#define ISP_STATUS_MASK				(0xffff << 0)
+
+#define ISP_CUR_ID					16
+#define ISP_CUR_ID_MASK				(0x3 << 16)
+
 #define LBC_DEC_LONG_ERROR		(1 << 24)
 #define LBC_DEC_SHORT_ERROR		(1 << 25)
 #define LBC_DEC_ERROR			(1 << 26)
@@ -306,9 +344,13 @@ enum isp_input_seq {
 };
 
 extern int isp_virtual_find_ch[4];
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 extern int isp_virtual_find_logic[7];
 extern int isp_virtual_find_sel[7];
 extern int isp_ch_find[7];
+#else
+extern int isp_virtual_find_logic[4];
+#endif
 
 void bsp_isp_map_reg_addr(unsigned long id, unsigned long base);
 void bsp_isp_map_load_dram_addr(unsigned long id, unsigned long base);
@@ -340,6 +382,7 @@ void bsp_isp_clr_irq_status(unsigned long id, unsigned int flag);
 unsigned int bsp_isp_get_internal_status0(unsigned long id, unsigned int flag);
 void bsp_isp_clr_internal_status0(unsigned long id, unsigned int flag);
 unsigned int bsp_isp_get_internal_status1(unsigned long id, unsigned int flag);
+unsigned int bsp_isp_get_isp_cur_id(unsigned long id);
 unsigned int bsp_isp_get_internal_status2(unsigned long id, unsigned int flag);
 void bsp_isp_clr_internal_status2(unsigned long id, unsigned int flag);
 void bsp_isp_set_saved_addr(unsigned long id, unsigned long addr);

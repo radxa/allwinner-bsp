@@ -291,6 +291,8 @@ struct sunxi_codec {
 	struct sunxi_codec_rglt rglt;
 	struct sunxi_codec_dts dts;
 
+	enum SND_SUNXI_CLK_STATUS clk_sta;
+
 	struct sunxi_codec_dap dac_dap;
 	struct sunxi_codec_dap adc_dap;
 

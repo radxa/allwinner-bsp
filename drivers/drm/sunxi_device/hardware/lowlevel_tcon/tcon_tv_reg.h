@@ -84,7 +84,7 @@ union tcon_tv_basic0_reg_t {
 union tcon_tv_basic1_reg_t {
 	u32 dwval;
 	struct {
-#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2)) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 		u32 vt:17;
 		u32 res0:14;
 		u32 vic39:1;

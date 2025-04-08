@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -82,5 +82,5 @@ int isp_rpmsg_trysend(struct isp_dev *isp, void *data, int len);
 
 int sunxi_vin_isp_parameter_init(void);
 void sunxi_vin_isp_parameter_exit(void);
-
 #endif
+

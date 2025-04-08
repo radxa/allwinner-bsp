@@ -23,6 +23,7 @@
 #include <linux/of_address.h>
 
 #include "snd_sunxi_sfx.h"
+#include "snd_sunxi_adapter.h"
 
 struct snd_sunxi_sfx {
 	dev_t sfx_dev;
@@ -72,7 +73,7 @@ static int snd_sunxi_hw_effect_mmap(struct file *filp, struct vm_area_struct *vm
 		return -1;
 	}
 
-	vma->vm_flags |= VM_IO;
+	sunxi_adpt_vm_flags_set(vma, VM_IO);
 	temp_pfn = sfx->phys_addr >> PAGE_SHIFT;
 
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
@@ -121,7 +122,7 @@ int snd_sunxi_hw_effect_init(struct snd_sunxi_sfx *sfx)
 		goto err_cdev_add;
 	}
 
-	sfx->sfx_class = class_create(THIS_MODULE, sfx->sfx_class_name);
+	sfx->sfx_class = sunxi_adpt_class_create(THIS_MODULE, sfx->sfx_class_name);
 	if (IS_ERR_OR_NULL(sfx->sfx_class)) {
 		SND_LOG_ERR("class_create failed\n");
 		goto err_class_create;
@@ -179,5 +180,5 @@ module_exit(sunxi_sfx_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.1");
 MODULE_DESCRIPTION("sunxi soundcard of sound effects");

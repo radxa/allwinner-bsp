@@ -142,7 +142,7 @@
 
 #define SID_PRCTL		0x40
 #define SID_RDKEY		0x60
-#define SID_OP_LOCK		0xAC
+#define SID_OP_LOCK		0xAC  /* In SID_PRCTL */
 
 #define EFUSE_CHIPID_BASE	"allwinner,sunxi-chipid"
 #define EFUSE_SID_BASE		"allwinner,sunxi-sid"
@@ -150,6 +150,7 @@
 
 #define EFUSE_MAX_ADDR_SIZE     (256)
 #define EFUSE_RW_MAX_LEN        (64)
+#define SUNXI_EFUSE_RAM_OFFSET	0x200
 
 typedef struct {
 	char name[64];
@@ -164,10 +165,12 @@ typedef struct {
 /* The interface functions */
 #if IS_ENABLED(CONFIG_AW_SID)
 unsigned int sunxi_get_soc_ver(void);
+unsigned int sunxi_get_sid_ver(void);
 unsigned int sunxi_get_soc_ver_from_reg(void);
 unsigned int sunxi_get_platform_id(void);
 int sunxi_get_soc_chipid(unsigned char *chipid);
 int sunxi_get_soc_chipid_str(char *chipid);
+int sunxi_get_soc_chipid_origin(char *chipid_origin);
 int sunxi_get_soc_ft_zone_str(char *serial);
 int sunxi_get_soc_rotpk_status_str(char *status);
 int sunxi_get_pmu_chipid(unsigned char *chipid);
@@ -178,12 +181,17 @@ s32 sunxi_get_platform(s8 *buf, s32 size);
 s32 sunxi_efuse_readn(s8 *key_name, void *buf, u32 n);
 int sunxi_get_module_param_from_sid(u32 *dst, u32 offset, u32 len);
 unsigned int sunxi_get_soc_markid(void);
+int sunxi_sid_sram_read32(const char *key, u32 *data);
+int sunxi_sid_get_ecc_status(void);
+int sunxi_get_soc_dvfs(u32 *dvfs);
 #else
 unsigned int __attribute__((weak)) sunxi_get_soc_ver(void) { return -ENOSYS; }
+unsigned int __attribute__((weak)) sunxi_get_sid_ver(void) { return -ENOSYS; }
 unsigned int __attribute__((weak)) sunxi_get_soc_ver_from_reg(void) { return -ENOSYS; }
 unsigned int __attribute__((weak)) sunxi_get_platform_id(void) { return -ENOSYS; }
 int __attribute__((weak)) sunxi_get_soc_chipid(unsigned char *chipid) { return -ENOSYS; }
 int __attribute__((weak)) sunxi_get_soc_chipid_str(char *chipid) { return -ENOSYS; }
+int __attribute__((weak)) sunxi_get_soc_chipid_origin(char *chipid_origin) { return -ENOSYS; }
 int __attribute__((weak)) sunxi_get_soc_ft_zone_str(char *serial) { return -ENOSYS; }
 int __attribute__((weak)) sunxi_get_soc_rotpk_status_str(char *status) { return -ENOSYS; }
 int __attribute__((weak)) sunxi_get_pmu_chipid(unsigned char *chipid) { return -ENOSYS; }
@@ -194,6 +202,9 @@ s32 __attribute__((weak)) sunxi_get_platform(s8 *buf, s32 size) { return -ENOSYS
 s32 __attribute__((weak)) sunxi_efuse_readn(s8 *key_name, void *buf, u32 n) { return -ENOSYS; }
 int __attribute__((weak)) sunxi_get_module_param_from_sid(u32 *dst, u32 offset, u32 len) { return -ENOSYS; }
 unsigned int __attribute__((weak)) sunxi_get_soc_markid(void) { return -ENOSYS; }
-#endif
+int __attribute__((weak))sunxi_sid_sram_read32(const char *key, u32 *data) { return -ENOSYS; }
+int __attribute__((weak)) sunxi_sid_get_ecc_status(void) { return -ENOSYS; }
+int __attribute__((weak)) sunxi_get_soc_dvfs(u32 *dvfs) { return -ENOSYS; }
+#endif  /* CONFIG_AW_SID */
 
 #endif  /* __SUNXI_SID_H */

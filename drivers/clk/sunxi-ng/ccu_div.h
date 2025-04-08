@@ -19,6 +19,9 @@
  * @max: Maximum value allowed for that divider. This is the
  *       arithmetic value, not the maximum value to be set in the
  *       register.
+ * @min: Minimum value allowed for that divider. This is the
+ *       arithmetic value, not the minimum value to be set in the
+ *       register.
  * @flags: clk_divider flags to apply on this divider
  * @table: Divider table pointer (if applicable)
  *
@@ -34,6 +37,7 @@ struct ccu_div_internal {
 	u8			width;
 
 	u32			max;
+	u32			min;
 	u32			offset;
 
 	u32			flags;
@@ -52,17 +56,18 @@ struct ccu_div_internal {
 #define _SUNXI_CCU_DIV_TABLE(_shift, _width, _table)			\
 	_SUNXI_CCU_DIV_TABLE_FLAGS(_shift, _width, _table, 0)
 
-#define _SUNXI_CCU_DIV_OFFSET_MAX_FLAGS(_shift, _width, _off, _max, _flags) \
+#define _SUNXI_CCU_DIV_OFFSET_MAX_MIN_FLAGS(_shift, _width, _off, _max, _min, _flags) \
 	{								\
 		.shift	= _shift,					\
 		.width	= _width,					\
 		.flags	= _flags,					\
 		.max	= _max,						\
+		.min	= _min,						\
 		.offset	= _off,						\
 	}
 
 #define _SUNXI_CCU_DIV_MAX_FLAGS(_shift, _width, _max, _flags)		\
-	_SUNXI_CCU_DIV_OFFSET_MAX_FLAGS(_shift, _width, 1, _max, _flags)
+	_SUNXI_CCU_DIV_OFFSET_MAX_MIN_FLAGS(_shift, _width, 1, _max, 1,  _flags)
 
 #define _SUNXI_CCU_DIV_FLAGS(_shift, _width, _flags)			\
 	_SUNXI_CCU_DIV_MAX_FLAGS(_shift, _width, 0, _flags)
@@ -71,10 +76,16 @@ struct ccu_div_internal {
 	_SUNXI_CCU_DIV_MAX_FLAGS(_shift, _width, _max, 0)
 
 #define _SUNXI_CCU_DIV_OFFSET(_shift, _width, _offset)			\
-	_SUNXI_CCU_DIV_OFFSET_MAX_FLAGS(_shift, _width, _offset, 0, 0)
+	_SUNXI_CCU_DIV_OFFSET_MAX_MIN_FLAGS(_shift, _width, _offset, 0, 1, 0)
 
 #define _SUNXI_CCU_DIV(_shift, _width)					\
 	_SUNXI_CCU_DIV_FLAGS(_shift, _width, 0)
+
+#define _SUNXI_CCU_DIV_MIN_FLAGS(_shift, _width, _min, _flags)		\
+	_SUNXI_CCU_DIV_OFFSET_MAX_MIN_FLAGS(_shift, _width, 1, 0, _min, _flags)
+
+#define _SUNXI_CCU_DIV_MIN(_shift, _width, _min)			\
+	_SUNXI_CCU_DIV_MIN_FLAGS(_shift, _width, _min, 0)
 
 struct ccu_div {
 	u32			enable;
@@ -141,6 +152,7 @@ struct ccu_div {
 		.mux	= _SUNXI_CCU_MUX_TABLE(_muxshift, _muxwidth, _table), \
 		.common	= {						\
 			.features	= CCU_FEATURE_KEY_FIELD_MOD,	\
+			.key_reg        = _reg,				\
 			.key_value	= _key_value,			\
 			.reg		= _reg,				\
 			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\

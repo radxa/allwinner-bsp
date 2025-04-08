@@ -1,14 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define pr_fmt(x) KBUILD_MODNAME ": " x "\n"
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/device.h>
-#include <linux/jiffies.h>
-#include <linux/platform_device.h>
-#include <linux/power_supply.h>
-#include <linux/of.h>
+#include "sunxi-power-supply.h"
 
 struct sunxi_virtual_ac_power {
 	char                      *name;

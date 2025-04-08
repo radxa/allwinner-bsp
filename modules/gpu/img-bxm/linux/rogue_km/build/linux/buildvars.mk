@@ -73,6 +73,12 @@ COMMON_FLAGS += \
  -D_FILE_OFFSET_BITS=64
 endif
 
+# Enable C99 compatibility for a mingw Windows cross compiler, particularly 'vsnprintf' returns
+# the required size of the buffer on buffer overflow, not -1.
+ifeq ($(TARGET_OS),windows)
+COMMON_FLAGS += -D__USE_MINGW_ANSI_STDIO=1
+endif
+
 ifeq (, $(shell which indent))
  INDENT_TOOL_NOT_FOUND := 1
 else
@@ -115,6 +121,10 @@ COMMON_USER_FLAGS += -fno-strict-aliasing
 # and the symbols put in the symbolpackage, or we're building debug.
 #
 COMMON_USER_FLAGS += -g
+
+ifeq ($(USE_ELF_TLS),1)
+COMMON_USER_FLAGS += -fno-emulated-tls
+endif
 
 # User C and User C++ warning flags
 #
@@ -268,11 +278,32 @@ ifeq ($(shell test "$(kernel-cc-is-clang)" = true  -a  \
  TESTED_KBUILD_FLAGS += $(call kernel-cc-option,-integrated-as)
 endif
 
+# For Android, IMG supports a wide range of clang and kernel versions. Flags
+# required in the Android kernel may not be required in the Linux kernel and
+# vice versa. To support these combinations, set these flags with conditions.
+#
 ifeq ($(SUPPORT_ANDROID_PLATFORM),1)
 # Detect clang and lld version.
 CLANG_LLD_VERSION_CHECK := $(TOP)/build/linux/tools/clang-ld-version.sh
 KBUILD_CLANG_VERSION    := $(shell $(CLANG_LLD_VERSION_CHECK) --$(KERNEL_CC))
 KBUILD_LLD_VERSION      := $(shell $(CLANG_LLD_VERSION_CHECK) --$(KERNEL_LD))
+
+ifneq ($(wildcard $(KERNELDIR)),)
+ include  build/linux/config/kernel_version.mk
+ ifeq ($(kernel-cc-is-clang),true)
+ __clang_ge_16.0.1 := \
+  $(shell ((test $(KBUILD_CLANG_VERSION) -ge 160001) && echo 1 || echo 0))
+  ifeq ($(__clang_ge_16.0.1),1)
+   TESTED_KBUILD_FLAGS += $(call kernel-cc-option,-Wno-void-ptr-dereference)
+   ifneq ($(call kernel-version-at-least,6,1),true)
+    ifeq ($(call kernel-version-at-least,5,4),true)
+     TESTED_KBUILD_FLAGS += $(call kernel-cc-option,-Wno-unused-command-line-argument)
+    endif
+   endif
+  endif
+ endif
+endif
+
 endif
 
 # User C only
@@ -306,9 +337,10 @@ endif
 #
 ifeq ($(cc-is-clang),true)
 __clang_bindir  := $(dir $(shell which clang))
-__clang_version := $(shell clang --version | grep -P -o '(?<=clang version )([0-9][^ ]+)')
-__clang_major := $(shell echo $(__clang_version) | cut -f1 -d'.')
-__clang_minor := $(shell echo $(__clang_version) | cut -f2 -d'.')
+__clang_major := $(shell $$CC -dM -E - < /dev/null | grep __clang_major__ | cut -d' ' -f3)
+__clang_minor := $(shell $$CC -dM -E - < /dev/null | grep __clang_minor__ | cut -d' ' -f3)
+__clang_patchlevel__:= $(shell $$CC -dM -E - < /dev/null | grep __clang_patchlevel__ | cut -d' ' -f3)
+__clang_version := $(__clang_major).$(__clang_minor).$(__clang_patchlevel__)
 ifneq ($(filter -O0,$(ALL_CFLAGS)),)
 __clang_lt_3.8 := \
 	$(shell ((test $(__clang_major) -lt 3) || \
@@ -352,6 +384,9 @@ ALL_LDFLAGS := -Wl,--warn-shared-textrel
 ifneq ($(USE_GOLD_LINKER),)
 ALL_HOST_LDFLAGS += -fuse-ld=gold
 ALL_LDFLAGS +=-fuse-ld=gold
+else ifeq ($(USE_LLD_LINKER),1)
+ALL_HOST_LDFLAGS += -fuse-ld=lld
+ALL_LDFLAGS += -fuse-ld=lld
 endif
 
 ifeq ($(GCOV_BUILD),on)
@@ -409,8 +444,7 @@ $(warning  you have it set (via $(origin TOOLCHAIN)))
 $(warning **********************************************)
 endif
 
-# We need the glibc version to generate the cache names for LLVM and XOrg components.
-ifeq ($(CROSS_COMPILE),)
-LIBC_VERSION_PROBE := $(shell ldd  $(shell which true) | awk '/libc.so/{print $$3'} )
-LIBC_VERSION := $(shell $(LIBC_VERSION_PROBE)| tr -d '(),' | head -1)
+# We need the glibc version to generate the cached file name.
+ifneq ($(SUPPORT_ANDROID_PLATFORM),1)
+ LIBC_VERSION := $(shell ldd --version | head -1 | awk '{print $$NF}')
 endif

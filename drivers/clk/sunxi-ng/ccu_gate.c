@@ -12,11 +12,68 @@
 #include "ccu_gate.h"
 #include "ccu-sunxi-trace.h"
 
+void ccu_pll_output_helper_disable(struct ccu_common *common, u32 output)
+{
+	unsigned long flags;
+	u32 reg;
+
+	spin_lock_irqsave(common->lock, flags);
+
+	reg = readl(common->base + common->reg);
+	writel(reg & ~output, common->base + common->reg);
+
+	spin_unlock_irqrestore(common->lock, flags);
+}
+void ccu_pll_output_helper_enable(struct ccu_common *common, u32 output)
+{
+	unsigned long flags;
+	u32 reg;
+
+	spin_lock_irqsave(common->lock, flags);
+
+	reg = readl(common->base + common->reg);
+	writel(reg | output, common->base + common->reg);
+
+	spin_unlock_irqrestore(common->lock, flags);
+}
+
+void ccu_pll_gate_helper_disable(struct ccu_common *common, u32 gate, u32 output, u32 lock_en, u32 ldo_en)
+{
+	unsigned long flags;
+	u32 reg;
+
+	if (!gate)
+		return;
+
+	spin_lock_irqsave(common->lock, flags);
+
+	/* Disable PLL_OUTPUT_GATE */
+	reg = readl(common->base + common->reg);
+	writel(reg & ~output, common->base + common->reg);
+
+	/* Disable PLL_LOCK_ENABLE */
+	reg = readl(common->base + common->reg);
+	writel(reg & ~lock_en, common->base + common->reg);
+
+	spin_unlock_irqrestore(common->lock, flags);
+
+	/* Disable PLL_EN */
+	ccu_gate_helper_disable(common, gate);
+
+	spin_lock_irqsave(common->lock, flags);
+	/* Disable PLL_LDO*/
+	reg = readl(common->base + common->reg);
+	writel(reg & ~ldo_en, common->base + common->reg);
+
+	spin_unlock_irqrestore(common->lock, flags);
+}
+
 void ccu_gate_helper_disable(struct ccu_common *common, u32 gate)
 {
 	unsigned long flags;
 	u32 reg;
 	u32 assoc_reg;
+	u32 key_reg;
 
 	if (!gate)
 		return;
@@ -26,16 +83,28 @@ void ccu_gate_helper_disable(struct ccu_common *common, u32 gate)
 	reg = readl(common->base + common->reg);
 
 	/* data reading result of the keyfield bits are always 0 */
-	if (common->features & CCU_FEATURE_KEY_FIELD_MOD)
-		reg = reg | common->key_value;
+	if (common->features & CCU_FEATURE_KEY_FIELD_MOD) {
+		if (common->reg == common->key_reg) {
+			reg = reg | common->key_value;
+		} else {
+			key_reg = readl(common->base + common->key_reg);
+			key_reg = key_reg | common->key_value;
+			writel(key_reg, common->base + common->key_reg);
+		}
+	}
 
-	writel(reg & ~gate, common->base + common->reg);
+	if (common->features & CCU_FEATURE_GATE_IS_REVERSE)
+		writel(reg | gate, common->base + common->reg);
+	else
+		writel(reg & ~gate, common->base + common->reg);
 
 	if (common->features & CCU_FEATURE_CLEAR_MOD)
 		ccu_helper_wait_for_clear(common, common->clear);
 
 	if (common->features & CCU_FEATURE_GATE_DOUBLE_REG) {
 		assoc_reg = readl(common->base + common->assoc_reg);
+		if (common->features & CCU_FEATURE_KEY_FIELD_MOD)
+			assoc_reg = assoc_reg | common->assoc_key_value;
 		writel(assoc_reg & ~(common->assoc_val), common->base + common->assoc_reg);
 	}
 
@@ -70,11 +139,82 @@ static void ccu_gate_init(struct clk_hw *hw)
 }
 #endif
 
+void ccu_common_helper_enable(struct ccu_common *common)
+{
+	u32 assoc_reg;
+
+	if (common->features & CCU_FEATURE_CLEAR_MOD)
+		ccu_helper_wait_for_clear(common, common->clear);
+
+	if (common->features & CCU_FEATURE_GATE_DOUBLE_REG) {
+		assoc_reg = readl(common->base + common->assoc_reg);
+		if (common->features & CCU_FEATURE_KEY_FIELD_MOD)
+			assoc_reg = assoc_reg | common->assoc_key_value;
+		writel(assoc_reg | common->assoc_val, common->base + common->assoc_reg);
+	}
+}
+
+int ccu_pll_gate_helper_enable(struct ccu_common *common, u32 gate, u32 output, u32 lock, u32 lock_enable, u32 ldo_en)
+{
+	unsigned long flags;
+	u32 reg;
+
+	if (!gate)
+		return 0;
+
+	spin_lock_irqsave(common->lock, flags);
+
+	reg = readl(common->base + common->reg);
+
+	sunxi_debug(NULL, "%s is 0x%x gate: 0x%x output: 0x%x lock: 0x%x\n", clk_hw_get_name(&common->hw), reg, gate, output, lock);
+
+	if (output && ldo_en && (reg & gate) && (reg & output) && (reg & ldo_en)) {
+		spin_unlock_irqrestore(common->lock, flags);
+		return 0;
+	}
+
+	if (output) {
+		reg = readl(common->base + common->reg);
+		writel(reg & ~output, common->base + common->reg);
+	}
+
+	/* Enable ldo */
+	if (ldo_en) {
+		reg = readl(common->base + common->reg);
+		writel(reg | ldo_en, common->base + common->reg);
+	}
+
+	/* Enable enable */
+	reg = readl(common->base + common->reg);
+	writel(reg | gate, common->base + common->reg);
+
+	/* Enable lock enable */
+	if (lock_enable) {
+		reg = readl(common->base + common->reg);
+		writel(reg | lock_enable, common->base + common->reg);
+	}
+
+	ccu_common_helper_enable(common);
+	ccu_helper_wait_for_lock(common, lock);
+
+	if (output) {
+		reg = readl(common->base + common->reg);
+		writel(reg | output, common->base + common->reg);
+	}
+
+	spin_unlock_irqrestore(common->lock, flags);
+	trace_clk_ng_enable(&common->hw);
+
+	sunxi_debug(NULL, "%s is 0x%x \n", clk_hw_get_name(&common->hw), readl(common->base + common->reg));
+
+	return 0;
+}
+
 int ccu_gate_helper_enable(struct ccu_common *common, u32 gate)
 {
 	unsigned long flags;
 	u32 reg;
-	u32 assoc_reg;
+	u32 key_reg;
 
 	if (!gate)
 		return 0;
@@ -84,18 +224,22 @@ int ccu_gate_helper_enable(struct ccu_common *common, u32 gate)
 	reg = readl(common->base + common->reg);
 
 	/* data reading result of the keyfield bits are always 0 */
-	if (common->features & CCU_FEATURE_KEY_FIELD_MOD)
-		reg = reg | common->key_value;
-
-	writel(reg | gate, common->base + common->reg);
-
-	if (common->features & CCU_FEATURE_CLEAR_MOD)
-		ccu_helper_wait_for_clear(common, common->clear);
-
-	if (common->features & CCU_FEATURE_GATE_DOUBLE_REG) {
-		assoc_reg = readl(common->base + common->assoc_reg);
-		writel(assoc_reg | common->assoc_val, common->base + common->assoc_reg);
+	if (common->features & CCU_FEATURE_KEY_FIELD_MOD) {
+		if (common->reg == common->key_reg) {
+			reg = reg | common->key_value;
+		} else {
+			key_reg = readl(common->base + common->key_reg);
+			key_reg = key_reg | common->key_value;
+			writel(key_reg, common->base + common->key_reg);
+		}
 	}
+
+	if (common->features & CCU_FEATURE_GATE_IS_REVERSE)
+		writel(reg & ~gate, common->base + common->reg);
+	else
+		writel(reg | gate, common->base + common->reg);
+
+	ccu_common_helper_enable(common);
 
 	spin_unlock_irqrestore(common->lock, flags);
 	trace_clk_ng_enable(&common->hw);
@@ -112,10 +256,17 @@ static int ccu_gate_enable(struct clk_hw *hw)
 
 int ccu_gate_helper_is_enabled(struct ccu_common *common, u32 gate)
 {
+	unsigned long val;
+
 	if (!gate)
 		return 1;
 
-	return readl(common->base + common->reg) & gate;
+	val = readl(common->base + common->reg) & gate;
+
+	if (common->features & CCU_FEATURE_GATE_IS_REVERSE)
+		val = !val;
+
+	return val;
 }
 
 static int ccu_gate_is_enabled(struct clk_hw *hw)

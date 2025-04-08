@@ -21,8 +21,11 @@
  * Clocks based on the formula parent * N / M
  */
 struct ccu_nm {
-	u32			enable;
+	u32			output;
 	u32			lock;
+	u32			lock_enable;
+	u32			ldo_en;
+	u32			enable;
 
 	struct ccu_mult_internal	n;
 	struct ccu_div_internal		m;
@@ -30,6 +33,7 @@ struct ccu_nm {
 	struct ccu_sdm_internal		sdm;
 
 	unsigned int		fixed_post_div;
+	unsigned int		fixed_pre_div;
 	unsigned int		min_rate;
 	unsigned int		max_rate;
 

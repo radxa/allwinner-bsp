@@ -28,7 +28,7 @@
 MODULE_AUTHOR("HY");
 MODULE_DESCRIPTION("A low-level driver for tp2815 mipi chip for TVI sensor");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.1");
 
 /*define module timing*/
 #define MCLK              (27*1000*1000)
@@ -116,11 +116,15 @@ enum{
 	MIPI_1CH2LANE_594M,
 	MIPI_3CH4LANE_594M,
 	MIPI_4CH4LANE_345M, //only for HD30864
+	MIPI_2CH2LANE_297M, //up to 2x720p25/30
+	MIPI_2CH2LANE_594M, //up to 2x1080p25/30
 };
 
 /*static struct delayed_work sensor_s_ae_ratio_work;*/
 static bool restart;
+#define SENSOR_NUM 0x2
 #define SENSOR_NAME "tp2815_mipi"
+#define SENSOR_NAME_2 "tp2815_mipi_2"
 
 void tp2815_decoder_init(struct v4l2_subdev *sd, unsigned char ch, unsigned char fmt, unsigned char std);
 int tp2815_hardware_init(struct v4l2_subdev *sd, unsigned char fmt);
@@ -1451,9 +1455,14 @@ void tp2815_mipi_out(struct v4l2_subdev *sd, unsigned char output)
 	} else if (MIPI_4CH4LANE_297M == output || MIPI_2CH4LANE_297M == output) {
 		sensor_write(sd, 0x20, 0x44);
 		sensor_write(sd, 0x20, 0x44);
-		if (MIPI_2CH4LANE_297M == output)
+		if (MIPI_2CH4LANE_297M == output) {
 			sensor_write(sd, 0x20, 0x24);
-		sensor_write(sd, 0x34, 0xe4); //
+			sensor_write(sd, 0x18, 0xd8); //VC0+VC1
+			sensor_write(sd, 0x34, 0xd8); //VIN0+VIN1
+		} else {
+			sensor_write(sd, 0x18, 0xe4);
+			sensor_write(sd, 0x34, 0xe4);
+		}
 		sensor_write(sd, 0x14, 0x44);
 		sensor_write(sd, 0x15, 0x0d);
 		sensor_write(sd, 0x25, 0x04);
@@ -1540,6 +1549,34 @@ void tp2815_mipi_out(struct v4l2_subdev *sd, unsigned char output)
 	} else if (MIPI_1CH2LANE_594M == output) {
 		sensor_write(sd, 0x20, 0x12);
 		sensor_write(sd, 0x34, 0x10); //output vin1&vin2
+		sensor_write(sd, 0x15, 0x0c);
+		sensor_write(sd, 0x25, 0x08);
+		sensor_write(sd, 0x26, 0x06);
+		sensor_write(sd, 0x27, 0x11);
+		sensor_write(sd, 0x29, 0x0a);
+		sensor_write(sd, 0x33, 0x07);
+		sensor_write(sd, 0x33, 0x00);
+		sensor_write(sd, 0x14, 0x43);
+		sensor_write(sd, 0x14, 0xc3);
+		sensor_write(sd, 0x14, 0x43);
+	} else if (MIPI_2CH2LANE_297M == output) {
+		sensor_write(sd, 0x20, 0x22);
+		sensor_write(sd, 0x18, 0xd8); // VC0 + VC1
+		sensor_write(sd, 0x34, 0xd8); // output vin1 & vin2
+		sensor_write(sd, 0x14, 0x54);
+		sensor_write(sd, 0x15, 0x0d);
+		sensor_write(sd, 0x25, 0x04);
+		sensor_write(sd, 0x26, 0x03);
+		sensor_write(sd, 0x27, 0x09);
+		sensor_write(sd, 0x29, 0x02);
+		sensor_write(sd, 0x33, 0x07);
+		sensor_write(sd, 0x33, 0x00);
+		sensor_write(sd, 0x14, 0xd4);
+		sensor_write(sd, 0x14, 0x54);
+	} else if (MIPI_2CH2LANE_594M == output) {
+		sensor_write(sd, 0x20, 0x22);
+		sensor_write(sd, 0x18, 0xd8); // VC0 + VC1
+		sensor_write(sd, 0x34, 0xd8); // output vin1 & vin2
 		sensor_write(sd, 0x15, 0x0c);
 		sensor_write(sd, 0x25, 0x08);
 		sensor_write(sd, 0x26, 0x06);
@@ -1735,10 +1772,14 @@ int  tp2815_hardware_init(struct v4l2_subdev *sd, unsigned char fmt)
 
 	tp2815_decoder_init(sd, CH_1, fmt, STD_HDA);
 	tp2815_decoder_init(sd, CH_2, fmt, STD_HDA);
-	tp2815_decoder_init(sd, CH_3, fmt, STD_HDA);
-	tp2815_decoder_init(sd, CH_4, fmt, STD_HDA);
 
-	tp2815_mipi_out(sd, MIPI_4CH4LANE_594M);
+	if (!strcmp(sd->name, SENSOR_NAME_2)) {
+		tp2815_mipi_out(sd, MIPI_2CH2LANE_594M);
+	} else {
+		tp2815_decoder_init(sd, CH_3, fmt, STD_HDA);
+		tp2815_decoder_init(sd, CH_4, fmt, STD_HDA);
+		tp2815_mipi_out(sd, MIPI_4CH4LANE_594M);
+	}
 
 	sensor_write(sd, 0x40, 0x0);
 #if Print_reg
@@ -2099,12 +2140,17 @@ static struct sensor_win_size sensor_win_sizes[] = {
 	},
 };
 #define N_WIN_SIZES (ARRAY_SIZE(sensor_win_sizes))
-
 static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 				struct v4l2_mbus_config *cfg)
 {
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
-	cfg->flags = 0 | V4L2_MBUS_CSI2_4_LANE | V4L2_MBUS_CSI2_CHANNEL_0 | V4L2_MBUS_CSI2_CHANNEL_1 | V4L2_MBUS_CSI2_CHANNEL_2 | V4L2_MBUS_CSI2_CHANNEL_3;
+	if (!strcmp(sd->name, SENSOR_NAME_2)) {
+		cfg->flags = 0 | V4L2_MBUS_CSI2_2_LANE | V4L2_MBUS_CSI2_CHANNEL_0 | V4L2_MBUS_CSI2_CHANNEL_1;
+	} else {
+		cfg->flags = 0 | V4L2_MBUS_CSI2_4_LANE | \
+			V4L2_MBUS_CSI2_CHANNEL_0 | V4L2_MBUS_CSI2_CHANNEL_1 | \
+			V4L2_MBUS_CSI2_CHANNEL_2 | V4L2_MBUS_CSI2_CHANNEL_3;
+	}
 	return 0;
 }
 
@@ -2262,10 +2308,16 @@ static const struct v4l2_subdev_ops sensor_ops = {
 
 
 /* ----------------------------------------------------------------------- */
-static struct cci_driver cci_drv = {
-	.name = SENSOR_NAME,
-	.addr_width = CCI_BITS_8,
-	.data_width = CCI_BITS_8,
+static struct cci_driver cci_drv[] = {
+	{
+		.name = SENSOR_NAME,
+		.addr_width = CCI_BITS_8,
+		.data_width = CCI_BITS_8,
+	}, {
+		.name = SENSOR_NAME_2,
+		.addr_width = CCI_BITS_8,
+		.data_width = CCI_BITS_8,
+	}
 };
 
 static int sensor_init_controls(struct v4l2_subdev *sd, const struct v4l2_ctrl_ops *ops)
@@ -2298,16 +2350,28 @@ static int sensor_init_controls(struct v4l2_subdev *sd, const struct v4l2_ctrl_o
 
 }
 
+static int sensor_dev_id;
 static int sensor_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
 	struct v4l2_subdev *sd;
 	struct sensor_info *info;
+	int i;
+
 	info = kzalloc(sizeof(struct sensor_info), GFP_KERNEL);
 	if (info == NULL)
 		return -ENOMEM;
 	sd = &info->sd;
-	cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv);
+
+	if (client) {
+		for (i = 0; i < SENSOR_NUM; i++) {
+			if (!strcmp(cci_drv[i].name, client->name))
+				break;
+		}
+		cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv[i]);
+	} else {
+		cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv[sensor_dev_id++]);
+	}
 	sensor_init_controls(sd, &sensor_ctrl_ops);
 	mutex_init(&info->lock);
 	restart = 0;
@@ -2330,8 +2394,19 @@ static int sensor_probe(struct i2c_client *client,
 static int sensor_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd;
-	sd = cci_dev_remove_helper(client, &cci_drv);
+	int i;
+
+	if (client) {
+		for (i = 0; i < SENSOR_NUM; i++) {
+			if (!strcmp(cci_drv[i].name, client->name))
+				break;
+		}
+		sd = cci_dev_remove_helper(client, &cci_drv[i]);
+	} else {
+		sd = cci_dev_remove_helper(client, &cci_drv[sensor_dev_id++]);
+	}
 	kfree(to_state(sd));
+
 	return 0;
 }
 
@@ -2339,26 +2414,55 @@ static const struct i2c_device_id sensor_id[] = {
 	{SENSOR_NAME, 0},
 	{}
 };
-MODULE_DEVICE_TABLE(i2c, sensor_id);
 
-static struct i2c_driver sensor_driver = {
-	.driver = {
-		   .owner = THIS_MODULE,
-		   .name = SENSOR_NAME,
-		   },
-	.probe = sensor_probe,
-	.remove = sensor_remove,
-	.id_table = sensor_id,
+static const struct i2c_device_id sensor_id_2[] = {
+	{SENSOR_NAME_2, 0},
+	{}
+};
+
+MODULE_DEVICE_TABLE(i2c, sensor_id);
+MODULE_DEVICE_TABLE(i2c, sensor_id_2);
+
+static struct i2c_driver sensor_driver[] = {
+	{
+		.driver = {
+			.owner = THIS_MODULE,
+			.name = SENSOR_NAME,
+			},
+		.probe = sensor_probe,
+		.remove = sensor_remove,
+		.id_table = sensor_id,
+	}, {
+		.driver = {
+			.owner = THIS_MODULE,
+			.name = SENSOR_NAME_2,
+		},
+		.probe = sensor_probe,
+		.remove = sensor_remove,
+		.id_table = sensor_id_2,
+	}
 };
 
 static __init int init_sensor(void)
 {
-	return cci_dev_init_helper(&sensor_driver);
+	int i, ret = 0;
+
+	sensor_dev_id = 0;
+
+	for (i = 0; i < SENSOR_NUM; i++)
+		ret = cci_dev_init_helper(&sensor_driver[i]);
+
+	return ret;
 }
 
 static __exit void exit_sensor(void)
 {
-	cci_dev_exit_helper(&sensor_driver);
+	int i;
+
+	sensor_dev_id = 0;
+
+	for (i = 0; i < SENSOR_NUM; i++)
+		cci_dev_exit_helper(&sensor_driver[i]);
 }
 
 VIN_INIT_DRIVERS(init_sensor);

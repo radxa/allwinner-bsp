@@ -33,7 +33,9 @@ MODULE_DESCRIPTION("A low-level driver for lt6911c mipi chip for TVI sensor");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0.0");
 
-/*define module timing*/
+static char dev_info[128] = "s:0-w:0-h:0-fps:0-r:0"; //state-width-height-fps-rate
+module_param_string(dev_info, dev_info, sizeof(dev_info), S_IRUGO | S_IWUSR);
+
 #define MCLK              (27*1000*1000)
 #define V4L2_IDENT_SENSOR  0x1605
 
@@ -49,6 +51,7 @@ struct gpio_config power_switch_gpio;
 
 #define SENSOR_NAME "lt6911c_mipi"
 
+/*define module timing*/
 static const struct v4l2_dv_timings_cap lt6911c_timings_cap = {
 	.type = V4L2_DV_BT_656_1120,
 	.reserved = { 0 },
@@ -62,6 +65,8 @@ static const struct v4l2_dv_timings_cap lt6911c_timings_cap = {
 			V4L2_DV_BT_CAP_REDUCED_BLANKING |
 			V4L2_DV_BT_CAP_CUSTOM)    /* capabilities */
 };
+
+static enum hotplut_state hotplut_status;
 
 /*
  * The default register settings
@@ -350,6 +355,26 @@ static int lt6911c_get_detected_timings(struct v4l2_subdev *sd, struct v4l2_dv_t
 	return 0;
 }
 
+static int lt6911c_get_audio_sampling_rate(struct v4l2_subdev *sd, int *fs_value)
+{
+	data_type rate = 0;
+
+	sensor_ii2_en(sd, 1);
+	sensor_write(sd, 0xff, 0xd1);
+	sensor_read(sd, 0x55, &rate);
+	sensor_ii2_en(sd, 0);
+
+	if (rate == 44)
+		*fs_value = 44100;
+	else if (rate == 47)
+		*fs_value = 48000;
+	else
+		*fs_value = 1000 * rate;
+
+	sensor_print("read 0x55 reg, val: %d, audio sample rate: %d Hz\n", rate, *fs_value);
+
+	return 0;
+}
 
 static long sensor_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
@@ -472,7 +497,11 @@ static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 				struct v4l2_mbus_config *cfg)
 {
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	cfg->bus.mipi_csi2.num_data_lanes = 0 | V4L2_MBUS_CSI2_4_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#else
 	cfg->flags = 0 | V4L2_MBUS_CSI2_4_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#endif
 	return 0;
 }
 
@@ -563,13 +592,11 @@ static int sensor_query_dv_timings(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	mutex_lock(&sensor_indet->detect_lock);
-	lt6911c_get_detected_timings(sd, timings);
-	memcpy(&info->timings, timings, sizeof(*timings));
-
+	//lt6911c_get_detected_timings(sd, timings);
+	memcpy(timings, &info->timings, sizeof(*timings));
 	//v4l2_print_dv_timings(sd->name, "query_dv_timings: ", timings, false);
 
-	if (!v4l2_valid_dv_timings(timings, &lt6911c_timings_cap, NULL,
-				NULL)) {
+	if (!v4l2_valid_dv_timings(timings, &lt6911c_timings_cap, NULL, NULL)) {
 		sensor_err("%s: timings out of range\n", __func__);
 		//return -ERANGE;
 	}
@@ -730,6 +757,71 @@ static bool sensor_detect_res(u32 width, u32 height, u32 fps)
 	}
 }
 
+static int __sensor_insert_detect(data_type *val)
+{
+	if (hotplut_status == HOTPLUT_DP_OUT) {
+		sensor_print("hotplut status is hotplug hdmi-in out!\n");
+		*val = 0x00;
+	} else if (hotplut_status == HOTPLUT_DP_IN) {
+		sensor_print("hotplut status is hotplug hdmi-in in!\n");
+		*val = 0x01;
+	} else if (hotplut_status == HOTPLUT_DP_NOSUPPRT) {
+		sensor_print("hotplut status is hotplug not support resolution!\n");
+		*val = 0x00;
+	} else if (hotplut_status == HOTPLUT_DP_RESOLUTION) {
+		sensor_print("hotplut status is resolution change!\n");
+		*val = 0x00;
+	} else {
+		sensor_print("hotplut status is not support!\n");
+		*val = 0x00;
+	}
+
+	return 0;
+}
+
+static ssize_t get_det_status_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	data_type val;
+	__sensor_insert_detect(&val);
+	return sprintf(buf, "0x%x\n", val);
+}
+
+static struct device_attribute detect_dev_attrs = {
+	.attr = {
+		.name = "online",
+		.mode = S_IRUGO,
+	},
+	.show = get_det_status_show,
+	.store = NULL,
+};
+
+static void sensor_uevent_notifiy(struct v4l2_subdev *sd, int w, int h, int fps, int s_rate, int status)
+{
+	char state[16], width[16], height[16], frame[16], rate[16];
+	char *envp[7] = {
+		"SYSTEM=HDMIIN",
+		NULL,
+		NULL,
+		NULL,
+		NULL,
+		NULL,
+		NULL };
+	snprintf(state, sizeof(state), "STATE=%d", status);
+	snprintf(width, sizeof(width), "WIDTH=%d", w);
+	snprintf(height, sizeof(height), "HEIGHT=%d", h);
+	snprintf(frame, sizeof(frame), "FPS=%d", fps);
+	snprintf(rate, sizeof(rate), "RATE=%d", s_rate);
+	envp[1] = width;
+	envp[2] = height;
+	envp[3] = frame;
+	envp[4] = rate;
+	envp[5] = state;
+	snprintf(dev_info, sizeof(dev_info), "s:%d-w:%d-h:%d-fps:%d-r:%d", status, w, h, fps, s_rate);
+	kobject_uevent_env(&sd->dev->kobj, KOBJ_CHANGE, envp);
+}
+
+static unsigned int fs_value_old;
 static void sensor_det_work(struct work_struct *work)
 {
 	struct delayed_work *delayed_work = to_delayed_work(work);
@@ -739,25 +831,43 @@ static void sensor_det_work(struct work_struct *work)
 	struct v4l2_dv_timings timings;
 	struct v4l2_event sensor_ev_fmt;
 	unsigned int changes = 0;
+	bool timing_changed = 0;
+	bool fs_value_changed = 0;
 	unsigned int stream_count;
+	unsigned int fs_value = 0;
 
 	mutex_lock(&sensor_indet->detect_lock);
 
 	lt6911c_get_detected_timings(sd, &timings);
+	timing_changed = v4l2_match_dv_timings(&info->timings, &timings, 0, false) ? 0 : 1;
 
-	if (v4l2_match_dv_timings(&info->timings, &timings, 0, false)) {
-		sensor_err("%s: timings no change\n", __func__);
+	lt6911c_get_audio_sampling_rate(sd, &fs_value);
+	if (fs_value != fs_value_old) {
+		fs_value_old = fs_value;
+		fs_value_changed = 1;
+		sensor_print("audio sampling rate has been changed to %d HZ.\n", fs_value);
 	} else {
+		fs_value_changed = 0;
+		sensor_print("audio sampling rate(%d HZ) has not changed.\n", fs_value);
+	}
+
+	if (!timing_changed && !fs_value_changed) {
+		sensor_err("%s: timings and audio sampling rate has not changed, do nothing!\n", __func__);
+	} else {
+		/* At least one of the timings and audio sampling rate has changed */
 		if (!v4l2_valid_dv_timings(&timings, &lt6911c_timings_cap, NULL, NULL)) {
 			sensor_err("%s: timings out of range\n", __func__);
+			hotplut_status = HOTPLUT_DP_OUT;
 			v4l2_ctrl_s_ctrl(info->sensor_indet.ctrl_hotplug, HOTPLUT_DP_OUT); /* not signal -- dp out */
+			sensor_uevent_notifiy(sd, 0, 0, 0, 0, 0);
 			sensor_print("%s send hotplug dp out to user\n", sd->name);
 		} else {
 			if (!sensor_detect_res(timings.bt.width, timings.bt.height, fps_calc(&timings.bt))) {
 				sensor_err("%s: driver not support %dfps@%dx%d, need add to sensor win_size\n",
 							__func__, fps_calc(&timings.bt), timings.bt.width, timings.bt.height);
-
+				hotplut_status = HOTPLUT_DP_NOSUPPRT;
 				v4l2_ctrl_s_ctrl(info->sensor_indet.ctrl_hotplug, HOTPLUT_DP_NOSUPPRT); /* signal -- resolution not support */
+				sensor_uevent_notifiy(sd, 0, 0, 0, 0, -1);
 				sensor_print("%s send hotplug not support resolution to user\n", sd->name);
 			} else  {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
@@ -765,10 +875,14 @@ static void sensor_det_work(struct work_struct *work)
 #else
 				stream_count = sd->entity.stream_count;
 #endif
-				if (stream_count) {
+				if (stream_count && timing_changed) {
 					changes |= V4L2_EVENT_SRC_CH_RESOLUTION;  /* signal -- resolution change */
-				} else {
+			} else {
+					//lt6911c_get_audio_sampling_rate(sd, &fs_value);
 					v4l2_ctrl_s_ctrl(info->sensor_indet.ctrl_hotplug, HOTPLUT_DP_IN); /* signal -- dp in */
+					hotplut_status = HOTPLUT_DP_IN;
+					sensor_uevent_notifiy(sd, timings.bt.width, timings.bt.height,
+									fps_calc(&timings.bt), fs_value, 1);
 					sensor_print("%s send hotplug dp in to user\n", sd->name);
 				}
 			}
@@ -801,7 +915,9 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 {
 	int ret;
 	struct device_node *np = NULL;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	enum of_gpio_flags gc;
+#endif
 	struct sensor_info *info = to_state(sd);
 	struct sensor_indetect *sensor_indet = &info->sensor_indet;
 	char *node_name = "sensor_detect";
@@ -817,7 +933,11 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 	}
 
 	/* power on sensor to detect hotplug*/
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	sensor_indet->power_gpio.gpio = of_get_named_gpio_flags(np, power_gpio_name, 0, &gc);
+#else
+	sensor_indet->power_gpio.gpio = of_get_named_gpio(np, power_gpio_name, 0);
+#endif
 	sensor_dbg("get form %s gpio is %d\n", power_gpio_name, sensor_indet->power_gpio.gpio);
 	if (!gpio_is_valid(sensor_indet->power_gpio.gpio)) {
 		sensor_err("fetch %s from device_tree failed\n", power_gpio_name);
@@ -831,11 +951,15 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 		gpio_direction_output(sensor_indet->power_gpio.gpio, 1);
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	power_switch_gpio.gpio = of_get_named_gpio_flags(np, power_switch_gpio_name, 0, &gc);
+#else
+	power_switch_gpio.gpio = of_get_named_gpio(np, power_switch_gpio_name, 0);
+#endif
 	sensor_dbg("get form %s gpio is %d\n", power_switch_gpio_name, power_switch_gpio.gpio);
 	if (!gpio_is_valid(power_switch_gpio.gpio)) {
-		sensor_err("fetch %s from device_tree failed\n", power_switch_gpio_name);
-		return -ENODEV;
+		sensor_err("fetch %s from device_tree failed, maybe not necessary\n", power_switch_gpio_name);
+		//return -ENODEV;
 	} else {
 		ret = gpio_request(power_switch_gpio.gpio, NULL);
 		if (ret < 0) {
@@ -845,7 +969,11 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 		gpio_direction_output(power_switch_gpio.gpio, 1);
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	sensor_indet->reset_gpio.gpio = of_get_named_gpio_flags(np, reset_gpio_name, 0, &gc);
+#else
+	sensor_indet->reset_gpio.gpio = of_get_named_gpio(np, reset_gpio_name, 0);
+#endif
 	sensor_dbg("get form %s gpio is %d\n", reset_gpio_name, sensor_indet->reset_gpio.gpio);
 	if (!gpio_is_valid(sensor_indet->reset_gpio.gpio)) {
 		sensor_err("fetch %s from device_tree failed\n", reset_gpio_name);
@@ -861,7 +989,11 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 		gpio_direction_output(sensor_indet->reset_gpio.gpio, 1);
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	sensor_indet->hotplug_det_gpio.gpio = of_get_named_gpio_flags(np, hotplug_gpio_name, 0, &gc);
+#else
+	sensor_indet->hotplug_det_gpio.gpio = of_get_named_gpio(np, hotplug_gpio_name, 0);
+#endif
 	sensor_dbg("get form %s gpio is %d\n", hotplug_gpio_name, sensor_indet->hotplug_det_gpio.gpio);
 	if (!gpio_is_valid(sensor_indet->hotplug_det_gpio.gpio)) {
 		sensor_err("fetch %s from device_tree failed\n", hotplug_gpio_name);
@@ -872,7 +1004,6 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 			sensor_err("request %s fail!\n", hotplug_gpio_name);
 			return -1;
 		}
-		gpio_direction_input(sensor_indet->hotplug_det_gpio.gpio);
 
 		sensor_indet->hotplug_det_irq = gpio_to_irq(sensor_indet->hotplug_det_gpio.gpio);
 		if (sensor_indet->hotplug_det_irq <= 0) {
@@ -946,10 +1077,14 @@ static int sensor_init_controls(struct v4l2_subdev *sd, const struct v4l2_ctrl_o
 
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int sensor_probe(struct i2c_client *client)
+#else
 static int sensor_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
-
+	int ret;
 	struct v4l2_subdev *sd;
 	struct sensor_info *info;
 
@@ -981,10 +1116,19 @@ static int sensor_probe(struct i2c_client *client,
 
 	sensor_det_init(sd);
 
+	ret = device_create_file(sd->dev, &detect_dev_attrs);
+	if (ret) {
+		sensor_err("class_create file fail!\n");
+	}
+
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 static int sensor_remove(struct i2c_client *client)
+#else
+static void sensor_remove(struct i2c_client *client)
+#endif
 {
 	struct v4l2_subdev *sd;
 
@@ -994,9 +1138,12 @@ static int sensor_remove(struct i2c_client *client)
 		sensor_det_exit(cci_drv.sd);
 
 	sd = cci_dev_remove_helper(client, &cci_drv);
+	device_remove_file(sd->dev, &detect_dev_attrs);
 	kfree(to_state(sd));
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id sensor_id[] = {

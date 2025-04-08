@@ -29,6 +29,7 @@ enum de_csc_type {
 	GAMMA_CSC,
 	SMBL_CSC,
 	FCM_CSC,
+	CDC_CSC,
 };
 
 struct csc_extra_create_info {
@@ -39,6 +40,7 @@ struct csc_extra_create_info {
 struct de_csc_handle {
 	struct module_create_info cinfo;
 	struct csc_extra_create_info ex_cinfo;
+	int hue_default_value;
 	unsigned int block_num;
 	struct de_reg_block **block;
 	struct de_csc_private *private;
@@ -57,18 +59,28 @@ struct de_csc_handle *de_csc_create(struct module_create_info *info);
 
 struct bcsh_info {
 	bool enable;
+	bool dirty;
 	unsigned int brightness;
 	unsigned int contrast;
 	unsigned int saturation;
 	unsigned int hue;
 };
 
+struct ctm_info {
+	bool enable;
+	bool dirty;
+	struct de_color_ctm ctm;
+};
+
 struct de_csc_handle *de_csc_create(struct module_create_info *info);
+void de_dcsc_pq_matrix_proc(struct matrix4x4 *conig, enum matrix_type type,
+		   bool write);
 s32 de_csc_apply(struct de_csc_handle *hdl, struct de_csc_info *in_info,
 		    struct de_csc_info *out_info, int *csc_coeff, bool apply, bool en);
 int de_dcsc_apply(struct de_csc_handle *hdl, const struct de_csc_info *in_info,
-		    const struct de_csc_info *out_info,
-		    const struct bcsh_info *bcsh, int *csc_coeff, bool apply);
+			const struct de_csc_info *out_info,
+			const struct bcsh_info *bcsh, const struct ctm_info *ctm,
+			int *csc_coeff, bool apply);
 s32 de_csc_enable(struct de_csc_handle *hdl, u32 en);
 void de_csc_dump_state(struct drm_printer *p, struct de_csc_handle *hdl);
 

@@ -60,8 +60,4 @@ ifeq ($(SUPPORT_COMPUTE_ONLY),)
  else
   -include ../common/window_systems/lws-generic.mk
  endif
-
- ifneq ($(MESA_EGL)$(MESA_WSI),)
-  SUPPORT_BUILD_LWS ?= 1
- endif
 endif

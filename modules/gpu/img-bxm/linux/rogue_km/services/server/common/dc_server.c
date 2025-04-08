@@ -605,7 +605,12 @@ fail_alloc:
 	return eError;
 }
 
+#if defined(SUPPORT_PMR_PAGES_DEFERRED_FREE)
+static PVRSRV_ERROR _DCPMRUnlockPhysAddresses(PMR_IMPL_PRIVDATA pvPriv,
+						PMR_IMPL_ZOMBIEPAGES *ppvZombiePages)
+#else
 static PVRSRV_ERROR _DCPMRUnlockPhysAddresses(PMR_IMPL_PRIVDATA pvPriv)
+#endif
 {
 	DC_BUFFER_PMR_DATA *psPMRPriv = pvPriv;
 	DC_BUFFER *psBuffer = psPMRPriv->psBuffer;
@@ -660,6 +665,10 @@ static PVRSRV_ERROR _DCPMRDevPhysAddr(PMR_IMPL_PRIVDATA pvPriv,
                                       IMG_UINT32 ui32Log2PageSize,
                                       IMG_UINT32 ui32NumOfPages,
                                       IMG_DEVMEM_OFFSET_T *puiOffset,
+#if defined(PVRSRV_SUPPORT_IPA_FEATURE)
+                                      IMG_UINT64 ui64IPAPolicyValue,
+                                      IMG_UINT64 ui64IPAClearMask,
+#endif
                                       IMG_BOOL *pbValid,
                                       IMG_DEV_PHYADDR *psDevAddrPtr)
 {
@@ -668,6 +677,11 @@ static PVRSRV_ERROR _DCPMRDevPhysAddr(PMR_IMPL_PRIVDATA pvPriv,
 	IMG_UINT32 uiInPageOffset;
 	IMG_DEV_PHYADDR sDevAddr;
 	IMG_UINT32 idx;
+
+#if defined(PVRSRV_SUPPORT_IPA_FEATURE)
+	PVR_UNREFERENCED_PARAMETER(ui64IPAPolicyValue);
+	PVR_UNREFERENCED_PARAMETER(ui64IPAClearMask);
+#endif
 
 	PVR_RETURN_IF_INVALID_PARAM(psPMRPriv->uiLog2PageSize == ui32Log2PageSize);
 
@@ -711,6 +725,10 @@ static PVRSRV_ERROR _DCPMRAcquireKernelMappingData(PMR_IMPL_PRIVDATA pvPriv,
 	void	           *pvKernelAddr = NULL;
 	PVRSRV_ERROR        eError = PVRSRV_OK;
 
+	PVR_UNREFERENCED_PARAMETER(uiOffset);
+	PVR_UNREFERENCED_PARAMETER(uiSize);
+	PVR_UNREFERENCED_PARAMETER(ulFlags);
+
 	PVR_LOG_RETURN_IF_INVALID_PARAM(psPMRPriv, "psPMRPriv");
 
 	psBuffer = psPMRPriv->psBuffer;
@@ -733,14 +751,12 @@ static void _DCPMRReleaseKernelMappingData(PMR_IMPL_PRIVDATA pvPriv,
 }
 #endif
 
-static PVRSRV_ERROR _DCPMRFinalize(PMR_IMPL_PRIVDATA pvPriv)
+static void _DCPMRFinalize(PMR_IMPL_PRIVDATA pvPriv)
 {
 	DC_BUFFER_PMR_DATA *psPMRPriv = pvPriv;
 
 	_DCBufferReleaseRef(psPMRPriv->psBuffer);
 	OSFreeMem(psPMRPriv);
-
-	return PVRSRV_OK;
 }
 
 static PVRSRV_ERROR _DCPMRReadBytes(PMR_IMPL_PRIVDATA pvPriv,
@@ -818,7 +834,6 @@ static PMR_IMPL_FUNCTAB sDCPMRFuncTab = {
 	.pfnReadBytes = _DCPMRReadBytes,
 	.pfnWriteBytes = NULL,
 	.pfnChangeSparseMem = NULL,
-	.pfnChangeSparseMemCPUMap = NULL,
 	.pfnMMap = NULL,
 	.pfnFinalize = _DCPMRFinalize
 };
@@ -866,6 +881,8 @@ static PVRSRV_ERROR _DCCreatePMR(IMG_DEVMEM_LOG2ALIGN_T uiLog2PageSize,
 	                      1,
 	                      &uiMappingTable,
 	                      uiLog2PageSize,
+	                      PVRSRV_MEMALLOCFLAG_GPU_READABLE |
+	                      PVRSRV_MEMALLOCFLAG_GPU_WRITEABLE |
 	                      PVRSRV_MEMALLOCFLAG_CPU_WRITEABLE |
 	                      PVRSRV_MEMALLOCFLAG_UNCACHED_WC,
 	                      pszAnnotation,
@@ -965,6 +982,8 @@ PVRSRV_ERROR DCDeviceAcquire(CONNECTION_DATA *psConnection,
 	DC_DEVICE *psDevice;
 	PVRSRV_ERROR eError = PVRSRV_ERROR_NO_DC_DEVICES_FOUND;
 	IMG_BOOL bFound = IMG_FALSE;
+
+	PVR_UNREFERENCED_PARAMETER(psConnection);
 
 	OSLockAcquire(g_hDCDevListLock);
 	if (!dllist_is_empty(&g_sDCDeviceListHead))
@@ -1970,14 +1989,18 @@ PVRSRV_ERROR DCRegisterDevice(DC_DEVICE_FUNCTIONS *psFuncTable,
 	eError = OSEventObjectCreate("DC_EVENT_OBJ", &psNew->psEventList);
 	PVR_GOTO_IF_ERROR(eError, FailEventObject);
 
-	eError = PhysHeapAcquireByUsage((PHYS_HEAP_USAGE_FLAGS)PHYS_HEAP_USAGE_DISPLAY, psNew->psDevNode, &psNew->psPhysHeap);
+	eError = PhysHeapAcquireByID(PVRSRV_PHYS_HEAP_DISPLAY,
+								 psNew->psDevNode,
+								 &psNew->psPhysHeap);
 	if (eError == PVRSRV_ERROR_PHYSHEAP_ID_INVALID)
 	{
 		/* DC based system layers must provide a DISPLAY Phys Heap or a
 		 * GPU_LOCAL heap which the display controller can operate with. This
 		 * can not use the default defined heap for the device as a CPU_LOCAL
 		 * value might not be accessible by the display controller HW. */
-		eError = PhysHeapAcquireByUsage(PHYS_HEAP_USAGE_GPU_LOCAL, psNew->psDevNode, &psNew->psPhysHeap);
+		eError = PhysHeapAcquireByID(PVRSRV_PHYS_HEAP_GPU_LOCAL,
+									 psNew->psDevNode,
+									 &psNew->psPhysHeap);
 	}
 	PVR_LOG_GOTO_IF_ERROR(eError, "DCRegisterDevice: DISPLAY heap not found", FailPhysHeap);
 
@@ -2039,6 +2062,16 @@ void DCUnregisterDevice(IMG_HANDLE hSrvHandle)
 		if (psPVRSRVData->eServicesState == PVRSRV_SERVICES_STATE_OK)
 		{
 			IMG_HANDLE hEvent;
+			IMG_BOOL bTimeout = IMG_TRUE;
+
+#if defined(SUPPORT_PMR_DEFERRED_FREE)
+			/* call to flush all outstanding cleanup items in case some of them
+			 * are holding references to DC */
+			PVRSRVCleanupThreadWaitForDevice(psDevice->psDevNode);
+			/* call to flush all outstanding zombie PMRs in case some of them
+			 * are holding references to DC */
+			PMRFreeZombies(psDevice->psDevNode);
+#endif /* defined(SUPPORT_PMR_DEFERRED_FREE) */
 
 			eError = OSEventObjectOpen(psDevice->psEventList, &hEvent);
 			if (eError != PVRSRV_OK)
@@ -2049,12 +2082,31 @@ void DCUnregisterDevice(IMG_HANDLE hSrvHandle)
 				hEvent = NULL;
 			}
 
-			while (OSAtomicRead(&psDevice->sRefCount) != 1)
+			LOOP_UNTIL_TIMEOUT_US(MAX_HW_TIME_US)
 			{
+				if (OSAtomicRead(&psDevice->sRefCount) == 1)
+				{
+					bTimeout = IMG_FALSE;
+					break;
+				}
 				if (hEvent)
 				{
 					OSEventObjectWait(hEvent);
 				}
+				else
+				{
+					OSWaitus(MAX_HW_TIME_US/WAIT_TRY_COUNT);
+				}
+
+				OSReleaseThreadQuanta();
+
+			} END_LOOP_UNTIL_TIMEOUT_US();
+
+			if (bTimeout)
+			{
+				PVR_DPF((PVR_DBG_ERROR,
+						 "%s: Timeout reached.",
+						 __func__));
 			}
 
 			OSEventObjectClose(hEvent);
@@ -2068,7 +2120,9 @@ void DCUnregisterDevice(IMG_HANDLE hSrvHandle)
 
 	_DCDeviceReleaseRef(psDevice);
 
-	if (OSAtomicRead(&psDevice->sRefCount) == 0)
+	iRefCount = OSAtomicRead(&psDevice->sRefCount);
+
+	if (iRefCount == 0)
 	{
 		PhysHeapRelease(psDevice->psPhysHeap);
 		OSEventObjectDestroy(psDevice->psEventList);
@@ -2077,7 +2131,12 @@ void DCUnregisterDevice(IMG_HANDLE hSrvHandle)
 	else
 	{
 		/* there are stuck references so it is not safe to free the memory */
-		PVR_DPF((PVR_DBG_ERROR, "%s: DC device has stuck references. Not freeing memory.", __func__));
+		PVR_DPF((PVR_DBG_ERROR, "%s: DC device has %d stuck references. "
+		        "Not freeing memory.", __func__, iRefCount));
+
+#if defined(SUPPORT_PMR_DEFERRED_FREE)
+		PMRDumpZombies(psDevice->psDevNode);
+#endif /* defined(SUPPORT_PMR_DEFERRED_FREE) */
 	}
 }
 
@@ -2167,8 +2226,7 @@ PVRSRV_ERROR DCImportBufferAcquire(IMG_HANDLE hImport,
 	IMG_UINT32 i;
 #endif
 
-	PMR_LogicalSize(psPMR, &uiLogicalSize);
-
+	uiLogicalSize = PMR_LogicalSize(psPMR);
 	uiPageCount = TRUNCATE_64BITS_TO_SIZE_T(uiLogicalSize >> uiLog2PageSize);
 
 	pasDevPAddr = OSAllocMem(sizeof(IMG_DEV_PHYADDR) * uiPageCount);
@@ -2183,7 +2241,7 @@ PVRSRV_ERROR DCImportBufferAcquire(IMG_HANDLE hImport,
 
 	/* Get page physical addresses */
 	eError = PMR_DevPhysAddr(psPMR, uiLog2PageSize, uiPageCount, 0,
-	                         pasDevPAddr, pbValid);
+	                         pasDevPAddr, pbValid, DEVICE_USE);
 	PVR_GOTO_IF_ERROR(eError, e3);
 
 #if defined(DEBUG)

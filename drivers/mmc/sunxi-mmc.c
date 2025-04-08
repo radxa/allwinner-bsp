@@ -47,6 +47,8 @@
 #include <linux/mmc/core.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/slot-gpio.h>
+#include <linux/pinctrl/pinconf.h>
+#include <linux/pinctrl/consumer.h>
 #include "../core/card.h"
 #if IS_ENABLED(CONFIG_MMC_HSQ)
 #include <mmc_hsq.h>
@@ -56,6 +58,8 @@
 
 #if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
 #include "cqhci.h"
+#elif IS_ENABLED(CONFIG_MMC_CQHCI)
+#include <cqhci.h>
 #endif
 #include "../redeposit/redeposit.h"
 
@@ -141,7 +145,7 @@ static irqreturn_t sunxi_mmc_handle_bottom_half(int irq, void *dev_id);
 static irqreturn_t sunxi_mmc_handle_do_bottom_half(void *dev_id);
 static void sunxi_mmc_request_done(struct mmc_host *mmc, struct mmc_request *mrq);
 
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 static void sunxi_mmc_dump_regs(struct mmc_host *mmc);
 static int sunxi_is_recovery_halt(struct mmc_host *mmc);
 static u32 sunxi_mmc_cqhci_irq(struct sunxi_mmc_host *host, u32 intmask);
@@ -153,6 +157,40 @@ static int sunxi_is_recovery_halt(struct mmc_host *mmc)
 	return 0;
 }
 #endif
+
+void sunxi_mmc_select_timing(struct mmc_host *mmc, int64_t value)
+{
+	switch (value) {
+	case MMC_TIMING_MMC_HS:
+		mmc->card->mmc_avail_type &= ~(EXT_CSD_CARD_TYPE_HS200 | EXT_CSD_CARD_TYPE_HS400
+									| EXT_CSD_CARD_TYPE_HS400ES | EXT_CSD_CARD_TYPE_DDR_52);
+		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_HS;
+		mmc->caps2 &= ~(MMC_CAP2_HS400_ES | MMC_CAP2_HS400_1_2V | MMC_CAP2_HS400_1_8V | MMC_CAP2_HS200_1_2V_SDR
+				| MMC_CAP2_HS200_1_8V_SDR);
+		mmc->caps &= ~(MMC_CAP_1_2V_DDR | MMC_CAP_1_8V_DDR | MMC_CAP_3_3V_DDR);
+		break;
+	case MMC_TIMING_MMC_DDR52:
+		mmc->card->mmc_avail_type &= ~(EXT_CSD_CARD_TYPE_HS200 | EXT_CSD_CARD_TYPE_HS400
+									| EXT_CSD_CARD_TYPE_HS400ES);
+		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_DDR_52;
+		mmc->caps2 &= ~(MMC_CAP2_HS400_ES | MMC_CAP2_HS400_1_2V | MMC_CAP2_HS400_1_8V | MMC_CAP2_HS200_1_2V_SDR
+				| MMC_CAP2_HS200_1_8V_SDR);
+		mmc->caps &= ~(MMC_CAP_1_2V_DDR | MMC_CAP_1_8V_DDR | MMC_CAP_3_3V_DDR);
+		break;
+	case MMC_TIMING_MMC_HS200:
+		mmc->card->mmc_avail_type &= ~(EXT_CSD_CARD_TYPE_HS400 | EXT_CSD_CARD_TYPE_HS400ES);
+		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_HS200;
+		mmc->caps2 &= ~(MMC_CAP2_HS400_ES | MMC_CAP2_HS400_1_2V | MMC_CAP2_HS400_1_8V);
+		break;
+	case MMC_TIMING_MMC_HS400:
+		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_DDR_52 | EXT_CSD_CARD_TYPE_HS400;
+		break;
+	default:
+		printk("don't support the timing, support emmc timing only\n");
+		break;
+	}
+}
+EXPORT_SYMBOL_GPL(sunxi_mmc_select_timing);
 
 int mmc_wbclr(struct sunxi_mmc_host *host, void __iomem *addr, u32 bmap, u32 tms)
 {
@@ -306,6 +344,64 @@ static void sunxi_timerout_handle(struct work_struct *work)
 timeout_out:
 	spin_unlock_irqrestore(&host->lock, flags);
 }
+
+static void sunxi_mmc_smhc_ecc_enable(struct sunxi_mmc_host *host)
+{
+	u32 rval = 0;
+
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_B2C_ECC) {
+		SM_INFO(mmc_dev(host->mmc), "enable B2C ECC\n");
+		//enabled irq
+		rval = mmc_readl(host, REG_B2C_ECC_CTRL);
+		rval |= (0x1 << 16);
+		mmc_writel(host, REG_B2C_ECC_CTRL, rval);
+
+		//enable ecc check
+		rval = mmc_readl(host, REG_B2C_ECC_CTRL);
+		rval |= (0x1 << 8);
+		mmc_writel(host, REG_B2C_ECC_CTRL, rval);
+	}
+
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_CQE_ECC) {
+		SM_INFO(mmc_dev(host->mmc), "enable CQE ECC\n");
+		//enabled irq
+		rval = mmc_readl(host, REG_CQE_ECC_CTRL);
+		rval |= (0x1 << 16);
+		mmc_writel(host, REG_CQE_ECC_CTRL, rval);
+
+		//enable ecc check
+		rval = mmc_readl(host, REG_CQE_ECC_CTRL);
+		rval |= (0x1 << 8);
+		mmc_writel(host, REG_CQE_ECC_CTRL, rval);
+	}
+}
+
+#ifdef SMHC_ERR_INJECT
+static void sunxi_mmc_smhc_ecc_err_inject(struct sunxi_mmc_host *host, u32 num)
+{
+	u32 rval = 0;
+
+	rval = mmc_readl(host, REG_WIDTH);
+	rval |= (0x1142 << 16);
+	mmc_writel(host, REG_WIDTH, rval);
+
+	/* b2c inject */
+	rval = mmc_readl(host, REG_B2C_ECC_CTRL);
+	rval |= (num << 6);
+	rval |= (0x1 << 4);
+	rval |= (0x1 << 0);
+	mmc_writel(host, REG_B2C_ECC_CTRL, rval);
+
+	/* cqe inject */
+	//rval = mmc_readl(host, REG_CQE_ECC_CTRL);
+	//rval |= (num << 6);
+	//rval |= (0x1 << 4);
+	//rval |= (0x1 << 0);
+	//mmc_writel(host, REG_CQE_ECC_CTRL, rval);
+
+	SM_ERR(mmc_dev(host->mmc), "***************: %d bit error\n", num);
+}
+#endif
 
 static bool sunxi_mmc_is_handle_request(struct sunxi_mmc_host *host)
 {
@@ -637,6 +733,9 @@ static int sunxi_mmc_init_host(struct mmc_host *mmc)
 	if (host->sunxi_mmc_set_acmda)
 		host->sunxi_mmc_set_acmda(host);
 
+	if ((host->sunxi_caps3 & MMC_SUNXI_CAP3_B2C_ECC) || (host->sunxi_caps3 & MMC_SUNXI_CAP3_CQE_ECC))
+		sunxi_mmc_smhc_ecc_enable(host);
+
 	return 0;
 }
 
@@ -644,7 +743,12 @@ static void sunxi_mmc_init_idma_des(struct sunxi_mmc_host *host,
 				    struct mmc_data *data)
 {
 	struct sunxi_idma_des *pdes = (struct sunxi_idma_des *)host->sg_cpu;
+#if defined(CONFIG_ARCH_SUN300IW1)
+	/* linux 5.4 for RV will select 64bit config, will be warning here */
+	struct sunxi_idma_des *pdes_pa = (struct sunxi_idma_des *)((size_t)host->sg_dma);
+#else
 	struct sunxi_idma_des *pdes_pa = (struct sunxi_idma_des *)host->sg_dma;
+#endif
 	struct mmc_host *mmc = host->mmc;
 	struct scatterlist *sg = NULL;
 	int i = 0, j = 0;
@@ -798,6 +902,13 @@ static int sunxi_mmc_map_dma(struct sunxi_mmc_host *host, struct mmc_data *data,
 				"******sg len is over one dma des transfer len******\n");
 			return -1;
 		}
+#if defined(CONFIG_ARCH_SUN300IW1)
+		if (!IS_ALIGNED(sg->offset, L1_CACHE_BYTES) || !IS_ALIGNED(sg->length, L1_CACHE_BYTES)) {
+			SM_DBG(mmc_dev(host->mmc),
+				"unaligned L1_CACHE_BYTES: os %x length %d\n",
+				sg->offset, sg->length);
+		}
+#endif
 	}
 
 	data->host_cookie = cookie;
@@ -936,7 +1047,7 @@ static int sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
 	struct mmc_command *sbc = mrq->sbc;
 	struct mmc_command *cmd = mrq->cmd;
 	const struct mmc_host_ops *ops = host->mmc->ops;
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	struct mmc_card *card = host->mmc ? host->mmc->card : NULL;
 	struct cqhci_host *cq_host = host->mmc->cqe_private;
 	u32 tmp_irq;
@@ -952,7 +1063,22 @@ static int sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
 		/* SDXC_BUSY_CLEAR use the same bit as SDXC_START_BIT_ERROR; */
 		err_flags &= ~SDXC_START_BIT_ERROR;
 
-	if (host->int_sum & err_flags) {
+	if (host->ecc_error & SDXC_B2C_ECC_DOUBIT_ERROR) {
+		SM_ERR(mmc_dev(host->mmc), "smc ecc error!!\n");
+		host->ecc_error &= ~SDXC_B2C_ECC_DOUBIT_ERROR;
+
+		if (host->int_sum & err_flags)
+			sunxi_mmc_dump_errinfo(host);
+
+		mrq->cmd->error = -ETIMEDOUT;
+		if (data) {
+			data->error = -ETIMEDOUT;
+			host->manual_stop_mrq = mrq;
+		}
+
+		if (mrq->stop)
+			mrq->stop->error = -ETIMEDOUT;
+	} else if (host->int_sum & err_flags) {
 		if (!host->execute_tuning_runing)
 			sunxi_mmc_dump_errinfo(host);
 		if ((((host->ctl_spec_cap & SUNXI_SC_EN_RETRY) && data)\
@@ -1074,14 +1200,15 @@ static int sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
 	}
 
 out:
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	/* only use sdr50, while cmdq failed */
 	/* card will be NULL, because uhs-3 sd card may send the cmd48 */
 	if ((mrq->cmd->opcode == MMC_CMDQ_TASK_MGMT) && (host->sunxi_caps3 & MMC_SUNXI_CQE_ON)) {
-		/* mrq->cmd->error = -ETIMEDOUT; */
+		/*In the case of recovery, force entry through cmd48 error to
+		 * initialize recovery to sdr50*/
+		mrq->cmd->error = -ETIMEDOUT;
 		if (card != NULL)
-			card->mmc_avail_type &= ~(EXT_CSD_CARD_TYPE_HS200 | EXT_CSD_CARD_TYPE_HS400
-						| EXT_CSD_CARD_TYPE_HS400ES | EXT_CSD_CARD_TYPE_DDR_52);
+			sunxi_mmc_select_timing(host->mmc, MMC_TIMING_MMC_HS);
 	}
 
 	if (host->rstr_nrml) {
@@ -1138,7 +1265,7 @@ static irqreturn_t sunxi_mmc_irq(int irq, void *dev_id)
 	bool sdio_int = false;
 	int final_ret = 0;
 	irqreturn_t ret = IRQ_HANDLED;
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	u32 tmp_msk;
 #endif
 
@@ -1150,7 +1277,7 @@ static irqreturn_t sunxi_mmc_irq(int irq, void *dev_id)
 	SM_DBG(mmc_dev(host->mmc), "irq: rq %px mi %08x idi %08x\n",
 		host->mrq, msk_int, idma_int);
 
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	/* cqhci normal processing interrupt */
 	if (!sunxi_is_recovery_halt(host->mmc) && host->cqe_on) {
 		tmp_msk = sunxi_mmc_cqhci_irq(host, msk_int);
@@ -1224,11 +1351,89 @@ out:
 
 	return ret;
 
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 cqe_out:
 	spin_unlock(&host->lock);
 	return ret;
 #endif
+}
+
+static int read_smhc_ecc_status(struct sunxi_mmc_host *host, u32 status)
+{
+	u32 val = 0;
+	int ret = 0;
+
+	val = status;
+
+	if ((val >> 23) & 0x1) {
+		//double bit error
+		if ((val >> 22) & 0x1) {
+			SM_ERR(mmc_dev(host->mmc),
+				"smc %d p%d err, check ecc: double bit error !!\n",
+				host->mmc->index, host->phy_index);
+			return -1;
+		}
+
+		//sigle bit error or more double two
+		if ((val >> 21) & 0x1) {
+			SM_ERR(mmc_dev(host->mmc),
+				"smc %d p%d err, check ecc: sigle bit error or more than double bit !!\n",
+				host->mmc->index, host->phy_index);
+			return 0;
+		}
+
+		//check_code err
+		SM_ERR(mmc_dev(host->mmc),
+				"smc %d p%d err, check ecc: unkown error\n",
+				host->mmc->index, host->phy_index);
+		return -1;
+	}
+
+	return ret;
+}
+
+static irqreturn_t sunxi_mmc_irq_ecc(int irq, void *dev_id)
+{
+	struct sunxi_mmc_host *host = dev_id;
+	u32 rval = 0;
+	int err = 0;
+
+	sunxi_mmc_dumphex32(host, "sunxi mmc ecc error", host->reg_base, 0x1f0);
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_B2C_ECC) {
+		SM_ERR(mmc_dev(host->mmc), "check b2c ecc:\n");
+		rval = mmc_readl(host, REG_B2C_ECC_INT_STATUS);
+		err = read_smhc_ecc_status(host, rval);
+		if (err < 0)
+			host->ecc_error |= SDXC_B2C_ECC_DOUBIT_ERROR;
+
+		//clean irq. set and clear for next transfer (write in spec)
+		rval = mmc_readl(host, REG_B2C_ECC_INT_CLEAR);
+		rval |= (1<<0);
+		mmc_writel(host, REG_B2C_ECC_INT_CLEAR, rval);
+
+		rval = mmc_readl(host, REG_B2C_ECC_INT_CLEAR);
+		rval &= ~(1<<0);
+		mmc_writel(host, REG_B2C_ECC_INT_CLEAR, rval);
+	}
+
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_CQE_ECC) {
+		SM_ERR(mmc_dev(host->mmc), "check cqe ecc:\n");
+		rval = mmc_readl(host, REG_CQE_ECC_INT_STATUS);
+		err = read_smhc_ecc_status(host, rval);
+		if (err < 0)
+			host->ecc_error |= SDXC_CQE_ECC_DOUBIT_ERROR;
+
+		//clean irq. set and clear for next transfer (write in spec)
+		rval = mmc_readl(host, REG_CQE_ECC_INT_CLEAR);
+		rval |= (1<<0);
+		mmc_writel(host, REG_CQE_ECC_INT_CLEAR, rval);
+
+		rval = mmc_readl(host, REG_CQE_ECC_INT_CLEAR);
+		rval &= ~(1<<0);
+		mmc_writel(host, REG_CQE_ECC_INT_CLEAR, rval);
+	}
+
+	return IRQ_HANDLED;
 }
 
 /*
@@ -1606,7 +1811,11 @@ static int sunxi_mmc_bus_clk_en(struct sunxi_mmc_host *host, int enable)
 
 	if (enable) {
 		if (!IS_ERR(host->clk_rst)) {
+#ifdef CONFIG_AW_CCU_LEGACY
+			rval = clk_prepare_enable(host->clk_rst);
+#else
 			rval = reset_control_deassert(host->clk_rst);
+#endif
 			if (rval) {
 				SM_ERR(mmc_dev(mmc), "reset err %d\n", rval);
 				return -1;
@@ -1619,10 +1828,26 @@ static int sunxi_mmc_bus_clk_en(struct sunxi_mmc_host *host, int enable)
 			return -1;
 		}
 
+		if (!IS_ERR(host->clk_store)) {
+			rval = clk_prepare_enable(host->clk_store);
+			if (rval) {
+				SM_ERR(mmc_dev(mmc), "Enable store clk err %d\n", rval);
+				return -1;
+			}
+		}
+
 		if (!IS_ERR(host->clk_mbus)) {
 			rval = clk_prepare_enable(host->clk_mbus);
 			if (rval) {
 				SM_ERR(mmc_dev(mmc), "Enable mbus clk err %d\n", rval);
+				return -1;
+			}
+		}
+
+		if (!IS_ERR(host->clk_msi_lite)) {
+			rval = clk_prepare_enable(host->clk_msi_lite);
+			if (rval) {
+				SM_ERR(mmc_dev(mmc), "Enable msi_lite clk err %d\n", rval);
 				return -1;
 			}
 		}
@@ -1634,12 +1859,21 @@ static int sunxi_mmc_bus_clk_en(struct sunxi_mmc_host *host, int enable)
 		}
 	} else {
 		clk_disable_unprepare(host->clk_mmc);
+		if (!IS_ERR(host->clk_msi_lite))
+			clk_disable_unprepare(host->clk_msi_lite);
 		if (!IS_ERR(host->clk_mbus))
 			clk_disable_unprepare(host->clk_mbus);
+		if (!IS_ERR(host->clk_store))
+			clk_disable_unprepare(host->clk_store);
 		clk_disable_unprepare(host->clk_ahb);
 
-		if (!IS_ERR(host->clk_rst))
+		if (!IS_ERR(host->clk_rst)) {
+#ifdef CONFIG_AW_CCU_LEGACY
+			clk_disable_unprepare(host->clk_rst);
+#else
 			reset_control_assert(host->clk_rst);
+#endif
+		}
 	}
 	return 0;
 }
@@ -1744,39 +1978,17 @@ static void sunxi_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			}
 		}
 
-		if (!IS_ERR(host->clk_rst)) {
-			rval = reset_control_deassert(host->clk_rst);
-			if (rval) {
-				SM_ERR(mmc_dev(mmc), "reset err %d\n", rval);
-				return;
-			}
-		}
-
-		rval = clk_prepare_enable(host->clk_ahb);
-		if (rval) {
-			SM_ERR(mmc_dev(mmc), "Enable ahb clk err %d\n", rval);
+		rval = sunxi_mmc_bus_clk_en(host, 1);
+		if (rval)
 			return;
-		}
-
-		if (!IS_ERR(host->clk_mbus)) {
-			rval = clk_prepare_enable(host->clk_mbus);
-			if (rval) {
-				SM_ERR(mmc_dev(mmc), "Enable mbus clk err %d\n", rval);
-				return;
-			}
-		}
-
-		rval = clk_prepare_enable(host->clk_mmc);
-		if (rval) {
-			SM_ERR(mmc_dev(mmc), "Enable mmc clk err %d\n", rval);
-			return;
-		}
 
 		host->ferror = sunxi_mmc_init_host(mmc);
 		if (host->ferror)
 			return;
 
 		enable_irq(host->irq);
+		if (host->irq_ecc >= 0)
+			enable_irq(host->irq_ecc);
 
 		host->power_on = 1;
 		SM_DBG(mmc_dev(mmc), "power on!\n");
@@ -1787,16 +1999,11 @@ static void sunxi_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			break;
 
 		disable_irq(host->irq);
+		if (host->irq_ecc >= 0)
+			disable_irq(host->irq_ecc);
 		sunxi_mmc_reset_host(host);
 
-		clk_disable_unprepare(host->clk_mmc);
-		if (!IS_ERR(host->clk_mbus))
-			clk_disable_unprepare(host->clk_mbus);
-		clk_disable_unprepare(host->clk_ahb);
-
-		if (!IS_ERR(host->clk_rst))
-			reset_control_assert(host->clk_rst);
-
+		sunxi_mmc_bus_clk_en(host, 0);
 		if (!IS_ERR(host->pins_sleep)) {
 			rval =
 			    pinctrl_select_state(host->pinctrl,
@@ -2423,7 +2630,7 @@ static void sunxi_mmc_parse_cmd(struct mmc_host *mmc, struct mmc_command *cmd,
 	u32 imask = SDXC_INTERRUPT_ERROR_BIT;
 	u32 cmd_val = SDXC_START | (cmd->opcode & 0x3f);
 	struct sunxi_mmc_host *host = mmc_priv(mmc);
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	struct cqhci_host *cq_host = mmc->cqe_private;
 	u32 rval;
 #endif
@@ -2498,7 +2705,7 @@ static void sunxi_mmc_parse_cmd(struct mmc_host *mmc, struct mmc_command *cmd,
 	*cval = cmd_val;
 	*wdma = wait_dma;
 
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	if (unlikely((cmd->data) && sunxi_mmc_is_cqhci_halt(host))) {
 		rval = cqhci_readl(cq_host, CQHCI_CFG);
 		rval &= (~CQHCI_ENABLE);
@@ -3013,12 +3220,13 @@ static const struct of_device_id sunxi_mmc_of_match[] = {
 	{.compatible = "allwinner,sunxi-mmc-v4p5x",},
 	{.compatible = "allwinner,sunxi-mmc-v4p6x",},
 	{.compatible = "allwinner,sunxi-mmc-v5p3x",},
+	{.compatible = "allwinner,sunxi-mmc-v5p6x",},
 	{ /* sentinel */ }
 };
 
 MODULE_DEVICE_TABLE(of, sunxi_mmc_of_match);
 
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 static bool sunxi_mmc_is_cqhci_halt(struct sunxi_mmc_host *host)
 {
 	struct cqhci_host *cq_host = host->mmc->cqe_private;
@@ -3062,6 +3270,12 @@ static bool sunxi_mmc_cqe_irq(struct sunxi_mmc_host *host, u32 intmask, int *cmd
 		*data_error = -ETIMEDOUT;
 	else
 		*data_error = 0;
+
+	if (host->ecc_error & SDXC_CQE_ECC_DOUBIT_ERROR) {
+		SM_ERR(mmc_dev(host->mmc), "smc cqe ecc error!!\n");
+		*data_error = -ETIMEDOUT;
+		host->ecc_error &= ~SDXC_CQE_ECC_DOUBIT_ERROR;
+	}
 
 	/* Clear selected interrupts. */
 	/* mmc_writel(host, REG_RINTR, intmask); */
@@ -3134,7 +3348,20 @@ static void sunxi_mmc_cqe_disable(struct mmc_host *mmc, bool recovery)
 		if (!(cqhci_readl(cq_host, CQHCI_CTL) & CQHCI_HALT)) {
 			SM_ERR(mmc_dev(host->mmc), "cqhci halt timeout when recovery doing!\n");
 		}
+	} else {
+		/*have to avoid cqe intr residual to non cmdq*/
+		rval = cqhci_readl(cq_host, CQHCI_IS);
+		cqhci_writel(cq_host, rval, CQHCI_IS);
 	}
+
+	/*It is necessary to ensure that the device end is in a non busy state
+	 * before the original controller;
+	 * Avoid sending commands while busy on the device side*/
+	if (sunxi_check_r1_ready_may_sleep(host)) {
+		SM_ERR(mmc_dev(mmc), "sure mmc ready fail: %s %d\n",
+					__func__, __LINE__);
+	}
+
 	host->cqe_on = false;
 	host->has_recovery = true;
 }
@@ -3172,6 +3399,20 @@ static u32 sunxi_mmc_read_l(struct cqhci_host *cq_host, int reg)
 	return val;
 }
 #endif
+
+static void sunxi_mmc_cqe_rdto(struct mmc_host *mmc)
+{
+	struct sunxi_mmc_host *host = mmc_priv(mmc);
+	u32 rdtmout = 0, rval = 0;
+
+	rdtmout = mmc->ios.clock / 1000 * host->cqe_rdto_ms;
+
+	rval = mmc_readl(host, REG_TMOUT);
+	rval |= 0x000000ff;
+	mmc_writel(host, REG_TMOUT, rval);
+	if (host->sunxi_mmc_set_rdtmout_reg)
+		host->sunxi_mmc_set_rdtmout_reg(host, rdtmout, 1);
+}
 
 static void sunxi_mmc_cqe_enable(struct mmc_host *mmc)
 {
@@ -3216,6 +3457,7 @@ static void sunxi_mmc_cqe_enable(struct mmc_host *mmc)
 
 	if (host->sunxi_mmc_thld_ctl)
 		host->sunxi_mmc_thld_ctl(host, &mmc->ios, NULL);
+	sunxi_mmc_cqe_rdto(mmc);
 
 	rval = mmc_readl(host, REG_CMDR);
 	rval &= ~SDXC_UPCLK_ONLY;
@@ -3265,7 +3507,7 @@ static const struct cqhci_host_ops sunxi_mmc_cqhci_ops = {
 	.disable = sunxi_mmc_cqe_disable,
 	.dumpregs = sunxi_mmc_dump_regs,
 };
-#endif //#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#endif //#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 
 
 static struct mmc_host_ops sunxi_mmc_ops = {
@@ -3317,7 +3559,6 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 	struct device_node *np = pdev->dev.of_node;
 	int ret;
 	u32 caps_val = 0;
-	enum of_gpio_flags flags;
 	struct device_node *apk_np = of_find_node_by_name(NULL, "auto_print");
 	const char *apk_sta = NULL;
 
@@ -3523,10 +3764,7 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 		}
 	}
 
-
-	host->card_pwr_gpio =
-	    of_get_named_gpio_flags(np, "card-pwr-gpios", 0,
-				    (enum of_gpio_flags *)&flags);
+	host->card_pwr_gpio = of_get_named_gpio(np, "card-pwr-gpios", 0);
 	if (gpio_is_valid(host->card_pwr_gpio)) {
 		ret =
 		    devm_gpio_request_one(&pdev->dev, host->card_pwr_gpio,
@@ -3586,9 +3824,19 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 		goto error_disable_regulator;
 	}
 
-	host->clk_mbus = devm_clk_get(&pdev->dev, "mbus");
+	host->clk_mbus = devm_clk_get(&pdev->dev, "mmc_mbus");
 	if (IS_ERR(host->clk_mbus)) {
 		SM_ERR(&pdev->dev, "Could not get mbus clock\n");
+	}
+
+	host->clk_store = devm_clk_get(&pdev->dev, "mmc_store");
+	if (IS_ERR(host->clk_store)) {
+		SM_ERR(&pdev->dev, "Could not get store clock\n");
+	}
+
+	host->clk_msi_lite = devm_clk_get(&pdev->dev, "mmc_msi_lite");
+	if (IS_ERR(host->clk_msi_lite)) {
+		SM_ERR(&pdev->dev, "Could not get msi_lite clock\n");
 	}
 
 	host->clk_mmc = devm_clk_get(&pdev->dev, "mmc");
@@ -3598,12 +3846,20 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 		goto error_disable_regulator;
 	}
 
+#ifdef CONFIG_AW_CCU_LEGACY
+	host->clk_rst = devm_clk_get(&pdev->dev, "rst");
+#else
 	host->clk_rst = devm_reset_control_get(&pdev->dev, "rst");
+#endif
 	if (IS_ERR(host->clk_rst))
 		SM_WARN(&pdev->dev, "Could not get mmc rst\n");
 
 	if (!IS_ERR(host->clk_rst)) {
+#ifdef CONFIG_AW_CCU_LEGACY
+		ret = clk_prepare_enable(host->clk_rst);
+#else
 		ret = reset_control_deassert(host->clk_rst);
+#endif
 		if (ret) {
 			SM_ERR(&pdev->dev, "reset err %d\n", ret);
 			goto error_disable_regulator;
@@ -3616,18 +3872,34 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 		goto error_assert_reset;
 	}
 
+	if (!IS_ERR(host->clk_store)) {
+		ret = clk_prepare_enable(host->clk_store);
+		if (ret) {
+			SM_ERR(&pdev->dev, "Enable store clk err %d\n", ret);
+			goto error_disable_clk_ahb;
+		}
+	}
+
 	if (!IS_ERR(host->clk_mbus)) {
 		ret = clk_prepare_enable(host->clk_mbus);
 		if (ret) {
 			SM_ERR(&pdev->dev, "Enable mbus clk err %d\n", ret);
-			goto error_disable_clk_ahb;
+			goto error_disable_clk_store;
+		}
+	}
+
+	if (!IS_ERR(host->clk_msi_lite)) {
+		ret = clk_prepare_enable(host->clk_msi_lite);
+		if (ret) {
+			SM_ERR(&pdev->dev, "Enable msi_lite clk err %d\n", ret);
+			goto error_disable_clk_mbus;
 		}
 	}
 
 	ret = clk_prepare_enable(host->clk_mmc);
 	if (ret) {
 		SM_ERR(&pdev->dev, "Enable mmc clk err %d\n", ret);
-		goto error_disable_clk_mbus;
+		goto error_disable_clk_msi_lite;
 	}
 #if defined(MMC_FPGA) && defined(CONFIG_ARCH_SUN8IW10P1)
 	disable_card2_dat_det();
@@ -3675,6 +3947,22 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 			SM_ERR(&pdev->dev, "No sdmmc device,check dts\n");
 		sunxi_mmc_init_priv_v4p6x(host, pdev, phy_index);
 	}
+
+	if (of_device_is_compatible(np, "allwinner,sunxi-mmc-v5p6x"))	{
+		int phy_index = 0;
+
+		if (of_property_match_string(np, "device_type", "sdc0") == 0)
+			phy_index = 0;
+		else if (of_property_match_string(np, "device_type", "sdc1") == 0)
+			phy_index = 1;
+		else if (of_property_match_string(np, "device_type", "sdc2") == 0)
+			phy_index = 2;
+		else if (of_property_match_string(np, "device_type", "sdc3") == 0)
+			phy_index = 3;
+		else
+			SM_ERR(&pdev->dev, "No sdmmc device,check dts\n");
+		sunxi_mmc_init_priv_v5p6x(host, pdev, phy_index);
+	}
 #endif
 
 #ifdef CONFIG_AW_MMC_V5P3X
@@ -3698,9 +3986,25 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 	}
 #endif
 
+	if (of_property_read_bool(np, "b2c-ecc-on")) {
+		SM_DBG(&pdev->dev, "b2c ecc on\n");
+		host->sunxi_caps3 |= MMC_SUNXI_CAP3_B2C_ECC;
+	}
+
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
+	if (of_property_read_bool(np, "cqe-on")) {
+		if (of_property_read_bool(np, "cqe-ecc-on")) {
+			SM_DBG(&pdev->dev, "cqe ecc on\n");
+			host->sunxi_caps3 |= MMC_SUNXI_CAP3_CQE_ECC;
+		}
+	}
+#endif
+
 #if defined(CONFIG_ARCH_SUN55IW3)
 	host->mmc_get_soc_ver = sunxi_get_soc_ver();
 #endif
+	host->irq = -1;
+	host->irq_ecc = -1;
 	host->irq = platform_get_irq(pdev, 0);
 	snprintf(host->name, sizeof(host->name), "mmc%d",
 		 host->phy_index);
@@ -3714,27 +4018,45 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
 
 	disable_irq(host->irq);
 
-	clk_disable_unprepare(host->clk_mmc);
-	if (!IS_ERR(host->clk_mbus))
-		clk_disable_unprepare(host->clk_mbus);
-	clk_disable_unprepare(host->clk_ahb);
+	if ((host->sunxi_caps3 & MMC_SUNXI_CAP3_B2C_ECC) || (host->sunxi_caps3 & MMC_SUNXI_CAP3_CQE_ECC)) {
+		host->irq_ecc = platform_get_irq(pdev, 1);
+		ret = devm_request_threaded_irq(&pdev->dev, host->irq_ecc, sunxi_mmc_irq_ecc,
+						NULL, 0,
+						host->name, host);
+		if (ret) {
+			SM_ERR(&pdev->dev, "failed to request irq ecc %d\n", ret);
+			goto error_disable_clk_mmc;
+		}
 
-	if (!IS_ERR(host->clk_rst))
-		reset_control_assert(host->clk_rst);
+		disable_irq(host->irq_ecc);
+	}
+
+	sunxi_mmc_bus_clk_en(host, 0);
 
 	return ret;
 
 error_disable_clk_mmc:
 	clk_disable_unprepare(host->clk_mmc);
+error_disable_clk_msi_lite:
+	if (!IS_ERR(host->clk_msi_lite))
+		clk_disable_unprepare(host->clk_msi_lite);
 error_disable_clk_mbus:
 	if (!IS_ERR(host->clk_mbus))
 		clk_disable_unprepare(host->clk_mbus);
+error_disable_clk_store:
+	if (!IS_ERR(host->clk_store))
+		clk_disable_unprepare(host->clk_store);
 error_disable_clk_ahb:
 	clk_disable_unprepare(host->clk_ahb);
 error_assert_reset:
 
-	if (!IS_ERR(host->clk_rst))
+	if (!IS_ERR(host->clk_rst)) {
+#ifdef CONFIG_AW_CCU_LEGACY
+		clk_disable_unprepare(host->clk_rst);
+#else
 		reset_control_assert(host->clk_rst);
+#endif
+	}
 
 error_disable_regulator:
 	if (!IS_ERR(host->supply.vdmmc18sw))  /* SD PMU control */
@@ -3924,6 +4246,12 @@ static int sunxi_mmc_extra_of_parse(struct mmc_host *mmc)
 			"execute tuning in kernel, retune_period=%d\n", mmc->retune_period);
 	}
 
+	if (of_property_read_u32(np, "cqe-dto-ms", &host->cqe_rdto_ms) < 0) {
+		host->cqe_rdto_ms = 2000;
+		SM_DBG(mmc->parent,
+			"powerctrl default delay time:%dms\n", host->time_pwroff_ms);
+	}
+
 	return 0;
 }
 
@@ -3935,7 +4263,7 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
 #if IS_ENABLED(CONFIG_MMC_HSQ) || IS_ENABLED(CONFIG_AW_MMC_HSQ)
 	struct mmc_hsq *hsq;
 #endif
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	struct cqhci_host *cq_host;
 #endif
 	int ret;
@@ -4045,7 +4373,7 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
 			SM_INFO(&pdev->dev, "Hsq init ok\n");
 	}
 #endif
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	if (host->sunxi_caps3 & MMC_SUNXI_CQE_ON) {
 		host->has_recovery = false;
 		host->mmc->caps2 |= MMC_CAP2_CQE | MMC_CAP2_CQE_DCMD;
@@ -4109,7 +4437,7 @@ static int sunxi_mmc_remove(struct platform_device *pdev)
 	struct sunxi_mmc_host *host = mmc_priv(mmc);
 
 #if defined(CONFIG_ARCH_SUN55IW3)
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	struct cqhci_host *cq_host = mmc->cqe_private;
 
 	if ((host->sunxi_caps3 & MMC_SUNXI_CQE_ON) && (host->mmc_get_soc_ver < 2)) {
@@ -4122,6 +4450,8 @@ static int sunxi_mmc_remove(struct platform_device *pdev)
 	if (host->ctl_spec_cap & SUNXI_SC_EN_TIMEOUT_DETECT)
 		cancel_delayed_work_sync(&host->sunxi_timerout_work);
 	disable_irq(host->irq);
+	if (host->irq_ecc >= 0)
+		disable_irq(host->irq_ecc);
 	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_RDPST)
 		tasklet_disable(&host->parallel_tasklet);
 	sunxi_mmc_reset_host(host);
@@ -4146,7 +4476,7 @@ static int sunxi_mmc_remove(struct platform_device *pdev)
 static void sunxi_mmc_regs_save(struct sunxi_mmc_host *host)
 {
 	struct sunxi_mmc_ctrl_regs *bak_regs = &host->bak_regs;
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	struct cqhci_host *cq_host = host->mmc->cqe_private;
 #endif
 
@@ -4167,7 +4497,10 @@ static void sunxi_mmc_regs_save(struct sunxi_mmc_host *host)
 	 else
 		SM_WARN(mmc_dev(host->mmc), "no spec reg save\n");
 
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_B2C_ECC)
+		bak_regs->ecc_ctrl = mmc_readl(host, REG_B2C_ECC_CTRL);
+
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	/* save cqhci register */
 	if (host->cqe_on) {
 		bak_regs->cqcfg = cqhci_readl(cq_host, CQHCI_CFG);
@@ -4178,13 +4511,15 @@ static void sunxi_mmc_regs_save(struct sunxi_mmc_host *host)
 		bak_regs->cqectrl = mmc_readl(host, REG_CQE_CTRL);
 		bak_regs->cqic = cqhci_readl(cq_host, CQHCI_IC);
 	}
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_CQE_ECC)
+		bak_regs->cqe_ecc_ctrl = mmc_readl(host, REG_CQE_ECC_CTRL);
 #endif
 }
 
 static void sunxi_mmc_regs_restore(struct sunxi_mmc_host *host)
 {
 	struct sunxi_mmc_ctrl_regs *bak_regs = &host->bak_regs;
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	struct cqhci_host *cq_host = host->mmc->cqe_private;
 #endif
 
@@ -4207,7 +4542,9 @@ static void sunxi_mmc_regs_restore(struct sunxi_mmc_host *host)
 	if (host->sunxi_mmc_set_acmda)
 		host->sunxi_mmc_set_acmda(host);
 
-#if IS_ENABLED(CONFIG_AW_MMC_CQHCI)
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_B2C_ECC)
+		mmc_writel(host, REG_B2C_ECC_CTRL, bak_regs->ecc_ctrl);
+#if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
 	/* save cqhci register */
 	if (host->cqe_on) {
 		mmc_writel(host, REG_CQE_CTRL, bak_regs->cqectrl);
@@ -4218,6 +4555,8 @@ static void sunxi_mmc_regs_restore(struct sunxi_mmc_host *host)
 		cqhci_writel(cq_host, bak_regs->cqssc1, CQHCI_SSC1);
 		cqhci_writel(cq_host, bak_regs->cqic, CQHCI_IC);
 	}
+	if (host->sunxi_caps3 & MMC_SUNXI_CAP3_CQE_ECC)
+		mmc_writel(host, REG_CQE_ECC_CTRL, bak_regs->cqe_ecc_ctrl);
 #endif
 }
 
@@ -4276,16 +4615,11 @@ static int sunxi_mmc_suspend(struct device *dev)
 
 			if (mmc_card_keep_power(mmc) || host->dat3_imask) {
 				disable_irq(host->irq);
+				if (host->irq_ecc >= 0)
+					disable_irq(host->irq_ecc);
 				sunxi_mmc_regs_save(host);
 
-				clk_disable_unprepare(host->clk_mmc);
-				if (!IS_ERR(host->clk_mbus))
-					clk_disable_unprepare(host->clk_mbus);
-				clk_disable_unprepare(host->clk_ahb);
-
-				if (!IS_ERR(host->clk_rst))
-					reset_control_assert(host->clk_rst);
-
+				sunxi_mmc_bus_clk_en(host, 0);
 				if (!IS_ERR(host->pins_sleep)) {
 					ret =
 					    pinctrl_select_state(host->pinctrl,
@@ -4386,37 +4720,9 @@ static int sunxi_mmc_resume(struct device *dev)
 				}
 			}
 
-			if (!IS_ERR(host->clk_rst)) {
-				ret = reset_control_deassert(host->clk_rst);
-				if (ret) {
-					SM_ERR(mmc_dev(mmc), "reset err %d\n",
-						ret);
-					goto resumerr;
-				}
-			}
-
-			ret = clk_prepare_enable(host->clk_ahb);
-			if (ret) {
-				SM_ERR(mmc_dev(mmc), "Enable ahb clk err %d\n",
-					ret);
+			ret = sunxi_mmc_bus_clk_en(host, 1);
+			if (ret)
 				goto resumerr;
-			}
-
-			if (!IS_ERR(host->clk_mbus)) {
-				ret = clk_prepare_enable(host->clk_mbus);
-				if (ret) {
-					SM_ERR(mmc_dev(mmc), "Enable ahb clk err %d\n",
-						ret);
-					goto resumerr;
-				}
-			}
-
-			ret = clk_prepare_enable(host->clk_mmc);
-			if (ret) {
-				SM_ERR(mmc_dev(mmc), "Enable mmc clk err %d\n",
-					ret);
-				goto resumerr;
-			}
 
 			host->ferror = sunxi_mmc_init_host(mmc);
 			if (host->ferror) {
@@ -4432,6 +4738,8 @@ static int sunxi_mmc_resume(struct device *dev)
 			}
 
 			enable_irq(host->irq);
+			if (host->irq_ecc >= 0)
+				enable_irq(host->irq_ecc);
 			SM_INFO(mmc_dev(mmc), "dat3_imask %x\n",
 				 host->dat3_imask);
 			/* dump_reg(host); */

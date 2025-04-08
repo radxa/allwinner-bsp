@@ -113,9 +113,9 @@ int sunxi_fb_wait_for_vsync(struct fb_info *info)
 	return 0;
 }
 
-static struct dma_buf *sunxi_fb_get_dmabuf(struct fb_info *info)
+static int sunxi_fb_get_dmabuf(struct fb_info *info, int *fd)
 {
-	return platform_fb_get_dmabuf(info->par);
+	return platform_fb_get_dmabuf(info->par, fd);
 }
 
 static int sunxi_fb_ioctl(struct fb_info *info, unsigned int cmd,
@@ -129,27 +129,17 @@ static int sunxi_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		break;
 	case FBIOGET_DMABUF:
 	{
-		struct dma_buf *dmabuf;
 		struct fb_dmabuf_export k_ret = {-1, 0};
 
-		ret = -1;
-		dmabuf = sunxi_fb_get_dmabuf(info);
-
-		if (IS_ERR_OR_NULL(dmabuf))
-			return PTR_ERR(dmabuf);
-
-		//k_ret.fd = dma_buf_fd(dmabuf, O_CLOEXEC);
-		//if (k_ret.fd < 0) {
-		//	dma_buf_put(dmabuf);
-		//	break;
-		//}
-		k_ret.fd = -1;
-		DRM_ERROR("not support FBIOGET_DMABUF on drm/kms display driver !\n");
+		ret = sunxi_fb_get_dmabuf(info, &k_ret.fd);
+		if (ret < 0) {
+			DRM_ERROR("fb export dmabuf ret %d fd %d\n", ret, k_ret.fd);
+			break;
+		}
 
 		if (copy_to_user(argp, &k_ret, sizeof(struct fb_dmabuf_export))) {
-			DRM_ERROR("copy to user err\n");
+			DRM_ERROR("fb copy to user err\n");
 		}
-		ret = 0;
 		break;
 	}
 	default:
@@ -307,10 +297,20 @@ static void dsi_notify_tp_work(struct work_struct *work)
 	event.data = &tmp_work->blank;
 	fb_notifier_call_chain(FB_EVENT_BLANK, &event);
 }
-void dsi_notify_call_chain(int cmd)
+void dsi_notify_call_chain(int cmd, int flag)
 {
-	__dsi_notify.blank = cmd;
-	schedule_work(&__dsi_notify.dsi_work);
+	struct fb_event event;
+
+	if (flag) {
+		if (!__fb_info)
+			return;
+		event.info = __fb_info;
+		event.data = &cmd;
+		fb_notifier_call_chain(FB_EVENT_BLANK, &event);
+	} else {
+		__dsi_notify.blank = cmd;
+		schedule_work(&__dsi_notify.dsi_work);
+	}
 }
 
 struct fb_info *sunxi_get_fb_info(int fb_id)
@@ -342,7 +342,7 @@ int fb_core_init(struct fb_create_info *create, struct display_channel_state *ou
 						height * FB_BUFFER_CNT, create->format);
 	if (ret < 0) {
 		fb_debug_inf("platform_fb_memory_alloc fail\n");
-		goto free_fb;
+		goto exit_fb;
 	}
 
 	fb_init_var(info->par, &info->var, create->format, width, height);
@@ -357,6 +357,8 @@ int fb_core_init(struct fb_create_info *create, struct display_channel_state *ou
 	fb_debug_inf("fb vir 0x%p phy 0x%8lx\n", virtual_addr, device_addr);
 	return 0;
 
+exit_fb:
+	platform_fb_exit(create, info->par);
 free_fb:
 	framebuffer_release(info);
 	return ret;
@@ -365,8 +367,8 @@ free_fb:
 int fb_core_exit(struct fb_create_info *create)
 {
 	unregister_framebuffer(__fb_info);
+	platform_fb_exit(create, __fb_info->par);
 	platform_fb_memory_free(__fb_info->par);
-	platform_fb_exit();
 	framebuffer_release(__fb_info);
 	return 0;
 }

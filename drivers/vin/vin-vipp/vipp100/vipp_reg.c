@@ -332,7 +332,7 @@ void vipp_osd_cfg(unsigned int id, struct vipp_osd_config *cfg)
 	vipp_reg_load_addr[id].vipp_osd_cfg->bits.osd_stat_en = cfg->osd_stat_en;
 	vipp_reg_load_addr[id].vipp_osd_cfg->bits.osd_ov_num = cfg->osd_ov_num;
 	vipp_reg_load_addr[id].vipp_osd_cfg->bits.osd_cv_num = cfg->osd_cv_num;
-#elif defined CONFIG_ARCH_SUN8IW16P1 || defined CONFIG_ARCH_SUN8IW19P1
+#elif IS_ENABLED(CONFIG_ARCH_SUN8IW16P1) || IS_ENABLED(CONFIG_ARCH_SUN8IW19P1)
 	vipp_reg_load_addr[id].vipp_osd_cfg->bits.argb_mode = cfg->osd_argb_mode;
 	vipp_reg_load_addr[id].vipp_osd_cfg->bits.stat_en = 1;
 	vipp_reg_load_addr[id].vipp_osd_cfg->bits.ov_num = cfg->osd_ov_num + 1;
@@ -407,7 +407,7 @@ void vipp_osd_para_cfg(unsigned int id, struct vipp_osd_para_config *para,
 		vipp_osd_para_load_addr[id].vipp_osd_cover_data[i].bits.u = para->cover_data[i].u;
 		vipp_osd_para_load_addr[id].vipp_osd_cover_data[i].bits.v = para->cover_data[i].v;
 	}
-#elif defined CONFIG_ARCH_SUN8IW16P1
+#elif IS_ENABLED(CONFIG_ARCH_SUN8IW16P1)
 	int i;
 
 	for (i = 0; i < cfg->osd_ov_num + 1; i++) {
@@ -464,7 +464,7 @@ void vipp_osd_para_cfg(unsigned int id, struct vipp_osd_para_config *para,
 
 	vipp_reg_load_addr[id].vipp_osd_cfg->bits.inv_th = para->overlay_cfg[0].inv_th;
 
-#elif defined CONFIG_ARCH_SUN8IW19P1
+#elif IS_ENABLED(CONFIG_ARCH_SUN8IW19P1)
 	int i;
 
 	for (i = 0; i < cfg->osd_orl_num + 1; i++) {

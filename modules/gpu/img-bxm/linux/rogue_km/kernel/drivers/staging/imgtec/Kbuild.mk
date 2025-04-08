@@ -52,20 +52,9 @@ ccflags-y := \
 
 ifeq ($(SUPPORT_EXTERNAL_PHYSHEAP_INTERFACE),1)
  ccflags-y := \
- -I$(TOP)/$(if $(SERVICES_SC),services_sc,services)/include \
+ -I$(TOP)/services/include \
  $(ccflags-y)
 endif
-
-adf_fbdev-y += \
- kernel/drivers/staging/imgtec/adf_fbdev.o \
- kernel/drivers/staging/imgtec/adf_common.o
-
-adf_pdp-y += \
- kernel/drivers/staging/imgtec/tc/adf_pdp.o \
- kernel/drivers/staging/imgtec/tc/pdp_apollo.o \
- kernel/drivers/staging/imgtec/tc/pdp_odin.o \
- kernel/drivers/staging/imgtec/adf_common.o \
- kernel/drivers/staging/imgtec/debugfs_dma_buf.o
 
 tc-y += \
  kernel/drivers/staging/imgtec/tc/tc_apollo.o \

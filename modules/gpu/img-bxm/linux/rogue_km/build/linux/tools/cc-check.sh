@@ -108,7 +108,7 @@ else
 	if [ "$?" = "0" ]; then
 		# compile passed, but was the warning unrecognized?
 		if [ "x$IS_CLANG" = "x1" ]; then
-			grep -E "(^warning: unknown warning option '$1'|^clang: warning: argument unused during compilation: '$1')" $log >/dev/null 2>&1
+			grep -E "(^warning: unknown warning option '$1'|warning: argument unused during compilation: '$1')" $log >/dev/null 2>&1
 		else
 			grep -E "(^cc1: warning: unrecognized command line option .$1.|^cc1: warning: command line option \"$1\" is valid for C\+\+/ObjC\+\+ but not for C|gcc: unrecognized option '$1')" $log >/dev/null 2>&1
 		fi

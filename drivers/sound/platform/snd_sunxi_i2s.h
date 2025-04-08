@@ -70,6 +70,8 @@
 
 #define SUN8IW11_I2S_MAX_REG		SUNXI_I2S_8SLOT_RXCHMAP
 
+#define SUN8IW17_I2S_MAX_REG		SUNXI_I2S_RXCHMAP1
+
 /* SUNXI_I2S_CTL:0x00 */
 #define RX_SYNC_EN_START		21
 #define RX_SYNC_EN			20
@@ -181,8 +183,8 @@ struct sunxi_i2s;
 struct sunxi_i2s_quirks {
 	unsigned int slot_num_max;
 
-	struct audio_reg_label *reg_labels;
-	unsigned int reg_labels_size;
+	unsigned int *audio_reg_addrs;
+	unsigned int audio_reg_size;
 	unsigned int reg_max;
 
 	bool rx_sync_en;
@@ -241,7 +243,6 @@ struct sunxi_i2s_dts {
 	 *    then missing member would be set 0.
 	 */
 	bool tx_pin[4];
-	bool rx_pin[4];
 	uint32_t tx_pin_chmap[4][16];
 	uint32_t rxfifo_pinmap[16];
 	uint32_t rxfifo_chmap[16];
@@ -257,6 +258,14 @@ struct sunxi_i2s_dts {
 
 	/* quirks to adapt diffent chip */
 	const struct sunxi_i2s_quirks *quirks;
+
+	unsigned int clk_keep;
+	unsigned int clk_en_post_delay;
+};
+
+struct sunxi_audio_status {
+	struct mutex apf_mutex;
+	bool spk;
 };
 
 enum SUNXI_I2S_DAI_FMT_SEL {
@@ -280,22 +289,33 @@ struct sunxi_i2s_dai_fmt {
 	bool rx_lsb_first;
 };
 
+struct sunxi_i2s_clk_sta {
+	struct mutex clk_mutex;
+	unsigned int old_rate;
+	u32 p_work;
+	u32 c_work;
+};
+
 struct sunxi_i2s {
 	const char *module_version;
 	struct platform_device *pdev;
 
+	struct audio_reg_group reg_group;
+
 	struct sunxi_i2s_mem mem;
-	struct sunxi_i2s_clk_t *clk;
+	sunxi_i2s_clk_t *clk;
 	struct snd_sunxi_rglt *rglt;
 	struct sunxi_i2s_pinctl pin;
 	struct sunxi_i2s_dts dts;
+	struct sunxi_audio_status audio_sta;
+	struct sunxi_i2s_clk_sta i2s_clk_sta;
 
 	struct sunxi_dma_params playback_dma_param;
 	struct sunxi_dma_params capture_dma_param;
 
 	struct sunxi_i2s_dai_fmt i2s_dai_fmt;
 
-	enum HDMI_FORMAT hdmi_fmt;
+	bool tx_trigger_bypass;
 
 	const struct sunxi_i2s_quirks *quirks;
 
@@ -303,6 +323,10 @@ struct sunxi_i2s {
 	char module_name[32];
 	struct snd_sunxi_dump dump;
 	bool show_reg_all;
+
+	/* pa config */
+	unsigned int pa_pin_max;
+	struct snd_sunxi_pacfg *pa_cfg;
 };
 
 sunxi_i2s_clk_t *snd_i2s_clk_init(struct platform_device *pdev);

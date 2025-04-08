@@ -20,6 +20,7 @@
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_print.h>
 #include <drm/drm_vblank.h>
+#include <drm/drm_vblank_work.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_writeback.h>
 #include <drm/drm_probe_helper.h>
@@ -76,11 +77,21 @@ struct sunxi_drm_crtc {
 	fifo_status_check_callback_t check_status;
 	is_sync_time_enough_callback_t is_sync_time_enough;
 	get_cur_line_callback_t get_cur_line;
+	is_support_backlight_callback_t is_support_backlight;
+	set_backlight_value_callback_t set_backlight_value;
+	get_backlight_value_callback_t get_backlight_value;
 	void *output_dev_data;
+
+	// protect by drm_device->event_lock
+	int should_send_vblank;
 
 	/* irq counter for systrace record */
 	unsigned int irqcnt;
 	unsigned int fifo_err;
+	unsigned int vblank_trace;
+
+	unsigned int hue_default_value;
+	bool share_scaler;
 };
 
 struct sunxi_drm_plane {
@@ -114,11 +125,14 @@ sunxi_replace_property_blob_from_id(struct drm_device *dev,
 
 	if (blob_id != 0) {
 		new_blob = drm_property_lookup_blob(dev, blob_id);
-		if (new_blob == NULL)
+		if (new_blob == NULL) {
+			DRM_ERROR("blob not found\n");
 			return -EINVAL;
+	}
 
 		if (expected_size > 0 &&
 		    new_blob->length != expected_size) {
+			DRM_ERROR("blob size err %d %d\n", (int)new_blob->length, (int)expected_size);
 			drm_property_blob_put(new_blob);
 			return -EINVAL;
 		}
@@ -134,6 +148,7 @@ static int sunxi_crtc_pq_proc_locked(struct sunxi_drm_crtc *scrtc, enum sunxi_pq
 {
 	struct sunxi_crtc_state *state = to_sunxi_crtc_state(scrtc->crtc.state);
 	struct de_backend_data *cur;
+	struct csc_info *csc;
 	drm_warn_on_modeset_not_all_locked(scrtc->crtc.dev);
 
 	if (state->backend_blob) {
@@ -142,11 +157,9 @@ static int sunxi_crtc_pq_proc_locked(struct sunxi_drm_crtc *scrtc, enum sunxi_pq
 	if (!data)
 		return -EINVAL;
 
-	DRM_ERROR("%s\n", __func__);
 	cur = state->backend_blob->data;
 	switch (type) {
 	case PQ_DEBAND:
-		DRM_ERROR("%s %lx\n", __func__, (unsigned long)cur);
 		cur->dirty |= DEBAND_DIRTY;
 		cur->deband_para.dirty |= PQD_DIRTY_MASK;
 		memcpy(&cur->deband_para.pqd, data, sizeof(cur->deband_para.pqd));
@@ -156,6 +169,36 @@ static int sunxi_crtc_pq_proc_locked(struct sunxi_drm_crtc *scrtc, enum sunxi_pq
 				memcpy(data, &cur->deband_para.pqd, sizeof(cur->deband_para.pqd));
 		}
 		break;
+	case PQ_COLOR_MATRIX:
+		csc = data;
+		if (csc->dirty == MATRIX_DIRTY) {
+			cur->dirty |= CSC_DIRTY;
+			cur->csc_para.dirty |= PQD_DIRTY_MASK;
+			memcpy(&cur->csc_para.pqd, data, sizeof(cur->csc_para.pqd));
+			if (cur->csc_para.pqd.cmd == PQ_READ) {
+				sunxi_de_backend_get_pqd_config(scrtc->sunxi_de, cur);
+				if (!(cur->dirty & CSC_DIRTY))
+					memcpy(data, &cur->csc_para.pqd, sizeof(cur->csc_para.pqd));
+			} else {
+				//tiger re-apply csc
+				state->bcsh_changed = true;
+			}
+		} else if (csc->dirty == BCSH_DIRTY) {
+			if (csc->cmd == PQ_READ) {
+				csc->enhance.contrast = state->excfg.contrast;
+				csc->enhance.brightness = state->excfg.brightness;
+				csc->enhance.saturation = state->excfg.saturation;
+				csc->enhance.hue = state->excfg.hue;
+			} else {
+				state->excfg.contrast = csc->enhance.contrast;
+				state->excfg.brightness = csc->enhance.brightness;
+				state->excfg.saturation = csc->enhance.saturation;
+				state->excfg.hue = csc->enhance.hue;
+				state->bcsh_changed = true;
+			}
+		}
+		break;
+
 	default:
 		DRM_ERROR("pq cmd not support %d\n", type);
 		return -EINVAL;
@@ -190,6 +233,37 @@ static int sunxi_plane_pq_proc_locked(struct drm_plane *plane, enum sunxi_pq_typ
 				memcpy(data, &cur->fcm_para.pqd, sizeof(cur->fcm_para.pqd));
 		}
 		break;
+	case PQ_DCI:
+		cur->dirty |= DCI_DIRTY;
+		cur->dci_para.dirty |= PQD_DIRTY_MASK;
+		memcpy(&cur->dci_para.pqd, data, sizeof(cur->dci_para.pqd));
+		if (cur->dci_para.pqd.cmd == PQ_READ) {
+			channel_get_pqd_config(splane->hdl, cstate);
+			if (!(cur->dirty & DCI_DIRTY))
+				memcpy(data, &cur->dci_para.pqd, sizeof(cur->dci_para.pqd));
+		}
+		break;
+	case PQ_DLC:
+		cur->dirty |= DLC_DIRTY;
+		cur->dlc_para.dirty |= PQD_DIRTY_MASK;
+		memcpy(&cur->dlc_para.pqd, data, sizeof(cur->dlc_para.pqd));
+		if (cur->dlc_para.pqd.cmd == PQ_READ) {
+			channel_get_pqd_config(splane->hdl, cstate);
+			if (!(cur->dirty & DLC_DIRTY))
+				memcpy(data, &cur->dlc_para.pqd, sizeof(cur->dlc_para.pqd));
+		}
+		break;
+	case PQ_GTM:
+		cur->dirty |= CDC_DIRTY;
+		cur->cdc_para.dirty |= PQD_DIRTY_MASK;
+		memcpy(&cur->cdc_para.pqd, data, sizeof(cur->cdc_para.pqd));
+		if (cur->cdc_para.pqd.cmd == PQ_READ) {
+			channel_get_pqd_config(splane->hdl, cstate);
+			if (!(cur->dirty & CDC_DIRTY))
+				memcpy(data, &cur->cdc_para.pqd, sizeof(cur->cdc_para.pqd));
+		}
+		break;
+
 	case PQ_SHARP35X:
 		cur->dirty |= SHARP_DIRTY;
 		cur->sharp_para.dirty |= PQD_DIRTY_MASK;
@@ -291,8 +365,8 @@ static int sunxi_crtc_gamma_proc_locked(struct drm_crtc *crtc, u32 *lut, bool ge
 
 int sunxi_drm_crtc_pq_proc(struct drm_device *dev, int disp, enum sunxi_pq_type type, void *data)
 {
-	int __backend[] = {PQ_DEBAND, PQ_GTM};
-	int __frontend[] = {PQ_FCM, PQ_DCI, PQ_SHARP35X, PQ_SNR, PQ_ASU};
+	int __backend[] = {PQ_DEBAND, PQ_COLOR_MATRIX};
+	int __frontend[] = {PQ_FCM, PQ_DCI, PQ_DLC, PQ_SHARP35X, PQ_SNR, PQ_ASU, PQ_GTM};//only channel cdc support gtm
 	int __backend_and_frontend[] = {PQ_SET_REG, PQ_GET_REG, PQ_COLOR_MATRIX, PQ_CDC};
 	struct gamma_para *gamma = data;
 	bool in_backend;
@@ -374,6 +448,7 @@ int sunxi_fbdev_plane_update(struct fbdev_config *config)
 			continue;
 		} else if (config->force) {
 			info.fbdev_output = true;
+			info.force = true;
 			info.hdl = sunxi_plane->hdl;
 			info.hwde = sunxi_plane->crtc->sunxi_de;
 			info.new_state = (void *)&disable;
@@ -391,7 +466,7 @@ int sunxi_fbdev_plane_update(struct fbdev_config *config)
 	}
 
 	plane = &fbdev_plane->plane;
-	if ((plane->state->fb || plane->state->crtc) && !config->force) {
+	if ((plane->state->fb || plane->state->crtc) && !config->force && dev->master) {
 		WARN_ON(scrtc_fbdev->fbdev_output);
 		DRM_INFO("skip fbdev plane update because plane used by userspace\n");
 		if (lock)
@@ -580,13 +655,13 @@ static int __maybe_unused sunxi_plane_atomic_precheck(struct drm_plane *plane,
 static int sunxi_plane_atomic_async_check(struct drm_plane *plane,
 				      struct drm_plane_state *new_state)
 #else
+
 static int sunxi_plane_atomic_async_check(struct drm_plane *plane,
 					struct drm_atomic_state *state)
 #endif
 {
 	return 0;
 }
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
 static void sunxi_plane_atomic_async_update(struct drm_plane *plane,
 				      struct drm_plane_state *new_state)
@@ -754,6 +829,11 @@ static int sunxi_atomic_plane_set_property(struct drm_plane *plane,
 		return 0;
 	}
 
+	if (property == private->prop_compressed_image_crop) {
+		cstate->compressed_image_crop = val;
+		return 0;
+	}
+
 	DRM_ERROR("plane property %d name%s not found!\n",
 		  property->base.id, property->name);
 	return -EINVAL;
@@ -861,6 +941,11 @@ static int sunxi_atomic_plane_get_property(struct drm_plane *plane,
 		return 0;
 	}
 
+	if (property == private->prop_compressed_image_crop) {
+		*val = cstate->compressed_image_crop;
+		return 0;
+	}
+
 	DRM_ERROR("plane property %d name%s not found!\n",
 		  property->base.id, property->name);
 	return -EINVAL;
@@ -930,6 +1015,9 @@ static void sunxi_atomic_plane_reset(struct drm_plane *plane)
 		DRM_ERROR("%s fail, no mem\n", __FUNCTION__);
 		return;
 	}
+
+	/* prepare for pqd */
+	state->frontend_blob = drm_property_create_blob(plane->dev, sizeof(struct de_frontend_data), NULL);
 
 	__drm_atomic_helper_plane_reset(plane, &state->base);
 	for (i = 0; i < MAX_LAYER_NUM_PER_CHN - 1; i++) {
@@ -1148,6 +1236,38 @@ int sunxi_drm_plane_property_create(struct sunxi_drm_private *private)
 	return 0;
 }
 
+static int plane_create_feature_blob(struct sunxi_drm_plane *plane)
+{
+	struct sunxi_drm_private *pri = to_sunxi_drm_private(plane->plane.dev);
+	struct de_channel_handle *hdl = plane->hdl;
+	struct drm_property_blob *blob;
+	unsigned int size = 0;
+	struct de_channel_feature ch;
+	struct de_channel_linebuf_feature ch_line_buf;
+
+	memset(&ch, 0, sizeof(ch));
+	memcpy(&ch.support, &hdl->mod, sizeof(ch.support));
+	ch.feature_cnt = 0;
+	ch.layer_cnt = plane->layer_cnt;
+	ch.hw_id = plane->index;
+	size += sizeof(ch);
+
+	memset(&ch_line_buf, 0, sizeof(ch_line_buf));
+	memcpy(&ch_line_buf, &hdl->lbuf, sizeof(hdl->lbuf));
+	ch.feature_cnt++;
+	size += sizeof(ch_line_buf);
+
+	blob = drm_property_create_blob(plane->plane.dev, size, NULL);
+	if (IS_ERR(blob))
+		return -1;
+	memcpy(blob->data, &ch, sizeof(ch));
+	memcpy(blob->data + sizeof(ch), &ch_line_buf, sizeof(ch_line_buf));
+
+	drm_object_attach_property(&plane->plane.base, pri->prop_feature,
+				   blob->base.id);
+	return 0;
+}
+
 static void sunxi_drm_plane_property_init(struct sunxi_drm_plane *plane, unsigned int channel_cnt, bool afbc_rot_support)
 {
 	struct sunxi_drm_private *pri = to_sunxi_drm_private(plane->plane.dev);
@@ -1189,11 +1309,15 @@ static void sunxi_drm_plane_property_init(struct sunxi_drm_plane *plane, unsigne
 #else
 	drm_object_attach_property(&plane->plane.base, pri->prop_color[0], 0);
 #endif
+#if DRM_OBJECT_MAX_PROPERTY > 24
 	drm_object_attach_property(&plane->plane.base, pri->prop_layer_id, COMMIT_ALL_LAYER);
+#endif
 	drm_object_attach_property(&plane->plane.base, pri->prop_frontend_data, 0);
 	drm_object_attach_property(&plane->plane.base, pri->prop_eotf, 0);
 	drm_object_attach_property(&plane->plane.base, pri->prop_color_space, 0);
 	drm_object_attach_property(&plane->plane.base, pri->prop_color_range, 0);
+	drm_object_attach_property(&plane->plane.base, pri->prop_compressed_image_crop, 0);
+	plane_create_feature_blob(plane);
 }
 
 static int sunxi_drm_plane_init(struct drm_device *dev,
@@ -1448,9 +1572,12 @@ static void sunxi_crtc_finish_page_flip(struct drm_device *dev,
 
 	/* send the vblank of drm_crtc_state->event */
 	spin_lock_irqsave(&dev->event_lock, flags);
-	if (scrtc->event) {
+	if (scrtc->event && scrtc->should_send_vblank) {
 		drm_crtc_send_vblank_event(&scrtc->crtc, scrtc->event);
+		scrtc->vblank_trace++;
+		SUNXIDRM_TRACE_INT2("crtc-vblank", scrtc->hw_id, scrtc->vblank_trace & 1);
 		scrtc->event = NULL;
+		scrtc->should_send_vblank = 0;
 	}
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 }
@@ -1459,11 +1586,16 @@ irqreturn_t sunxi_crtc_event_proc(int irq, void *crtc)
 {
 	struct sunxi_drm_crtc *scrtc = to_sunxi_crtc(crtc);
 	bool timeout;
+	bool busy = sunxi_de_query_de_busy(scrtc->sunxi_de);
 
 	scrtc->irqcnt++;
-	if (scrtc->check_status(scrtc->output_dev_data))
+	if (scrtc->check_status(scrtc->output_dev_data)) {
 		scrtc->fifo_err++;
-	SUNXIDRM_TRACE_INT2("crtc-irq-", scrtc->hw_id, scrtc->irqcnt & 1);
+		SUNXIDRM_TRACE_INT2("crtc-ERR", scrtc->hw_id, scrtc->fifo_err & 1);
+	}
+
+	SUNXIDRM_TRACE_INT2("crtc-irq", scrtc->hw_id, scrtc->irqcnt & 1);
+	SUNXIDRM_TRACE_INT2("crtc-busy", scrtc->hw_id, busy);
 
 	timeout = !scrtc->is_sync_time_enough(scrtc->output_dev_data);
 	sunxi_de_event_proc(scrtc->sunxi_de, timeout);
@@ -1471,7 +1603,17 @@ irqreturn_t sunxi_crtc_event_proc(int irq, void *crtc)
 	wb_finish_proc(scrtc);
 	/* vblank common process */
 	drm_crtc_handle_vblank(&scrtc->crtc);
-	//sunxi_crtc_finish_page_flip(crtc->dev, scrtc);
+
+	if (!busy) {
+		/*
+		 * Ideally, the vsync interrupt should be processed during the vsync blanking area (where DE-busy is 0);
+		 * however, due to system interrupt preemption or scheduling reasons,
+		 * the vsync interrupt may be delayed to the active region of frame n+1.
+		 *
+		 * We need to identify these cases and prevent them from incorrectly triggering the fence of frame n+1.
+		 */
+		sunxi_crtc_finish_page_flip(scrtc->crtc.dev, scrtc);
+	}
 	return IRQ_HANDLED;
 }
 
@@ -1485,6 +1627,7 @@ static int sunxi_crtc_atomic_set_property(struct drm_crtc *crtc,
 	struct sunxi_drm_private *priv = to_sunxi_drm_private(drm);
 	struct drm_mode_config *config = &drm->mode_config;
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(state);
+	int ret;
 
 	if (property == config->tv_brightness_property) {
 		scrtc_state->excfg.brightness = val;
@@ -1507,6 +1650,17 @@ static int sunxi_crtc_atomic_set_property(struct drm_crtc *crtc,
 				&scrtc_state->backend_blob,
 				val, sizeof(struct de_backend_data),
 				&replaced);
+	} else if (property == priv->prop_sunxi_ctm) {
+		ret = sunxi_replace_property_blob_from_id(drm,
+				&scrtc_state->sunxi_ctm,
+				val, sizeof(struct de_color_ctm),
+				&replaced);
+		scrtc_state->sunxi_ctm_changed |= replaced;
+		return ret;
+	} else if (property == priv->prop_frame_rate_change) {
+		scrtc_state->frame_rate_change = val;
+		DRM_DEBUG_DRIVER("[SUNXI-DE] set frame_rate_change for VRR\n");
+		return 0;
 	}
 
 	return -EINVAL;
@@ -1537,6 +1691,12 @@ static int sunxi_crtc_atomic_get_property(struct drm_crtc *crtc,
 	} else if (property == priv->prop_backend_data) {
 		*val = (scrtc_state->backend_blob) ? scrtc_state->backend_blob->base.id : 0;
 		return 0;
+	} else if (property == priv->prop_sunxi_ctm) {
+		*val = (scrtc_state->sunxi_ctm) ? scrtc_state->sunxi_ctm->base.id : 0;
+		return 0;
+	} else if (property == priv->prop_frame_rate_change) {
+		*val = false;
+		return 0;
 	}
 	return -EINVAL;
 }
@@ -1557,6 +1717,12 @@ static struct drm_crtc_state *sunxi_crtc_duplicate_state(struct drm_crtc *crtc)
 	if (cur->backend_blob) {
 		drm_property_blob_get(cur->backend_blob);
 	}
+	if (cur->sunxi_ctm) {
+		drm_property_blob_get(cur->sunxi_ctm);
+	}
+
+	// frame_rate_change should be reset on next commit
+	state->frame_rate_change = false;
 
 	__drm_atomic_helper_crtc_duplicate_state(crtc, &state->base);
 	return &state->base;
@@ -1571,6 +1737,9 @@ static void sunxi_crtc_destroy_state(struct drm_crtc *crtc,
 
 	if (state->backend_blob) {
 		drm_property_blob_put(state->backend_blob);
+	}
+	if (state->sunxi_ctm) {
+		drm_property_blob_put(state->sunxi_ctm);
 	}
 
 	__drm_atomic_helper_crtc_destroy_state(s);
@@ -1594,7 +1763,7 @@ static void sunxi_crtc_reset(struct drm_crtc *crtc)
 	state->excfg.brightness = 50;
 	state->excfg.contrast = 50;
 	state->excfg.saturation = 50;
-	state->excfg.hue = 50;
+	state->excfg.hue = scrtc->hue_default_value;
 
 	/* prepare for pqd */
 	state->backend_blob = drm_property_create_blob(crtc->dev, sizeof(struct de_backend_data), NULL);
@@ -1613,7 +1782,7 @@ void sunxi_crtc_atomic_print_state(struct drm_printer *p,
 	int h = state->mode.vdisplay;
 	int fps = drm_mode_vrefresh(&state->mode);
 
-	drm_printf(p, "\n\t%s: ", scrtc->enabled ? "on" : "off\n");
+	drm_printf(p, "\t%s", scrtc->enabled ? "on: " : "off\n");
 	if (scrtc->enabled) {
 		drm_printf(p, "%dx%d@%d&%dMhz->tcon%d irqcnt=%d err=%d\n", w, h, fps,
 			    (int)(scrtc->clk_freq / 1000000), cstate->tcon_id, scrtc->irqcnt, scrtc->fifo_err);
@@ -1621,6 +1790,8 @@ void sunxi_crtc_atomic_print_state(struct drm_printer *p,
 			    " color_range: %d data_bits: %d\n", cstate->px_fmt_space,
 			    cstate->yuv_sampling, cstate->eotf, cstate->color_space,
 			    cstate->color_range, cstate->data_bits);
+
+		sunxi_de_dump_state(p, scrtc->sunxi_de);
 
 		spin_lock_irqsave(&scrtc->wb_lock, flags);
 		wb = scrtc->wb;
@@ -1652,6 +1823,11 @@ static void sunxi_crtc_atomic_enable(struct drm_crtc *crtc,
 	struct sunxi_de_out_cfg cfg;
 	bool sw_enable = scrtc_state->sw_enable;
 
+	if (scrtc_state->frame_rate_change) {
+		drm_crtc_vblank_on(crtc);
+		return;
+	}
+
 	DRM_INFO("[SUNXI-CRTC]%s\n", __func__);
 	if (scrtc->enabled) {
 		DRM_INFO("crtc has been enable, no need to enable again\n");
@@ -1671,6 +1847,9 @@ static void sunxi_crtc_atomic_enable(struct drm_crtc *crtc,
 	scrtc->check_status = scrtc_state->check_status;
 	scrtc->is_sync_time_enough = scrtc_state->is_sync_time_enough;
 	scrtc->get_cur_line = scrtc_state->get_cur_line;
+	scrtc->is_support_backlight = scrtc_state->is_support_backlight;
+	scrtc->get_backlight_value = scrtc_state->get_backlight_value;
+	scrtc->set_backlight_value = scrtc_state->set_backlight_value;
 	scrtc->output_dev_data = scrtc_state->output_dev_data;
 
 	drm_property_blob_get(new_state->mode_blob);
@@ -1683,15 +1862,27 @@ static void sunxi_crtc_atomic_enable(struct drm_crtc *crtc,
 	cfg.width = modeinfo.hdisplay;
 	cfg.height = modeinfo.vdisplay;
 	cfg.device_fps = modeinfo.vrefresh;
+	cfg.max_device_fps = sunxi_drm_get_device_max_fps(crtc->dev);
 	cfg.kHZ_pixelclk = modeinfo.clock;
 	cfg.htotal = modeinfo.htotal;
 	cfg.vtotal = modeinfo.vtotal;
+	cfg.interlaced = !!(modeinfo.flags & DRM_MODE_FLAG_INTERLACE);
 	cfg.px_fmt_space = scrtc_state->px_fmt_space;
 	cfg.yuv_sampling = scrtc_state->yuv_sampling;
 	cfg.eotf = scrtc_state->eotf;
 	cfg.color_space = scrtc_state->color_space;
 	cfg.color_range = scrtc_state->color_range;
 	cfg.data_bits = scrtc_state->data_bits;
+
+	if ((scrtc_state->pixel_mode != 0) && (scrtc_state->pixel_mode != 1)
+	    && (scrtc_state->pixel_mode != 2) && (scrtc_state->pixel_mode != 4)
+	    && (scrtc_state->pixel_mode != 8)) {
+		DRM_ERROR("pixel_mode set for crtc is not support:%d, use default 1 pixel mode\n",
+			  scrtc_state->pixel_mode);
+		cfg.pixel_mode = 1;
+	} else {
+		cfg.pixel_mode = scrtc_state->pixel_mode;
+	}
 
 	if (sunxi_de_enable(scrtc->sunxi_de, &cfg) < 0)
 		DRM_ERROR("sunxi_de_enable failed\n");
@@ -1716,9 +1907,16 @@ static void sunxi_crtc_atomic_disable(struct drm_crtc *crtc,
 	unsigned long flags;
 	struct sunxi_drm_wb *wb;
 	struct sunxi_drm_crtc *scrtc = to_sunxi_crtc(crtc);
+	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(crtc->state);
+
+	drm_crtc_vblank_off(crtc);
+
+	if (scrtc_state->frame_rate_change) {
+		DRM_DEBUG_KMS("%s: skip disable for VRR\n", __func__);
+		return;
+	}
 
 	DRM_INFO("[SUNXI-CRTC]%s\n", __func__);
-	drm_crtc_vblank_off(crtc);
 	if (!scrtc->enabled) {
 		DRM_ERROR("%s: crtc has been disabled\n", __func__);
 		return;
@@ -1741,10 +1939,11 @@ static void sunxi_crtc_atomic_disable(struct drm_crtc *crtc,
 	if (crtc->state->event && !crtc->state->active) {
 		spin_lock_irq(&crtc->dev->event_lock);
 		drm_crtc_send_vblank_event(crtc, crtc->state->event);
+		scrtc->vblank_trace++;
+		SUNXIDRM_TRACE_INT2("crtc-vblank", scrtc->hw_id, scrtc->vblank_trace & 1);
 		spin_unlock_irq(&crtc->dev->event_lock);
 		crtc->state->event = NULL;
 	}
-
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
@@ -1799,7 +1998,7 @@ static void sunxi_crtc_atomic_flush(struct drm_crtc *crtc,
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(new_state);
 	struct sunxi_de_flush_cfg cfg;
 	void *backend_data;
-	bool all_dirty = crtc->state->mode_changed;
+	bool all_dirty = crtc->state->mode_changed || (crtc->state->active_changed && crtc->state->active);
 	SUNXIDRM_TRACE_BEGIN(__func__);
 	sunxi_wb_commit(scrtc);
 	memset(&cfg, 0, sizeof(cfg));
@@ -1807,6 +2006,14 @@ static void sunxi_crtc_atomic_flush(struct drm_crtc *crtc,
 		if (crtc->state->gamma_lut) {
 			cfg.gamma_lut = crtc->state->gamma_lut->data;
 			cfg.gamma_dirty = true;
+		}
+	}
+
+	if (all_dirty || scrtc_state->sunxi_ctm_changed) {
+		if (scrtc_state->sunxi_ctm) {
+			cfg.ctm = scrtc_state->sunxi_ctm->data;
+			cfg.ctm_dirty = true;
+			scrtc_state->sunxi_ctm_changed = false;
 		}
 	}
 
@@ -1818,11 +2025,18 @@ static void sunxi_crtc_atomic_flush(struct drm_crtc *crtc,
 		cfg.bcsh_dirty = true;
 		scrtc_state->bcsh_changed = false;
 	}
+
 	backend_data = scrtc_state->backend_blob ? scrtc_state->backend_blob->data : NULL;
 	sunxi_de_atomic_flush(scrtc->sunxi_de, backend_data, &cfg);
 	if (scrtc_state->atomic_flush)
 		scrtc_state->atomic_flush(scrtc_state->output_dev_data);
 
+
+	/*
+	 * Ideally, the page_flip should be called within the vsync interrupt;
+	 * but if the interrupt is delayed, we perform the page_flip after the rcq_finished
+	 * to ensure that the fence of the current frame is signaled !
+	 */
 	sunxi_crtc_finish_page_flip(crtc->dev, scrtc);
 
 	if (scrtc->fbdev_flush_pending) {
@@ -1904,6 +2118,7 @@ static int sunxi_drm_crtc_atomic_check(struct drm_crtc *crtc,
 				      struct drm_crtc_state *state)
 {
 	struct drm_crtc_state *crtc_state = state;
+	struct drm_atomic_state *atomic_state = state->state;
 #else
 
 static int sunxi_drm_crtc_atomic_check(struct drm_crtc *crtc,
@@ -1911,9 +2126,18 @@ static int sunxi_drm_crtc_atomic_check(struct drm_crtc *crtc,
 {
 	struct drm_crtc_state *crtc_state =
 		drm_atomic_get_new_crtc_state(state, crtc);
+	struct drm_atomic_state *atomic_state = state;
 #endif
 	struct sunxi_drm_crtc *scrtc = to_sunxi_crtc(crtc);
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(crtc_state);
+	struct drm_plane *plane;
+	struct drm_plane_state *new_plane_state;
+	struct display_channel_state *cstate;
+	uint32_t src_w, src_h;
+	uint32_t scaler_en_num = 0;
+	uint32_t ovl_en = 0, fill_color_en = 0;
+	int i, j;
+
 	if (crtc_state->enable && (!scrtc_state->output_dev_data ||
 	    !scrtc_state->enable_vblank ||
 	    !scrtc_state->check_status ||
@@ -1925,6 +2149,61 @@ static int sunxi_drm_crtc_atomic_check(struct drm_crtc *crtc,
 		scrtc->gamma_dirty = false;
 		crtc_state->color_mgmt_changed = true;
 	}
+
+	if (scrtc->share_scaler) {
+		for_each_new_plane_in_state(atomic_state, plane, new_plane_state, i) {
+			/* force solid color to not use scaler in scaler share hardware */
+			cstate = to_display_channel_state(new_plane_state);
+			ovl_en = fill_color_en = 0;
+			for (j = 0; j < OVL_MAX; j++) {
+				if ((j == 0 && !new_plane_state->fb) ||
+				    (j != 0 && !cstate->fb[j - 1]))
+					continue;
+
+				if (!cstate->color[j]) {
+					ovl_en++;
+					continue;
+				}
+
+				if (j == 0) {
+					new_plane_state->src_x = 0;
+					new_plane_state->src_y = 0;
+					new_plane_state->src_w = new_plane_state->crtc_w << 16;
+					new_plane_state->src_h = new_plane_state->crtc_h << 16;
+				} else {
+					cstate->src_x[j - 1] = 0;
+					cstate->src_y[j - 1] = 0;
+					cstate->src_w[j - 1] = cstate->crtc_w[j - 1] << 16;
+					cstate->src_h[j - 1] = cstate->crtc_h[j - 1] << 16;
+				}
+				fill_color_en++;
+			}
+
+			/* solid color is forced to not use scaler,
+			 * which may conflict with other layers with scaler.
+			 */
+			if (ovl_en && fill_color_en)
+				DRM_INFO("[SUNXI-CRTC:%d:%s] not suitable for layer + solid color in the same ovl\n"
+					 , crtc->base.id, crtc->name);
+
+			if (fill_color_en)
+				continue;
+
+			src_w = new_plane_state->src_w >> 16;
+			src_h = new_plane_state->src_h >> 16;
+			if ((new_plane_state->crtc && new_plane_state->crtc == crtc) &&
+			    (new_plane_state->fb && (src_w != new_plane_state->crtc_w ||
+			     src_h != new_plane_state->crtc_h))) {
+				scaler_en_num++;
+			}
+		}
+	}
+	if (scaler_en_num > 1) {
+		DRM_ERROR("[SUNXI-CRTC:%d:%s] cannot set up more than one scaled "
+			  "plane on shared scaler hardware.\n", crtc->base.id, crtc->name);
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -1960,8 +2239,45 @@ int sunxi_drm_crtc_get_hw_id(struct drm_crtc *crtc)
 	return scrtc->hw_id;
 }
 
-static void sunxi_drm_crtc_property_init(struct sunxi_drm_crtc *crtc)
+unsigned int sunxi_drm_crtc_get_clk_freq(struct drm_crtc *crtc)
 {
+	struct sunxi_drm_crtc *scrtc = to_sunxi_crtc(crtc);
+	if (!crtc || !scrtc) {
+		DRM_ERROR("crtc is NULL\n");
+		return 0;
+	}
+	return scrtc->clk_freq;
+}
+
+static int crtc_create_feature_blob(struct sunxi_drm_crtc *crtc, const struct de_disp_feature *feat)
+{
+	struct sunxi_drm_private *pri = to_sunxi_drm_private(crtc->crtc.dev);
+	struct drm_property_blob *blob;
+	unsigned int size = 0;
+	struct de_disp_feature feat_prop;
+
+	memset(&feat_prop, 0, sizeof(feat_prop));
+	memcpy(&feat_prop, feat, sizeof(*feat));
+	feat_prop.feature_cnt = 0;
+	feat_prop.hw_id = crtc->hw_id;
+	size += sizeof(feat_prop);
+
+	blob = drm_property_create_blob(crtc->crtc.dev, size, NULL);
+	if (IS_ERR(blob)) {
+		DRM_ERROR("crtc feature blob create fail\n");
+		return -1;
+	}
+	memcpy(blob->data, &feat_prop, sizeof(feat_prop));
+
+	drm_object_attach_property(&crtc->crtc.base, pri->prop_feature,
+				   blob->base.id);
+	return 0;
+}
+
+static void sunxi_drm_crtc_property_init(struct sunxi_drm_crtc *crtc, const struct de_disp_feature *feat,
+					 int hue_default_value)
+{
+	struct sunxi_drm_private *pri = to_sunxi_drm_private(crtc->crtc.dev);
 	struct drm_device *drm = crtc->crtc.dev;
 	struct drm_mode_config *conf = &drm->mode_config;
 	/* although for drm core bcsh is consider as connector's prop, we add
@@ -1970,7 +2286,21 @@ static void sunxi_drm_crtc_property_init(struct sunxi_drm_crtc *crtc)
 	drm_object_attach_property(&crtc->crtc.base, conf->tv_brightness_property, 50);
 	drm_object_attach_property(&crtc->crtc.base, conf->tv_contrast_property, 50);
 	drm_object_attach_property(&crtc->crtc.base, conf->tv_saturation_property, 50);
-	drm_object_attach_property(&crtc->crtc.base, conf->tv_hue_property, 50);
+	drm_object_attach_property(&crtc->crtc.base, conf->tv_hue_property, hue_default_value);
+	drm_object_attach_property(&crtc->crtc.base, pri->prop_sunxi_ctm, 0);
+	drm_object_attach_property(&crtc->crtc.base, pri->prop_backend_data, 0);
+	drm_object_attach_property(&crtc->crtc.base, pri->prop_frame_rate_change, 0);
+	crtc_create_feature_blob(crtc, feat);
+}
+
+void sunxi_drm_crtc_prepare_vblank_event(struct sunxi_drm_crtc *scrtc)
+{
+	unsigned long flags;
+	struct drm_device *drmdev = scrtc->crtc.dev;
+
+	spin_lock_irqsave(&drmdev->event_lock, flags);
+	scrtc->should_send_vblank = 1;
+	spin_unlock_irqrestore(&drmdev->event_lock, flags);
 }
 
 void sunxi_drm_crtc_wait_one_vblank(struct sunxi_drm_crtc *scrtc)
@@ -1985,6 +2315,35 @@ int sunxi_drm_crtc_get_output_current_line(struct sunxi_drm_crtc *scrtc)
 		return -EINVAL;
 	}
 	return scrtc->get_cur_line(scrtc->output_dev_data);
+}
+
+bool sunxi_drm_crtc_is_support_backlight(struct sunxi_drm_crtc *scrtc)
+{
+	if (!scrtc) {
+		DRM_ERROR("crtc is NULL\n");
+		return -EINVAL;
+	}
+
+	return scrtc->is_support_backlight ? scrtc->is_support_backlight(scrtc->output_dev_data) : false;
+}
+
+int sunxi_drm_crtc_get_backlight(struct sunxi_drm_crtc *scrtc)
+{
+	if (!scrtc) {
+		DRM_ERROR("crtc is NULL\n");
+		return false;
+	}
+	return scrtc->get_backlight_value ? scrtc->get_backlight_value(scrtc->output_dev_data) : 0;
+}
+
+void sunxi_drm_crtc_set_backlight_value(struct sunxi_drm_crtc *scrtc, int backlight)
+{
+	if (!scrtc) {
+		DRM_ERROR("crtc is NULL\n");
+		return ;
+	}
+	if (scrtc->set_backlight_value)
+		scrtc->set_backlight_value(scrtc->output_dev_data, backlight);
 }
 
 struct sunxi_drm_crtc *sunxi_drm_crtc_init_one(struct sunxi_de_info *info)
@@ -2009,6 +2368,8 @@ struct sunxi_drm_crtc *sunxi_drm_crtc_init_one(struct sunxi_de_info *info)
 	scrtc->plane_cnt = info->plane_cnt;
 	scrtc->crtc.port = info->port;
 	scrtc->clk_freq = info->clk_freq;
+	scrtc->hue_default_value = info->hue_default_value;
+	scrtc->share_scaler = info->feat.feat.share_scaler;
 	scrtc->plane =
 		devm_kzalloc(drm->dev,
 			     sizeof(*scrtc->plane) * info->plane_cnt,
@@ -2060,7 +2421,7 @@ struct sunxi_drm_crtc *sunxi_drm_crtc_init_one(struct sunxi_de_info *info)
 
 	drm_mode_crtc_set_gamma_size(&scrtc->crtc, info->gamma_lut_len);
 	drm_crtc_enable_color_mgmt(&scrtc->crtc, 0, false, info->gamma_lut_len);
-	sunxi_drm_crtc_property_init(scrtc);
+	sunxi_drm_crtc_property_init(scrtc, &info->feat, info->hue_default_value);
 	drm_crtc_helper_add(&scrtc->crtc, &sunxi_crtc_helper_funcs);
 
 #ifdef SUNXI_DRM_PLANE_ASYNC

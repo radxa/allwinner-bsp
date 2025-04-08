@@ -88,8 +88,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define DC_EXAMPLE_DPI 160
 #endif
 
-#ifndef DC_EXAMPLE_NUM_DEVICES
-#define DC_EXAMPLE_NUM_DEVICES 1
+#ifndef DC_EXAMPLE_NUM_DEVICES_DEFAULT
+#define DC_EXAMPLE_NUM_DEVICES_DEFAULT 1
 #endif
 
 #define DC_EXAMPLE_DEBUGFS_NUM_DEVICES "num_devices"
@@ -110,8 +110,11 @@ DC_EXAMPLE_MODULE_PARAMETERS sModuleParams =
 	.ui32RefreshRate = DC_EXAMPLE_REFRESH_RATE,
 	.ui32XDpi = DC_EXAMPLE_DPI,
 	.ui32YDpi = DC_EXAMPLE_DPI,
-	.ui32NumDevices = DC_EXAMPLE_NUM_DEVICES
+	.ui32NumDevices = DC_EXAMPLE_NUM_DEVICES_DEFAULT
 };
+
+#define STR(s)	#s
+#define STRINGIFY(s)	STR(s)
 
 module_param_named(width,	sModuleParams.ui32Width, uint, S_IRUGO);
 module_param_named(height,	sModuleParams.ui32Height, uint, S_IRUGO);
@@ -124,7 +127,9 @@ module_param_named(xdpi,	sModuleParams.ui32XDpi, uint, S_IRUGO);
 module_param_named(ydpi,	sModuleParams.ui32YDpi, uint, S_IRUGO);
 module_param_named(num_devices,	sModuleParams.ui32NumDevices, uint, S_IRUGO);
 MODULE_PARM_DESC(num_devices,
-        "Number of display devices to register (default: 1 - max: 16)");
+        "Number of display devices to register (default: "
+		STRINGIFY(DC_EXAMPLE_NUM_DEVICES_DEFAULT) " - max: "
+		STRINGIFY(PVRSRV_MAX_DEVICES) ")");
 
 const DC_EXAMPLE_MODULE_PARAMETERS *DCExampleGetModuleParameters(void)
 {

@@ -155,6 +155,9 @@ static void edp_mode_init(struct sunxi_edp_hw_desc *edp_hw, u32 mode)
 		reg_val = SET_BITS(24, 4, reg_val, 0x0);
 	}
 	writel(reg_val, edp_hw->reg_base + REG_EDP_TX_PRESEL);
+	reg_val = readl(edp_hw->reg_base + REG_EDP_AUX_FILTTER);
+	reg_val = SET_BITS(14, 2, reg_val, 0x2);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_AUX_FILTTER);
 }
 
 /*0:edp_mode   1:dp_mode*/
@@ -797,7 +800,7 @@ s32 inno_irq_disable(struct sunxi_edp_hw_desc *edp_hw, u32 irq_id)
 	return 0;
 }
 
-s32 edp_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -831,6 +834,7 @@ s32 edp_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf,
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 
 		/* wait aux reply event */
+		/*
 		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 			if (timeout >= 50000) {
 				EDP_LOW_DBG("edp_aux_read wait AUX_REPLY event timeout, request:0x%x\n",
@@ -840,7 +844,7 @@ s32 edp_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf,
 			}
 			timeout++;
 		}
-
+		*/
 		/* wait for AUX_REPLY*/
 		//fixme
 		regval = readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT);
@@ -897,7 +901,7 @@ CLR_EVENT:
 	return ret;
 }
 
-s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -953,6 +957,7 @@ s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 
 		/* wait aux reply event */
+		/*
 		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 			if (timeout >= 50000) {
 				EDP_LOW_DBG("edp_aux_write wait AUX_REPLY event timeout, request:0x%x\n",
@@ -962,7 +967,7 @@ s32 edp_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf
 			}
 			timeout++;
 		}
-
+		*/
 
 		/* wait for AUX_REPLY*/
 		while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
@@ -1006,7 +1011,7 @@ CLR_EVENT:
 	return ret;
 }
 
-s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -1040,6 +1045,7 @@ s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 
 		/* wait aux reply event */
+		/*
 		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 			if (timeout >= 50000) {
 				EDP_LOW_DBG("edp_aux_i2c_read wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
@@ -1048,6 +1054,7 @@ s32 edp_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *
 			}
 			timeout++;
 		}
+		*/
 
 		/* wait for AUX_REPLY*/
 		while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
@@ -1099,7 +1106,7 @@ CLR_EVENT:
 	return ret;
 }
 
-s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
+s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
 {
 	u32 reg_val[4];
 	u32 regval = 0;
@@ -1153,6 +1160,7 @@ s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char 
 		writel(1, edp_hw->reg_base + REG_EDP_AUX_START);
 
 		/* wait aux reply event */
+		/*
 		while (!(readl(edp_hw->reg_base + REG_EDP_HPD_EVENT) & (1 << 1))) {
 			if (timeout >= 50000) {
 				EDP_LOW_DBG("edp_aux_i2c_write wait AUX_REPLY event timeout, request:0x%x\n", edp_hw->cur_aux_request);
@@ -1161,6 +1169,7 @@ s32 edp_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char 
 			}
 			timeout++;
 		}
+		*/
 
 		/* wait for AUX_REPLY*/
 		while (((readl(edp_hw->reg_base + REG_EDP_AUX_TIMEOUT) >> 16) & 0x3) != 0) {
@@ -1200,24 +1209,24 @@ CLR_EVENT:
 	return ret;
 }
 
-s32 inno_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
 {
-	return edp_aux_read(edp_hw, addr, len, buf, retry);
+	return edp_aux_read(edp_hw, addr, len, buf);
 }
 
-s32 inno_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
 {
-	return edp_aux_write(edp_hw, addr, len, buf, retry);
+	return edp_aux_write(edp_hw, addr, len, buf);
 }
 
-s32 inno_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 len, char *buf)
 {
-	return edp_aux_i2c_read(edp_hw, i2c_addr, len, buf, retry);
+	return edp_aux_i2c_read(edp_hw, i2c_addr, len, buf);
 }
 
-s32 inno_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 len, char *buf, bool retry)
+s32 inno_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 len, char *buf)
 {
-	return edp_aux_i2c_write(edp_hw, i2c_addr, len, buf, retry);
+	return edp_aux_i2c_write(edp_hw, i2c_addr, len, buf);
 }
 
 s32 inno_aux_read_ext(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char *buf)
@@ -1225,7 +1234,7 @@ s32 inno_aux_read_ext(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 len, char 
 	u32 retry_cnt = 0;
 	s32 ret = 0;
 	while (retry_cnt < 7) {
-		ret = inno_aux_read(edp_hw, addr, len, buf, retry_cnt ? true : false);
+		ret = inno_aux_read(edp_hw, addr, len, buf);
 		/*
 		 * for CTS 4.2.1.1, add retry when AUX_NACK, AUX_DEFER,
 		 * AUX_TIMEOUT, AUX_NO_STOP
@@ -1248,7 +1257,7 @@ s32 inno_aux_i2c_read_ext(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 le
 	u32 retry_cnt = 0;
 	s32 ret = 0;
 	while (retry_cnt < 7) {
-		ret = inno_aux_i2c_read(edp_hw, i2c_addr, i2c_addr, len, buf, retry_cnt ? true : false);
+		ret = inno_aux_i2c_read(edp_hw, i2c_addr, i2c_addr, len, buf);
 		/*
 		 * for CTS 4.2.1.1, add retry when AUX_NACK, AUX_DEFER,
 		 * AUX_TIMEOUT, AUX_NO_STOP
@@ -1271,7 +1280,7 @@ s32 inno_aux_i2c_write_ext(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 l
 	u32 retry_cnt = 0;
 	s32 ret = 0;
 	while (retry_cnt < 7) {
-		ret = inno_aux_i2c_write(edp_hw, i2c_addr, i2c_addr, len, buf, retry_cnt ? true : false);
+		ret = inno_aux_i2c_write(edp_hw, i2c_addr, i2c_addr, len, buf);
 		/*
 		 * for CTS 4.2.1.1, add retry when AUX_NACK, AUX_DEFER,
 		 * AUX_TIMEOUT, AUX_NO_STOP
@@ -2330,13 +2339,14 @@ bool inno_check_controller_error(struct sunxi_edp_hw_desc *edp_hw)
 
 	reg_val1 = readl(edp_hw->reg_base + REG_EDP_HPD_PLUG);
 	reg_val1 = GET_BITS(0, 1, reg_val1);
-	EDP_LOW_DBG("reg[0x1a4][bit16:bit23]: original_val:0x%x, cur_value:0x%x\n",
-		    REG_ESD_DEF, reg_val);
-	EDP_LOW_DBG("reg[0x88][bit0]: original_val:0x%x, cur_value:0x%x\n",
-		    REG_HPD_NARROW_PLUSE_DEF, reg_val1);
-	if ((reg_val != REG_ESD_DEF) || (reg_val1 != REG_HPD_NARROW_PLUSE_DEF))
+
+	if ((reg_val != REG_ESD_DEF) || (reg_val1 != REG_HPD_NARROW_PLUSE_DEF)) {
+		EDP_LOW_DBG("reg[0x1a4][bit16:bit23]: original_val:0x%x, cur_value:0x%x\n",
+				REG_ESD_DEF, reg_val);
+		EDP_LOW_DBG("reg[0x88][bit0]: original_val:0x%x, cur_value:0x%x\n",
+				REG_HPD_NARROW_PLUSE_DEF, reg_val1);
 		return true;
-	else
+	} else
 		return false;
 }
 
@@ -2360,6 +2370,15 @@ bool inno_support_enhance_frame(struct sunxi_edp_hw_desc *edp_hw)
 	return true;
 }
 
+bool inno_set_tcon_tv_use_edp_inner_clk(struct sunxi_edp_hw_desc *edp_hw, u32 bypass)
+{
+	u32 reg_val;
+	reg_val = readl(edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	reg_val = SET_BITS(1, 1, reg_val, bypass);
+	writel(reg_val, edp_hw->reg_base + REG_EDP_ANA_PIXPLL_FBDIV);
+	return true;
+}
+
 
 static struct sunxi_edp_hw_video_ops inno_edp13_video_ops = {
 	.check_controller_error = inno_check_controller_error,
@@ -2379,7 +2398,7 @@ static struct sunxi_edp_hw_video_ops inno_edp13_video_ops = {
 	.ssc_is_enabled = inno_ssc_is_enabled,
 	.ssc_set_mode = inno_ssc_set_mode,
 	.ssc_get_mode = inno_ssc_get_mode,
-	.aux_read = inno_aux_read,
+	.aux_read = inno_aux_read_ext,
 	.aux_write = inno_aux_write,
 	.aux_i2c_read = inno_aux_i2c_read,
 	.aux_i2c_write = inno_aux_i2c_write,
@@ -2413,6 +2432,7 @@ static struct sunxi_edp_hw_video_ops inno_edp13_video_ops = {
 	.support_assr = inno_support_assr,
 	.enhance_frame_enable = inno_enhance_frame_enable,
 	.support_enhance_frame = inno_support_enhance_frame,
+	.set_use_inner_clk = inno_set_tcon_tv_use_edp_inner_clk,
 };
 
 struct sunxi_edp_hw_video_ops *sunxi_edp_get_hw_video_ops(void)

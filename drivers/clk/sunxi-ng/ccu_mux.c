@@ -177,6 +177,7 @@ u8 ccu_mux_helper_get_parent(struct ccu_common *common,
 
 	return parent;
 }
+EXPORT_SYMBOL_GPL(ccu_mux_helper_get_parent);
 
 int ccu_mux_helper_set_parent(struct ccu_common *common,
 			      struct ccu_mux_internal *cm,

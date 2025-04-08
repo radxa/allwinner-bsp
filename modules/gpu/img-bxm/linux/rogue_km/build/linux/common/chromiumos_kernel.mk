@@ -44,13 +44,11 @@
 # remotes/cros/chromeos-3.18, 315d1eac
 # CHROMIUM: img-rogue: add support for dma-fence and sync_file
 
-ifeq ($(call kernel-version-at-least,3,18),true)
- ifeq ($(CHROMIUMOS_KERNEL),1)
-  ifneq ($(wildcard $(KERNELDIR)/include/linux/dma-fence.h),)
-   CHROMIUMOS_KERNEL_HAS_DMA_FENCE := 1
-   $(eval $(call KernelConfigC,CHROMIUMOS_KERNEL_HAS_DMA_FENCE,,\
+ifeq ($(CHROMIUMOS_KERNEL),1)
+ ifneq ($(wildcard $(KERNELDIR)/include/linux/dma-fence.h),)
+  CHROMIUMOS_KERNEL_HAS_DMA_FENCE := 1
+  $(eval $(call KernelConfigC,CHROMIUMOS_KERNEL_HAS_DMA_FENCE,,\
 ChromiumOS kernel contains the dma-fence API instead of the fence API\
 ))
-  endif
  endif
 endif

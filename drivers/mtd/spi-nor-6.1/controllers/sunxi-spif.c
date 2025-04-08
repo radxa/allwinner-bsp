@@ -1864,7 +1864,10 @@ static int sunxi_spif_nor_register(struct sunxi_spif *sspi)
 			SNOR_HWCAPS_PP,
 	};
 	int ret;
-	const char *type = "sunxipart";
+	const char * const type[] = {
+		"sunxipart",
+		NULL
+	};
 
 	sunxi_spif_init_hwcaps(sspi, &hwcaps);
 
@@ -1900,7 +1903,7 @@ static int sunxi_spif_nor_register(struct sunxi_spif *sspi)
 			return -ENOMEM;
 	}
 
-	return mtd_device_parse_register(&nor->mtd, &type, NULL, NULL, 0);
+	return mtd_device_parse_register(&nor->mtd, type, NULL, NULL, 0);
 }
 
 static struct sunxi_spif_data sun55iw3_spif_data = {

@@ -330,6 +330,8 @@ static int sunxi_jack_suspend(struct snd_soc_card *card)
 			SND_LOG_INFO("%s, %d\n", __func__, __LINE__);
 			jack_codec->jack_suspend(jack_codec->data);
 		}
+		if (jack_codec->jack_exit)
+			jack_codec->jack_exit(jack_codec->data);
 	}
 
 	return 0;
@@ -466,7 +468,6 @@ int snd_sunxi_jack_codec_init(void *jack_data)
 
 	return 0;
 }
-EXPORT_SYMBOL(snd_sunxi_jack_codec_init);
 
 void snd_sunxi_jack_codec_exit(void *jack_data)
 {
@@ -499,7 +500,6 @@ void snd_sunxi_jack_codec_exit(void *jack_data)
 
 	return;
 }
-EXPORT_SYMBOL(snd_sunxi_jack_codec_exit);
 
 /*******************************************************************************
  * for machcine
@@ -516,6 +516,9 @@ int snd_sunxi_jack_codec_register(struct snd_soc_card *card)
 	}
 	sunxi_jack.card = card;
 
+	sunxi_jack.type = 0;
+	sunxi_jack.type_old = 0;
+	sunxi_jack.system_sta = JACK_SYS_STA_INIT;
 	ret = snd_sunxi_card_jack_new(sunxi_jack.card, "Headphones",
 				      SND_JACK_HEADSET
 				      | SND_JACK_HEADPHONE

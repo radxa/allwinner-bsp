@@ -1764,6 +1764,7 @@ PVRSRV_ERROR PVRSRVAllocHandleBase(PVRSRV_HANDLE_BASE **ppsBase,
 	return PVRSRV_OK;
 
 ErrorDestroyHandleBase:
+    eError = PVRSRV_ERROR_INVALID_PARAMS;
 	(void)gpsHandleFuncs->pfnDestroyHandleBase(psBase->psImplBase);
 
 ErrorUnlock:
@@ -1944,7 +1945,7 @@ static PVRSRV_ERROR FreeHandleDataWrapper(IMG_HANDLE hHandle, void *pvData)
 		if (psHandleData->pfnReleaseData != NULL)
 		{
 			eError = psHandleData->pfnReleaseData(psHandleData->pvData);
-			if (eError == PVRSRV_ERROR_RETRY)
+			if (PVRSRVIsRetryError(eError))
 			{
 				PVR_DPF((PVR_DBG_MESSAGE, "%s: Got retry while calling release "
 				        "data callback for handle %p of type = %s", __func__,
@@ -1954,7 +1955,9 @@ static PVRSRV_ERROR FreeHandleDataWrapper(IMG_HANDLE hHandle, void *pvData)
 			}
 			else if (eError != PVRSRV_OK)
 			{
-				return eError;
+				PVR_DPF((PVR_DBG_ERROR, "%s: Unexpected error from pfnReleaseData (%s)",
+						 __func__,
+						 PVRSRVGetErrorString(eError)));
 			}
 		}
 
@@ -2044,9 +2047,6 @@ static const PVRSRV_HANDLE_TYPE g_aeOrderedFreeList[] =
 	PVRSRV_HANDLE_TYPE_RGX_SERVER_COMPUTE_CONTEXT,
 	PVRSRV_HANDLE_TYPE_RGX_SERVER_RAY_CONTEXT,
 	PVRSRV_HANDLE_TYPE_RGX_SERVER_KICKSYNC_CONTEXT,
-#if defined(PVR_TESTING_UTILS) && defined(SUPPORT_VALIDATION)
-	PVRSRV_HANDLE_TYPE_RGX_SERVER_GPUMAP_CONTEXT,
-#endif
 	PVRSRV_HANDLE_TYPE_RI_HANDLE,
 	PVRSRV_HANDLE_TYPE_SYNC_RECORD_HANDLE,
 	PVRSRV_HANDLE_TYPE_SYNC_PRIMITIVE_BLOCK,
@@ -2055,6 +2055,7 @@ static const PVRSRV_HANDLE_TYPE g_aeOrderedFreeList[] =
 	PVRSRV_HANDLE_TYPE_PVRSRV_FENCE_SERVER,
 	PVRSRV_HANDLE_TYPE_DEVMEMINT_MAPPING,
 	PVRSRV_HANDLE_TYPE_DEVMEMINT_RESERVATION,
+	PVRSRV_HANDLE_TYPE_DEVMEMXINT_RESERVATION,
 	PVRSRV_HANDLE_TYPE_DEVMEMINT_HEAP,
 	PVRSRV_HANDLE_TYPE_DEVMEMINT_CTX_EXPORT,
 	PVRSRV_HANDLE_TYPE_DEV_PRIV_DATA,
@@ -2203,6 +2204,7 @@ PVRSRV_ERROR PVRSRVAcquireProcessHandleBase(IMG_PID uiPid, PROCESS_HANDLE_BASE *
 	return PVRSRV_OK;
 
 ErrorFreeHandleBase:
+    eError = PVRSRV_ERROR_INVALID_PARAMS;
 	PVRSRVFreeHandleBase(psBase->psHandleBase, 0);
 ErrorFreeProcessHandleBase:
 	OSFreeMem(psBase);
@@ -2280,6 +2282,7 @@ PVRSRV_ERROR PVRSRVFreeHandleBase(PVRSRV_HANDLE_BASE *psBase, IMG_UINT64 ui64Max
 	PVRSRV_ERROR eError;
 	IMG_PID uiCleanupPid = PVRSRVCleanupThreadGetPid();
 	uintptr_t uiCleanupTid = PVRSRVCleanupThreadGetTid();
+	IMG_UINT32 ui32ErrorCount = 0;
 
 	PVR_ASSERT(gpsHandleFuncs);
 
@@ -2347,9 +2350,24 @@ PVRSRV_ERROR PVRSRVFreeHandleBase(PVRSRV_HANDLE_BASE *psBase, IMG_UINT64 ui64Max
 		eError = gpsHandleFuncs->pfnIterateOverHandles(psBase->psImplBase,
 							       &FreeHandleDataWrapper,
 							       (void *)&sHandleData);
-		PVR_GOTO_IF_ERROR(eError, ExitUnlock);
+
+		/* On retry error return without destroying handle base. Caller may retry. */
+		if (PVRSRVIsRetryError(eError))
+		{
+			PVR_GOTO_IF_ERROR(eError, ExitUnlock);
+		}
+
+		/* Retry is not possible. Continue freeing remaining handles. */
+		if (eError != PVRSRV_OK)
+		{
+			ui32ErrorCount++;
+		}
 	}
 
+	if (ui32ErrorCount > 0)
+	{
+		PVR_DPF((PVR_DBG_ERROR, "%s: Error freeing %d handles.", __func__, ui32ErrorCount));
+	}
 
 	if (psBase->psHashTab != NULL)
 	{
@@ -2477,3 +2495,7 @@ PVRSRV_ERROR PVRSRVHandleDeInit(void)
 
 	return eError;
 }
+
+/******************************************************************************
+ End of file (handle.c)
+******************************************************************************/

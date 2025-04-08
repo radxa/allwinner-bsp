@@ -600,7 +600,7 @@ int parse_modules_from_device_tree(struct vin_md *vind)
 		if (sensors->use_sensor_list == 0xff) {
 			sprintf(property, "%s%d_sensor_list", child->name, idx);
 			get_value_int(child, property, &sensors->use_sensor_list);
-#ifndef CONFIG_SENSOR_LIST_MODULE
+#if !IS_ENABLED(CONFIG_SENSOR_LIST_MODULE)
 			sensors->use_sensor_list = 0;
 #endif
 		}
@@ -616,7 +616,7 @@ int parse_modules_from_device_tree(struct vin_md *vind)
 		if (sensors->use_sensor_list == 0xff) {
 			sprintf(property, "%s%d_sensor_list", child->name, idx);
 			get_value_int(child, property, &sensors->use_sensor_list);
-#ifndef CONFIG_SENSOR_LIST_MODULE
+#if !IS_ENABLED(CONFIG_SENSOR_LIST_MODULE)
 			sensors->use_sensor_list = 0;
 #endif
 		}

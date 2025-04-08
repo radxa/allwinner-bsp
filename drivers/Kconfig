@@ -19,6 +19,7 @@ source "$(BSP_TOP)drivers/mbus/Kconfig"
 
 # Storage
 source "$(BSP_TOP)drivers/mmc/Kconfig"
+source "$(BSP_TOP)drivers/ufs/Kconfig"
 source "$(BSP_TOP)modules/nand/Kconfig"
 source "$(BSP_TOP)drivers/mtd/Kconfig"
 source "$(BSP_TOP)drivers/redeposit/Kconfig"

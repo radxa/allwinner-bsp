@@ -1,35 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define pr_fmt(x) KBUILD_MODNAME ": " x "\n"
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include "linux/irq.h"
-#include <linux/slab.h>
-#include <linux/interrupt.h>
-#include <linux/device.h>
-#include <linux/mutex.h>
-#include <linux/param.h>
-#include <linux/jiffies.h>
-#include <linux/platform_device.h>
-#include <linux/power_supply.h>
-#include <linux/fs.h>
-#include <linux/kernel.h>
-#include <linux/ktime.h>
-#include <linux/of.h>
-#include <linux/timekeeping.h>
-#include <linux/types.h>
-#include <linux/string.h>
-#include <asm/irq.h>
-#include <linux/cdev.h>
-#include <linux/delay.h>
-#include <linux/pm_runtime.h>
-#include <linux/kthread.h>
-#include <linux/freezer.h>
-#include <linux/err.h>
-#include <power/bmu-ext.h>
-
-#include <linux/err.h>
 #include "axp2601_battery.h"
 
 #define DIVIDE_BY_50(n) (((n) / 50) * 50)
@@ -40,12 +11,20 @@ struct axp2601_bat_power {
 	struct regmap             *regmap;
 	struct power_supply       *bat_supply;
 	struct power_supply       *qc_psy;
+	struct power_supply       *gpio_vbus_psy;
 	struct delayed_work        bat_supply_mon;
 	struct delayed_work        bat_power_curve;
 	struct delayed_work        bat_power_full_curve;
 	struct bmu_ext_config_info     dts_info;
 	struct wakeup_source       *ws;
 	void __iomem			   *writebase;
+
+	int			charger_cooler_type;
+
+	/* charge_limit_process */
+	atomic_t		pmu_limit_status;
+	/* charge_cycle_count */
+	atomic_t	 	charge_cycle_count;
 };
 
 static enum power_supply_property axp2601_bat_props[] = {
@@ -64,16 +43,43 @@ static enum power_supply_property axp2601_bat_props[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_MANUFACTURER,
 	POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CYCLE_COUNT,
+	POWER_SUPPLY_PROP_MANUFACTURE_YEAR,
+	POWER_SUPPLY_PROP_MANUFACTURE_MONTH,
+	POWER_SUPPLY_PROP_MANUFACTURE_DAY,
 };
 
-static int axp2601_get_vbat_vol(struct power_supply *ps,
-			     union power_supply_propval *val)
+static int axp2601_usb_power_get(struct axp2601_bat_power *bat_power)
 {
-	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
+	if (!IS_ERR_OR_NULL(bat_power->qc_psy)) {
+		return 1;
+	}
+
+	return 0;
+}
+
+static int axp2601_gpio_vbus_power_get(struct axp2601_bat_power *bat_power)
+{
+	if (!IS_ERR_OR_NULL(bat_power->gpio_vbus_psy)) {
+		return 1;
+	}
+
+	return 0;
+}
+
+static int axp2601_can_charge_status_get(struct axp2601_bat_power *bat_power)
+{
+	return axp2601_usb_power_get(bat_power) || axp2601_gpio_vbus_power_get(bat_power);
+}
+
+static int _axp2601_get_vbat_vol(struct axp2601_bat_power *bat_power)
+{
 	struct regmap *regmap = bat_power->regmap;
 	uint8_t data[2];
 	uint16_t vtemp[3], tempv;
-	int ret = 0;
+	int ret = 0, bat_vol;
 	uint8_t i;
 
 	for (i = 0; i < 3; i++) {
@@ -98,13 +104,23 @@ static int axp2601_get_vbat_vol(struct power_supply *ps,
 		vtemp[0] = vtemp[1];
 		vtemp[1] = tempv;
 	} /* Why three times? */
+
 	/*incase vtemp[1] exceed AXP2601_VBAT_MAX */
 	if ((vtemp[1] > AXP2601_VBAT_MAX) || (vtemp[1] < AXP2601_VBAT_MIN)) {
-		val->intval = 0;
-		return 0;
+		bat_vol = 0;
+	} else {
+		bat_vol = vtemp[1] * 1000;
 	}
 
-	val->intval = vtemp[1] * 1000;
+	return bat_vol;
+}
+
+static int axp2601_get_vbat_vol(struct power_supply *ps,
+			     union power_supply_propval *val)
+{
+	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
+
+	val->intval = _axp2601_get_vbat_vol(bat_power);
 
 	return 0;
 }
@@ -115,8 +131,10 @@ static int axp2601_get_temp(struct power_supply *ps,
 {
 	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_TEMP, val);
+	} else {
+		val->intval = 300;
 	}
 
 	return 0;
@@ -127,8 +145,35 @@ static int axp2601_get_bat_health(struct power_supply *ps,
 {
 	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_HEALTH, val);
+	} else {
+		val->intval = POWER_SUPPLY_HEALTH_GOOD;
+	}
+
+	return 0;
+}
+
+static int _axp2601_get_bat_present(struct axp2601_bat_power *bat_power)
+{
+	int bat_vol;
+
+	bat_vol = _axp2601_get_vbat_vol(bat_power);
+	if (bat_vol > 3000)
+		return 1;
+
+	return 0;
+}
+
+static int axp2601_get_bat_present(struct power_supply *ps,
+				  union power_supply_propval *val)
+{
+	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
+
+	if (axp2601_usb_power_get(bat_power)) {
+		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, val);
+	} else {
+		val->intval = _axp2601_get_bat_present(bat_power);
 	}
 
 	return 0;
@@ -139,12 +184,15 @@ static int axp2601_get_soc(struct power_supply *ps,
 {
 	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
 	struct regmap *regmap = bat_power->regmap;
+	struct power_supply       *vbus_status;
 	unsigned int data;
 	u32 reg_value;
 	int ret = 0;
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, val);
+	} else {
+		axp2601_get_bat_present(ps, val);
 	}
 
 	if (!val->intval) {
@@ -152,13 +200,23 @@ static int axp2601_get_soc(struct power_supply *ps,
 		return 0;
 	}
 
+	if (!(axp2601_can_charge_status_get(bat_power))) {
+		writel(0, bat_power->writebase);
+	} else {
+		if (axp2601_usb_power_get(bat_power)) {
+			vbus_status = bat_power->qc_psy;
+		} else if (axp2601_gpio_vbus_power_get(bat_power)) {
+			vbus_status = bat_power->gpio_vbus_psy;
+		}
+	}
+
 	reg_value = readl(bat_power->writebase);
 
 	if (reg_value & 0x80 || reg_value & 0x100) {
 		data = reg_value & 0x7F;
 		if (data == 101) {
-			if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-				power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, val);
+			if (axp2601_can_charge_status_get(bat_power)) {
+				power_supply_get_property(vbus_status, POWER_SUPPLY_PROP_STATUS, val);
 				if (val->intval == POWER_SUPPLY_STATUS_DISCHARGING) {
 					__pm_stay_awake(bat_power->ws);
 					schedule_delayed_work(&bat_power->bat_power_full_curve, msecs_to_jiffies(60 * 1000));
@@ -171,8 +229,8 @@ static int axp2601_get_soc(struct power_supply *ps,
 			return ret;
 		data &= 0x7F;
 
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-			power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, val);
+		if (axp2601_can_charge_status_get(bat_power)) {
+			power_supply_get_property(vbus_status, POWER_SUPPLY_PROP_STATUS, val);
 			if (val->intval == POWER_SUPPLY_STATUS_CHARGING || val->intval == POWER_SUPPLY_STATUS_FULL) {
 				if (data > 94) {
 					reg_value &= ~(0x1FF);
@@ -206,8 +264,12 @@ static int axp2601_get_bat_status(struct power_supply *ps,
 {
 	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, val);
+	} else if (axp2601_gpio_vbus_power_get(bat_power)) {
+		power_supply_get_property(bat_power->gpio_vbus_psy, POWER_SUPPLY_PROP_STATUS, val);
+	} else {
+		val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
 	}
 
 	if (val->intval == POWER_SUPPLY_STATUS_CHARGING || val->intval == POWER_SUPPLY_STATUS_FULL) {
@@ -222,26 +284,35 @@ static int axp2601_get_bat_status(struct power_supply *ps,
 	return 0;
 }
 
-static int axp2601_get_bat_present(struct power_supply *ps,
-				  union power_supply_propval *val)
-{
-	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
-
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, val);
-	}
-
-	return 0;
-}
-
 static int axp2601_get_ichg_lim(struct power_supply *ps,
 			     union power_supply_propval *val)
 {
 	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, val);
+	} else {
+		val->intval = 0;
 	}
+
+	return 0;
+}
+
+static int axp2601_get_charger_count(struct power_supply *ps,
+		union power_supply_propval *val)
+{
+	struct axp2601_bat_power *bat_power = power_supply_get_drvdata(ps);
+	struct bmu_ext_config_info *bmp_ext_config = &bat_power->dts_info;
+	unsigned int data;
+	int charge_cycle_count = 0, reduce_cap;
+
+	charge_cycle_count = atomic_read(&bat_power->charge_cycle_count);
+
+	data = bmp_ext_config->pmu_battery_cap * 1000;
+	reduce_cap = charge_cycle_count * bmp_ext_config->pmu_bat_cycle_cap_reduce;
+	data -= reduce_cap;
+
+	val->intval = data;
 
 	return 0;
 }
@@ -251,9 +322,30 @@ static int axp2601_set_ichg(struct axp2601_bat_power *bat_power, int mA)
 	union power_supply_propval qc_val;
 
 	qc_val.intval = mA;
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &qc_val);
 	}
+	return 0;
+}
+
+static int axp2601_set_status(struct axp2601_bat_power *bat_power, int status)
+{
+	union power_supply_propval qc_val;
+
+	if (!status) {
+		PMIC_INFO("disable charge\n");
+		if (axp2601_usb_power_get(bat_power)) {
+			qc_val.intval = 1;
+			power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
+		}
+	} else {
+		PMIC_INFO("enable charge\n");
+		if (axp2601_usb_power_get(bat_power)) {
+			qc_val.intval = 2;
+			power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
+		}
+	}
+
 	return 0;
 }
 
@@ -279,7 +371,7 @@ static int axp2601_reset_mcu(struct axp2601_bat_power *bat_power)
 	union power_supply_propval qc_val;
 	struct regmap *regmap = bat_power->regmap;
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		qc_val.intval = 1;
 		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
 	}
@@ -288,7 +380,7 @@ static int axp2601_reset_mcu(struct axp2601_bat_power *bat_power)
 	ret = _axp2601_reset_mcu(regmap);
 
 	msleep(500);
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		qc_val.intval = 2;
 		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
 	}
@@ -535,6 +627,10 @@ static int axp2601_bat_get_property(struct power_supply *psy,
 		ret = axp2601_get_ichg_lim(psy, val);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
+		if (bat_power->charger_cooler_type) {
+			val->intval = atomic_read(&bat_power->pmu_limit_status);
+			break;
+		}
 		ret = axp2601_get_ichg_lim(psy, val);
 		if (val->intval < bat_power->dts_info.pmu_bat_charge_control_lim)
 			val->intval = 0;
@@ -552,28 +648,28 @@ static int axp2601_bat_get_property(struct power_supply *psy,
 			return ret;
 		break;
 	case POWER_SUPPLY_PROP_TEMP_ALERT_MIN:
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (axp2601_usb_power_get(bat_power)) {
 			power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_TEMP_ALERT_MIN, val);
 		} else {
 			val->intval = -200000;
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP_ALERT_MAX:
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (axp2601_usb_power_get(bat_power)) {
 			power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_TEMP_ALERT_MAX, val);
 		} else {
 			val->intval = 200000;
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MIN:
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (axp2601_usb_power_get(bat_power)) {
 			power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MIN, val);
 		} else {
 			val->intval = -200000;
 		}
 		break;
 	case POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MAX:
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (axp2601_usb_power_get(bat_power)) {
 			power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MAX, val);
 		} else {
 			val->intval = 200000;
@@ -584,6 +680,26 @@ static int axp2601_bat_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
 		val->intval = bat_power->dts_info.pmu_battery_cap * 1000;
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		val->intval = bat_power->dts_info.pmu_battery_cap * 1000;
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL:
+		ret = axp2601_get_charger_count(psy, val);
+		if (ret < 0)
+			return ret;
+		break;
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+		val->intval = -1;
+		break;
+	case POWER_SUPPLY_PROP_MANUFACTURE_YEAR:
+		val->intval = bat_power->dts_info.pmu_bat_manufacture_year;
+		break;
+	case POWER_SUPPLY_PROP_MANUFACTURE_MONTH:
+		val->intval = bat_power->dts_info.pmu_bat_manufacture_month;
+		break;
+	case POWER_SUPPLY_PROP_MANUFACTURE_DAY:
+		val->intval = bat_power->dts_info.pmu_bat_manufacture_day;
 		break;
 	default:
 		return -EINVAL;
@@ -603,15 +719,34 @@ static int axp2601_bat_set_property(struct power_supply *psy,
 		ret = axp2601_set_ichg(bat_power, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
-		if (val->intval == 1) {
-			lim_cur = bat_power->dts_info.pmu_bat_charge_control_lim;
-		} else if (val->intval == 2) {
-			lim_cur = bat_power->dts_info.pmu_runtime_chgcur;
+		if (!bat_power->charger_cooler_type) {
+			if (val->intval == 1) {
+				lim_cur = bat_power->dts_info.pmu_bat_charge_control_lim;
+			} else if (val->intval == 2) {
+				lim_cur = bat_power->dts_info.pmu_runtime_chgcur;
+			} else {
+				lim_cur = 0;
+			}
 		} else {
-			lim_cur = 0;
+			atomic_set(&bat_power->pmu_limit_status, val->intval);
+			if (val->intval == PAUSE_CHARGING_STATE) {
+				lim_cur = 0;
+			} else if (val->intval == LIMIT_CUR_STATE) {
+				lim_cur = bat_power->dts_info.pmu_bat_charge_control_lim;
+			} else if (val->intval == NORMAL_STATE) {
+				lim_cur = bat_power->dts_info.pmu_runtime_chgcur;
+			} else {
+				break;
+			}
 		}
 		PMIC_INFO("ichg set:%d\n", lim_cur);
 		ret = axp2601_set_ichg(bat_power, lim_cur);
+		break;
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+		atomic_set(&bat_power->charge_cycle_count, val->intval);
+		break;
+	case POWER_SUPPLY_PROP_STATUS:
+		ret = axp2601_set_status(bat_power, val->intval);
 		break;
 	default:
 		ret = -EINVAL;
@@ -630,6 +765,12 @@ static int axp2601_bat_property_is_writeable(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
 		ret = 0;
+		break;
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+		ret = 1;
+		break;
+	case POWER_SUPPLY_PROP_STATUS:
+		ret = 1;
 		break;
 	default:
 		ret = -EINVAL;
@@ -660,14 +801,23 @@ static int axp2601_init_chip(struct axp2601_bat_power *bat_power)
 	if (bat_power == NULL)
 		return -ENODEV;
 
+	/* init bat cycle*/
+	atomic_set(&bat_power->charge_cycle_count, 0);
+	bmp_ext_config->pmu_bat_cycle_cap_reduce *= bmp_ext_config->pmu_battery_cap * 10 / bmp_ext_config->pmu_bat_cycle_life;
+
+	/* default sets */
+	atomic_set(&bat_power->pmu_limit_status, 0);
+
 	ret = regmap_update_bits(bat_power->regmap, AXP2601_RESET_CFG, AXP2601_MODE_SLEEP, 0);
 	if (ret < 0) {
 		PMIC_DEV_ERR(bat_power->dev, "axp2601 reg update, i2c communication err!\n");
 		return ret;
 	}
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (axp2601_usb_power_get(bat_power)) {
 		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, &qc_val);
+	} else {
+		qc_val.intval = _axp2601_get_bat_present(bat_power);
 	}
 
 	if (!qc_val.intval)
@@ -708,6 +858,15 @@ static int axp2601_init_chip(struct axp2601_bat_power *bat_power)
 			reg &= ~(0xFF);
 			writel(reg, bat_power->writebase);
 		}
+	}
+
+	/* init charger cooling type */
+	if (of_find_property(bat_power->dev->of_node, "#cooling-cells", NULL)) {
+		PMIC_INFO("charger cooling type: new\n");
+		bat_power->charger_cooler_type = 1;
+	} else {
+		PMIC_INFO("charger cooling type: old\n");
+		bat_power->charger_cooler_type = 0;
 	}
 
 	return ret;
@@ -754,10 +913,15 @@ static int axp2601_bat_dt_parse(struct device_node *node,
 		return -1;
 	}
 
-	BMU_EXT_OF_PROP_READ(pmu_battery_cap,                4000);
+	BMU_EXT_OF_PROP_READ(pmu_battery_cap,                 4000);
 	BMU_EXT_OF_PROP_READ(pmu_battery_warning_level,       15);
 	BMU_EXT_OF_PROP_READ(pmu_runtime_chgcur,              2000);
 	BMU_EXT_OF_PROP_READ(pmu_bat_charge_control_lim,	  600);
+	BMU_EXT_OF_PROP_READ(pmu_bat_cycle_life,              800);
+	BMU_EXT_OF_PROP_READ(pmu_bat_cycle_cap_reduce,        20);
+	BMU_EXT_OF_PROP_READ(pmu_bat_manufacture_year,       2024);
+	BMU_EXT_OF_PROP_READ(pmu_bat_manufacture_month,         1);
+	BMU_EXT_OF_PROP_READ(pmu_bat_manufacture_day,           1);
 
 	bmp_ext_config->wakeup_new_soc =
 		of_property_read_bool(node, "wakeup_new_soc");
@@ -788,29 +952,8 @@ static void axp2601_bat_power_monitor(struct work_struct *work)
 {
 	struct axp2601_bat_power *bat_power =
 		container_of(work, typeof(*bat_power), bat_supply_mon.work);
-	unsigned char temp_val[2];
-	unsigned int reg_value;
-	int ret;
 
 	power_supply_changed(bat_power->bat_supply);
-
-	 /* 0xce, 0xcf return mcoul high 16 bit value */
-	reg_value = 0x28;
-	ret = regmap_write(bat_power->regmap, AXP2601_GAUGE_FG_ADDR, reg_value);
-
-	regmap_read(bat_power->regmap, AXP2601_GAUGE_CONFIG, &reg_value);
-	if (reg_value & BIT(4)) {
-		regmap_read(bat_power->regmap, AXP2601_GAUGE_FG_ADDR, &reg_value);
-		if (reg_value == 0x28) {
-		/* reset gauge if  is overflow */
-		regmap_bulk_read(bat_power->regmap, AXP2601_GAUGE_FG_DATA_H, temp_val, 2);
-		reg_value = (temp_val[0] << 8) + temp_val[1];
-			if ((reg_value != 0xffff) && (reg_value != 0x0000)) {
-				axp2601_reset_mcu(bat_power);
-				PMIC_WARN("reset gauge:mcoul overflow\n");
-			}
-		}
-	}
 
 	schedule_delayed_work(&bat_power->bat_supply_mon, msecs_to_jiffies(10 * 1000));
 }
@@ -823,8 +966,20 @@ static void axp2601_bat_power_full_curve_monitor(struct work_struct *work)
 	static int rest_vol, blance_vol;
 	u32 reg;
 	unsigned int reg_value = 0, ret = 0;
+	struct power_supply       *vbus_status;
 
 	power_supply_changed(bat_power->bat_supply);
+
+	if (!(axp2601_can_charge_status_get(bat_power))) {
+		return;
+	}
+
+	if (axp2601_usb_power_get(bat_power)) {
+		vbus_status = bat_power->qc_psy;
+	} else if (axp2601_gpio_vbus_power_get(bat_power)) {
+		vbus_status = bat_power->gpio_vbus_psy;
+	}
+
 
 	reg = readl(bat_power->writebase);
 
@@ -843,8 +998,8 @@ static void axp2601_bat_power_full_curve_monitor(struct work_struct *work)
 			return;
 		}
 		if (blance_vol <= 0) {
-			if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-				power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &val);
+			if (axp2601_usb_power_get(bat_power)) {
+				power_supply_get_property(vbus_status, POWER_SUPPLY_PROP_STATUS, &val);
 				if (val.intval == POWER_SUPPLY_STATUS_CHARGING || val.intval == POWER_SUPPLY_STATUS_FULL)
 					ret = 1;
 				else
@@ -900,8 +1055,19 @@ static void axp2601_bat_power_curve_monitor(struct work_struct *work)
 	static int rest_vol, blance_vol;
 	u32 reg;
 	unsigned int reg_value = 0;
+	struct power_supply       *vbus_status;
 
 	power_supply_changed(bat_power->bat_supply);
+
+	if (!(axp2601_can_charge_status_get(bat_power))) {
+		return;
+	}
+
+	if (axp2601_usb_power_get(bat_power)) {
+		vbus_status = bat_power->qc_psy;
+	} else if (axp2601_gpio_vbus_power_get(bat_power)) {
+		vbus_status = bat_power->gpio_vbus_psy;
+	}
 
 	reg = readl(bat_power->writebase);
 
@@ -911,8 +1077,8 @@ static void axp2601_bat_power_curve_monitor(struct work_struct *work)
 
 		rest_vol = reg & 0x7F;
 		if (blance_vol >= 1) {
-			if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-				power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_ONLINE, &val);
+			if (axp2601_usb_power_get(bat_power)) {
+				power_supply_get_property(vbus_status, POWER_SUPPLY_PROP_ONLINE, &val);
 				reg_value = val.intval;
 			}
 
@@ -956,11 +1122,6 @@ static int axp2601_battery_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	if (!axp_dev->irq) {
-		PMIC_ERR("can not register axp2601-battery without irq\n");
-		return -EINVAL;
-	}
-
 	bat_power = devm_kzalloc(&pdev->dev, sizeof(*bat_power), GFP_KERNEL);
 	if (bat_power == NULL) {
 		PMIC_ERR("axp2601_bat_power alloc failed\n");
@@ -999,7 +1160,22 @@ static int axp2601_battery_probe(struct platform_device *pdev)
 		}
 	} else {
 		PMIC_INFO("axp2601:no quick charge\n");
-		bat_power->qc_psy =  NULL;
+		bat_power->qc_psy = NULL;
+		if (of_find_property(bat_power->dev->of_node, "gpio_vbus_det_supply", NULL)) {
+			np = of_parse_phandle(bat_power->dev->of_node, "gpio_vbus_det_supply", 0);
+			if (!of_device_is_available(np)) {
+				PMIC_INFO("no gpio vbus det\n");
+				bat_power->gpio_vbus_psy =  NULL;
+			} else {
+				bat_power->gpio_vbus_psy = devm_power_supply_get_by_phandle(bat_power->dev, "gpio_vbus_det_supply");
+				PMIC_INFO("used gpio vbus det\n");
+				if (!(bat_power->gpio_vbus_psy) || (IS_ERR(bat_power->gpio_vbus_psy)))
+					return -EPROBE_DEFER;
+			}
+		} else {
+			PMIC_INFO("no gpio vbus det\n");
+			bat_power->gpio_vbus_psy = NULL;
+		}
 	}
 
 	ret = axp2601_init_chip(bat_power);
@@ -1022,39 +1198,49 @@ static int axp2601_battery_probe(struct platform_device *pdev)
 	}
 
 	bmu_ext_register_cooler(bat_power->bat_supply);
-	for (i = 0; i < ARRAY_SIZE(axp_bat_irq); i++) {
-		irq = platform_get_irq_byname(pdev, axp_bat_irq[i].name);
-		if (irq < 0)
-			continue;
 
-		irq = regmap_irq_get_virq(axp_dev->regmap_irqc, irq);
-		if (irq < 0) {
-			PMIC_DEV_ERR(&pdev->dev, "can not get irq\n");
-			return irq;
-		}
-		/* we use this variable to suspend irq */
-		axp_bat_irq[i].irq = irq;
+	if (axp_dev->irq) {
+		for (i = 0; i < ARRAY_SIZE(axp_bat_irq); i++) {
+			irq = platform_get_irq_byname(pdev, axp_bat_irq[i].name);
+			if (irq < 0)
+				continue;
 
-		ret = devm_request_any_context_irq(&pdev->dev, irq,
-						   axp_bat_irq[i].isr, 0,
-						   axp_bat_irq[i].name, bat_power);
+			irq = regmap_irq_get_virq(axp_dev->regmap_irqc, irq);
+			if (irq < 0) {
+				PMIC_DEV_ERR(&pdev->dev, "can not get irq\n");
+				return irq;
+			}
+			/* we use this variable to suspend irq */
+			axp_bat_irq[i].irq = irq;
 
-		if (ret < 0) {
-			PMIC_DEV_ERR(&pdev->dev, "failed to request %s IRQ %d: %d\n",
+			ret = devm_request_any_context_irq(&pdev->dev, irq,
+							   axp_bat_irq[i].isr, 0,
+							   axp_bat_irq[i].name, bat_power);
+
+			if (ret < 0) {
+				PMIC_DEV_ERR(&pdev->dev, "failed to request %s IRQ %d: %d\n",
+					axp_bat_irq[i].name, irq, ret);
+				return ret;
+			} else {
+				ret = 0;
+			}
+
+			PMIC_DEV_DEBUG(&pdev->dev, "Requested %s IRQ %d: %d\n",
 				axp_bat_irq[i].name, irq, ret);
-			return ret;
-		} else {
-			ret = 0;
 		}
-
-		PMIC_DEV_DEBUG(&pdev->dev, "Requested %s IRQ %d: %d\n",
-			axp_bat_irq[i].name, irq, ret);
+	} else {
+		PMIC_INFO("axp2601:no irq\n");
 	}
+
 	platform_set_drvdata(pdev, bat_power);
 
 	INIT_DELAYED_WORK(&bat_power->bat_supply_mon, axp2601_bat_power_monitor);
 	INIT_DELAYED_WORK(&bat_power->bat_power_full_curve, axp2601_bat_power_full_curve_monitor);
 	schedule_delayed_work(&bat_power->bat_supply_mon, msecs_to_jiffies(500));
+
+	if (!(axp2601_usb_power_get(bat_power))) {
+		writel(0, bat_power->writebase);
+	}
 
 	reg = readl(bat_power->writebase);
 	if (ret < 0)
@@ -1135,6 +1321,7 @@ static int axp2601_bat_suspend(struct platform_device *pdev, pm_message_t state)
 	u32 reg_value;
 
 	cancel_delayed_work_sync(&bat_power->bat_supply_mon);
+	atomic_set(&bat_power->pmu_limit_status, 0);
 	reg_value = readl(bat_power->writebase);
 	if (reg_value & 0x80) {
 		cancel_delayed_work_sync(&bat_power->bat_power_curve);

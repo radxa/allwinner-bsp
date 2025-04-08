@@ -239,6 +239,17 @@ void vipp_set_para_ready(unsigned int id, enum vipp_ready_flag flag)
 #endif
 }
 
+static void __vipp_chn_cap_disable_para_notready(unsigned int id, unsigned int ch)
+{
+	vin_reg_clr_set(vipp_base[id] + VIPP_CH_CTRL_REG_OFF + VIPP_CH_OFFSET + ch * VIPP_CH_AMONG_OFFSET,
+			VIPP_CHN_CAP_EN_MASK | VIPP_PARA_READY_MASK, (0 << VIPP_CHN_CAP_EN) | (0 << VIPP_PARA_READY));
+}
+
+void vipp_chn_cap_disable_para_notready(unsigned int id)
+{
+	__vipp_chn_cap_disable_para_notready(id, vipp_virtual_find_ch[id]);
+}
+
 static void __vipp_chn_bypass_mode(unsigned int id, unsigned int mode, unsigned int ch)
 {
 	vin_reg_clr_set(vipp_base[id] + VIPP_CH_CTRL_REG_OFF + VIPP_CH_OFFSET + ch * VIPP_CH_AMONG_OFFSET,

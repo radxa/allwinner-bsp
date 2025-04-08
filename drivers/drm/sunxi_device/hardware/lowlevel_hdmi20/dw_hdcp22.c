@@ -66,11 +66,11 @@ void _dw_hdcp2x_data_enable(u8 enable)
 {
 	if (enable == DW_HDMI_ENABLE) {
 		_dw_hdcp2x_ovr_set_avmute(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
-		dw_mc_set_hdcp_clk(DW_HDMI_ENABLE);
+		dw_mc_set_clk(DW_MC_CLK_HDCP, DW_HDMI_ENABLE);
 		return;
 	}
 
-	dw_mc_set_hdcp_clk(DW_HDMI_DISABLE);
+	dw_mc_set_clk(DW_MC_CLK_HDCP, DW_HDMI_DISABLE);
 	_dw_hdcp2x_ovr_set_avmute(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
 }
 
@@ -373,7 +373,7 @@ int dw_hdcp2x_enable(void)
 
 int dw_hdcp2x_disable(void)
 {
-	dw_mc_set_hdcp_clk(DW_HDMI_DISABLE);
+	dw_mc_set_clk(DW_MC_CLK_HDCP, DW_HDMI_DISABLE);
 
 	dw_hdcp2x_ovr_set_path(DW_HDMI_DISABLE, DW_HDMI_ENABLE);
 
@@ -464,13 +464,13 @@ int dw_hdcp2x_init(void)
 	hdcp->esm_fw_size = DW_ESM_FW_SIZE;
 	hdcp->esm_fw_addr_vir = (unsigned long)dma_alloc_coherent(hdmi->dev,
 		hdcp->esm_fw_size, &hdcp->esm_fw_addr, GFP_KERNEL | __GFP_ZERO);
-	//hdcp->esm_fw_addr -= 0x40000000;
+	/* hdcp->esm_fw_addr -= 0x40000000; */
 
 	/* esm data dma address alloc */
 	hdcp->esm_data_size = DW_ESM_DATA_SIZE;
 	hdcp->esm_data_addr_vir = (unsigned long)dma_alloc_coherent(hdmi->dev,
 		hdcp->esm_data_size, &hdcp->esm_data_addr, GFP_KERNEL | __GFP_ZERO);
-	//hdcp->esm_data_addr -= 0x40000000;
+	/* hdcp->esm_data_addr -= 0x40000000; */
 
 	hdcp->esm_hpi_addr = (unsigned long)(hdmi->addr + ESM_REG_BASE_OFFSET);
 
@@ -510,36 +510,22 @@ void dw_hdcp2x_exit(void)
 
 ssize_t dw_hdcp2x_dump(char *buf)
 {
-	int i = 0;
 	ssize_t n = 0;
-	char *esm_addr = (char *)esm->driver->vir_code_base;
-
-	n += sprintf(buf + n, " - [hdcp2x]\n");
-	n += sprintf(buf + n, "    -fw loader       : [%s]\n",
-			hdcp->esm_loading ? "ok" : "failed");
-	n += sprintf(buf + n, "    -fw size         : %d-bytes\n",
-			hdcp->esm_size);
-	n += sprintf(buf + n, "    -fw first 8-bytes:");
-	for (i = 0; i < 8; i++)
-		n += sprintf(buf + n, " 0x%02x", (u32)*(esm_addr + i));
-	n += sprintf(buf + n, "\n");
-	n += sprintf(buf + n, "    -fw last 8-bytes :");
-	for (i = hdcp->esm_size - 8; i < hdcp->esm_size; i++)
-		n += sprintf(buf + n, " 0x%02x", (u32)*(esm_addr + i));
-	n += sprintf(buf + n, "\n");
-
-	n += sprintf(buf + n, "    -esm code addr   : 0x%x\n",
-		esm->driver->code_base);
-	n += sprintf(buf + n, "    -esm data addr   : 0x%x\n",
+	n += sprintf(buf + n, "\n[dw hdcp2x]\n");
+	n += sprintf(buf + n, "|       |                  state               |                  esm firmware\n");
+	n += sprintf(buf + n, "| name  |--------------------------------------+-----------------------------------------------------|\n");
+	n += sprintf(buf + n, "|       | mode  |  path  | config | capability | booting | loader |  size  | code addr  | data addr  |\n");
+	n += sprintf(buf + n, "|-------+-------+--------+--------+------------+---------+--------+--------+------------+------------|\n");
+	n += sprintf(buf + n, "| state | %-5s | %-6s |  %-3s   |    %-4s    |   %-3s   |   %-3s  | %-6d | 0x%-8x | 0x%-8x |\n",
+		dw_read_mask(A_HDCPCFG0, A_HDCPCFG0_HDMIDVI_MASK) ? "hdmi" : "dvi",
+		dw_hdcp2x_get_path() ? "hdcp2x" : "hdcp1x",
+		hdcp->esm_auth_done ? "yes" : "no",
+		hdcp->esm_cap_done ? "pass" : "fail",
+		hdcp->esm_open ? "on" : "off",
+		hdcp->esm_loading ? "yes" : "no",
+		hdcp->esm_size,
+		esm->driver->code_base,
 		esm->driver->data_base);
-
-	n += sprintf(buf + n, "    -esm boot        : [%s]\n",
-			hdcp->esm_open ? "ok" : "failed");
-	n += sprintf(buf + n, "    -auth config     : [%s]\n",
-			hdcp->esm_auth_done ? "enable" : "disable");
-	n += sprintf(buf + n, "    -auth capability : [%s]\n",
-			hdcp->esm_cap_done ? "ok" : "failed");
-
 	return n;
 }
 

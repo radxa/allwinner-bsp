@@ -20,14 +20,12 @@
 #include <linux/mutex.h>
 #include "de_dci_type.h"
 #include "de_dci.h"
-struct de_dci_handle *de35x_dci_create(struct module_create_info *info);
 
 #define NUM_BLKS 16
 #define HIST_BINS 16
 #define PDF_REC_NUM 2 /*need two record to calculate*/
 #define DCI_LEVEL_NUM 10
 #define DCI_DATA_NUM 15
-
 
 enum {
 	DCI_PARA_REG_BLK = 0,
@@ -49,38 +47,27 @@ struct de_dci_private {
 	u32 g_last_cdfs[NUM_BLKS][HIST_BINS];
 	u16 g_update_rate;
 	bool g_start;
-	enum enhance_init_state g_init_state;
-	win_percent_t win_per;
-	bool ahb_read_enable;
+	u8 demo_hor_start;
+	u8 demo_hor_end;
+	u8 demo_ver_start;
+	u8 demo_ver_end;
 
 	/* Frame number of dci run */
 	u32 runtime;
 	/* dci enabled */
-	u32 isenable;
 	u32 frame_cnt;
 
-	/* use for query if de_top is busy */
-	void __iomem *de_reg_base;
 	struct mutex lock;
 
 	s32 (*de_dci_enable)(struct de_dci_handle *hdl, u32 enable);
 	s32 (*de_dci_set_size)(struct de_dci_handle *hdl, u32 width, u32 height);
 	s32 (*de_dci_set_window)(struct de_dci_handle *hdl,
-		      u32 win_enable, u32 x, u32 y, u32 w, u32 h);
+		      u32 x, u32 y, u32 w, u32 h);
 	s32 (*de_dci_set_color_range)(struct de_dci_handle *hdl, enum de_color_range cr);
-	s32 (*de_dci_dump_state)(struct drm_printer *p, struct de_dci_handle *hdl);
 	s32 (*de_dci_update_local_param)(struct de_dci_handle *hdl);
 };
 
-//static u16 g_update_rate;
-//static bool g_start;
-//static enum enhance_init_state g_init_state;
-//static win_percent_t win_per;
-//static u32 *g_pdf[DE_NUM][VI_CHN_NUM][PDF_REC_NUM];
-//static u32 *g_cur_pdf[DE_NUM][VI_CHN_NUM];
-//static u32 g_last_cdfs[NUM_BLKS][HIST_BINS];
-//static bool ahb_read_enable;
-
+struct de_dci_handle *de35x_dci_create(struct module_create_info *info);
 struct de_dci_handle *de_dci_create(struct module_create_info *info)
 {
 	return de35x_dci_create(info);
@@ -95,14 +82,6 @@ s32 de_dci_enable(struct de_dci_handle *hdl, u32 enable)
 		return 0;
 }
 
-s32 de_dci_dump_state(struct drm_printer *p, struct de_dci_handle *hdl)
-{
-	if (hdl->private->de_dci_dump_state)
-		return hdl->private->de_dci_dump_state(p, hdl);
-	else
-		return 0;
-}
-
 s32 de_dci_set_size(struct de_dci_handle *hdl, u32 width, u32 height)
 {
 	if (hdl->private->de_dci_set_size)
@@ -112,10 +91,10 @@ s32 de_dci_set_size(struct de_dci_handle *hdl, u32 width, u32 height)
 }
 
 s32 de_dci_set_window(struct de_dci_handle *hdl,
-		      u32 win_enable, u32 x, u32 y, u32 w, u32 h)
+		      u32 x, u32 y, u32 w, u32 h)
 {
 	if (hdl->private->de_dci_set_window)
-		return hdl->private->de_dci_set_window(hdl, win_enable, x, y, w, h);
+		return hdl->private->de_dci_set_window(hdl, x, y, w, h);
 	else
 		return 0;
 }
@@ -181,6 +160,18 @@ static inline struct dci_reg *de35x_get_dci_shadow_reg(struct de_dci_private *pr
 	return (struct dci_reg *)(priv->shadow_blks[DCI_PARA_REG_BLK].vir_addr);
 }
 
+s32 de_dci_dump_state(struct drm_printer *p, struct de_dci_handle *hdl)
+{
+	struct de_dci_private *priv = hdl->private;
+	struct dci_reg *reg = de35x_get_dci_shadow_reg(priv);
+	unsigned long base = (unsigned long)hdl->private->reg_blks[0].reg_addr;
+	unsigned long de_base = (unsigned long)hdl->cinfo.de_reg_base;
+
+	drm_printf(p, "\n\tdci@%8x: %sable\n", (unsigned int)(base - de_base),
+			  reg->ctl.bits.en ? "en" : "dis");
+	return 0;
+}
+
 s32 de35x_dci_set_size(struct de_dci_handle *hdl, u32 width, u32 height)
 {
 	struct de_dci_private *priv = hdl->private;
@@ -190,6 +181,16 @@ s32 de35x_dci_set_size(struct de_dci_handle *hdl, u32 width, u32 height)
 
 	reg->size.bits.width = width - 1;
 	reg->size.bits.height = height - 1;
+
+	reg->demo_horz.bits.demo_horz_start =
+	    width * priv->demo_hor_start / 100;
+	reg->demo_horz.bits.demo_horz_end =
+	    width * priv->demo_hor_end / 100;
+	reg->demo_vert.bits.demo_vert_start =
+	    height * priv->demo_ver_start / 100;
+	reg->demo_vert.bits.demo_vert_end =
+	    height * priv->demo_ver_end / 100;
+
 	de_dci_request_update(priv, DCI_PARA_REG_BLK, 1);
 
 	mutex_unlock(&priv->lock);
@@ -197,37 +198,40 @@ s32 de35x_dci_set_size(struct de_dci_handle *hdl, u32 width, u32 height)
 	return 0;
 }
 
-s32 de35x_dci_set_window(struct de_dci_handle *hdl,
-		      u32 demo_enable, u32 x, u32 y, u32 w, u32 h)
+s32 de_dci_set_demo_mode(struct de_dci_handle *hdl, bool enable)
 {
 	struct de_dci_private *priv = hdl->private;
 	struct dci_reg *reg = de35x_get_dci_shadow_reg(priv);
 
 	mutex_lock(&priv->lock);
-
-	if (priv->g_init_state >= ENHANCE_TIGERLCD_ON) {
-		reg->demo_horz.bits.demo_horz_start =
-		    x + reg->size.bits.width * priv->win_per.hor_start / 100;
-		reg->demo_horz.bits.demo_horz_end =
-		    x + reg->size.bits.width * priv->win_per.hor_end / 100;
-		reg->demo_vert.bits.demo_vert_start =
-		    y + reg->size.bits.height * priv->win_per.ver_start / 100;
-		reg->demo_vert.bits.demo_vert_end =
-		    y + reg->size.bits.height * priv->win_per.ver_end / 100;
-	}
-	if (demo_enable) {
-		reg->demo_horz.bits.demo_horz_start = x;
-		reg->demo_horz.bits.demo_horz_end = x + w - 1;
-		reg->demo_vert.bits.demo_vert_start = y;
-		reg->demo_vert.bits.demo_vert_end = y + h - 1;
-	}
-	reg->ctl.bits.demo_en = demo_enable | priv->win_per.demo_en;
-	de_dci_request_update(priv, DCI_PARA_REG_BLK, 1);
-
+	reg->ctl.bits.demo_en = enable ? 1 : 0;
 	mutex_unlock(&priv->lock);
+	de_dci_request_update(priv, DCI_PARA_REG_BLK, 1);
 	return 0;
 }
 
+s32 de35x_dci_set_window(struct de_dci_handle *hdl,
+		      u32 x, u32 y, u32 w, u32 h)
+{
+	struct de_dci_private *priv = hdl->private;
+
+	mutex_lock(&priv->lock);
+	priv->demo_hor_start = x;
+	priv->demo_hor_end = x + w;
+	priv->demo_ver_start = y;
+	priv->demo_ver_end = y + h - 1;
+	mutex_unlock(&priv->lock);
+
+	return 0;
+}
+
+bool de_dci_is_enabled(struct de_dci_handle *hdl)
+{
+	struct de_dci_private *priv = hdl->private;
+	struct dci_reg *reg = de35x_get_dci_shadow_reg(priv);
+
+	return !!reg->ctl.bits.en;
+}
 
 s32 de35x_dci_enable(struct de_dci_handle *hdl, u32 en)
 {
@@ -235,13 +239,7 @@ s32 de35x_dci_enable(struct de_dci_handle *hdl, u32 en)
 	struct dci_reg *reg = de35x_get_dci_shadow_reg(priv);
 
 	mutex_lock(&priv->lock);
-#ifdef SUPPORT_AHB_READ
-	reg->ctl.bits.en = en;
-	priv->isenable = en;
-#else
-	reg->ctl.bits.en = 0;
-	priv->isenable = 0;
-#endif
+	reg->ctl.bits.en = en ? 1 : 0;
 	de_dci_request_update(priv, DCI_PARA_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
 
@@ -266,45 +264,7 @@ s32 de35x_dci_init(struct de_dci_handle *hdl)
 	struct de_dci_private *priv = hdl->private;
 	struct dci_reg *reg = de35x_get_dci_shadow_reg(priv);
 
-	if (priv->g_init_state >= ENHANCE_INITED) {
-		return 0;
-	}
-
 	mutex_lock(&priv->lock);
-	priv->g_init_state = ENHANCE_INITED;
-	/*reg->ctl.dwval = 0x80000001;*/
-	/* reg->ctl.dwval = 0x80000000; */
-	/* reg->color_range.dwval = 0x1; */
-	/* reg->skin_protect.dwval = 0x00800000; */
-	/* reg->pdf_radius.dwval = 0x0; */
-	/* reg->count_bound.dwval = 0x03ff0000; */
-	/* reg->border_map_mode.dwval = 0x1; */
-	/* reg->brighten_level0.dwval = 0x05030100; */
-	/* reg->brighten_level1.dwval = 0x08080808; */
-	/* reg->brighten_level2.dwval = 0x08080808; */
-	/* reg->brighten_level3.dwval = 0x80808; */
-	/* reg->darken_level0.dwval = 0x8080808; */
-	/* reg->darken_level1.dwval = 0x8080808; */
-	/* reg->darken_level2.dwval = 0x8080807; */
-	/* reg->darken_level3.dwval = 0x30207; */
-	/* reg->chroma_comp_br_th0.dwval = 0x32281e14; */
-	/* reg->chroma_comp_br_th1.dwval = 0xff73463c; */
-	/* reg->chroma_comp_br_gain0.dwval = 0x0c0a0804; */
-	/* reg->chroma_comp_br_gain1.dwval = 0x10100e0e; */
-	/* reg->chroma_comp_br_slope0.dwval = 0x06060603; */
-	/* reg->chroma_comp_br_slope1.dwval = 0x00010606; */
-	/* reg->chroma_comp_dark_th0.dwval = 0x5a46321e; */
-	/* reg->chroma_comp_dark_th1.dwval = 0xffaa9682; */
-	/* reg->chroma_comp_dark_gain0.dwval = 0x02020201; */
-	/* reg->chroma_comp_dark_gain1.dwval = 0x02020202; */
-	/* reg->chroma_comp_dark_slope0.dwval = 0x03030302; */
-	/* reg->chroma_comp_dark_slope1.dwval = 0x00030301; */
-
-	/* reg->inter_frame_para.dwval = 0x0001001e; */
-	/* reg->ftd_hue_thr.dwval = 0x96005a; */
-	/* reg->ftd_chroma_thr.dwval = 0x28000a; */
-	/* reg->ftd_slp.dwval = 0x4040604; */
-
 	reg->ctl.dwval = 0x80000000;
 	reg->color_range.dwval = 0x1;
 	reg->skin_protect.dwval = 0x85850001;
@@ -343,12 +303,11 @@ s32 de35x_dci_init(struct de_dci_handle *hdl)
 	return 0;
 }
 
-//s32 de_dci_tasklet(struct de_dci_handle *hdl, u32 frame_cnt)
 s32 de35x_dci_update_local_param(struct de_dci_handle *hdl)
 {
 	struct de_dci_private *priv = hdl->private;
 	struct dci_reg *hw_reg = (struct dci_reg *) (priv->reg_blks[0].reg_addr);
-	struct dci_reg *reg = de35x_get_dci_reg(priv);
+	struct dci_reg *reg = de35x_get_dci_shadow_reg(priv);
 	int blk_idx = 0;
 	int bin_idx = 0;
 	u32 *cur_pdf = priv->g_cur_pdf;
@@ -363,9 +322,11 @@ s32 de35x_dci_update_local_param(struct de_dci_handle *hdl)
 	int scene_change_th = 30;
 
 	DRM_DEBUG_DRIVER("[%s]-%d\n", __func__, __LINE__);
-	priv->frame_cnt++;
-	if (priv->isenable < 1 || !priv->ahb_read_enable)
+
+	if (!!reg->ctl.bits.en)
 		return 0;
+
+	priv->frame_cnt++;
 
 	if (priv->frame_cnt % 2) {
 		g_pdf_pre0 = priv->g_pdf[0];
@@ -377,20 +338,10 @@ s32 de35x_dci_update_local_param(struct de_dci_handle *hdl)
 
 	memset(cur_cdfs, 0, sizeof(u32) * NUM_BLKS * HIST_BINS);
 	/* Read histogram to pdf[256] */
-	if (priv->ahb_read_enable) {
-		/*aw_memcpy_fromio(g_pdf_pre0, hw_reg->pdf_stats,
-				 sizeof(u32) * NUM_BLKS * HIST_BINS);*/
-		for (blk_idx = 0; blk_idx < NUM_BLKS; ++blk_idx) {
-			for (bin_idx = 0; bin_idx < HIST_BINS; ++bin_idx) {
-				//FIXME query busy is no need any more?
-				//if (de350_dci_query_de_top_busy(hdl)) {
-					int offset = blk_idx * HIST_BINS + bin_idx;
-					//aw_memcpy_fromio(g_pdf_pre0 + offset,
-					//		 hw_reg->pdf_stats + offset,
-					//		 sizeof(u32));
-					*(g_pdf_pre0 + offset) = readl(hw_reg->pdf_stats + offset);
-				//}
-			}
+	for (blk_idx = 0; blk_idx < NUM_BLKS; ++blk_idx) {
+		for (bin_idx = 0; bin_idx < HIST_BINS; ++bin_idx) {
+			int offset = blk_idx * HIST_BINS + bin_idx;
+			*(g_pdf_pre0 + offset) = readl(hw_reg->pdf_stats + offset);
 		}
 	}
 
@@ -444,8 +395,10 @@ s32 de35x_dci_update_local_param(struct de_dci_handle *hdl)
 	}
 	priv->g_start = 0;
 	memcpy(&priv->g_last_cdfs, cur_pdf, sizeof(u32) * NUM_BLKS * HIST_BINS);
+	mutex_lock(&priv->lock);
 	memcpy(reg->cdf_config, cur_cdfs, sizeof(u32) * 256);
-	dci_set_block_dirty(priv, DCI_CDF_REG_BLK, 1);
+	mutex_unlock(&priv->lock);
+	de_dci_request_update(priv, DCI_CDF_REG_BLK, 1);
 	return 0;
 }
 
@@ -470,7 +423,6 @@ struct de_dci_handle *de35x_dci_create(struct module_create_info *info)
 
 	reg_base = info->de_reg_base + info->reg_offset + desc->reg_offset;
 	priv = hdl->private;
-	priv->de_reg_base = info->de_reg_base;
 	reg_mem_info = &(priv->reg_mem_info);
 
 	reg_mem_info->size = sizeof(struct dci_reg);
@@ -565,232 +517,197 @@ struct de_dci_handle *de35x_dci_create(struct module_create_info *info)
 	hdl->private->de_dci_set_color_range = de35x_dci_set_color_range;
 	hdl->private->de_dci_update_local_param = de35x_dci_update_local_param;
 
-	priv->g_init_state = ENHANCE_INVALID;
 	priv->g_update_rate = 243;
 	priv->g_start = false;
-	priv->ahb_read_enable = true;
-
 
 	return hdl;
 }
 
 
-//int de_dci_pq_proc(u32 sel, u32 cmd, u32 subcmd, void *data)
-//{
-//	struct de_dci_private *priv = NULL;
-//	struct dci_reg *reg = NULL;
-//	dci_module_param_t *para = NULL;
-//	int i = 0;
-//
-//	DE_INFO("sel=%d, cmd=%d, subcmd=%d, data=%px\n", sel, cmd, subcmd, data);
-//	para = (dci_module_param_t *)data;
-//	if (para == NULL) {
-//		DE_WARN("para NULL\n");
-//		return -1;
-//	}
-//
-//	for (i = 0; i < VI_CHN_NUM; i++) {
-//		if (!de_feat_is_support_dci_by_chn(sel, i))
-//			continue;
-//		priv = &(dci_priv[sel][i]);
-//		reg = de35x_get_dci_reg(priv);
-//		if (subcmd == 16) { /* read */
-//			para->value[0] = reg->ctl.bits.en;
-//			/*para->value[1] = reg->ctl.bits.demo_en;*/
-//			para->value[2]  = reg->ctl.bits.chroma_comp_en;
-//			para->value[3]  = reg->color_range.bits.input_color_space;
-//			para->value[4]  = reg->skin_protect.bits.skin_en;
-//			para->value[5]  = reg->inter_frame_para.bits.lpf_pdf_en;
-//			para->value[6]  = reg->skin_protect.bits.skin_darken_w;
-//			para->value[7]  = reg->skin_protect.bits.skin_brighten_w;
-//			para->value[8]  = reg->brighten_level0.bits.brighten_level_0;
-//			para->value[9]  = reg->brighten_level0.bits.brighten_level_1;
-//			para->value[10] = reg->brighten_level0.bits.brighten_level_2;
-//			para->value[11] = reg->brighten_level0.bits.brighten_level_3;
-//
-//			para->value[12] = reg->brighten_level1.bits.brighten_level_4;
-//			para->value[13] = reg->brighten_level1.bits.brighten_level_5;
-//			para->value[14] = reg->brighten_level1.bits.brighten_level_6;
-//			para->value[15] = reg->brighten_level1.bits.brighten_level_7;
-//
-//			para->value[16] = reg->brighten_level2.bits.brighten_level_8;
-//			para->value[17] = reg->brighten_level2.bits.brighten_level_9;
-//			para->value[18] = reg->brighten_level2.bits.brighten_level_10;
-//			para->value[19] = reg->brighten_level2.bits.brighten_level_11;
-//
-//			para->value[20] = reg->brighten_level3.bits.brighten_level_12;
-//			para->value[21] = reg->brighten_level3.bits.brighten_level_13;
-//			para->value[22] = reg->brighten_level3.bits.brighten_level_14;
-//
-//			para->value[23] = reg->darken_level0.bits.darken_level_0;
-//			para->value[24] = reg->darken_level0.bits.darken_level_1;
-//			para->value[25] = reg->darken_level0.bits.darken_level_2;
-//			para->value[26] = reg->darken_level0.bits.darken_level_3;
-//
-//			para->value[27] = reg->darken_level1.bits.darken_level_4;
-//			para->value[28] = reg->darken_level1.bits.darken_level_5;
-//			para->value[29] = reg->darken_level1.bits.darken_level_6;
-//			para->value[30] = reg->darken_level1.bits.darken_level_7;
-//
-//			para->value[31] = reg->darken_level2.bits.darken_level_8;
-//			para->value[32] = reg->darken_level2.bits.darken_level_9;
-//			para->value[33] = reg->darken_level2.bits.darken_level_10;
-//			para->value[34] = reg->darken_level2.bits.darken_level_11;
-//
-//			para->value[35] = reg->darken_level3.bits.darken_level_12;
-//			para->value[36] = reg->darken_level3.bits.darken_level_13;
-//			para->value[37] = reg->darken_level3.bits.darken_level_14;
-//
-//			para->value[38] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain0;
-//			para->value[39] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain1;
-//			para->value[40] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain2;
-//			para->value[41] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain3;
-//
-//			para->value[42] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain4;
-//			para->value[43] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain5;
-//			para->value[44] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain6;
-//			para->value[45] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain7;
-//
-//			para->value[46] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain0;
-//			para->value[47] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain1;
-//			para->value[48] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain2;
-//			para->value[49] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain3;
-//
-//			para->value[50] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain4;
-//			para->value[51] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain5;
-//			para->value[52] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain6;
-//			para->value[53] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain7;
-//
-//			/*para->value[53] = reg->demo_horz.bits.demo_horz_start;
-//			para->value[54] = reg->demo_horz.bits.demo_horz_end;
-//			para->value[55] = reg->demo_vert.bits.demo_vert_start;
-//			para->value[56] = reg->demo_vert.bits.demo_vert_end;*/
-//			para->value[54] = win_per.hor_start;
-//			para->value[55] = win_per.hor_end;
-//			para->value[56] = win_per.ver_start;
-//			para->value[57] = win_per.ver_end;
-//			para->value[1]  = win_per.demo_en;
-//
-//			para->value[58] = reg->ftd_hue_thr.bits.ftd_hue_low_thr;
-//			para->value[59] = reg->ftd_hue_thr.bits.ftd_hue_high_thr;
-//			para->value[60] = reg->ftd_chroma_thr.bits.ftd_chr_low_thr;
-//			para->value[61] = reg->ftd_chroma_thr.bits.ftd_chr_high_thr;
-//			para->value[62] = reg->ftd_slp.bits.ftd_hue_low_slp;
-//			para->value[63] = reg->ftd_slp.bits.ftd_hue_high_slp;
-//			para->value[64] = reg->ftd_slp.bits.ftd_chr_low_slp;
-//			para->value[65] = reg->ftd_slp.bits.ftd_chr_high_slp;
-//		} else { /* write */
-//			reg->ctl.bits.en = para->value[0];
-//			g_init_state = para->value[0] ? ENHANCE_TIGERLCD_ON : ENHANCE_TIGERLCD_OFF;
-//			reg->ctl.bits.demo_en = para->value[1];
-//			reg->ctl.bits.chroma_comp_en = para->value[2];
-//			reg->color_range.bits.input_color_space = para->value[3];
-//			reg->skin_protect.bits.skin_en = para->value[4];
-//			reg->inter_frame_para.bits.lpf_pdf_en = para->value[5];
-//			reg->skin_protect.bits.skin_darken_w = para->value[6];
-//			reg->skin_protect.bits.skin_brighten_w = para->value[7];
-//			reg->brighten_level0.bits.brighten_level_0 = para->value[8];
-//			reg->brighten_level0.bits.brighten_level_1 = para->value[9];
-//			reg->brighten_level0.bits.brighten_level_2 = para->value[10];
-//			reg->brighten_level0.bits.brighten_level_3 = para->value[11];
-//
-//			reg->brighten_level1.bits.brighten_level_4 = para->value[12];
-//			reg->brighten_level1.bits.brighten_level_5 = para->value[13];
-//			reg->brighten_level1.bits.brighten_level_6 = para->value[14];
-//			reg->brighten_level1.bits.brighten_level_7 = para->value[15];
-//
-//			reg->brighten_level2.bits.brighten_level_8 = para->value[16];
-//			reg->brighten_level2.bits.brighten_level_9 = para->value[17];
-//			reg->brighten_level2.bits.brighten_level_10 = para->value[18];
-//			reg->brighten_level2.bits.brighten_level_11 = para->value[19];
-//
-//			reg->brighten_level3.bits.brighten_level_12 = para->value[20];
-//			reg->brighten_level3.bits.brighten_level_13 = para->value[21];
-//			reg->brighten_level3.bits.brighten_level_14 = para->value[22];
-//
-//			reg->darken_level0.bits.darken_level_0 = para->value[23];
-//			reg->darken_level0.bits.darken_level_1 = para->value[24];
-//			reg->darken_level0.bits.darken_level_2 = para->value[25];
-//			reg->darken_level0.bits.darken_level_3 = para->value[26];
-//
-//			reg->darken_level1.bits.darken_level_4 = para->value[27];
-//			reg->darken_level1.bits.darken_level_5 = para->value[28];
-//			reg->darken_level1.bits.darken_level_6 = para->value[29];
-//			reg->darken_level1.bits.darken_level_7 = para->value[30];
-//
-//			reg->darken_level2.bits.darken_level_8 = para->value[31];
-//			reg->darken_level2.bits.darken_level_9 = para->value[32];
-//			reg->darken_level2.bits.darken_level_10 = para->value[33];
-//			reg->darken_level2.bits.darken_level_11 = para->value[34];
-//
-//			reg->darken_level3.bits.darken_level_12 = para->value[35];
-//			reg->darken_level3.bits.darken_level_13 = para->value[36];
-//			reg->darken_level3.bits.darken_level_14 = para->value[37];
-//
-//			reg->chroma_comp_br_gain0.bits.c_comp_br_gain0 = para->value[38];
-//			reg->chroma_comp_br_gain0.bits.c_comp_br_gain1 = para->value[39];
-//			reg->chroma_comp_br_gain0.bits.c_comp_br_gain2 = para->value[40];
-//			reg->chroma_comp_br_gain0.bits.c_comp_br_gain3 = para->value[41];
-//
-//			reg->chroma_comp_br_gain1.bits.c_comp_br_gain4 = para->value[42];
-//			reg->chroma_comp_br_gain1.bits.c_comp_br_gain5 = para->value[43];
-//			reg->chroma_comp_br_gain1.bits.c_comp_br_gain6 = para->value[44];
-//			reg->chroma_comp_br_gain1.bits.c_comp_br_gain7 = para->value[45];
-//
-//			reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain0 = para->value[46];
-//			reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain1 = para->value[47];
-//			reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain2 = para->value[48];
-//			reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain3 = para->value[49];
-//
-//			reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain4 = para->value[50];
-//			reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain5 = para->value[51];
-//			reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain6 = para->value[52];
-//			reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain7 = para->value[53];
-//
-//			/*reg->demo_horz.bits.demo_horz_start = para->value[53];
-//			reg->demo_horz.bits.demo_horz_end = para->value[54];
-//			reg->demo_vert.bits.demo_vert_start = para->value[55];
-//			reg->demo_vert.bits.demo_vert_end = para->value[56];*/
-//
-//			win_per.hor_start = para->value[54];
-//			win_per.hor_end = para->value[55];
-//			win_per.ver_start = para->value[56];
-//			win_per.ver_end = para->value[57];
-//			win_per.demo_en = para->value[1];
-//			reg->ctl.bits.demo_en = win_per.demo_en;
-//			reg->demo_horz.bits.demo_horz_start =
-//			    reg->size.bits.width * win_per.hor_start / 100;
-//			reg->demo_horz.bits.demo_horz_end =
-//			    reg->size.bits.width * win_per.hor_end / 100;
-//			reg->demo_vert.bits.demo_vert_start =
-//			    reg->size.bits.height * win_per.ver_start / 100;
-//			reg->demo_vert.bits.demo_vert_end =
-//			    reg->size.bits.height * win_per.ver_end / 100;
-//
-//			reg->ftd_hue_thr.bits.ftd_hue_low_thr = para->value[58];
-//			reg->ftd_hue_thr.bits.ftd_hue_high_thr = para->value[59];
-//			reg->ftd_chroma_thr.bits.ftd_chr_low_thr = para->value[60];
-//			reg->ftd_chroma_thr.bits.ftd_chr_high_thr = para->value[61];
-//			reg->ftd_slp.bits.ftd_hue_low_slp = para->value[62];
-//			reg->ftd_slp.bits.ftd_hue_high_slp = para->value[63];
-//			reg->ftd_slp.bits.ftd_chr_low_slp = para->value[64];
-//			reg->ftd_slp.bits.ftd_chr_high_slp = para->value[65];
-//
-//			dci_set_block_dirty(priv, DCI_PARA_REG_BLK, 1);
-//		}
-//	}
-//	return 0;
-//}
-//
-//
-//s32 de_dci_enable_ahb_read(bool en)
-//{
-//#ifdef SUPPORT_AHB_READ
-//	DRM_INFO("de_dci_enable_ahb_read=%d\n", en);
-//	ahb_read_enable = en;
-//#else
-//	DRM_INFO("force de_dci_enable_ahb_read=%d to 0\n", en);
-//	ahb_read_enable = 0;
-//#endif
-//	return 0;
-//}
+int de_dci_pq_proc(struct de_dci_handle *hdl, dci_module_param_t *para)
+{
+	struct de_dci_private *priv = hdl->private;
+	struct dci_reg *reg = de35x_get_dci_shadow_reg(priv);
+
+	if (para->cmd == PQ_READ) {
+		para->value[0] = reg->ctl.bits.en;
+		para->value[1] = reg->ctl.bits.demo_en;
+		para->value[2]  = reg->ctl.bits.chroma_comp_en;
+		para->value[3]  = reg->color_range.bits.input_color_space;
+		para->value[4]  = reg->skin_protect.bits.skin_en;
+		para->value[5]  = reg->inter_frame_para.bits.lpf_pdf_en;
+		para->value[6]  = reg->skin_protect.bits.skin_darken_w;
+		para->value[7]  = reg->skin_protect.bits.skin_brighten_w;
+		para->value[8]  = reg->brighten_level0.bits.brighten_level_0;
+		para->value[9]  = reg->brighten_level0.bits.brighten_level_1;
+		para->value[10] = reg->brighten_level0.bits.brighten_level_2;
+		para->value[11] = reg->brighten_level0.bits.brighten_level_3;
+
+		para->value[12] = reg->brighten_level1.bits.brighten_level_4;
+		para->value[13] = reg->brighten_level1.bits.brighten_level_5;
+		para->value[14] = reg->brighten_level1.bits.brighten_level_6;
+		para->value[15] = reg->brighten_level1.bits.brighten_level_7;
+
+		para->value[16] = reg->brighten_level2.bits.brighten_level_8;
+		para->value[17] = reg->brighten_level2.bits.brighten_level_9;
+		para->value[18] = reg->brighten_level2.bits.brighten_level_10;
+		para->value[19] = reg->brighten_level2.bits.brighten_level_11;
+
+		para->value[20] = reg->brighten_level3.bits.brighten_level_12;
+		para->value[21] = reg->brighten_level3.bits.brighten_level_13;
+		para->value[22] = reg->brighten_level3.bits.brighten_level_14;
+
+		para->value[23] = reg->darken_level0.bits.darken_level_0;
+		para->value[24] = reg->darken_level0.bits.darken_level_1;
+		para->value[25] = reg->darken_level0.bits.darken_level_2;
+		para->value[26] = reg->darken_level0.bits.darken_level_3;
+
+		para->value[27] = reg->darken_level1.bits.darken_level_4;
+		para->value[28] = reg->darken_level1.bits.darken_level_5;
+		para->value[29] = reg->darken_level1.bits.darken_level_6;
+		para->value[30] = reg->darken_level1.bits.darken_level_7;
+
+		para->value[31] = reg->darken_level2.bits.darken_level_8;
+		para->value[32] = reg->darken_level2.bits.darken_level_9;
+		para->value[33] = reg->darken_level2.bits.darken_level_10;
+		para->value[34] = reg->darken_level2.bits.darken_level_11;
+
+		para->value[35] = reg->darken_level3.bits.darken_level_12;
+		para->value[36] = reg->darken_level3.bits.darken_level_13;
+		para->value[37] = reg->darken_level3.bits.darken_level_14;
+
+		para->value[38] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain0;
+		para->value[39] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain1;
+		para->value[40] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain2;
+		para->value[41] = reg->chroma_comp_br_gain0.bits.c_comp_br_gain3;
+
+		para->value[42] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain4;
+		para->value[43] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain5;
+		para->value[44] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain6;
+		para->value[45] = reg->chroma_comp_br_gain1.bits.c_comp_br_gain7;
+
+		para->value[46] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain0;
+		para->value[47] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain1;
+		para->value[48] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain2;
+		para->value[49] = reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain3;
+
+		para->value[50] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain4;
+		para->value[51] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain5;
+		para->value[52] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain6;
+		para->value[53] = reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain7;
+
+		/*para->value[53] = reg->demo_horz.bits.demo_horz_start;
+		para->value[54] = reg->demo_horz.bits.demo_horz_end;
+		para->value[55] = reg->demo_vert.bits.demo_vert_start;
+		para->value[56] = reg->demo_vert.bits.demo_vert_end;*/
+		para->value[54] = priv->demo_hor_start;
+		para->value[55] = priv->demo_hor_end;
+		para->value[56] = priv->demo_ver_start;
+		para->value[57] = priv->demo_ver_end;
+
+		para->value[58] = reg->ftd_hue_thr.bits.ftd_hue_low_thr;
+		para->value[59] = reg->ftd_hue_thr.bits.ftd_hue_high_thr;
+		para->value[60] = reg->ftd_chroma_thr.bits.ftd_chr_low_thr;
+		para->value[61] = reg->ftd_chroma_thr.bits.ftd_chr_high_thr;
+		para->value[62] = reg->ftd_slp.bits.ftd_hue_low_slp;
+		para->value[63] = reg->ftd_slp.bits.ftd_hue_high_slp;
+		para->value[64] = reg->ftd_slp.bits.ftd_chr_low_slp;
+		para->value[65] = reg->ftd_slp.bits.ftd_chr_high_slp;
+	} else { /* write */
+		reg->ctl.bits.en = para->value[0];
+		reg->ctl.bits.demo_en = para->value[1];
+		reg->ctl.bits.chroma_comp_en = para->value[2];
+		reg->color_range.bits.input_color_space = para->value[3];
+		reg->skin_protect.bits.skin_en = para->value[4];
+		reg->inter_frame_para.bits.lpf_pdf_en = para->value[5];
+		reg->skin_protect.bits.skin_darken_w = para->value[6];
+		reg->skin_protect.bits.skin_brighten_w = para->value[7];
+		reg->brighten_level0.bits.brighten_level_0 = para->value[8];
+		reg->brighten_level0.bits.brighten_level_1 = para->value[9];
+		reg->brighten_level0.bits.brighten_level_2 = para->value[10];
+		reg->brighten_level0.bits.brighten_level_3 = para->value[11];
+
+		reg->brighten_level1.bits.brighten_level_4 = para->value[12];
+		reg->brighten_level1.bits.brighten_level_5 = para->value[13];
+		reg->brighten_level1.bits.brighten_level_6 = para->value[14];
+		reg->brighten_level1.bits.brighten_level_7 = para->value[15];
+
+		reg->brighten_level2.bits.brighten_level_8 = para->value[16];
+		reg->brighten_level2.bits.brighten_level_9 = para->value[17];
+		reg->brighten_level2.bits.brighten_level_10 = para->value[18];
+		reg->brighten_level2.bits.brighten_level_11 = para->value[19];
+
+		reg->brighten_level3.bits.brighten_level_12 = para->value[20];
+		reg->brighten_level3.bits.brighten_level_13 = para->value[21];
+		reg->brighten_level3.bits.brighten_level_14 = para->value[22];
+
+		reg->darken_level0.bits.darken_level_0 = para->value[23];
+		reg->darken_level0.bits.darken_level_1 = para->value[24];
+		reg->darken_level0.bits.darken_level_2 = para->value[25];
+		reg->darken_level0.bits.darken_level_3 = para->value[26];
+
+		reg->darken_level1.bits.darken_level_4 = para->value[27];
+		reg->darken_level1.bits.darken_level_5 = para->value[28];
+		reg->darken_level1.bits.darken_level_6 = para->value[29];
+		reg->darken_level1.bits.darken_level_7 = para->value[30];
+
+		reg->darken_level2.bits.darken_level_8 = para->value[31];
+		reg->darken_level2.bits.darken_level_9 = para->value[32];
+		reg->darken_level2.bits.darken_level_10 = para->value[33];
+		reg->darken_level2.bits.darken_level_11 = para->value[34];
+
+		reg->darken_level3.bits.darken_level_12 = para->value[35];
+		reg->darken_level3.bits.darken_level_13 = para->value[36];
+		reg->darken_level3.bits.darken_level_14 = para->value[37];
+
+		reg->chroma_comp_br_gain0.bits.c_comp_br_gain0 = para->value[38];
+		reg->chroma_comp_br_gain0.bits.c_comp_br_gain1 = para->value[39];
+		reg->chroma_comp_br_gain0.bits.c_comp_br_gain2 = para->value[40];
+		reg->chroma_comp_br_gain0.bits.c_comp_br_gain3 = para->value[41];
+
+		reg->chroma_comp_br_gain1.bits.c_comp_br_gain4 = para->value[42];
+		reg->chroma_comp_br_gain1.bits.c_comp_br_gain5 = para->value[43];
+		reg->chroma_comp_br_gain1.bits.c_comp_br_gain6 = para->value[44];
+		reg->chroma_comp_br_gain1.bits.c_comp_br_gain7 = para->value[45];
+
+		reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain0 = para->value[46];
+		reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain1 = para->value[47];
+		reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain2 = para->value[48];
+		reg->chroma_comp_dark_gain0.bits.c_comp_dk_gain3 = para->value[49];
+
+		reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain4 = para->value[50];
+		reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain5 = para->value[51];
+		reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain6 = para->value[52];
+		reg->chroma_comp_dark_gain1.bits.c_comp_dk_gain7 = para->value[53];
+
+		/*reg->demo_horz.bits.demo_horz_start = para->value[53];
+		reg->demo_horz.bits.demo_horz_end = para->value[54];
+		reg->demo_vert.bits.demo_vert_start = para->value[55];
+		reg->demo_vert.bits.demo_vert_end = para->value[56];*/
+
+		priv->demo_hor_start = para->value[54];
+		priv->demo_hor_end = para->value[55];
+		priv->demo_ver_start = para->value[56];
+		priv->demo_ver_end = para->value[57];
+		reg->demo_horz.bits.demo_horz_start =
+		    (reg->size.bits.width + 1) * priv->demo_hor_start / 100;
+		reg->demo_horz.bits.demo_horz_end =
+		    (reg->size.bits.width + 1)* priv->demo_hor_end / 100;
+		reg->demo_vert.bits.demo_vert_start =
+		    (reg->size.bits.height + 1) * priv->demo_ver_start / 100;
+		reg->demo_vert.bits.demo_vert_end =
+		    (reg->size.bits.height + 1) * priv->demo_ver_end / 100;
+
+		reg->ftd_hue_thr.bits.ftd_hue_low_thr = para->value[58];
+		reg->ftd_hue_thr.bits.ftd_hue_high_thr = para->value[59];
+		reg->ftd_chroma_thr.bits.ftd_chr_low_thr = para->value[60];
+		reg->ftd_chroma_thr.bits.ftd_chr_high_thr = para->value[61];
+		reg->ftd_slp.bits.ftd_hue_low_slp = para->value[62];
+		reg->ftd_slp.bits.ftd_hue_high_slp = para->value[63];
+		reg->ftd_slp.bits.ftd_chr_low_slp = para->value[64];
+		reg->ftd_slp.bits.ftd_chr_high_slp = para->value[65];
+
+		de_dci_request_update(priv, DCI_PARA_REG_BLK, 1);
+	}
+	return 0;
+}

@@ -28,6 +28,8 @@
 #define SET_BITS(shift, width, reg, val) \
 	(((reg) & CLRMASK(width, shift)) | ((val) << (shift)))
 
+extern short g_gamma_funcs[17][1024];
+
 enum de_format_space {
 	DE_FORMAT_SPACE_RGB = 0,
 	DE_FORMAT_SPACE_YUV,

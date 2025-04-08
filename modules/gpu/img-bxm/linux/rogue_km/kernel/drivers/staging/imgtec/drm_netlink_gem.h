@@ -52,9 +52,7 @@ struct vm_area_struct;
 #include <drm/drmP.h>
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 #include <drm/drm_gem.h>
-#endif
 
 int netlink_gem_mmap(struct file *file, struct vm_area_struct *vma);
 

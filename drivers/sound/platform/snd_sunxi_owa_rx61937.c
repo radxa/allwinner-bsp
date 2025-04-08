@@ -91,5 +91,4 @@ int sunxi_add_rx_raw_controls(struct snd_soc_component *component)
 
 MODULE_AUTHOR("huhaoxin@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
 MODULE_DESCRIPTION("sunxi soundcard platform of owa_rx61937");

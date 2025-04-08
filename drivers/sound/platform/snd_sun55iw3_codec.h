@@ -427,6 +427,7 @@ struct sunxi_codec {
 	struct sunxi_codec_rglt rglt;
 	struct sunxi_codec_dts dts;
 	struct sunxi_audio_status audio_sta;
+	enum SND_SUNXI_CLK_STATUS clk_sta;
 
 	struct sunxi_jack_codec_priv jack_codec_priv;
 	struct sunxi_jack_extcon_priv jack_extcon_priv;

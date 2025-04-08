@@ -6,6 +6,7 @@
  * Copyright (c) 2022 Allwinnertech Ltd.
  */
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
 #include <linux/i2c.h>
@@ -14,6 +15,7 @@
 #include <sound/pcm_params.h>
 
 #include "ac107.h"
+#include "snd_sunxi_common.h"
 
 static unsigned int ac107_ecdb_ch_nums;
 
@@ -106,69 +108,53 @@ static const struct reg_default ac107_reg_defaults[] = {
 
 /* PLLCLK: FOUT =(FIN * N) / [(M1+1) * (M2+1)*(K1+1)*(K2+1)] */
 static const struct ac107_pll_div ac107_pll_div[] = {
-	{400000,   12288000, 0,  0, 983,  15, 1},
-	{512000,   12288000, 0,  0, 960,  19, 1},
-	{768000,   12288000, 0,  0, 640,  19, 1},
-	{800000,   12288000, 0,  0, 768,  24, 1},
-	{1024000,  12288000, 0,  0, 480,  19, 1},
-	{1600000,  12288000, 0,  0, 384,  24, 1},
-	{2048000,  12288000, 0,  0, 240,  19, 1},
-	{3072000,  12288000, 0,  0, 160,  19, 1},
-	{4096000,  12288000, 0,  0, 120,  19, 1},
-	{6000000,  12288000, 4,  0, 512,  24, 1},
-	{6144000,  12288000, 1,  0, 160,  19, 1},
-	{12000000, 12288000, 9,  0, 512,  24, 1},
-	{13000000, 12288000, 12, 0, 639,  25, 1},
-	{15360000, 12288000, 9,  0, 320,  19, 1},
-	{16000000, 12288000, 9,  0, 384,  24, 1},
-	{19200000, 12288000, 11, 0, 384,  24, 1},
-	{19680000, 12288000, 15, 1, 999,  24, 1},
-	{24000000, 12288000, 9,  0, 256,  24, 1},
+	{256000,    12288000,  0,  0,  96,   1,  0},
+	{384000,    12288000,  0,  1,  128,  0,  1},
+	{512000,    12288000,  1,  0,  960,  19, 0},
+	{768000,    12288000,  1,  0,  96,   2,  0},
+	{1024000,   12288000,  1,  0,  96,   1,  1},
+	{1152000,   12288000,  1,  0,  128,  2,  1},
+	{1536000,   12288000,  9,  0,  960,  5,  1},
+	{1728000,   12288000,  1,  1,  512,  8,  1},
+	{2048000,   12288000,  2,  0,  756,  20, 1},
+	{2304000,   12288000,  0,  0,  32,   2,  1},
+	{3072000,   12288000,  0,  0,  160,  19, 1},
+	{3456000,   12288000,  1,  1,  256,  8,  1},
+	{4096000,   12288000,  1,  0,  12,   0,  1},
+	{4608000,   12288000,  1,  0,  32,   2,  1},
+	{6144000,   12288000,  1,  0,  8,    0,  1},
+	{6912000,   12288000,  1,  0,  128,  17, 1},
+	{8192000,   12288000,  0,  0,  3,    0,  1},
+	{9216000,   12288000,  1,  0,  16,   2,  1},
+	{12288000,  12288000,  0,  0,  22,   10, 1},
+	{13824000,  12288000,  1,  0,  32,   8,  1},
+	{16384000,  12288000,  1,  1,  12,   1,  1},
+	{18432000,  12288000,  0,  0,  8,    5,  1},
+	{24576000,  12288000,  0,  1,  6,    5,  0},
+	{27648000,  12288000,  1,  1,  32,   8,  1},
+	{36864000,  12288000,  1,  1,  8,    2,  1},
+	{49152000,  12288000,  1,  1,  12,   5,  1},
 
-	{400000,   11289600, 0,  0, 1016, 17, 1},
-	{512000,   11289600, 0,  0, 882,  19, 1},
-	{768000,   11289600, 0,  0, 588,  19, 1},
-	{800000,   11289600, 0,  0, 508,  17, 1},
-	{1024000,  11289600, 0,  0, 441,  19, 1},
-	{1600000,  11289600, 0,  0, 254,  17, 1},
-	{2048000,  11289600, 1,  0, 441,  19, 1},
-	{3072000,  11289600, 0,  0, 147,  19, 1},
-	{4096000,  11289600, 3,  0, 441,  19, 1},
-	{6000000,  11289600, 1,  0, 143,  18, 1},
-	{6144000,  11289600, 1,  0, 147,  19, 1},
-	{12000000, 11289600, 3,  0, 143,  18, 1},
-	{13000000, 11289600, 12, 0, 429,  18, 1},
-	{15360000, 11289600, 14, 0, 441,  19, 1},
-	{16000000, 11289600, 24, 0, 882,  24, 1},
-	{19200000, 11289600, 4,  0, 147,  24, 1},
-	{19680000, 11289600, 13, 1, 771,  23, 1},
-	{24000000, 11289600, 24, 0, 588,  24, 1},
-
-	{12288000, 12288000, 9,  0, 400,  19, 1},
-	{11289600, 11289600, 9,  0, 400,  19, 1},
-
-	{24576000 / 1,   12288000, 9, 0, 200, 19, 1},
-	{24576000 / 16,  12288000, 0, 0, 320, 19, 1},
-	{24576000 / 64,  12288000, 0, 0, 640, 9,  1},
-	{24576000 / 96,  12288000, 0, 0, 960, 9,  1},
-	{24576000 / 128, 12288000, 0, 0, 512, 3,  1},
-	{24576000 / 176, 12288000, 0, 0, 880, 4,  1},
-	{24576000 / 192, 12288000, 0, 0, 960, 4,  1},
-
-	{22579200 / 1,   11289600, 9, 0, 200, 19, 1},
-	{22579200 / 4,   11289600, 4, 0, 400, 19, 1},
-	{22579200 / 6,   11289600, 2, 0, 360, 19, 1},
-	{22579200 / 8,   11289600, 0, 0, 160, 19, 1},
-	{22579200 / 12,  11289600, 0, 0, 240, 19, 1},
-	{22579200 / 16,  11289600, 0, 0, 320, 19, 1},
-	{22579200 / 24,  11289600, 0, 0, 480, 19, 1},
-	{22579200 / 32,  11289600, 0, 0, 640, 19, 1},
-	{22579200 / 48,  11289600, 0, 0, 960, 19, 1},
-	{22579200 / 64,  11289600, 0, 0, 640, 9,  1},
-	{22579200 / 96,  11289600, 0, 0, 960, 9,  1},
-	{22579200 / 128, 11289600, 0, 0, 512, 3,  1},
-	{22579200 / 176, 11289600, 0, 0, 880, 4,  1},
-	{22579200 / 192, 11289600, 0, 0, 960, 4,  1},
+	{352800,    11289600,  0,  0,  32,   0,  0},
+	{529200,    11289600,  1,  1,  512,  2,  1},
+	{705600,    11289600,  1,  1,  512,  3,  1},
+	{1058400,   11289600,  0,  0,  32,   2,  0},
+	{1411200,   11289600,  1,  1,  512,  7,  1},
+	{1587600,   11289600,  1,  1,  512,  8,  1},
+	{2116800,   11289600,  0,  0,  16,   2,  0},
+	{2822400,   11289600,  0,  0,  4,    0,  0},
+	{3175200,   11289600,  1,  1,  256,  8,  1},
+	{4233600,   11289600,  0,  0,  8,    2,  0},
+	{5644800,   11289600,  0,  0,  2,    0,  0},
+	{6350400,   11289600,  1,  1,  128,  8,  1},
+	{8467200,   11289600,  0,  0,  4,    2,  0},
+	{11289600,  11289600,  0,  0,  1,    0,  0},
+	{12700800,  11289600,  1,  1,  64,   8,  1},
+	{16934400,  11289600,  0,  0,  2,    2,  0},
+	{22579200,  11289600,  1,  1,  8,    1,  1},
+	{25401600,  11289600,  1,  1,  32,   8,  1},
+	{33868800,  11289600,  1,  1,  8,    2,  1},
+	{45158400,  11289600,  1,  1,  6,    2,  1},
 };
 
 static const struct ac107_real_to_reg ac107_sample_bit[] = {
@@ -191,6 +177,9 @@ static const struct ac107_real_to_reg ac107_sample_rate[] = {
 	{32000, 6},
 	{44100, 7},
 	{48000, 8},
+	{64000, 9},
+	{88200, 10},
+	{96000, 11},
 };
 
 static const struct ac107_real_to_reg ac107_slot_width[] = {
@@ -223,12 +212,15 @@ static const struct ac107_real_to_reg ac107_bclk_div[] = {
 
 struct ac107_priv {
 	struct regmap *regmap;
+	unsigned int pll_freq_in;
+	unsigned int pll_freq_out;
 	unsigned int sysclk_freq;
 	unsigned int fmt;
 	int slots;
 	int slot_width;
 
 	struct ac107_data pdata;
+	struct snd_sunxi_rglt *rglt;
 };
 
 static int ac107_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
@@ -409,15 +401,15 @@ static int ac107_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 	unsigned int k1 = 0;
 	unsigned int k2 = 0;
 
+	if (pdata->sysclk_src != SYSCLK_SRC_PLL) {
+		dev_dbg(dai->dev, "ac107 sysclk source don't pll, don't need config pll\n");
+		return 0;
+	}
+
 	if (freq_in < 128000 || freq_in > 24576000) {
 		dev_err(dai->dev, "ac107 pllclk source input only support [128K,24M], now %u\n",
 			freq_in);
 		return -EINVAL;
-	}
-
-	if (pdata->sysclk_src != SYSCLK_SRC_PLL) {
-		dev_dbg(dai->dev, "ac107 sysclk source don't pll, don't need config pll\n");
-		return 0;
 	}
 
 	switch (pdata->pllclk_src) {
@@ -434,6 +426,9 @@ static int ac107_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 		dev_err(dai->dev, "ac107 pllclk source config error: %d\n", pdata->pllclk_src);
 		return -EINVAL;
 	}
+
+	ac107->pll_freq_in = freq_in;
+	ac107->pll_freq_out = freq_out;
 
 	/* PLLCLK: FOUT =(FIN * N) / [(M1+1) * (M2+1)*(K1+1)*(K2+1)] */
 	for (i = 0; i < ARRAY_SIZE(ac107_pll_div); i++) {
@@ -499,7 +494,11 @@ static int ac107_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
 		return -EINVAL;
 	}
 
-	ac107->sysclk_freq = freq;
+	if (pdata->sysclk_src == SYSCLK_SRC_PLL) {
+		ac107->sysclk_freq = ac107->pll_freq_out;
+	} else {
+		ac107->sysclk_freq = freq;
+	}
 
 	return 0;
 }
@@ -751,8 +750,11 @@ static int ac107_probe(struct snd_soc_component *component)
 
 	/* ADC PTN sel: 0->normal, 1->0x5A5A5A, 2->0x123456, 3->0x000000 */
 	regmap_update_bits(regmap, ADC_DIG_DEBUG, 0x7 << ADC_PTN_SEL, 0x0 << ADC_PTN_SEL);
-	//VREF Fast Start-up Enable
+	/* VREF Fast Start-up Enable */
 	regmap_update_bits(regmap, PWR_CTRL1, 0x1 << VREF_FSU_DISABLE, 0x0 << VREF_FSU_DISABLE);
+	/* SDOUT driver level:0x0->level0, 0x1->level1, 0x2->level2, 0x3->level3 */
+	regmap_update_bits(regmap, I2S_PADDRV_CTRL, 0x3 << SDOUT_DRV,
+			   pdata->dout_drive_level << SDOUT_DRV);
 
 	return 0;
 }
@@ -768,13 +770,22 @@ static void ac107_remove(struct snd_soc_component *component)
 
 static int ac107_suspend(struct snd_soc_component *component)
 {
-	(void)component;
+	struct ac107_priv *ac107 = snd_soc_component_get_drvdata(component);
+
+	snd_sunxi_regulator_disable(ac107->rglt);
 
 	return 0;
 }
 
 static int ac107_resume(struct snd_soc_component *component)
 {
+	struct ac107_priv *ac107 = snd_soc_component_get_drvdata(component);
+	int ret;
+
+	ret = snd_sunxi_regulator_enable(ac107->rglt);
+	if (ret)
+		return ret;
+
 	ac107_probe(component);
 
 	return 0;
@@ -1017,13 +1028,25 @@ static void ac107_set_params_from_of(struct i2c_client *i2c, struct ac107_data *
 	} else {
 		pdata->ecdn_mode = 0;
 	}
+
+	ret = of_property_read_u32(np, "dout-drive-level", &pdata->dout_drive_level);
+	if (ret < 0 || pdata->dout_drive_level > 0x3)
+		pdata->dout_drive_level = 0x1;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int ac107_i2c_probe(struct i2c_client *i2c)
+#else
 static int ac107_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
+#endif
 {
 	struct ac107_data *pdata = dev_get_platdata(&i2c->dev);
 	struct ac107_priv *ac107;
 	int ret;
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+	(void)id;
+#endif
 
 	ac107 = devm_kzalloc(&i2c->dev, sizeof(*ac107), GFP_KERNEL);
 	if (IS_ERR_OR_NULL(ac107)) {
@@ -1036,11 +1059,13 @@ static int ac107_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *i
 		return PTR_ERR(ac107->regmap);
 
 	if (pdata)
-		memcpy(&ac107->pdata, pdata, sizeof(*ac107));
+		memcpy(&ac107->pdata, pdata, sizeof(*pdata));
 	else if (i2c->dev.of_node)
 		ac107_set_params_from_of(i2c, &ac107->pdata);
 	else
 		dev_err(&i2c->dev, "Unable to allocate ac107 private data\n");
+
+	ac107->rglt = snd_sunxi_regulator_init(&i2c->dev);
 
 	i2c_set_clientdata(i2c, ac107);
 
@@ -1055,6 +1080,27 @@ static int ac107_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *i
 	return ret;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+static void ac107_i2c_remove(struct i2c_client *i2c)
+#else
+static int ac107_i2c_remove(struct i2c_client *i2c)
+#endif
+{
+	struct device *dev = &i2c->dev;
+	struct device_node *np = i2c->dev.of_node;
+	struct ac107_priv *ac107 = dev_get_drvdata(dev);
+
+	snd_sunxi_regulator_exit(ac107->rglt);
+
+	devm_kfree(dev, ac107);
+	of_node_put(np);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	return;
+#else
+	return 0;
+#endif
+}
+
 static const struct of_device_id ac107_of_match[] = {
 	{ .compatible = "allwinner,sunxi-ac107", },
 	{ }
@@ -1067,6 +1113,7 @@ static struct i2c_driver ac107_i2c_driver = {
 		.of_match_table = ac107_of_match,
 	},
 	.probe = ac107_i2c_probe,
+	.remove = ac107_i2c_remove,
 };
 
 module_i2c_driver(ac107_i2c_driver);
@@ -1074,4 +1121,4 @@ module_i2c_driver(ac107_i2c_driver);
 MODULE_DESCRIPTION("ASoC AC107 driver");
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.1");
+MODULE_VERSION("1.0.2");

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -257,6 +257,12 @@
 #define CSIC_DMA_CLR_DIS_MASK			(0X7FFF << CSIC_DMA_CLR_DIS)
 #define CSIC_DMA_FRM_CNT			0
 #define CSIC_DMA_FRM_CNT_MASK			(0XFFFF << CSIC_DMA_FRM_CNT)
+
+#define	CSIC_DMA_PCLK_STAT_REG_OFF          0X270
+#define PCLK_CNT_LINE_MIN       0
+#define PCLK_CNT_LINE_MIN_MASK       (0X7FFF << PCLK_CNT_LINE_MIN)
+#define PCLK_CNT_LINE_MAX       16
+#define PCLK_CNT_LINE_MAX_MASK       (0X7FFF << PCLK_CNT_LINE_MAX)
 
 #define	CSIC_DMA_BUFA_F0_ENTRY_REG_OFF  	0X280
 #define	BUFA_F0_ENTRY				0

@@ -535,7 +535,7 @@ int dw_hdcp1x_enable(void)
 
 	/* 6. enable and start auth for hdcp1x enable flow */
 	_dw_hdcp1x_set_rxdetect(DW_HDMI_ENABLE);
-	dw_mc_set_hdcp_clk(DW_HDMI_ENABLE);
+	dw_mc_set_clk(DW_MC_CLK_HDCP, DW_HDMI_ENABLE);
 
 	hdcp->hdcp1x_auth_done  = DW_HDMI_ENABLE;
 	hdcp->hdcp1x_auth_state = DW_HDCP1X_FAILED;
@@ -596,39 +596,31 @@ ssize_t dw_hdcp_dump(char *buf)
 {
 	ssize_t n = 0;
 
-	n += sprintf(buf + n, "[dw hdcp]:\n");
-	n += sprintf(buf + n, " - tmds mode     : [%s]\n",
-			dw_read_mask(A_HDCPCFG0, A_HDCPCFG0_HDMIDVI_MASK) ? "hdmi" : "dvi");
-	n += sprintf(buf + n, " - data path     : [%s]\n",
-			dw_hdcp2x_get_path() ? "hdcp2x" : "hdcp1x");
-	n += sprintf(buf + n, " - hdcp clock    : [%s]\n",
-			dw_mc_get_hdcp_clk() ? "disable" : "enable");
-
-	if (_dw_hdcp_get_enable_type() == 0x0)
-		return n;
-
 	if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP14)) {
-		n += sprintf(buf + n, " - [dw hdcp1x]\n");
-		n += sprintf(buf + n, "\t- auth config: %s\n",
-				hdcp->hdcp1x_auth_done ? "done" : "not-done");
-		n += sprintf(buf + n, "\t- auth state : %s\n",
-				hdcp->hdcp1x_auth_state == DW_HDCP1X_ENGAGED ? "success" : "failed");
-		n += sprintf(buf + n, "\t- hw encrying: %s\n",
-				hdcp->hdcp1x_encrying ? "enable" : "disable");
-		n += sprintf(buf + n, "\t- sw encrying: %s\n",
-				dw_read_mask(A_HDCPCFG1,
-					A_HDCPCFG1_ENCRYPTIONDISABLE_MASK) ? "disable" : "enable");
-		n += sprintf(buf + n, "\t- rx bksv: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n",
+		n += sprintf(buf + n, "\n[dw hdcp1x]\n");
+		n += sprintf(buf + n, "|  name  | mode  | data path | config | auth | sw encry | hw encry |            bksv              |\n");
+		n += sprintf(buf + n, "|--------+-------+-----------+--------+------+----------+----------+------------------------------|\n");
+		n += sprintf(buf + n, "| state  | %-4s  |  %-6s   |  %-4s  | %-4s |   %-3s    |   %-3s    | 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x |\n",
+			dw_read_mask(A_HDCPCFG0, A_HDCPCFG0_HDMIDVI_MASK) ? "hdmi" : "dvi",
+			dw_hdcp2x_get_path() ? "hdcp2x" : "hdcp1x",
+			hdcp->hdcp1x_auth_done ? "yes" : "not",
+			hdcp->hdcp1x_auth_state == DW_HDCP1X_ENGAGED ? "pass" : "fail",
+			hdcp->hdcp1x_encrying ? "on" : "off",
+			dw_read_mask(A_HDCPCFG1, A_HDCPCFG1_ENCRYPTIONDISABLE_MASK) ? "off" : "on",
 			dw_read_mask(HDCPREG_BKSV0, HDCPREG_BKSV0_HDCPREG_BKSV0_MASK),
 			dw_read_mask(HDCPREG_BKSV1, HDCPREG_BKSV1_HDCPREG_BKSV1_MASK),
 			dw_read_mask(HDCPREG_BKSV2, HDCPREG_BKSV2_HDCPREG_BKSV2_MASK),
 			dw_read_mask(HDCPREG_BKSV3, HDCPREG_BKSV3_HDCPREG_BKSV3_MASK),
 			dw_read_mask(HDCPREG_BKSV4, HDCPREG_BKSV4_HDCPREG_BKSV4_MASK));
-	}
-
-	if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP22)) {
+	} else if (_dw_hdcp_get_enable_type() & BIT(DW_HDCP_TYPE_HDCP22)) {
 		n += dw_hdcp2x_dump(buf + n);
+	} else {
+		n += sprintf(buf + n, "\n[dw hdcp]\n");
+		n += sprintf(buf + n, "|  name  | mode  |  path  |\n");
+		n += sprintf(buf + n, "|--------+-------+--------|\n");
+		n += sprintf(buf + n, "| state  | %-5s | %-6s |\n",
+			dw_read_mask(A_HDCPCFG0, A_HDCPCFG0_HDMIDVI_MASK) ? "hdmi" : "dvi",
+			dw_hdcp2x_get_path() ? "hdcp2x" : "hdcp1x");
 	}
-
 	return n;
 }

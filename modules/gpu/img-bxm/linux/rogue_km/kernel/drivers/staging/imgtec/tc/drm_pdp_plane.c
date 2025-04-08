@@ -114,8 +114,8 @@ static int pdp_plane_helper_atomic_check(struct drm_plane *plane,
 						       state->crtc);
 
 	return drm_atomic_helper_check_plane_state(state, crtc_new_state,
-						   DRM_PLANE_HELPER_NO_SCALING,
-						   DRM_PLANE_HELPER_NO_SCALING,
+						   DRM_PLANE_NO_SCALING,
+						   DRM_PLANE_NO_SCALING,
 						   false, true);
 }
 
@@ -191,7 +191,7 @@ static const struct drm_plane_helper_funcs pdp_plane_helper_funcs = {
 static const struct drm_plane_funcs pdp_plane_funcs = {
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
-	.destroy = drm_primary_helper_destroy,
+	.destroy = drm_plane_helper_destroy,
 	.reset = drm_atomic_helper_plane_reset,
 	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
@@ -325,7 +325,7 @@ void pdp_plane_set_surface(struct drm_crtc *crtc, struct drm_plane *plane,
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
 		modifier = fb->modifier;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
+#else
 		modifier = fb->modifier[0];
 #endif
 

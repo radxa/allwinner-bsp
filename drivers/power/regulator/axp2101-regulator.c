@@ -13,18 +13,9 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
  */
-#include <linux/err.h>
-#include <linux/init.h>
-#include <linux/module.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
-#include <linux/platform_device.h>
-#include <linux/regmap.h>
-#include <power/axp2101.h>
-#include <linux/regulator/driver.h>
-#include <linux/regulator/machine.h>
-#include <linux/regulator/of_regulator.h>
-#include <linux/delay.h>
+
+#include "sunxi-power-regulator.h"
+#include "axp2101.h"
 
 #define CPUX_GPIO	0
 #define CPUS_GPIO	1
@@ -158,6 +149,28 @@ extern void sun55iw3_pinctrl_fix_over_voltage(bool is_cpus_gpio);
 		.ops		= &axp20x_ops_range_vol_delay,			\
 	}
 
+#if IS_ENABLED(CONFIG_AW_AXP1530_WORKAROUND_DVM)
+#define AXP1530_SW_DVM_REGULATOR_RANGE_STEP_DELAY(_family, _id, _match, _supply, _ranges, _n_voltages,	\
+			_vreg, _vmask, _ereg, _emask)						\
+	[_family##_##_id] = {									\
+		.name		= (_match),							\
+		.supply_name	= (_supply),							\
+		.of_match	= of_match_ptr(_match),						\
+		.regulators_node = of_match_ptr("regulators"),					\
+		.type		= REGULATOR_VOLTAGE,						\
+		.id		= _family##_##_id,						\
+		.n_voltages	= (_n_voltages),						\
+		.owner		= THIS_MODULE,							\
+		.vsel_reg	= (_vreg),							\
+		.vsel_mask	= (_vmask),							\
+		.enable_reg	= (_ereg),							\
+		.enable_mask	= (_emask),							\
+		.linear_ranges	= (_ranges),							\
+		.n_linear_ranges = ARRAY_SIZE(_ranges),						\
+		.ops		= &axp1530_sw_dvm_ops_range_step_delay,				\
+	}
+#endif
+
 struct regulator_delay {
 	u32 step;
 	u32 final;
@@ -235,6 +248,83 @@ static int regulator_disable_regmap_axp2202_rbfet(struct regulator_dev *rdev)
 		return ret;
 	ret = regmap_update_bits(rdev->regmap, AXP2202_IRQ_EN1, 0xC0, 0xC0);
 
+	return 0;
+}
+
+static int regulator_is_enabled_regmap_axp515_drivevbus(struct regulator_dev *rdev)
+{
+	unsigned int val[2];
+	int ret;
+
+	ret = regmap_read(rdev->regmap, AXP515_RBFET_SET, &val[0]);
+	if (ret)
+		return ret;
+
+	return val[0] &= BIT(6);
+}
+
+static int regulator_enable_regmap_axp515_drivevbus(struct regulator_dev *rdev)
+{
+	int ret = 0;
+	unsigned int data;
+
+	mdelay(50);
+	regmap_read(rdev->regmap, AXP515_STATUS0, &data);
+	if (data & BIT(1))
+		return ret;
+
+	ret = regmap_update_bits(rdev->regmap, AXP515_RBFET_SET, BIT(6), BIT(6));
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int regulator_disable_regmap_axp515_drivevbus(struct regulator_dev *rdev)
+{
+	int ret;
+	unsigned int reg_val[2];
+
+	regmap_write(rdev->regmap, AXP515_EXT_PARA4, 0x06);
+	regmap_write(rdev->regmap, AXP515_EXT_PARA2, 0x04);
+	regmap_write(rdev->regmap, AXP515_EXT_PARA5, 0x04);
+	regmap_write(rdev->regmap, AXP515_ADDR_EXTENSION, 0x01);
+	regmap_write(rdev->regmap, AXP515_BOOST_EXT0, 0x51);
+	regmap_write(rdev->regmap, AXP515_CC_GLOBAL_CTRL, 0xC0);
+	regmap_write(rdev->regmap, AXP515_CC_LOW_POWER_CTRL, 0x07);
+	regmap_write(rdev->regmap, AXP515_BOOST_EXT6, 0x08);
+	regmap_write(rdev->regmap, AXP515_CC_STATUS0, 0x08);
+	regmap_write(rdev->regmap, AXP515_ADDR_EXTENSION, 0x00);
+
+	regmap_read(rdev->regmap, AXP515_INTEN3, &reg_val[0]);
+	regmap_read(rdev->regmap, AXP515_INTEN2, &reg_val[1]);
+	regmap_update_bits(rdev->regmap, AXP515_INTEN3, 0xC0, 0);
+	regmap_write(rdev->regmap, AXP515_INTEN2, 0);
+	mdelay(500);
+	ret = regmap_update_bits(rdev->regmap, AXP515_RBFET_SET, BIT(6), 0);
+	regmap_update_bits(rdev->regmap, AXP515_INTSTS3, 0xC0, 0xC0);
+	regmap_update_bits(rdev->regmap, AXP515_INTSTS2, 0xFF, 0xFF);
+	mdelay(500);
+
+	regmap_write(rdev->regmap, AXP515_ADDR_EXTENSION, 0x01);
+	regmap_write(rdev->regmap, AXP515_CC_STATUS0, 0x00);
+	regmap_write(rdev->regmap, AXP515_BOOST_EXT6, 0x00);
+	regmap_write(rdev->regmap, AXP515_CC_GLOBAL_CTRL, 0x00);
+	regmap_write(rdev->regmap, AXP515_CC_LOW_POWER_CTRL, 0x00);
+	regmap_write(rdev->regmap, AXP515_BOOST_EXT0, 0x00);
+	regmap_write(rdev->regmap, AXP515_ADDR_EXTENSION, 0x00);
+
+	mdelay(100);
+
+	regmap_write(rdev->regmap, AXP515_EXT_PARA4, 0x00);
+	regmap_write(rdev->regmap, AXP515_EXT_PARA2, 0x00);
+	regmap_write(rdev->regmap, AXP515_EXT_PARA5, 0x00);
+
+	regmap_update_bits(rdev->regmap, AXP515_INTSTS3, 0xC0, 0xC0);
+	regmap_update_bits(rdev->regmap, AXP515_INTSTS2, 0xFF, 0xFF);
+	regmap_write(rdev->regmap, AXP515_INTEN3, reg_val[0]);
+	regmap_write(rdev->regmap, AXP515_INTEN2, reg_val[1]);
+
 	return ret;
 }
 
@@ -243,8 +333,14 @@ static int axp2101_set_voltage_time_sel(struct regulator_dev *rdev,
 {
 	struct axp_reg_data *rdev_data = (struct axp_reg_data *)rdev_get_drvdata(rdev);
 	struct regulator_delay *delay = &rdev_data->rdev_delay;
+	int delay_time;
 
-	return abs(new_selector - old_selector) * delay->step + delay->final;
+	if (abs(new_selector - old_selector))
+		delay_time =  abs(new_selector - old_selector) * delay->step + delay->final;
+	else
+		delay_time = 0;
+
+	return delay_time;
 };
 
 static int axp_set_voltage_time(struct regulator_dev *rdev,
@@ -274,6 +370,133 @@ static int axp_set_voltage_time(struct regulator_dev *rdev,
 	delay = (DIV_ROUND_UP(abs(new_uV - old_uV), ramp_delay) + 999) / 1000;
 	return delay * 1000;
 }
+
+#if IS_ENABLED(CONFIG_AW_AXP1530_WORKAROUND_DVM)
+static int axp1530_sw_dvm_set_voltage_time_sel(struct regulator_dev *rdev,
+		unsigned int old_selector, unsigned int new_selector)
+{
+	struct regulator_delay *delay = (struct regulator_delay *)rdev->reg_data;
+	int delay_time;
+
+	if (abs(new_selector - old_selector))
+		delay_time = (abs(new_selector - old_selector) * delay->step + delay->final);
+	else
+		delay_time = 0;
+
+	return delay_time;
+};
+
+#define AXP1530_SW_DVM_STEP (2)
+static int axp1530_sw_dvm_set_voltage_sel_regmap
+		  (struct regulator_dev *rdev, unsigned int new_selector)
+{
+	int ret;
+	int i, delay = 0;
+	int old_selector = -1;
+	int start_selector = 0;
+	int end_selector = 0;
+	unsigned int quot, rem;
+	const struct regulator_ops *ops = rdev->desc->ops;
+
+	/* first step voltage 1.00v */
+	start_selector = 50;
+	/* end step voltage 1.2v */
+	end_selector = 70;
+
+	old_selector = ops->get_voltage_sel(rdev);
+	if (old_selector < 0)
+		return old_selector;
+
+	new_selector <<= ffs(rdev->desc->vsel_mask) - 1;
+
+	if (new_selector <= old_selector) {
+		/* step down voltage */
+
+		ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+					rdev->desc->vsel_mask, new_selector);
+		if (ret)
+			return ret;
+
+		delay = axp2101_set_voltage_time_sel(rdev, old_selector, new_selector);
+		mdelay(delay / 1000);
+	} else {
+		/* step up voltage */
+		if ((old_selector < start_selector) && (start_selector <= new_selector)) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask,
+						start_selector);
+			if (ret)
+				return ret;
+			delay = axp1530_sw_dvm_set_voltage_time_sel(rdev, old_selector,
+						start_selector);
+
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			} else if (delay) {
+				udelay(delay);
+			}
+			old_selector = start_selector;
+		} else if (new_selector < start_selector || new_selector > end_selector) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask,
+						new_selector);
+			if (ret)
+				return ret;
+			delay = axp1530_sw_dvm_set_voltage_time_sel(rdev, old_selector,
+						new_selector);
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			}  else if (delay) {
+				udelay(delay);
+			}
+			old_selector = new_selector;
+		}
+
+		quot = (new_selector - old_selector) / AXP1530_SW_DVM_STEP;
+		rem = (new_selector - old_selector) % AXP1530_SW_DVM_STEP;
+		for (i = 1; i <= quot; i++) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask,
+						old_selector + AXP1530_SW_DVM_STEP * i);
+			if (ret)
+				return ret;
+
+			/* delay for every dvm step */
+			delay = axp1530_sw_dvm_set_voltage_time_sel(rdev,
+									old_selector,
+									old_selector + AXP1530_SW_DVM_STEP);
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			} else if (delay) {
+				udelay(delay);
+			}
+		}
+
+		if (rem) {
+			ret = regmap_update_bits(rdev->regmap, rdev->desc->vsel_reg,
+						rdev->desc->vsel_mask, new_selector);
+			if (ret)
+				return ret;
+
+			/* delay for remainder */
+			delay = axp1530_sw_dvm_set_voltage_time_sel(rdev,
+									old_selector,
+									old_selector + rem);
+			if (delay >= 1000) {
+				mdelay(delay / 1000);
+				udelay(delay % 1000);
+			} else if (delay) {
+				udelay(delay);
+			}
+		}
+	}
+
+	return ret;
+}
+#endif
 
 static struct regulator_ops axp20x_ops_fixed = {
 	.list_voltage		= regulator_list_voltage_linear,
@@ -327,6 +550,23 @@ static struct regulator_ops axp2202_ops_rbfet = {
 	.is_enabled		= regulator_is_enabled_regmap,
 };
 static struct regulator_ops axp2202_c_ops_vmid;
+
+static struct regulator_ops axp515_ops_drivevbus = {
+	.enable			= regulator_enable_regmap_axp515_drivevbus,
+	.disable		= regulator_disable_regmap_axp515_drivevbus,
+	.is_enabled		= regulator_is_enabled_regmap_axp515_drivevbus,
+};
+
+#if IS_ENABLED(CONFIG_AW_AXP1530_WORKAROUND_DVM)
+static struct regulator_ops axp1530_sw_dvm_ops_range_step_delay = {
+	.set_voltage_sel	= axp1530_sw_dvm_set_voltage_sel_regmap,
+	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
+	.list_voltage		= regulator_list_voltage_linear_range,
+	.enable			= regulator_enable_regmap,
+	.disable		= regulator_disable_regmap,
+	.is_enabled		= regulator_is_enabled_regmap,
+};
+#endif
 
 static const struct linear_range axp152_dcdc1_ranges[] = {
 	REGULATOR_LINEAR_RANGE(1700000, 0x0, 0x4, 100000),
@@ -737,12 +977,19 @@ static const struct linear_range axp1530_dcdc3_ranges[] = {
 };
 
 static const struct regulator_desc axp1530_regulators[] = {
+#if IS_ENABLED(CONFIG_AW_AXP1530_WORKAROUND_DVM)
+	AXP1530_SW_DVM_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC1, "dcdc1", "vin1", axp1530_dcdc1_ranges,
+			0x6B, AXP1530_DCDC1_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(0)),
+	AXP1530_SW_DVM_REGULATOR_RANGE_STEP_DELAY(AXP1530, DCDC3, "dcdc3", "vin3", axp1530_dcdc3_ranges,
+			0x58, AXP1530_DCDC3_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(2)),
+#else
 	AXP_DESC_RANGES(AXP1530, DCDC1, "dcdc1", "vin1", axp1530_dcdc1_ranges,
 			0x6B, AXP1530_DCDC1_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(0)),
-	AXP_DESC_RANGES(AXP1530, DCDC2, "dcdc2", "vin2", axp1530_dcdc2_ranges,
-			0x58, AXP1530_DCDC2_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(1)),
 	AXP_DESC_RANGES(AXP1530, DCDC3, "dcdc3", "vin3", axp1530_dcdc3_ranges,
 			0x58, AXP1530_DCDC3_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(2)),
+#endif
+	AXP_DESC_RANGES(AXP1530, DCDC2, "dcdc2", "vin2", axp1530_dcdc2_ranges,
+			0x58, AXP1530_DCDC2_CONRTOL, 0x7f, AXP1530_OUTPUT_CONTROL, BIT(1)),
 	AXP_DESC(AXP1530, LDO1, "ldo1", "ldo1in", 500, 3500, 100,
 		AXP1530_ALDO1_CONRTOL, 0x1f, AXP1530_OUTPUT_CONTROL, BIT(3)),
 	AXP_DESC(AXP1530, LDO2, "ldo2", "ldo2in", 500, 3500, 100,
@@ -1075,9 +1322,9 @@ static const struct regulator_desc axp8191_regulators[] = {
 			(AXP8191, DCDC9, "dcdc9", "vin-ps", axp8191_dcdc9_ranges,
 			0x68, AXP8191_DC9OUT_VOL, GENMASK(6, 0),
 			AXP8191_DCDC_CTL2, BIT(0)),
-	AXP_DESC_SW(AXP8191, DC1SW1, "dc1sw1", "dcdc1", AXP8191_DCDC_CTL2,
+	AXP_DESC_SW(AXP8191, DC1SW1, "dc1sw1", "swin", AXP8191_DCDC_CTL2,
 		    BIT(3)),
-	AXP_DESC_SW(AXP8191, DC1SW2, "dc1sw2", "dcdc1", AXP8191_DCDC_CTL2,
+	AXP_DESC_SW(AXP8191, DC1SW2, "dc1sw2", "swin", AXP8191_DCDC_CTL2,
 		    BIT(4)),
 	AXP_DESC(AXP8191, ALDO1, "aldo1", "aldo", 500, 3400, 100,
 		 AXP8191_ALDO1OUT_VOL, GENMASK(4, 0), AXP8191_LDO_POWER_ON_OFF_CTL1,
@@ -1225,6 +1472,16 @@ static const struct regulator_desc axp2202_c_drivevbus_regulator = {
 	.ops		= &axp2202_c_ops_drivevbus,
 };
 
+static const struct regulator_desc axp515_drivevbus_regulator = {
+	.name		= "drivevbus",
+	.supply_name	= "drivevbusin",
+	.of_match	= of_match_ptr("drivevbus"),
+	.regulators_node = of_match_ptr("regulators"),
+	.type		= REGULATOR_VOLTAGE,
+	.owner		= THIS_MODULE,
+	.ops		= &axp515_ops_drivevbus,
+};
+
 static int axp20x_set_dcdc_freq(struct platform_device *pdev, u32 dcdcfreq)
 {
 	struct axp20x_dev *axp20x = dev_get_drvdata(pdev->dev.parent);
@@ -1344,6 +1601,11 @@ static int axp20x_set_dcdc_workmode(struct regulator_dev *rdev, int id, u32 work
 
 		mask = AXP22X_WORKMODE_DCDCX_MASK(id - AXP22X_DCDC1);
 		workmode <<= id - AXP22X_DCDC1;
+		break;
+	case AXP2101_ID:
+		reg = AXP2101_DCDC_CFG1;
+		mask = GENMASK(5, 2);
+		workmode <<= id + 2;
 		break;
 
 	default:
@@ -1492,7 +1754,12 @@ static int axp2101_regulator_probe(struct platform_device *pdev)
 		nregulators = AXP2202_REG_ID_MAX;
 		drivevbus = of_property_read_bool(pdev->dev.parent->of_node,
 						  "x-powers,drive-vbus-en");
-	break;
+		break;
+	case AXP515_ID:
+		nregulators = AXP515_REG_ID_MAX;
+		drivevbus = of_property_read_bool(pdev->dev.parent->of_node,
+						  "x-powers,drive-vbus-en");
+		break;
 	default:
 		PMIC_DEV_ERR(&pdev->dev, "Unsupported AXP variant: %ld\n",
 			axp20x->variant);
@@ -1665,6 +1932,14 @@ static int axp2101_regulator_probe(struct platform_device *pdev)
 						       &config);
 			}
 			break;
+		case AXP515_ID:
+			regmap_update_bits(axp20x->regmap, AXP515_AUTO_SETS, BIT(5), 0);
+			rdev = devm_regulator_register(&pdev->dev,
+						       &axp515_drivevbus_regulator,
+						       &config);
+			drivevbus = of_property_read_bool(pdev->dev.parent->of_node,
+							  "x-powers,drive-vbus-en");
+			break;
 		default:
 			PMIC_DEV_ERR(&pdev->dev, "AXP variant: %ld unsupported drivevbus\n",
 				axp20x->variant);
@@ -1687,6 +1962,8 @@ static int axp2101_regulator_remove(struct platform_device *pdev)
 
 static struct of_device_id axp_regulator_id_tab[] = {
 	{ .compatible = "x-powers,axp2202-regulator" },
+	{ .compatible = "x-powers,axp515-regulator" },
+	{ .compatible = "x-powers,axp1530-regulator" },
 	{ /* sentinel */ },
 };
 

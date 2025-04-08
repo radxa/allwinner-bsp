@@ -43,6 +43,7 @@
 #include "sunxi_drm_intf.h"
 #include "sunxi_drm_crtc.h"
 #include "sunxi_drm_drv.h"
+#include "panel/panels.h"
 
 #if IS_ENABLED(CONFIG_EXTCON)
 #include <linux/version.h>
@@ -59,6 +60,9 @@
 #define SUNXI_EDP_CODEC_DRV_NAME "sunxi-snd-codec-av"
 
 u32 loglevel_debug;
+int sunxi_tcon_top_clk_enable(struct device *tcon_top);
+int sunxi_tcon_top_clk_disable(struct device *tcon_top);
+s32 edp_read_dpcd(struct sunxi_edp_hw_desc *edp_hw, char *dpcd_rx_buf);
 
 struct edp_debug {
 	unsigned long aux_i2c_addr;
@@ -70,14 +74,22 @@ struct edp_debug {
 	u32 aux_write_val[16];
 	u32 aux_write_val_before[16];
 	u32 lane_debug_en;
+	u32 force_level;
 	u32 hpd_mask;
 	u32 hpd_mask_pre;
+	u32 src_max_lane;
+	u64 src_max_rate;
 
 	/* resource lock, power&clk won't release when edp enable fail if not 0 */
 	u32 edp_res_lock;
 
 	/* bypass training for some signal test case */
 	u32 bypass_training;
+};
+
+struct edp_blacklist_modes {
+	const char **name;
+	int num;
 };
 
 struct sunxi_drm_edp {
@@ -87,6 +99,7 @@ struct sunxi_drm_edp {
 	bool bound;
 
 	u32 enable;
+	bool suspend;
 	u32 irq;
 	void __iomem *base_addr;
 	void __iomem *top_addr;
@@ -102,10 +115,16 @@ struct sunxi_drm_edp {
 	struct clk *clk_bus;
 	struct clk *clk;
 	struct clk *clk_24m;
+	u32 use_inner_clk;
 	struct regulator *vdd_regulator;
 	struct regulator *vcc_regulator;
 	struct reset_control *rst_bus;
 	struct sunxi_edp_output_desc *desc;
+
+	/* typec dp related property */
+	struct mutex typec_dp_lock;
+	u32 typec_aux_retry;
+	struct delayed_work typec_hpd_monitor;
 
 	/* drm property */
 	struct drm_property *colorspace_property;
@@ -128,9 +147,16 @@ struct sunxi_drm_edp {
 	struct edp_tx_cap source_cap;
 	struct edp_rx_cap sink_cap;
 	struct edp_debug edp_debug;
+	struct edp_blacklist_modes blacklist;
 	struct sunxi_dp_hdcp hdcp;
 #if IS_ENABLED(CONFIG_EXTCON)
+	/* internal extcon for hotplug report to app */
 	struct extcon_dev *extcon_edp;
+
+	// external extcon for hotplug notifier from sink or virtual device,
+	// such as typec-dp or no-hpd-pin panel
+	struct extcon_dev *extcon_sink;
+	struct notifier_block extcon_nb;
 #endif
 };
 
@@ -160,7 +186,10 @@ struct sunxi_edp_output_desc {
 	s32 (*runtime_resume)(struct sunxi_drm_edp *drm_edp);
 	s32 (*suspend)(struct sunxi_drm_edp *drm_edp);
 	s32 (*resume)(struct sunxi_drm_edp *drm_edp);
+	/* do reset to fix error cause by unpreditable issue: ESD or ? */
 	void (*soft_reset)(struct sunxi_drm_edp *drm_edp);
+	/* do reset to recovery controller into current status before enable */
+	void (*enable_reset)(struct sunxi_drm_edp *drm_edp);
 };
 
 
@@ -171,6 +200,10 @@ static const struct drm_prop_enum_list colorspace_mode_names[] = {
 };
 
 static const struct drm_display_mode edp_standard_modes[] = {
+	/* dmt: 0x52 - 1920x1080@60Hz */
+	{ DRM_MODE("1920x1080", DRM_MODE_TYPE_DRIVER, 148500, 1920, 2008,
+		   2052, 2200, 0, 1080, 1084, 1089, 1125, 0,
+		   DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC) },
 	/* dmt: 0x55 - 1280x720@60Hz */
 	{ DRM_MODE("1280x720", DRM_MODE_TYPE_DRIVER, 74250, 1280, 1390,
 		   1430, 1650, 0, 720, 725, 730, 750, 0,
@@ -179,10 +212,6 @@ static const struct drm_display_mode edp_standard_modes[] = {
 	{ DRM_MODE("1280x720", DRM_MODE_TYPE_DRIVER, 74250, 1280, 1720,
 		   1760, 1980, 0, 720, 725, 730, 750, 0,
 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC) },
-	/* dmt: 0x52 - 1920x1080@60Hz */
-	{ DRM_MODE("1920x1080", DRM_MODE_TYPE_DRIVER, 148500, 1920, 2008,
-		   2052, 2200, 0, 1080, 1084, 1089, 1125, 0,
-		   DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC) },
 	/* cea: 31 - 1920x1080@50Hz 16:9 */
 	{ DRM_MODE("1920x1080", DRM_MODE_TYPE_DRIVER, 148500, 1920, 2448,
 		   2492, 2640, 0, 1080, 1084, 1089, 1125, 0,
@@ -198,6 +227,8 @@ static const struct drm_display_mode edp_standard_modes[] = {
 
 };
 
+void edp_enable_reset(struct sunxi_drm_edp *drm_edp);
+static int edp_phy_validate_lane_cnt(struct sunxi_drm_edp *drm_edp, int lane_cnt);
 
 static inline struct sunxi_drm_edp *
 drm_connector_to_sunxi_drm_edp(struct drm_connector *connector)
@@ -214,6 +245,27 @@ drm_encoder_to_sunxi_drm_edp(struct drm_encoder *encoder)
 
 	return container_of(sdrm, struct sunxi_drm_edp, sdrm);
 }
+
+struct device *edp_of_get_video_sys(struct device *dev)
+{
+	struct device_node *sys_node =
+		of_parse_phandle(dev->of_node, "sys", 0);
+	struct platform_device *pdev = sys_node ? of_find_device_by_node(sys_node) : NULL;
+	if (!pdev) {
+		DRM_INFO("edp has no dependence on video_sys\n");
+		return NULL;
+	}
+	return &pdev->dev;
+}
+
+int edp_video_sys_enable(struct device *dev, bool enable)
+{
+	if (enable)
+		return sunxi_tcon_top_clk_enable(dev);
+	else
+		return sunxi_tcon_top_clk_disable(dev);
+}
+
 
 static int __parse_dump_str(const char *buf, size_t size,
 				unsigned long *start, unsigned long *end)
@@ -267,11 +319,13 @@ out:
 static char edp_extcon_name[20];
 static const u32 edp_cable[] = {
 	EXTCON_EDP_TYPE,
+	EXTCON_JACK_VIDEO_OUT,
 	EXTCON_NONE,
 };
 
 static const u32 dp_cable[] = {
 	EXTCON_DP_TYPE,
+	EXTCON_JACK_VIDEO_OUT,
 	EXTCON_NONE,
 };
 
@@ -292,7 +346,6 @@ s32 edp_report_hpd_work(struct sunxi_drm_edp *drm_edp, u32 hpd)
 		else
 			extcon_set_state_sync(drm_edp->extcon_edp, EXTCON_DP_TYPE,
 				      EDP_HPD_PLUGIN);
-
 		break;
 	case EDP_HPD_PLUGOUT:
 	default:
@@ -303,11 +356,81 @@ s32 edp_report_hpd_work(struct sunxi_drm_edp *drm_edp, u32 hpd)
 		else
 			extcon_set_state_sync(drm_edp->extcon_edp, EXTCON_DP_TYPE,
 					      EDP_HPD_PLUGOUT);
+
+		extcon_set_state_sync(drm_edp->extcon_edp, EXTCON_JACK_VIDEO_OUT, EDP_HPD_PLUGOUT);
+
 		break;
 	}
 
 	return RET_OK;
 }
+
+static bool typec_dp_try_communication(struct sunxi_drm_edp *drm_edp)
+{
+	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+	struct sunxi_drm_device *sdrm = &drm_edp->sdrm;
+	struct edid *edid = NULL;
+	char dpcd_rx_buf[576];
+	int ret;
+
+	memset(&dpcd_rx_buf[0], 0, sizeof(dpcd_rx_buf));
+	ret = edp_read_dpcd(edp_hw, &dpcd_rx_buf[0]);
+	if (ret < 0) {
+		EDP_WRN("fail to read edp dpcd from extcon sink!\n");
+		return false;
+	} else {
+		if ((dpcd_rx_buf[0] == 0x00) || dpcd_rx_buf[1] == 0x00) {
+			EDP_WRN("dpcd read all 0, read dpcd fail from extcon sink!\n");
+			return false;
+		}
+	}
+
+	/* FIXME:TODO: add edid correct when edid_corrupt occur */
+	edid = drm_do_get_edid(&sdrm->connector, edp_get_edid_block, &drm_edp->edp_hw);
+	if (edid == NULL) {
+		EDP_WRN("fail to read edid from extcon sink\n");
+		return false;
+	} else {
+		edp_edid_put(edid);
+	}
+
+	return true;
+}
+
+/* most use in typec-dp application */
+static int edp_sink_extcon_evt(struct notifier_block *nb,
+			unsigned long state, void *param)
+{
+	struct sunxi_drm_edp *drm_edp = container_of(nb, struct sunxi_drm_edp, extcon_nb);
+	unsigned long state_inner;
+
+	mutex_lock(&drm_edp->typec_dp_lock);
+	state_inner = state;
+	drm_edp->typec_aux_retry = 0;
+
+	/* forbid some un-standard typec->others cable at first and then do
+	 * retry in 1s, and assume it is bad or really un-standard cable if
+	 * exceed 30s retry timeout  */
+	if (state_inner != 0) {
+		/* some conversion cable or hub may be un-standard*/
+		if (!typec_dp_try_communication(drm_edp)) {
+			EDP_DRV_DBG("typec dp communication fail, retry later!\n");
+			state_inner = 0;
+			drm_edp->typec_aux_retry = 1;
+			/* retry to wait convertion cable ready */
+			schedule_delayed_work(&drm_edp->typec_hpd_monitor, msecs_to_jiffies(1 * 1000));
+		}
+	} else {
+		cancel_delayed_work_sync(&drm_edp->typec_hpd_monitor);
+	}
+	mutex_unlock(&drm_edp->typec_dp_lock);
+
+	drm_edp->hpd_state_now = state_inner ? true : false;
+
+	return NOTIFY_OK;
+}
+
+
 
 #else
 s32 edp_report_hpd_work(struct sunxi_drm_edp *drm_edp, u32 hpd)
@@ -326,9 +449,13 @@ irqreturn_t drm_edp_irq_handler(int irq, void *dev_data)
 	int ret;
 
 	EDP_DRV_DBG("edp irq handler!\n");
-	ret = edp_hw_get_hotplug_state(edp_hw);
-	if (ret >= 0)
-		drm_edp->hpd_state_now =  ret ? true : false;
+
+	/* if use simulate sink device, skip hpd_state update in irq */
+	if (drm_edp->extcon_sink == NULL) {
+		ret = edp_hw_get_hotplug_state(edp_hw);
+		if (ret >= 0)
+			drm_edp->hpd_state_now =  ret ? true : false;
+	}
 
 	/* TODO: such as aux reply error */
 
@@ -348,6 +475,14 @@ void edp_soft_reset(struct sunxi_drm_edp *drm_edp)
 
 	if (desc->soft_reset)
 		desc->soft_reset(drm_edp);
+}
+
+void edp_enable_reset(struct sunxi_drm_edp *drm_edp)
+{
+	struct sunxi_edp_output_desc *desc = drm_edp->desc;
+
+	if (desc->enable_reset)
+		desc->enable_reset(drm_edp);
 }
 
 static void edp_hotplugin_proc(struct sunxi_drm_edp *drm_edp)
@@ -428,6 +563,8 @@ void edp_parse_dpcd(struct sunxi_drm_edp *drm_edp, char *dpcd_rx_buf)
 {
 	struct edp_rx_cap *sink_cap;
 	struct edp_tx_core *edp_core;
+	int i = 0;
+	int ret = 0;
 
 	sink_cap = &drm_edp->sink_cap;
 	edp_core = &drm_edp->edp_core;
@@ -461,6 +598,13 @@ void edp_parse_dpcd(struct sunxi_drm_edp *drm_edp, char *dpcd_rx_buf)
 	}
 
 	sink_cap->max_lane = dpcd_rx_buf[2] & EDP_DPCD_MAX_LANE_MASK;
+	for (i = sink_cap->max_lane; i > 1; i /= 2) {
+		/* validate capability from external phy, for tyepc STATE_D/F */
+		ret = edp_phy_validate_lane_cnt(drm_edp, i);
+		if (ret == 0)
+			break;
+	}
+	sink_cap->max_lane = i;
 	EDP_DRV_DBG("sink max lane count:%d\n", sink_cap->max_lane);
 
 	if (dpcd_rx_buf[2] & EDP_DPCD_ENHANCE_FRAME_MASK) {
@@ -561,6 +705,25 @@ void edp_parse_dpcd(struct sunxi_drm_edp *drm_edp, char *dpcd_rx_buf)
 	drm_edp->dpcd_parsed = true;
 }
 
+void edp_adjust_pixel_mode(struct sunxi_drm_edp *drm_edp)
+{
+	struct edp_tx_cap *src_cap = &drm_edp->source_cap;
+	struct edp_tx_core *edp_core = &drm_edp->edp_core;
+	unsigned int pixel_clk = edp_core->timings.pixel_clk / 1000; /*kHz*/
+
+	/* reset pixel mode */
+	edp_core->pixel_mode = 1;
+
+	if (src_cap->muti_pixel_mode_support && edp_core->pclk_limit_khz != 0) {
+		while (pixel_clk > edp_core->pclk_limit_khz) {
+			pixel_clk /= 2;
+			edp_core->pixel_mode *= 2;
+			EDP_DRV_DBG("adjust pixel mode: pixel_clk:%d pixel_mode:%d\n", pixel_clk, edp_core->pixel_mode);
+		}
+	}
+
+}
+
 s32 edp_running_thread(void *parg)
 {
 	struct sunxi_drm_edp *drm_edp = NULL;
@@ -586,6 +749,9 @@ s32 edp_running_thread(void *parg)
 		/* soft reset controller when error occurs, such as ESD */
 		if (edp_hw_check_controller_error(edp_hw))
 			edp_soft_reset(drm_edp);
+
+		if (drm_edp->suspend)
+			continue;
 
 		if (edp_debug->hpd_mask & 0x1000)
 			continue;
@@ -675,6 +841,9 @@ static s32 edp_clk_enable(struct sunxi_drm_edp *drm_edp, bool en)
 				return ret;
 			}
 		}
+
+		edp_set_use_inner_clk(&drm_edp->edp_hw, ((drm_edp->use_inner_clk) && en));
+
 	} else {
 		if (!IS_ERR_OR_NULL(drm_edp->clk_24m))
 			clk_disable_unprepare(drm_edp->clk_24m);
@@ -692,6 +861,8 @@ static s32 edp_clk_enable(struct sunxi_drm_edp *drm_edp, bool en)
 				return ret;
 			}
 		}
+		edp_set_use_inner_clk(&drm_edp->edp_hw, ((drm_edp->use_inner_clk) && en));
+
 	}
 
 	return ret;
@@ -706,8 +877,9 @@ static void edp_phy_enable(struct sunxi_drm_edp *drm_edp, bool en)
 		if (drm_edp->combo_phy)
 			phy_power_on(drm_edp->combo_phy);
 
-		if (drm_edp->dp_phy)
+		if (drm_edp->dp_phy) {
 			phy_power_on(drm_edp->dp_phy);
+		}
 	} else {
 		if (drm_edp->aux_phy)
 			phy_power_off(drm_edp->aux_phy);
@@ -722,27 +894,11 @@ static void edp_phy_enable(struct sunxi_drm_edp *drm_edp, bool en)
 
 static void edp_phy_init(struct sunxi_drm_edp *drm_edp)
 {
-	// the phy has only one user such as aux/dp,
-	// we can init it when edp driver need.
-
 	if (drm_edp->aux_phy)
 		phy_init(drm_edp->aux_phy);
 
-	/*
-	 * we can use 4lane as default, phy para will update
-	 * when training start
-	 */
-	if (drm_edp->combo_phy)
-//		phy_set_mode_ext(drm_edp->combo_phy, PHY_MODE_DP, DP_2LANE | USB);
-		phy_set_mode(drm_edp->combo_phy, PHY_MODE_DP);
-
-	if (drm_edp->dp_phy) {
+	if (drm_edp->dp_phy)
 		phy_init(drm_edp->dp_phy);
-		phy_set_mode(drm_edp->dp_phy, PHY_MODE_DP);
-	}
-
-	//FIXME: if need to judge typec-dp out's case, when should we update
-	//combo phy para, in typec-switch driver or in this edp driver?
 }
 
 static void edp_phy_exit(struct sunxi_drm_edp *drm_edp)
@@ -756,6 +912,49 @@ static void edp_phy_exit(struct sunxi_drm_edp *drm_edp)
 	// ignore combo phy, leave it until other module configure it
 }
 
+static int edp_phy_validate_lane_cnt(struct sunxi_drm_edp *drm_edp, int lane_cnt)
+{
+	union phy_configure_opts phy_opts;
+	struct phy_configure_opts_dp *dp_opts = &phy_opts.dp;
+	struct edp_tx_core *edp_core = &drm_edp->edp_core;
+	int ret = 0;
+
+	memset(dp_opts, 0, sizeof(struct phy_configure_opts_dp));
+	dp_opts->lanes = lane_cnt;
+	dp_opts->set_lanes = 1;
+
+	if (edp_core->combo_phy)
+		ret = phy_validate(edp_core->combo_phy, PHY_MODE_DP, 0, &phy_opts);
+
+	if (edp_core->dp_phy)
+		ret = phy_validate(edp_core->dp_phy, PHY_MODE_DP, 0, &phy_opts);
+
+	/* there is no validate ops in phy, let it pass */
+	if ((ret == -EOPNOTSUPP) || (ret == -EINVAL))
+		ret = 0;
+
+	return ret;
+}
+
+static void edp_phy_ssc_enable(struct sunxi_drm_edp *drm_edp, bool enable)
+{
+	union phy_configure_opts phy_opts;
+	struct phy_configure_opts_dp *dp_opts = &phy_opts.dp;
+
+	memset(dp_opts, 0, sizeof(struct phy_configure_opts_dp));
+	dp_opts->ssc = enable ? 1 : 0;
+	if (drm_edp->combo_phy)
+		phy_configure(drm_edp->combo_phy, &phy_opts);
+
+	if (drm_edp->dp_phy)
+		phy_configure(drm_edp->dp_phy, &phy_opts);
+}
+
+static void edp_phy_ssc_set_mode(struct sunxi_drm_edp *drm_edp, s32 mode)
+{
+	//TODO
+}
+
 /* FIXME: we need to think about that: typec-dp out's 2LNAE+USB case,
  * how DisplayPort's report its DPCD capbility? if it report
  * 4lane max support, how to compatible with 2LANE+USB case?
@@ -766,15 +965,28 @@ void edp_update_capacity(struct sunxi_drm_edp *drm_edp)
 	struct edp_rx_cap *sink_cap;
 	struct edp_tx_cap *src_cap;
 	struct edp_lane_para *lane_para;
+	struct edp_debug *edp_debug;
 
 	edp_core = &drm_edp->edp_core;
 	lane_para = &edp_core->lane_para;
 	sink_cap = &drm_edp->sink_cap;
 	src_cap = &drm_edp->source_cap;
+	edp_debug = &drm_edp->edp_debug;
 
-	if (drm_edp->dpcd_parsed) {
-		lane_para->lane_cnt = min(src_cap->max_lane, sink_cap->max_lane);
-		lane_para->bit_rate = min(src_cap->max_rate, sink_cap->max_rate);
+	/*
+	 * edp_debug's src_max_lane/src_max_rate can use for force specific
+	 * lane/rate output for debug purpose
+	 */
+	if (drm_edp->dpcd_parsed && !edp_debug->lane_debug_en) {
+		if (edp_debug->src_max_lane)
+			lane_para->lane_cnt = min(edp_debug->src_max_lane, sink_cap->max_lane);
+		else
+			lane_para->lane_cnt = min(src_cap->max_lane, sink_cap->max_lane);
+
+		if (edp_debug->src_max_rate)
+			lane_para->bit_rate = min(edp_debug->src_max_rate, sink_cap->max_rate);
+		else
+			lane_para->bit_rate = min(src_cap->max_rate, sink_cap->max_rate);
 	}
 }
 
@@ -930,10 +1142,11 @@ s32 edp_debug_mode_parse(struct device *dev)
 	/* FIXME: limit some senior panel support 90/120 hz, default enable. we seem can not handle
 	 * dual screen with different fps well */
 	ret = of_property_read_u32(dev->of_node, "fps_limit_60", &value);
-	if (!ret)
+	if (!ret) {
 		drm_edp->fps_limit_60 = value ? true : false;
-	else
+	} else {
 		drm_edp->fps_limit_60 = true;
+	}
 
 	edp_debug->bypass_training = 0;
 
@@ -946,6 +1159,8 @@ s32 edp_misc_parse(struct device *dev)
 	s32  value = 1;
 	struct edp_tx_core *edp_core;
 	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_blacklist_modes *blacklist;
+	int i = 0;
 
 	edp_core = &drm_edp->edp_core;
 
@@ -977,11 +1192,36 @@ s32 edp_misc_parse(struct device *dev)
 	else
 		edp_core->psr_en = 0;
 
-	ret = of_property_read_u32(dev->of_node, "edp_pixel_mode", &value);
+	ret = of_property_read_u32(dev->of_node, "pclk_limit", &value);
 	if (!ret)
-		edp_core->pixel_mode = value;
+		edp_core->pclk_limit_khz = value;
 	else
-		edp_core->pixel_mode = 1;
+		edp_core->pclk_limit_khz = 0;
+
+	blacklist = &drm_edp->blacklist;
+	blacklist->num = of_property_count_strings(dev->of_node, "blacklist_modes");
+	if (blacklist->num < 0)
+		blacklist->num = 0;
+
+	if (blacklist->num != 0) {
+		blacklist->name = kcalloc(blacklist->num, sizeof(char *), GFP_KERNEL);
+		if (!blacklist->name) {
+			EDP_ERR("fail to alloc memory for edp blacklist's name\n");
+			return RET_FAIL;
+		}
+
+		for (i = 0; i < blacklist->num; i++) {
+			ret = of_property_read_string_index(dev->of_node, "blacklist_modes", i,
+							    &blacklist->name[i]);
+			if (ret) {
+				pr_debug("%s: failed to get blacklist mode at idx %d\n",
+					__func__, i);
+				continue;
+			}
+		}
+	}
+
+	edp_core->pixel_mode = 1;
 
 	return RET_OK;
 }
@@ -1014,18 +1254,26 @@ s32 edp_lane_para_parse(struct device *dev)
 			lane_para->bit_rate = BIT_RATE_5G4;
 			break;
 		default:
-			EDP_ERR("edp_rate out of range!\n");
-			return RET_FAIL;
+			EDP_ERR("edp_lane_rate out of range, set to default: 2.7G!\n");
+			lane_para->bit_rate = BIT_RATE_2G7;
+			break;
 		}
+	} else {
+		EDP_ERR("edp_lane_rate not set manaually, set to default: 2.7G!\n");
+		lane_para->bit_rate = BIT_RATE_2G7;
 	}
 
 	ret = of_property_read_u32(dev->of_node, "edp_lane_cnt", &value);
 	if (!ret) {
 		if ((value <= 0) || (value == 3) || (value > 4)) {
-			EDP_ERR("edp_lane_cnt out of range!\n");
-			return RET_FAIL;
+			EDP_ERR("edp_lane_cnt out of range, set to default: 2!\n");
+			lane_para->lane_cnt = 2;
+		} else {
+			lane_para->lane_cnt = value;
 		}
-		lane_para->lane_cnt = value;
+	} else {
+		EDP_ERR("edp_lane_cnt not set manaually, set to default: 2!\n");
+		lane_para->lane_cnt = 2;
 	}
 
 	ret = of_property_read_u32(dev->of_node, "edp_colordepth", &value);
@@ -1174,6 +1422,119 @@ static ssize_t colorbar_show(struct device *dev,
 
 	count += sprintf(buf + count, "0:DE  1:colorbar  2:grayscale  3:black_and_white\n");
 	count += sprintf(buf + count, "4:all-0  5:all-1  6:reserved  7:gridding\n");
+
+	return count;
+}
+
+static ssize_t panel_selftest_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	char tmp_tx_buf[16];
+	char tmp_rx_buf[16];
+	char reg_val;
+	u32 test_en = 0;
+	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+
+	test_en = simple_strtoul(buf, NULL, 0);
+	memset(tmp_tx_buf, 0, sizeof(tmp_tx_buf));
+	memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
+
+	/* DPCD[010AH] bit_7: panel selftest enable */
+	edp_hw_aux_read(edp_hw, DPCD_010AH, 1, tmp_rx_buf);
+	reg_val = tmp_rx_buf[0];
+	if (test_en)
+		reg_val |= (1 << 7);
+	else
+		reg_val &= ~(1 << 7);
+
+	tmp_tx_buf[0] = reg_val;
+	edp_hw_aux_write(edp_hw, DPCD_010AH, 1, &tmp_tx_buf[0]);
+
+	return count;
+}
+
+static ssize_t panel_selftest_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	u32 count = 0;
+
+	count += sprintf(buf + count, "echo [enable] > panel_selftest\n");
+	count += sprintf(buf + count, "eg: 1 to enable selftest, 0 to disable selftest\n");
+
+	return count;
+}
+
+static ssize_t src_max_lane_debug_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_debug *edp_debug;
+	u32 lane_max;
+
+	edp_debug = &drm_edp->edp_debug;
+
+	lane_max = simple_strtoul(buf, NULL, 0);
+	if ((lane_max != 0) && (lane_max != 1) &&
+	    (lane_max != 2) && (lane_max != 4)) {
+		EDP_WRN("max_lane for debug should select from: 0/1/2/4\n");
+	} else {
+		edp_debug->src_max_lane = lane_max;
+	}
+
+	return count;
+}
+
+static ssize_t src_max_lane_debug_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_debug *edp_debug;
+	u32 count = 0;
+
+	edp_debug = &drm_edp->edp_debug;
+
+	count += sprintf(buf + count, "src_max_lane_debug: %d\n", edp_debug->src_max_lane);
+
+	return count;
+}
+
+static ssize_t src_max_rate_debug_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_debug *edp_debug;
+	u64 rate_max;
+
+	edp_debug = &drm_edp->edp_debug;
+
+	rate_max = simple_strtoul(buf, NULL, 0);
+	if ((rate_max != 162) && (rate_max != 270) &&
+	    (rate_max != 540) && (rate_max != 810) && (rate_max != 0)) {
+		EDP_WRN("max_rate for debug should select from: 162/270/540/810\n");
+	} else {
+		edp_debug->src_max_rate = rate_max * 10000000;
+	}
+
+	return count;
+}
+
+static ssize_t src_max_rate_debug_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_debug *edp_debug;
+	u32 count = 0;
+
+	edp_debug = &drm_edp->edp_debug;
+
+	count += sprintf(buf + count, "src_max_rate_debug: %lld\n", edp_debug->src_max_rate);
 
 	return count;
 }
@@ -1336,8 +1697,6 @@ static ssize_t lane_remap_debug_store(struct device *dev,
 				lane_para->lane_remap[i] = value;
 			}
 
-			lane_para->lane_remap[i] = value;
-
 			separator = strchr(separator + 1, ' ');
 			if (separator == NULL)
 				break;
@@ -1354,6 +1713,104 @@ static ssize_t lane_remap_debug_show(struct device *dev,
 	u32 count = 0;
 	count += sprintf(buf + count, "echo [ch0_remap ch1_remap ch2_remap ch3_remap] > lane_remap_debug\n");
 	count += sprintf(buf + count, "eg: echo 0 1 2 3  > lane_remap_debug\n");
+
+	return count;
+}
+
+static ssize_t lane_sw_debug_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	u32 count = 0;
+	count += sprintf(buf + count, "echo [ch0_sw ch1_sw ch2_sw ch3_sw] > lane_sw_debug\n");
+	count += sprintf(buf + count, "eg: echo 0 0 0 0 > lane_sw_debug\n");
+
+	return count;
+}
+
+static ssize_t lane_sw_debug_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_tx_core *edp_core;
+	struct edp_lane_para *lane_para;
+	struct edp_debug *edp_debug = &drm_edp->edp_debug;
+	u8 *separator = NULL;
+	u32 i, value;
+
+	edp_core = &drm_edp->edp_core;
+	lane_para = &edp_core->debug_lane_para;
+
+	separator = strchr(buf, ' ');
+	if (separator == NULL) {
+		EDP_WRN("%s,%d err, syntax error!\n", __func__, __LINE__);
+	} else {
+		for (i = 0; i < 4; i++) {
+			if (i == 0) {
+				value = simple_strtoul(buf, NULL, 0);
+				lane_para->lane_sw[i] = value;
+				continue;
+			} else {
+				value = simple_strtoul(separator + 1, NULL, 0);
+				lane_para->lane_sw[i] = value;
+			}
+
+			separator = strchr(separator + 1, ' ');
+			if (separator == NULL)
+				break;
+		}
+		edp_debug->force_level = true;
+	}
+
+	return count;
+}
+
+static ssize_t lane_pre_debug_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	u32 count = 0;
+	count += sprintf(buf + count, "echo [ch0_pre ch1_pre ch2_pre ch3_pre] > lane_pre_debug\n");
+	count += sprintf(buf + count, "eg: echo 0 0 0 0 > lane_pre_debug\n");
+
+	return count;
+}
+
+static ssize_t lane_pre_debug_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_tx_core *edp_core;
+	struct edp_lane_para *lane_para;
+	struct edp_debug *edp_debug = &drm_edp->edp_debug;
+	u8 *separator = NULL;
+	u32 i, value;
+
+	edp_core = &drm_edp->edp_core;
+	lane_para = &edp_core->debug_lane_para;
+
+	separator = strchr(buf, ' ');
+	if (separator == NULL) {
+		EDP_WRN("%s,%d err, syntax error!\n", __func__, __LINE__);
+	} else {
+		for (i = 0; i < 4; i++) {
+			if (i == 0) {
+				value = simple_strtoul(buf, NULL, 0);
+				lane_para->lane_pre[i] = value;
+				continue;
+			} else {
+				value = simple_strtoul(separator + 1, NULL, 0);
+				lane_para->lane_pre[i] = value;
+			}
+
+			separator = strchr(separator + 1, ' ');
+			if (separator == NULL)
+				break;
+		}
+		edp_debug->force_level = true;
+	}
 
 	return count;
 }
@@ -1662,22 +2119,24 @@ static ssize_t source_info_show(struct device *dev,
 	struct edp_tx_core *edp_core;
 	struct edp_tx_cap *src_cap;
 	struct edp_lane_para tmp_lane_para;
+	struct edp_debug *edp_debug;
 	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
 	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
 	u32 count = 0;
 	u32 valid_symbol;
-	char color_fmt[10];
+	char color_fmt[64];
 
 	edp_core = &drm_edp->edp_core;
 	src_cap = &drm_edp->source_cap;
+	edp_debug = &drm_edp->edp_debug;
 
 	memset(&tmp_lane_para, 0, sizeof(struct edp_lane_para));
 
 	count += sprintf(buf + count, "[Capacity Info]\n");
 	count += sprintf(buf + count, "Max lane Support: %d\n",\
-			 src_cap->max_lane);
+			 edp_debug->src_max_lane ? edp_debug->src_max_lane : src_cap->max_lane);
 	count += sprintf(buf + count, "Max Rate Support: %lld\n",\
-			 src_cap->max_rate);
+			 edp_debug->src_max_rate ? edp_debug->src_max_rate : src_cap->max_rate);
 	count += sprintf(buf + count, "TPS3 Support: %s\n",\
 			 src_cap->tps3_support ? "Yes" : "No");
 	count += sprintf(buf + count, "Fast Train Support: %s\n",\
@@ -1916,7 +2375,7 @@ static ssize_t phy_read_show(struct device *dev,
 	unsigned long start_reg = 0;
 	unsigned long end_reg = 0;
 	unsigned long len;
-	char tmp_rx_buf[256];
+	u16 tmp_rx_buf[256];
 	void __iomem *phy;
 
 	edp_debug = &drm_edp->edp_debug;
@@ -1936,7 +2395,7 @@ static ssize_t phy_read_show(struct device *dev,
 	len = end_reg - start_reg;
 	phy = ioremap(start_reg, len * 2);
 
-	memset(tmp_rx_buf, 0, 256);
+	memset(tmp_rx_buf, 0, sizeof(tmp_rx_buf));
 
 	for (i = 0; i < len; i++) {
 		tmp_rx_buf[i] = readw(phy + i * 2);
@@ -1954,7 +2413,7 @@ static ssize_t phy_read_show(struct device *dev,
 
 		if (((start_reg + i * 2) % 0x10) == 0)
 			show_cnt += sprintf(buf + show_cnt, "\n0x%04lx:", (start_reg + i * 2));
-		show_cnt += sprintf(buf + show_cnt, "  0x%02x", tmp_rx_buf[i]);
+		show_cnt += sprintf(buf + show_cnt, "  0x%04x", tmp_rx_buf[i]);
 	}
 
 	show_cnt += sprintf(buf + show_cnt, "\n");
@@ -1969,7 +2428,7 @@ static ssize_t phy_write_store(struct device *dev,
 				struct device_attribute *attr,
 				const char *buf, size_t count)
 {
-	u8 value = 0;
+	u16 value = 0;
 	u8 *separator = NULL;
 	u32 reg_addr = 0;
 	void __iomem *phy;
@@ -2209,6 +2668,14 @@ static ssize_t lane_config_now_show(struct device *dev,
 	count += sprintf(buf + count, "ch_remap[1]: %d\n", lane_para->lane_remap[1]);
 	count += sprintf(buf + count, "ch_remap[2]: %d\n", lane_para->lane_remap[2]);
 	count += sprintf(buf + count, "ch_remap[3]: %d\n", lane_para->lane_remap[3]);
+	count += sprintf(buf + count, "sw[0]:%d\n", lane_para->lane_sw[0]);
+	count += sprintf(buf + count, "sw[1]:%d\n", lane_para->lane_sw[1]);
+	count += sprintf(buf + count, "sw[2]:%d\n", lane_para->lane_sw[2]);
+	count += sprintf(buf + count, "sw[3]:%d\n", lane_para->lane_sw[3]);
+	count += sprintf(buf + count, "pre[0]:%d\n", lane_para->lane_pre[0]);
+	count += sprintf(buf + count, "pre[1]:%d\n", lane_para->lane_pre[1]);
+	count += sprintf(buf + count, "pre[2]:%d\n", lane_para->lane_pre[2]);
+	count += sprintf(buf + count, "pre[3]:%d\n", lane_para->lane_pre[3]);
 	return count;
 }
 
@@ -2237,6 +2704,14 @@ static ssize_t lane_config_debug_show(struct device *dev,
 	count += sprintf(buf + count, "ch_remap[1]: %d\n", lane_para->lane_remap[1]);
 	count += sprintf(buf + count, "ch_remap[2]: %d\n", lane_para->lane_remap[2]);
 	count += sprintf(buf + count, "ch_remap[3]: %d\n", lane_para->lane_remap[3]);
+	count += sprintf(buf + count, "sw[0]:%d\n", lane_para->lane_sw[0]);
+	count += sprintf(buf + count, "sw[1]:%d\n", lane_para->lane_sw[1]);
+	count += sprintf(buf + count, "sw[2]:%d\n", lane_para->lane_sw[2]);
+	count += sprintf(buf + count, "sw[3]:%d\n", lane_para->lane_sw[3]);
+	count += sprintf(buf + count, "pre[0]:%d\n", lane_para->lane_pre[0]);
+	count += sprintf(buf + count, "pre[1]:%d\n", lane_para->lane_pre[1]);
+	count += sprintf(buf + count, "pre[2]:%d\n", lane_para->lane_pre[2]);
+	count += sprintf(buf + count, "pre[3]:%d\n", lane_para->lane_pre[3]);
 
 	return count;
 }
@@ -2258,7 +2733,9 @@ static ssize_t timings_now_show(struct device *dev,
 	count += sprintf(buf + count, "fps: %d\n", fps);
 	count += sprintf(buf + count, "vic: %d\n", timings->vic);
 	count += sprintf(buf + count, "tv_mode: %d\n", timings->tv_mode);
+	count += sprintf(buf + count, "pixel_mode: %d\n", edp_core->pixel_mode);
 	count += sprintf(buf + count, "pixel_clk: %d\n", timings->pixel_clk);
+	count += sprintf(buf + count, "pixel_clk_act: %d\n", timings->pixel_clk / edp_core->pixel_mode);
 	count += sprintf(buf + count, "pixel_repeat: %d\n", timings->pixel_repeat);
 	count += sprintf(buf + count, "x_res: %d\n", timings->x_res);
 	count += sprintf(buf + count, "y_res: %d\n", timings->y_res);
@@ -2420,7 +2897,7 @@ static ssize_t pattern_debug_store(struct device *dev,
 				const char *buf, size_t count)
 {
 	u32 pattern_debug = 0;
-	u32 test_lane_cnt;
+	u32 test_lane_cnt = 0;
 	u8 *separator = NULL;
 	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
 	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
@@ -2432,6 +2909,44 @@ static ssize_t pattern_debug_store(struct device *dev,
 		pattern_debug = simple_strtoul(buf, NULL, 0);
 		test_lane_cnt = simple_strtoul(separator + 1, NULL, 0);
 	}
+
+	/*
+	 * open/close scrambling reference to DP1.4 spec Table 2-174
+	 *
+	 * 0: NONE
+	 * 1: TPS1
+	 * 2: TPS2
+	 * 3: TPS3
+	 * 4: TPS4
+	 * 5: PRBS7
+	 * 6: D10_2
+	 * 7: HBR2_EYE
+	 * 8: LINK_QUALITY_PATTERN
+	 * 9: CP2520_PATTERN2
+	 * 10: CP2520_PATTERN3
+	 * 11: SYMBOL_MEASURE_PATTERN
+	 * 12: PATTERN_80BIT
+	 */
+
+	switch (pattern_debug) {
+	case 1:
+	case 2:
+	case 3:
+	case 5:
+	case 6:
+	case 12:
+		edp_hw_scrambling_enable(edp_hw, false);
+		break;
+	case 4:
+	case 9:
+	case 10:
+	case 11:
+		edp_hw_scrambling_enable(edp_hw, true);
+		break;
+	default:
+		break;
+	}
+
 
 	edp_hw_set_pattern(edp_hw, pattern_debug, test_lane_cnt);
 
@@ -2448,6 +2963,7 @@ static ssize_t pattern_debug_show(struct device *dev,
 	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
 
 	pattern = edp_hw_get_pattern(edp_hw);
+	count += sprintf(buf + count, "Pattern Now: ");
 	switch (pattern) {
 	case PATTERN_NONE:
 		count += sprintf(buf + count, "PATTERN_NONE\n");
@@ -2494,6 +3010,21 @@ static ssize_t pattern_debug_show(struct device *dev,
 
 	}
 
+	count += sprintf(buf + count, "\n[Pattern List:]\n");
+	count += sprintf(buf + count, "0: NONE\n");
+	count += sprintf(buf + count, "1: TPS1\n");
+	count += sprintf(buf + count, "2: TPS2\n");
+	count += sprintf(buf + count, "3: TPS3\n");
+	count += sprintf(buf + count, "4: TPS4\n");
+	count += sprintf(buf + count, "5: PRBS7\n");
+	count += sprintf(buf + count, "6: D10_2\n");
+	count += sprintf(buf + count, "7: HBR2_EYE\n");
+	count += sprintf(buf + count, "8: LINK_QUALITY_PATTERN\n");
+	count += sprintf(buf + count, "9: CP2520_PATTERN2\n");
+	count += sprintf(buf + count, "10: CP2520_PATTERN3\n");
+	count += sprintf(buf + count, "11: SYMBOL_MEASURE_PATTERN\n");
+	count += sprintf(buf + count, "12: PATTERN_80BIT\n");
+
 	return count;
 }
 
@@ -2536,9 +3067,16 @@ static ssize_t ssc_debug_show(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
 {
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct edp_tx_core *edp_core;
 	u32 count = 0;
+
+	edp_core = &drm_edp->edp_core;
+
 	count += sprintf(buf + count, "echo [ssc_en ssc_mode] > ssc_debug\n");
 	count += sprintf(buf + count, "eg: 0-Center_Mode   1-Downspread_Mode\n");
+	count += sprintf(buf + count, "SSC now:\n");
+	count += sprintf(buf + count, "enable:%d  mode:%d\n", edp_core->ssc_en, edp_core->ssc_mode);
 
 	return count;
 }
@@ -2550,6 +3088,8 @@ static DEVICE_ATTR(lane_invert_debug, 0664, lane_invert_debug_show, lane_invert_
 static DEVICE_ATTR(lane_remap_debug, 0664, lane_remap_debug_show, lane_remap_debug_store);
 static DEVICE_ATTR(lane_fmt_debug, 0664, lane_fmt_debug_show, lane_fmt_debug_store);
 static DEVICE_ATTR(lane_cfg_debug, 0664, lane_cfg_debug_show, lane_cfg_debug_store);
+static DEVICE_ATTR(lane_sw_debug, 0664, lane_sw_debug_show, lane_sw_debug_store);
+static DEVICE_ATTR(lane_pre_debug, 0664, lane_pre_debug_show, lane_pre_debug_store);
 static DEVICE_ATTR(resource_lock, 0664, resource_lock_show, resource_lock_store);
 static DEVICE_ATTR(bypass_training, 0664, bypass_training_show, bypass_training_store);
 static DEVICE_ATTR(loglevel_debug, 0664, loglevel_debug_show, loglevel_debug_store);
@@ -2570,6 +3110,9 @@ static DEVICE_ATTR(training_param_type, 0664, training_param_type_show, training
 static DEVICE_ATTR(ssc_debug, 0664, ssc_debug_show, ssc_debug_store);
 static DEVICE_ATTR(pattern_debug, 0664, pattern_debug_show, pattern_debug_store);
 static DEVICE_ATTR(colorbar, 0664, colorbar_show, colorbar_store);
+static DEVICE_ATTR(panel_selftest, 0664, panel_selftest_show, panel_selftest_store);
+static DEVICE_ATTR(src_max_lane_debug, 0664, src_max_lane_debug_show, src_max_lane_debug_store);
+static DEVICE_ATTR(src_max_rate_debug, 0664, src_max_rate_debug_show, src_max_rate_debug_store);
 
 static struct attribute *edp_attributes[] = {
 	&dev_attr_dpcd.attr,
@@ -2579,6 +3122,8 @@ static struct attribute *edp_attributes[] = {
 	&dev_attr_lane_invert_debug.attr,
 	&dev_attr_lane_fmt_debug.attr,
 	&dev_attr_lane_cfg_debug.attr,
+	&dev_attr_lane_sw_debug.attr,
+	&dev_attr_lane_pre_debug.attr,
 	&dev_attr_resource_lock.attr,
 	&dev_attr_bypass_training.attr,
 	&dev_attr_loglevel_debug.attr,
@@ -2599,6 +3144,9 @@ static struct attribute *edp_attributes[] = {
 	&dev_attr_ssc_debug.attr,
 	&dev_attr_pattern_debug.attr,
 	&dev_attr_colorbar.attr,
+	&dev_attr_panel_selftest.attr,
+	&dev_attr_src_max_lane_debug.attr,
+	&dev_attr_src_max_rate_debug.attr,
 	NULL
 };
 
@@ -2691,6 +3239,8 @@ void sunxi_edp_get_source_capacity(struct sunxi_drm_edp *drm_edp)
 	src_cap->enhance_frame_support = edp_source_support_enhance_frame(edp_hw);
 	src_cap->lane_remap_support = edp_source_support_lane_remap(edp_hw);
 	src_cap->lane_invert_support = edp_source_support_lane_invert(edp_hw);
+	src_cap->muti_pixel_mode_support = edp_source_support_muti_pixel_mode(edp_hw);
+	src_cap->need_reset_before_enable = edp_source_need_reset_before_enable(edp_hw);
 
 	if (edp_source_support_hdcp1x(edp_hw) ||
 		    edp_source_support_hdcp2x(edp_hw)) {
@@ -2780,14 +3330,21 @@ int edp_parse_dts(struct device *dev)
 		goto ERR_IOMAP;
 	}
 
-	drm_edp->clk = devm_clk_get(dev, "clk_edp");
+	drm_edp->clk = devm_clk_get_optional(dev, "clk_edp");
 	if (IS_ERR_OR_NULL(drm_edp->clk)) {
 		EDP_DEV_ERR(dev, "fail to get clk for edp!\n");
-		ret = RET_FAIL;
-		goto ERR_CLK_BUS;
+		drm_edp->clk = NULL;
+		/* ret = RET_FAIL; */
+		/* goto ERR_CLK_BUS; */
 	}
 
-	drm_edp->clk_24m = devm_clk_get(dev, "clk_24m_edp");
+	ret = of_property_read_u32(dev->of_node, "use_inner_clk", &drm_edp->use_inner_clk);
+	if (!ret)
+		drm_edp->use_inner_clk = 1;
+	else
+		drm_edp->use_inner_clk = 0;
+
+	drm_edp->clk_24m = devm_clk_get_optional(dev, "clk_24m_edp");
 	if (IS_ERR_OR_NULL(drm_edp->clk_24m)) {
 		EDP_DRV_DBG("24M clock for edp is not need or missing!\n");
 	}
@@ -2831,6 +3388,25 @@ int edp_parse_dts(struct device *dev)
 	} else
 		drm_edp->edp_core.combo_phy = drm_edp->combo_phy;
 
+#if IS_ENABLED(CONFIG_EXTCON)
+	drm_edp->extcon_sink = extcon_get_edev_by_phandle(dev, 0);
+	if (IS_ERR_OR_NULL(drm_edp->extcon_sink)) {
+		DRM_INFO("sink extcon is not setting, maybe not used!\n");
+		drm_edp->extcon_sink = NULL;
+	}
+
+	if (drm_edp->extcon_sink) {
+		/* sync hpd state when sink extcon's state is update */
+		drm_edp->extcon_nb.notifier_call = edp_sink_extcon_evt;
+		ret = devm_extcon_register_notifier(dev, drm_edp->extcon_sink,
+				EXTCON_DISP_DP, &drm_edp->extcon_nb);
+		if (ret) {
+			DRM_ERROR("register extcon notifier for edp fail\n");
+			goto ERR_CLK;
+		}
+	}
+#endif
+
 	ret = edp_debug_mode_parse(dev);
 	if (ret != 0)
 		goto ERR_CLK;
@@ -2848,8 +3424,8 @@ int edp_parse_dts(struct device *dev)
 ERR_CLK:
 	if (drm_edp->clk_24m)
 		clk_put(drm_edp->clk_24m);
-	clk_put(drm_edp->clk);
-ERR_CLK_BUS:
+	if (!IS_ERR_OR_NULL(drm_edp->clk))
+		clk_put(drm_edp->clk);
 	clk_put(drm_edp->clk_bus);
 ERR_IOMAP:
 	if (drm_edp->base_addr)
@@ -2936,12 +3512,33 @@ static int sunxi_edp_connector_get_modes(struct drm_connector *connector)
 			/* release edid to avoid dangling pointer */
 			edp_edid_put(edid);
 		}
-
-		if (!mode_num)
-			mode_num += populate_mode_from_default_timings(connector);
 	}
 
+	/*
+	 * For DP: if edid is null or bad, use some standard timings.
+	 * For eDP: if panel is not connect in some test case, use it too.
+	 */
+
+	if (!mode_num)
+		mode_num += populate_mode_from_default_timings(connector);
+
 	return mode_num;
+}
+
+int edp_query_blacklist_modes(struct edp_blacklist_modes *blacklist,
+			      struct drm_display_mode *mode)
+{
+	int i;
+	char tmp_name[64];
+
+	memset(&tmp_name[0], 0, sizeof(tmp_name));
+	sprintf(tmp_name, "%s@%d", mode->name, drm_mode_vrefresh(mode));
+	for (i = 0; i < blacklist->num; i++) {
+		if (strcmp(tmp_name, blacklist->name[i]) == 0)
+			return RET_FAIL;
+	}
+
+	return RET_OK;
 }
 
 static enum drm_mode_status
@@ -2950,15 +3547,51 @@ sunxi_edp_connector_mode_valid(struct drm_connector *connector,
 {
 	struct sunxi_drm_edp *drm_edp
 		= drm_connector_to_sunxi_drm_edp(connector);
+	struct drm_device *drm = drm_edp->sdrm.drm_dev;
 	struct disp_video_timings timings;
 	s32 ret = 0;
 	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+	int fps;
+	unsigned int de_max_dclk;
+
+	/* if need to force some signal test, should not do timings validate */
+	if (drm_edp->edp_debug.lane_debug_en)
+		return MODE_OK;
+
+	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_DisplayPort) {
+		ret = edp_query_blacklist_modes(&drm_edp->blacklist, mode);
+		if (ret) {
+			EDP_DRV_DBG("Mode[%s@%d] is forbid in blacklist!\n",
+				  mode->name, drm_mode_vrefresh(mode));
+			return MODE_BAD;
+		}
+	}
 
 	drm_mode_to_sunxi_video_timings(mode, &timings);
 
+	/* abandon the resolution can't be handle by display engine */
+	de_max_dclk = sunxi_drm_get_de_max_freq(drm);
+	if (timings.pixel_clk > de_max_dclk) {
+		EDP_DRV_DBG("Mode[%s@%d](pclk:%d) is out of display engine's capability(pclk:%d)!",
+			    mode->name, drm_mode_vrefresh(mode), timings.pixel_clk, de_max_dclk);
+		return MODE_BAD;
+	}
+
+	/* abandon some reolution which fps exceed 60, if need */
+	if (drm_edp->fps_limit_60) {
+		fps = timings.pixel_clk / timings.hor_total_time
+			/ timings.ver_total_time;
+		if  (fps > 61) {
+			EDP_DRV_DBG("Mode[%s@%d] is abandon because of fps litmit to 60!",
+					    mode->name, drm_mode_vrefresh(mode));
+			return MODE_BAD;
+		}
+	}
+
 	ret = edp_hw_query_lane_capability(edp_hw, &drm_edp->edp_core, &timings);
 	if (ret) {
-		DRM_ERROR("Mode[%s] is out of edp lane's capability!\n", mode->name);
+		DRM_ERROR("Mode[%s@%d] is out of edp lane's capability!\n",
+			  mode->name, drm_mode_vrefresh(mode));
 		return MODE_BAD;
 	}
 
@@ -2970,20 +3603,21 @@ drm_edp_connector_detect(struct drm_connector *connector, bool force)
 {
 	struct sunxi_drm_edp *drm_edp
 		= drm_connector_to_sunxi_drm_edp(connector);
+	struct edp_debug *edp_debug = &drm_edp->edp_debug;
 
 	if (!drm_edp)
 		return connector_status_unknown;
 
 	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_eDP) {
-		//FIXME
-		/* for such case: fb_client need detect and enable plugin
-		 * connector, but edp's controller init in atomic_enable */
-		if (!drm_edp->is_enabled)
-			return connector_status_connected;
+		return connector_status_connected;
 	}
 
-	return drm_edp->hpd_state ? connector_status_connected :
-		connector_status_disconnected;
+	if (edp_debug->hpd_mask)
+		return drm_edp->hpd_state ? connector_status_connected :
+					connector_status_disconnected;
+	else
+		return drm_edp->hpd_state_now ? connector_status_connected :
+					connector_status_disconnected;
 }
 
 
@@ -3119,6 +3753,34 @@ static bool sunxi_edp_is_sync_time_enough(void *data)
 	return sunxi_tcon_is_sync_time_enough(drm_edp->sdrm.tcon_dev);
 }
 
+static bool sunxi_edp_is_support_backlight(void *data)
+{
+	struct sunxi_drm_edp *drm_edp = (struct sunxi_drm_edp *)data;
+
+	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_eDP)
+		return general_panel_edp_is_support_backlight(drm_edp->sdrm.panel);
+	else
+		return false;
+}
+
+static int sunxi_edp_get_backlight_value(void *data)
+{
+	struct sunxi_drm_edp *drm_edp = (struct sunxi_drm_edp *)data;
+
+	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_eDP)
+		return general_panel_edp_get_backlight_value(drm_edp->sdrm.panel);
+	else
+		return 0;
+}
+
+static void sunxi_edp_set_backlight_value(void *data, int brightness)
+{
+	struct sunxi_drm_edp *drm_edp = (struct sunxi_drm_edp *)data;
+
+	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_eDP)
+		general_panel_edp_set_backlight_value(drm_edp->sdrm.panel, brightness);
+}
+
 void sunxi_edp_encoder_atomic_disable(struct drm_encoder *encoder,
 				      struct drm_atomic_state *state)
 {
@@ -3133,6 +3795,9 @@ void sunxi_edp_encoder_atomic_disable(struct drm_encoder *encoder,
 	}
 	sunxi_tcon_mode_exit(drm_edp->sdrm.tcon_dev);
 	drm_edp->is_enabled = false;
+
+	extcon_set_state_sync(drm_edp->extcon_edp, EXTCON_JACK_VIDEO_OUT, EDP_HPD_PLUGOUT);
+
 	DRM_DEBUG_DRIVER("%s finish\n", __FUNCTION__);
 }
 
@@ -3150,7 +3815,6 @@ void sunxi_edp_encoder_atomic_enable(struct drm_encoder *encoder,
 	struct sunxi_edp_connector_state *estate = to_drm_edp_connector_state(conn_state);
 	struct edp_lane_para *lane_para = &drm_edp->edp_core.lane_para;
 	struct disp_output_config disp_cfg;
-	int fps = 0;
 
 	/* update color_format/color_depth from property */
 	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_DisplayPort) {
@@ -3178,19 +3842,6 @@ void sunxi_edp_encoder_atomic_enable(struct drm_encoder *encoder,
 			lane_para->bpp = 2 * lane_para->colordepth;
 		else if (lane_para->color_fmt == DISP_CSC_TYPE_YUV420)
 			lane_para->bpp = 3 * lane_para->colordepth / 2;
-	}
-
-	/* parse timings from drm_video_mode */
-	drm_mode_to_sunxi_video_timings(&drm_edp->mode, &edp_core->timings);
-
-	fps = edp_core->timings.pixel_clk / edp_core->timings.hor_total_time
-		/ edp_core->timings.ver_total_time;
-	if (fps > 65 && drm_edp->fps_limit_60) {
-		EDP_INFO("eDP/DP screen's timings:[%dx%d@%dHz], limit to [%dx%d@60Hz] now!\n",
-			 edp_core->timings.x_res, edp_core->timings.y_res, fps,
-			 edp_core->timings.x_res, edp_core->timings.y_res);
-		edp_core->timings.pixel_clk =
-			edp_core->timings.x_res *edp_core->timings.y_res * 60;
 	}
 
 	memset(&disp_cfg, 0, sizeof(struct disp_output_config));
@@ -3221,6 +3872,7 @@ void sunxi_edp_encoder_atomic_enable(struct drm_encoder *encoder,
 
 		}
 	} else {
+
 		if (drm_edp->desc->enable_early) {
 			if (drm_edp->desc->enable_early(drm_edp))
 				goto FAIL;
@@ -3237,6 +3889,10 @@ void sunxi_edp_encoder_atomic_enable(struct drm_encoder *encoder,
 	}
 
 	DRM_DEBUG_DRIVER("%s finish, sw = %d\n", __FUNCTION__, drm_edp->sw_enable);
+
+	/* ensure edp audio always enable after video, avoid display-audio async issue */
+	extcon_set_state_sync(drm_edp->extcon_edp, EXTCON_JACK_VIDEO_OUT, EDP_HPD_PLUGIN);
+
 	drm_edp->is_enabled = true;
 	return;
 FAIL:
@@ -3251,9 +3907,28 @@ int sunxi_edp_encoder_atomic_check(struct drm_encoder *encoder,
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(crtc_state);
 	struct sunxi_drm_edp *drm_edp = drm_encoder_to_sunxi_drm_edp(encoder);
 	struct sunxi_edp_connector_state *new_estate = to_drm_edp_connector_state(conn_state);
+	int new_lane_colordepth;
+
+	switch (new_estate->color_depth) {
+	case DISP_DATA_8BITS:
+		new_lane_colordepth = 8;
+		break;
+	case DISP_DATA_10BITS:
+		new_lane_colordepth = 10;
+		break;
+	case DISP_DATA_12BITS:
+		new_lane_colordepth = 12;
+		break;
+	case DISP_DATA_16BITS:
+		new_lane_colordepth = 16;
+		break;
+	default:
+		new_lane_colordepth = 8;
+		break;
+	}
 
 	if ((drm_edp->edp_core.lane_para.color_fmt != new_estate->color_format) ||
-		(drm_edp->edp_core.lane_para.colordepth != new_estate->color_depth))
+		(drm_edp->edp_core.lane_para.colordepth != new_lane_colordepth))
 		crtc_state->connectors_changed = true;
 
 	scrtc_state->tcon_id = drm_edp->sdrm.tcon_id;
@@ -3261,6 +3936,9 @@ int sunxi_edp_encoder_atomic_check(struct drm_encoder *encoder,
 	scrtc_state->check_status = sunxi_edp_fifo_check;
 	scrtc_state->is_sync_time_enough = sunxi_edp_is_sync_time_enough;
 	scrtc_state->get_cur_line = sunxi_edp_get_current_line;
+	scrtc_state->is_support_backlight = sunxi_edp_is_support_backlight;
+	scrtc_state->get_backlight_value = sunxi_edp_get_backlight_value;
+	scrtc_state->set_backlight_value = sunxi_edp_set_backlight_value;
 	scrtc_state->output_dev_data = drm_edp;
 	if (conn_state->crtc) {
 		drm_edp->sw_enable = sunxi_drm_check_if_need_sw_enable(conn_state->connector);
@@ -3272,21 +3950,32 @@ int sunxi_edp_encoder_atomic_check(struct drm_encoder *encoder,
 }
 
 
-static void sunxi_edp_encoder_mode_set(struct drm_encoder *encoder,
-				       struct drm_display_mode *mode,
-				       struct drm_display_mode *adj_mode)
+static void sunxi_edp_encoder_atomic_mode_set (struct drm_encoder *encoder,
+					struct drm_crtc_state *crtc_state,
+					struct drm_connector_state *conn_state)
+
 {
 	struct sunxi_drm_edp *drm_edp = drm_encoder_to_sunxi_drm_edp(encoder);
+	struct edp_tx_core *edp_core = &drm_edp->edp_core;
+	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(crtc_state);
 
-	drm_mode_copy(&drm_edp->mode, adj_mode);
+	drm_mode_copy(&drm_edp->mode, &crtc_state->adjusted_mode);
 
+	/* parse timings from drm_video_mode */
+	drm_mode_to_sunxi_video_timings(&drm_edp->mode, &edp_core->timings);
+
+	/* auto-adjust pixel mode if clk's upfloor is limit in some platform */
+	edp_adjust_pixel_mode(drm_edp);
+
+	/* sync pixel_mode to crtc */
+	scrtc_state->pixel_mode = edp_core->pixel_mode;
 }
 
 static const struct drm_encoder_helper_funcs sunxi_edp_encoder_helper_funcs = {
 	.atomic_disable = sunxi_edp_encoder_atomic_disable,
 	.atomic_enable = sunxi_edp_encoder_atomic_enable,
 	.atomic_check = sunxi_edp_encoder_atomic_check,
-	.mode_set = sunxi_edp_encoder_mode_set,
+	.atomic_mode_set = sunxi_edp_encoder_atomic_mode_set,
 };
 
 static void drm_edp_connector_init_property (struct drm_device *drm,
@@ -3495,7 +4184,8 @@ s32 drm_edp_output_enable(struct sunxi_drm_edp *drm_edp)
 		goto OUT;
 	}
 
-	clk_set_rate(drm_edp->clk, edp_core->timings.pixel_clk / edp_core->pixel_mode);
+	if (!IS_ERR_OR_NULL(drm_edp->clk))
+		clk_set_rate(drm_edp->clk, edp_core->timings.pixel_clk / edp_core->pixel_mode);
 	ret = edp_hw_enable(edp_hw, edp_core);
 	if (ret) {
 		EDP_ERR("edp core enable failed!\n");
@@ -3505,9 +4195,18 @@ s32 drm_edp_output_enable(struct sunxi_drm_edp *drm_edp)
 
 	if (src_cap->ssc_support) {
 		edp_hw_ssc_enable(edp_hw, edp_core->ssc_en ? true : false);
-		if (edp_core->ssc_en)
+		edp_phy_ssc_enable(drm_edp, edp_core->ssc_en ? true : false);
+		if (edp_core->ssc_en) {
 			edp_hw_ssc_set_mode(edp_hw, edp_core->ssc_mode);
+			edp_phy_ssc_set_mode(drm_edp, edp_core->ssc_mode);
+		}
 	}
+
+	ret = edp_main_link_setup(edp_hw, edp_core,
+				  edp_debug->bypass_training ? true : false,
+				  (edp_debug->lane_debug_en && edp_debug->force_level) ? true : false);
+	if (ret < 0)
+		goto OUT;
 
 	// edp need assr enable
 	// note: DP should and must not use ASSR, otherwise panel shows nothing
@@ -3535,11 +4234,13 @@ s32 drm_edp_output_enable(struct sunxi_drm_edp *drm_edp)
 	if (ret < 0)
 		goto OUT;
 
-	if (!edp_debug->bypass_training) {
-		ret = edp_main_link_setup(edp_hw, edp_core);
+	if (src_cap->muti_pixel_mode_support) {
+		ret = edp_hw_set_pixel_mode(edp_hw, edp_core->pixel_mode);
 		if (ret < 0)
 			goto OUT;
 	}
+
+	edp_hw_video_soft_reset(edp_hw);
 
 	edp_hw_link_start(edp_hw);
 
@@ -3653,6 +4354,9 @@ s32 drm_dp_output_bind(struct sunxi_drm_edp *drm_edp)
 		}
 	}
 
+	if (drm_edp->sdrm.video_sys_dev)
+		edp_video_sys_enable(drm_edp->sdrm.video_sys_dev, true);
+
 	ret = edp_clk_enable(drm_edp, true);
 	if (ret) {
 		EDP_ERR("edp_clk_enable fail!!\n");
@@ -3755,11 +4459,27 @@ s32 drm_dp_output_enable(struct sunxi_drm_edp *drm_edp)
 		return RET_FAIL;
 	}
 
+	/*
+	 * some controller need a reset after each plugout when in typec-dp
+	 * application, to ensure working stable. (such as sun60iw2p1)
+	 */
+	if (src_cap->need_reset_before_enable)
+		edp_enable_reset(drm_edp);
+
 	if (src_cap->ssc_support) {
 		edp_hw_ssc_enable(edp_hw, edp_core->ssc_en ? true : false);
-		if (edp_core->ssc_en)
+		edp_phy_ssc_enable(drm_edp, edp_core->ssc_en ? true : false);
+		if (edp_core->ssc_en) {
 			edp_hw_ssc_set_mode(edp_hw, edp_core->ssc_mode);
+			edp_phy_ssc_set_mode(drm_edp, edp_core->ssc_mode);
+		}
 	}
+
+	ret = edp_main_link_setup(edp_hw, edp_core,
+				  edp_debug->bypass_training ? true : false,
+				  (edp_debug->lane_debug_en && edp_debug->force_level) ? true : false);
+	if (ret < 0)
+		return RET_FAIL;
 
 	if (src_cap->enhance_frame_support && sink_cap->enhance_frame_support)
 		edp_hw_enhance_frame_enable(edp_hw, true);
@@ -3779,8 +4499,8 @@ s32 drm_dp_output_enable(struct sunxi_drm_edp *drm_edp)
 	if (ret < 0)
 		return RET_FAIL;
 
-	if (!edp_debug->bypass_training) {
-		ret = edp_main_link_setup(edp_hw, edp_core);
+	if (src_cap->muti_pixel_mode_support) {
+		ret = edp_hw_set_pixel_mode(edp_hw, edp_core->pixel_mode);
 		if (ret < 0)
 			return RET_FAIL;
 	}
@@ -3881,6 +4601,15 @@ s32 drm_dp_output_runtime_suspend(struct sunxi_drm_edp *drm_edp)
 	if (drm_edp->vdd_regulator)
 		regulator_disable(drm_edp->vdd_regulator);
 
+	if (drm_edp->sdrm.video_sys_dev)
+		edp_video_sys_enable(drm_edp->sdrm.video_sys_dev, false);
+
+	pm_runtime_put_sync(drm_edp->dev);
+
+	drm_edp->suspend = true;
+	if (drm_edp->extcon_sink)
+		cancel_delayed_work_sync(&drm_edp->typec_hpd_monitor);
+
 	return ret;
 }
 
@@ -3890,6 +4619,8 @@ s32 drm_dp_output_runtime_resume(struct sunxi_drm_edp *drm_edp)
 	struct edp_debug *edp_debug = &drm_edp->edp_debug;
 	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
 	s32 ret;
+
+	pm_runtime_get_sync(drm_edp->dev);
 
 	edp_core = &drm_edp->edp_core;
 	if (drm_edp->vdd_regulator) {
@@ -3907,6 +4638,9 @@ s32 drm_dp_output_runtime_resume(struct sunxi_drm_edp *drm_edp)
 			goto ERR_VCC;
 		}
 	}
+
+	if (drm_edp->sdrm.video_sys_dev)
+		edp_video_sys_enable(drm_edp->sdrm.video_sys_dev, true);
 
 	ret = edp_clk_enable(drm_edp, true);
 	if (ret) {
@@ -3926,6 +4660,18 @@ s32 drm_dp_output_runtime_resume(struct sunxi_drm_edp *drm_edp)
 			edp_hpd_mask_proc(drm_edp, edp_debug->hpd_mask);
 		}
 	} else {
+		/*
+		 * If use in typec-dp, some displayport panel or branch cable
+		 * or conversion cable might disconnect during suspend, so
+		 * we should assume hpd is disconnect and try to communicate
+		 * with them to decide the actual hpd state
+		 */
+		if (drm_edp->extcon_sink && drm_edp->hpd_state_now) {
+			drm_edp->hpd_state_now = false;
+			if (typec_dp_try_communication(drm_edp))
+				drm_edp->hpd_state_now = true;
+		}
+
 		if (!drm_edp->hpd_state_now)
 			edp_hotplugout_proc(drm_edp);
 		else
@@ -3935,6 +4681,8 @@ s32 drm_dp_output_runtime_resume(struct sunxi_drm_edp *drm_edp)
 		edp_report_hpd_work(drm_edp, drm_edp->hpd_state_now);
 		drm_edp->hpd_state = drm_edp->hpd_state_now;
 	}
+
+	drm_edp->suspend = false;
 
 	return ret;
 
@@ -3981,6 +4729,22 @@ void drm_dp_output_soft_reset(struct sunxi_drm_edp *drm_edp)
 	edp_hw_controller_init(edp_hw, edp_core);
 }
 
+void drm_dp_output_enable_reset(struct sunxi_drm_edp *drm_edp)
+{
+	struct edp_tx_core *edp_core = &drm_edp->edp_core;
+	struct sunxi_edp_hw_desc *edp_hw = &drm_edp->edp_hw;
+	s32 ret;
+
+	ret = edp_clk_enable(drm_edp, false);
+
+	msleep(50);
+
+	ret = edp_clk_enable(drm_edp, true);
+
+	edp_hw_controller_init(edp_hw, edp_core);
+	msleep(10);
+}
+
 struct sunxi_edp_output_desc drm_dp_output = {
 	.hw_id			= 0,
 	.connector_type		= DRM_MODE_CONNECTOR_DisplayPort,
@@ -3992,7 +4756,10 @@ struct sunxi_edp_output_desc drm_dp_output = {
 	.plugout		= drm_dp_output_plugout,
 	.runtime_suspend	= drm_dp_output_runtime_suspend,
 	.runtime_resume		= drm_dp_output_runtime_resume,
+	.suspend                = drm_dp_output_runtime_suspend,
+	.resume                 = drm_dp_output_runtime_resume,
 	.soft_reset		= drm_dp_output_soft_reset,
+	.enable_reset		= drm_dp_output_enable_reset,
 };
 
 
@@ -4002,7 +4769,7 @@ static const struct of_device_id drm_edp_match[] = {
 	{},
 };
 
-static struct device *drm_edp_of_get_tcon(struct device *edp_dev)
+static struct device *edp_of_get_tcon(struct device *edp_dev)
 {
 	struct device_node *node = edp_dev->of_node;
 	struct device_node *tcon_tv_node;
@@ -4069,10 +4836,11 @@ NODE_PUT:
 int sunxi_edp_init_sysfs(struct sunxi_drm_edp *drm_edp)
 {
 	int ret = RET_OK;
-	char edp_class_dev_name[10];
+	char *edp_class_dev_name;
 
 	/*Create and add a character device*/
-	snprintf(edp_class_dev_name, sizeof(edp_class_dev_name), "edp");
+	edp_class_dev_name = kzalloc(32, GFP_KERNEL);
+	snprintf(edp_class_dev_name, 32, "edp");
 	alloc_chrdev_region(&drm_edp->devid, 0, 1, edp_class_dev_name);/*corely for device number*/
 	drm_edp->edp_cdev = cdev_alloc();
 	cdev_init(drm_edp->edp_cdev, &edp_fops);
@@ -4085,7 +4853,7 @@ int sunxi_edp_init_sysfs(struct sunxi_drm_edp *drm_edp)
 	}
 
 	/*Create a path: sys/class/edp*/
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
 	drm_edp->edp_class = class_create(THIS_MODULE, edp_class_dev_name);
 #else
 	drm_edp->edp_class = class_create(edp_class_dev_name);
@@ -4197,6 +4965,27 @@ static int sunxi_edp_register_audio_driver(struct device *dev)
 	return PTR_ERR_OR_ZERO(drm_edp->audio_pdev);
 }
 
+static void drm_edp_typec_hpd_monitor(struct work_struct *work)
+{
+	struct sunxi_drm_edp *drm_edp =
+		container_of(work, struct sunxi_drm_edp, typec_hpd_monitor.work);
+
+	if (drm_edp->extcon_sink == NULL)
+		return;
+
+	mutex_lock(&drm_edp->typec_dp_lock);
+	if (drm_edp->typec_aux_retry > 0 && drm_edp->typec_aux_retry < 30) {
+		if (typec_dp_try_communication(drm_edp)) {
+			drm_edp->typec_aux_retry = 0;
+			drm_edp->hpd_state_now = true;
+		} else {
+			drm_edp->typec_aux_retry++;
+			schedule_delayed_work(&drm_edp->typec_hpd_monitor, msecs_to_jiffies(1 * 1000));
+		}
+	}
+	mutex_unlock(&drm_edp->typec_dp_lock);
+}
+
 static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 			   void *data)
 {
@@ -4248,8 +5037,9 @@ static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 	if (ret < 0)
 		goto OUT;
 
+
 	/* get tcon dev, tcon may need to be init before edp init */
-	tcon_tv_dev = drm_edp_of_get_tcon(dev);
+	tcon_tv_dev = edp_of_get_tcon(dev);
 	if (tcon_tv_dev == NULL) {
 		DRM_ERROR("tcon_tv for edp not found!\n");
 		ret = RET_FAIL;
@@ -4268,6 +5058,7 @@ static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 	sdrm->tcon_id = tcon_id;
 	sdrm->drm_dev = drm;
 	sdrm->hw_id = drm_edp->desc->hw_id;
+	sdrm->video_sys_dev = edp_of_get_video_sys(dev);
 
 	ret = sunxi_edp_init_hardware(drm_edp);
 	if (ret) {
@@ -4307,6 +5098,10 @@ static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 	if (src_cap->audio_support)
 		sunxi_edp_register_audio_driver(dev);
 
+	/* init something for typec application */
+	INIT_DELAYED_WORK(&drm_edp->typec_hpd_monitor, drm_edp_typec_hpd_monitor);
+	mutex_init(&drm_edp->typec_dp_lock);
+
 	EDP_DRV_DBG("edp bind finish!\n");
 	return RET_OK;
 
@@ -4344,6 +5139,33 @@ static const struct component_ops sunxi_drm_edp_component_ops = {
 	.bind = sunxi_drm_edp_bind,
 	.unbind = sunxi_drm_edp_unbind,
 };
+
+static int __maybe_unused sunxi_drm_edp_suspend(struct device *dev)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct sunxi_edp_output_desc *desc = drm_edp->desc;
+
+	if (desc->suspend)
+		desc->suspend(drm_edp);
+
+	return 0;
+}
+
+static int __maybe_unused sunxi_drm_edp_resume(struct device *dev)
+{
+	struct sunxi_drm_edp *drm_edp = dev_get_drvdata(dev);
+	struct sunxi_edp_output_desc *desc = drm_edp->desc;
+
+	if (desc->resume)
+		desc->resume(drm_edp);
+
+	return 0;
+}
+
+static const struct dev_pm_ops sunxi_drm_edp_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(sunxi_drm_edp_suspend, sunxi_drm_edp_resume)
+};
+
 
 static int drm_edp_probe(struct platform_device *pdev)
 {
@@ -4395,6 +5217,7 @@ struct platform_driver sunxi_drm_edp_platform_driver = {
 		   .name = "drm_edp",
 		   .owner = THIS_MODULE,
 		   .of_match_table = drm_edp_match,
+		   .pm = &sunxi_drm_edp_pm_ops,
 	},
 };
 /*End of File*/

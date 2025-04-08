@@ -14,7 +14,7 @@
 #include <sound/soc.h>
 #include <sound/pcm.h>
 
-#include "snd_sunxi_adapter.h"
+#include "snd_sunxi_common.h"
 
 #ifndef __SND_SUNXI_PCM_H
 #define __SND_SUNXI_PCM_H
@@ -37,15 +37,34 @@ struct sunxi_dma_params {
 	/* max buffer set (value must be (2^n)Kbyte) */
 	size_t cma_kbytes;
 	size_t fifo_size;
+
+	/* dma_buf_mode = 0: dynamically allocate DMA buffer;
+	 * dma_buf_mode = 1: allocate DMA buffer when start up.
+	 */
+	unsigned int dma_buf_mode;
+
+	/* for hdmi audio */
+	enum HDMI_FORMAT hdmi_fmt;
+
+	/* runtime->buffer_size should *2 when pcm data is raw data */
+	snd_pcm_uframes_t buffer_size;
+	snd_pcm_uframes_t period_size;
+
+	/* when buffer_size and period_size *2 is true */
+	bool change_size_flag;
+
+	/* DMA area */
+	unsigned char *raw_dma_area;
+	dma_addr_t raw_dma_addr;
+	dma_addr_t pcm_dma_addr;
 };
 
 #if IS_ENABLED(CONFIG_SND_SOC_SUNXI_PCM)
 extern int snd_sunxi_dma_platform_register(struct device *dev);
 extern void snd_sunxi_dma_platform_unregister(struct device *dev);
 
-int sunxi_adpt_register_component(struct device *dev);
-void sunxi_adpt_unregister_component(struct device *dev);
-
+int sunxi_pcm_probe(struct snd_soc_component *component);
+void sunxi_pcm_remove(struct snd_soc_component *component);
 int sunxi_pcm_construct(struct snd_soc_component *component,
 			       struct snd_soc_pcm_runtime *rtd);
 void sunxi_pcm_destruct(struct snd_soc_component *component,
@@ -75,8 +94,7 @@ int sunxi_pcm_mmap(struct snd_soc_component *component,
 
 int sunxi_pcm_copy(struct snd_soc_component *component,
 		   struct snd_pcm_substream *substream, int channel,
-		   unsigned long hwoff, void __user *buf,
-		   unsigned long bytes);
+		   unsigned long hwoff, void __user *buf, unsigned long bytes);
 int sunxi_pcm_prepare(struct snd_soc_component *component,
 		      struct snd_pcm_substream *substream);
 
@@ -92,6 +110,11 @@ static inline void snd_sunxi_dma_platform_unregister(struct device *dev)
 	pr_err("[sound %4d][PCM %s] PCM API is disabled\n", __LINE__, __func__);
 }
 
+static inline int sunxi_pcm_probe(struct snd_soc_component *component)
+{
+	return 0;
+}
+static inline void sunxi_pcm_remove(struct snd_soc_component *component) { }
 static inline int sunxi_pcm_construct(struct snd_soc_component *component,
 				      struct snd_soc_pcm_runtime *rtd)
 {
@@ -144,10 +167,9 @@ static inline int sunxi_pcm_mmap(struct snd_soc_component *component,
 	return 0;
 }
 
-static inline int sunxi_pcm_copy(struct snd_soc_component *component,
-				 struct snd_pcm_substream *substream, int channel,
-				 unsigned long hwoff, void __user *buf,
-				 unsigned long bytes)
+static inline int sunxi_pcm_copy_user(struct snd_soc_component *component,
+				      struct snd_pcm_substream *substream, int channel,
+				      unsigned long hwoff, void __user *buf, unsigned long bytes)
 {
 	return 0;
 }

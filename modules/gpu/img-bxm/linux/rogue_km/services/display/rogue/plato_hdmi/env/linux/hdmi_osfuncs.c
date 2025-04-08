@@ -148,7 +148,7 @@ static ssize_t HdmiDebugFsWrite(struct file *psFile,
 
 	pszBuffer[uiLocCount] = '\0';
 
-	if (strtobool(pszBuffer, &bHDMIEnabled) == 0)
+	if (kstrtobool(pszBuffer, &bHDMIEnabled) == 0)
 	{
 		psDevice->bHDMIEnabled = bHDMIEnabled ? IMG_TRUE : IMG_FALSE;
 	}

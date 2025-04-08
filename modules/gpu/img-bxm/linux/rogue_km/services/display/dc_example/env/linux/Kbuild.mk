@@ -47,6 +47,10 @@ ccflags-y += \
  -I$(TOP)/include/$(PVR_ARCH)/public
 endif
 
+ifneq ($(DC_EXAMPLE_NUM_DEVICES_DEFAULT),)
+ ccflags-y += -DDC_EXAMPLE_NUM_DEVICES_DEFAULT=$(DC_EXAMPLE_NUM_DEVICES_DEFAULT)
+endif
+
 dc_example-y += \
  services/display/dc_example/common/dc_example.o \
  services/display/dc_example/env/linux/ex_osfuncs.o \

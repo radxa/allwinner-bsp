@@ -60,7 +60,6 @@ struct nulldisp_gem_object {
 
 	atomic_t pg_refcnt;
 	struct page **pages;
-	dma_addr_t *addrs; /* Will be NULL for imported buffers. */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 	struct dma_resv _resv;
@@ -78,8 +77,6 @@ int nulldisp_gem_object_get_pages(struct drm_gem_object *obj)
 {
 	struct drm_device *dev = obj->dev;
 	struct nulldisp_gem_object *nulldisp_obj = to_nulldisp_obj(obj);
-	struct page **pages;
-	int err;
 
 	if (WARN_ON(obj->import_attach))
 		return -EEXIST;
@@ -87,39 +84,16 @@ int nulldisp_gem_object_get_pages(struct drm_gem_object *obj)
 	WARN_ON(!mutex_is_locked(&dev->struct_mutex));
 
 	if (atomic_inc_return(&nulldisp_obj->pg_refcnt) == 1) {
-		unsigned int npages = obj->size >> PAGE_SHIFT;
-		dma_addr_t *addrs;
-		unsigned int i;
-
-		pages = drm_gem_get_pages(obj);
+		struct page **pages = drm_gem_get_pages(obj);
 		if (IS_ERR(pages)) {
-			err = PTR_ERR(pages);
-			goto dec_refcnt;
-		}
-
-		addrs = kmalloc_array(npages, sizeof(*addrs), GFP_KERNEL);
-		if (!addrs) {
-			err = -ENOMEM;
-			goto free_pages;
-		}
-
-		for (i = 0; i < npages; i++) {
-			addrs[i] = dma_map_page(dev->dev, pages[i],
-						0, PAGE_SIZE,
-						DMA_BIDIRECTIONAL);
+			atomic_dec(&nulldisp_obj->pg_refcnt);
+			return PTR_ERR(pages);
 		}
 
 		nulldisp_obj->pages = pages;
-		nulldisp_obj->addrs = addrs;
 	}
 
 	return 0;
-
-free_pages:
-	drm_gem_put_pages(obj, pages, false, false);
-dec_refcnt:
-	atomic_dec(&nulldisp_obj->pg_refcnt);
-	return err;
 }
 
 static void nulldisp_gem_object_put_pages(struct drm_gem_object *obj)
@@ -133,26 +107,18 @@ static void nulldisp_gem_object_put_pages(struct drm_gem_object *obj)
 		return;
 
 	if (atomic_dec_and_test(&nulldisp_obj->pg_refcnt)) {
-		unsigned int npages = obj->size >> PAGE_SHIFT;
-		unsigned int i;
-
-		for (i = 0; i < npages; i++) {
-			dma_unmap_page(dev->dev, nulldisp_obj->addrs[i],
-				       PAGE_SIZE, DMA_BIDIRECTIONAL);
-		}
-
-		kfree(nulldisp_obj->addrs);
-		nulldisp_obj->addrs = NULL;
-
 		drm_gem_put_pages(obj, nulldisp_obj->pages, true, true);
 		nulldisp_obj->pages = NULL;
 	}
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0))
-vm_fault_t nulldisp_gem_object_vm_fault(struct vm_fault *vmf)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0))
+typedef int vm_fault_t;
+#endif
+static vm_fault_t nulldisp_gem_object_vm_fault(struct vm_fault *vmf)
 #else
-int nulldisp_gem_object_vm_fault(struct vm_area_struct *vma,
+static int nulldisp_gem_object_vm_fault(struct vm_area_struct *vma,
 				 struct vm_fault *vmf)
 #endif
 {
@@ -185,7 +151,7 @@ int nulldisp_gem_object_vm_fault(struct vm_area_struct *vma,
 	return 0;
 }
 
-void nulldisp_gem_vm_open(struct vm_area_struct *vma)
+static void nulldisp_gem_vm_open(struct vm_area_struct *vma)
 {
 	struct drm_gem_object *obj = vma->vm_private_data;
 
@@ -200,7 +166,7 @@ void nulldisp_gem_vm_open(struct vm_area_struct *vma)
 	}
 }
 
-void nulldisp_gem_vm_close(struct vm_area_struct *vma)
+static void nulldisp_gem_vm_close(struct vm_area_struct *vma)
 {
 	struct drm_gem_object *obj = vma->vm_private_data;
 
@@ -215,6 +181,9 @@ void nulldisp_gem_vm_close(struct vm_area_struct *vma)
 	drm_gem_vm_close(vma);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static
+#endif
 void nulldisp_gem_object_free(struct drm_gem_object *obj)
 {
 	struct nulldisp_gem_object *nulldisp_obj = to_nulldisp_obj(obj);
@@ -235,6 +204,9 @@ void nulldisp_gem_object_free(struct drm_gem_object *obj)
 	kfree(nulldisp_obj);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static
+#endif
 int nulldisp_gem_prime_pin(struct drm_gem_object *obj)
 {
 	struct drm_device *dev = obj->dev;
@@ -247,6 +219,9 @@ int nulldisp_gem_prime_pin(struct drm_gem_object *obj)
 	return err;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static
+#endif
 void nulldisp_gem_prime_unpin(struct drm_gem_object *obj)
 {
 	struct drm_device *dev = obj->dev;
@@ -256,6 +231,9 @@ void nulldisp_gem_prime_unpin(struct drm_gem_object *obj)
 	mutex_unlock(&dev->struct_mutex);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static
+#endif
 struct sg_table *
 nulldisp_gem_prime_get_sg_table(struct drm_gem_object *obj)
 {
@@ -272,65 +250,12 @@ nulldisp_gem_prime_get_sg_table(struct drm_gem_object *obj)
 	return drm_prime_pages_to_sg(obj->dev, nulldisp_obj->pages, nr_pages);
 }
 
-struct drm_gem_object *
-nulldisp_gem_prime_import_sg_table(struct drm_device *dev,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
-				   struct dma_buf_attachment *attach,
-#else
-				   size_t size,
-#endif
-				   struct sg_table *sgt)
-{
-	struct nulldisp_gem_object *nulldisp_obj;
-	struct drm_gem_object *obj;
-	struct page **pages;
-	unsigned int npages;
-
-	nulldisp_obj = kzalloc(sizeof(*nulldisp_obj), GFP_KERNEL);
-	if (!nulldisp_obj)
-		return NULL;
-
-	nulldisp_obj->resv = attach->dmabuf->resv;
-
-	obj = &nulldisp_obj->base;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
-	obj->resv = nulldisp_obj->resv;
-#endif
-
-	drm_gem_private_object_init(dev, obj, attach->dmabuf->size);
-
-	npages = obj->size >> PAGE_SHIFT;
-
-	pages = kmalloc_array(npages, sizeof(*pages), GFP_KERNEL);
-	if (!pages)
-		goto exit_free_arrays;
-
-	if (drm_prime_sg_to_page_array(sgt, pages, npages))
-		goto exit_free_arrays;
-
-	nulldisp_obj->import_sgt = sgt;
-	nulldisp_obj->pages = pages;
-	nulldisp_obj->addrs = NULL;
-
-	return obj;
-
-exit_free_arrays:
-	kfree(pages);
-	drm_prime_gem_destroy(obj, sgt);
-	kfree(nulldisp_obj);
-	return NULL;
-}
-
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 struct dma_buf *nulldisp_gem_prime_export(
 					  struct drm_device *dev,
 					  struct drm_gem_object *obj,
 					  int flags)
 {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0))
-	/* Read/write access required */
-	flags |= O_RDWR;
-#endif
 	return drm_gem_prime_export(dev, obj, flags);
 }
 #endif
@@ -348,7 +273,7 @@ static void *nulldisp_gem_vmap(struct drm_gem_object *obj)
 		return NULL;
 
 
-	return vmap(nulldisp_obj->pages, nr_pages, 0, PAGE_KERNEL);
+	return vmap(nulldisp_obj->pages, nr_pages, VM_MAP, PAGE_KERNEL);
 }
 
 static void nulldisp_gem_vunmap(struct drm_gem_object *obj, void *vaddr)
@@ -357,31 +282,49 @@ static void nulldisp_gem_vunmap(struct drm_gem_object *obj, void *vaddr)
 }
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static
+#endif
 void *nulldisp_gem_prime_vmap(struct drm_gem_object *obj)
 {
 	return nulldisp_gem_vmap(obj);
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static
+#endif
 void nulldisp_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr)
 {
 	nulldisp_gem_vunmap(obj, vaddr);
 }
 #else
-int nulldisp_gem_prime_vmap(struct drm_gem_object *obj, struct dma_buf_map *map)
+static
+int nulldisp_gem_prime_vmap(struct drm_gem_object *obj, struct iosys_map *map)
 {
 	void *vaddr = nulldisp_gem_vmap(obj);
 
-	dma_buf_map_set_vaddr(map, vaddr);
+	iosys_map_set_vaddr_iomem(map, vaddr);
 	return (vaddr == NULL) ? -ENOMEM : 0;
 }
 
-void nulldisp_gem_prime_vunmap(struct drm_gem_object *obj, struct dma_buf_map *map)
+static
+void nulldisp_gem_prime_vunmap(struct drm_gem_object *obj, struct iosys_map *map)
 {
 	nulldisp_gem_vunmap(obj, map->vaddr);
-	dma_buf_map_clear(map);
+	iosys_map_clear(map);
 }
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0) */
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static
+#endif
+const struct vm_operations_struct nulldisp_gem_vm_ops = {
+	.fault	= nulldisp_gem_object_vm_fault,
+	.open	= nulldisp_gem_vm_open,
+	.close	= nulldisp_gem_vm_close,
+};
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0))
 int nulldisp_gem_prime_mmap(struct drm_gem_object *obj,
 			    struct vm_area_struct *vma)
 {
@@ -395,6 +338,86 @@ int nulldisp_gem_prime_mmap(struct drm_gem_object *obj,
 
 	return err;
 }
+#else
+static int nulldisp_gem_obj_mmap(struct drm_gem_object *obj,
+				 struct vm_area_struct *vma)
+{
+	int err;
+
+	mutex_lock(&obj->dev->struct_mutex);
+	err = nulldisp_gem_object_get_pages(obj);
+	/* Required in documentation for drm_gem_object_funcs::mmap */
+	vma->vm_ops = &nulldisp_gem_vm_ops;
+	/* This is what used to be done in drm_gem_mmap_obj() before */
+	pvr_vm_flags_set(vma, VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP);
+	vma->vm_page_prot = pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
+	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
+	mutex_unlock(&obj->dev->struct_mutex);
+
+	return err;
+}
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+static const struct drm_gem_object_funcs nulldisp_gem_funcs = {
+	.export = drm_gem_prime_export,
+	.pin = nulldisp_gem_prime_pin,
+	.unpin = nulldisp_gem_prime_unpin,
+	.get_sg_table = nulldisp_gem_prime_get_sg_table,
+	.vmap = nulldisp_gem_prime_vmap,
+	.vunmap = nulldisp_gem_prime_vunmap,
+	.free = nulldisp_gem_object_free,
+	.mmap = nulldisp_gem_obj_mmap,
+};
+#endif
+
+struct drm_gem_object *
+nulldisp_gem_prime_import_sg_table(struct drm_device *dev,
+				   struct dma_buf_attachment *attach,
+				   struct sg_table *sgt)
+{
+	struct nulldisp_gem_object *nulldisp_obj;
+	struct drm_gem_object *obj;
+	struct page **pages;
+	unsigned int npages;
+
+	nulldisp_obj = kzalloc(sizeof(*nulldisp_obj), GFP_KERNEL);
+	if (!nulldisp_obj)
+		return NULL;
+
+	nulldisp_obj->resv = attach->dmabuf->resv;
+
+	obj = &nulldisp_obj->base;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+	obj->resv = nulldisp_obj->resv;
+#endif
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+	obj->funcs = &nulldisp_gem_funcs;
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) */
+
+	drm_gem_private_object_init(dev, obj, attach->dmabuf->size);
+
+	npages = obj->size >> PAGE_SHIFT;
+
+	pages = kmalloc_array(npages, sizeof(*pages), GFP_KERNEL);
+	if (!pages)
+		goto exit_free_arrays;
+
+	if (drm_prime_sg_to_page_array(sgt, pages, npages))
+		goto exit_free_arrays;
+
+	nulldisp_obj->import_sgt = sgt;
+	nulldisp_obj->pages = pages;
+
+	return obj;
+
+exit_free_arrays:
+	kfree(pages);
+	drm_prime_gem_destroy(obj, sgt);
+	kfree(nulldisp_obj);
+	return NULL;
+}
+
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 struct dma_resv *

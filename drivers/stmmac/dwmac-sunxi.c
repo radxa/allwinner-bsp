@@ -31,7 +31,7 @@
 
 #include "dwmac-sunxi.h"
 
-#define DWMAC_MODULE_VERSION		"0.3.0"
+#define DWMAC_MODULE_VERSION		"0.3.2"
 
 #define MAC_ADDR_LEN			18
 #define SUNXI_DWMAC_MAC_ADDRESS		"00:00:00:00:00:00"
@@ -343,7 +343,7 @@ static void sunxi_dwmac_hw_exit(struct sunxi_dwmac *chip)
 	writel(0, chip->syscfg_base);
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 static int sunxi_dwmac_ecc_init(struct sunxi_dwmac *chip)
 {
 	struct net_device *ndev = dev_get_drvdata(chip->dev);
@@ -444,7 +444,7 @@ err_parse_maps:
 	devm_kfree(&pdev->dev, maps);
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0))
 static void sunxi_dwmac_request_mtl_irq(struct platform_device *pdev, struct sunxi_dwmac *chip,
 		struct plat_stmmacenet_data *plat_dat)
 {
@@ -570,7 +570,7 @@ static int sunxi_dwmac_resource_get(struct platform_device *pdev, struct sunxi_d
 	}
 
 	sunxi_dwmac_parse_delay_maps(chip);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0))
 	if (chip->variant->flags & SUNXI_DWMAC_MULTI_MSI)
 		sunxi_dwmac_request_mtl_irq(pdev, chip, plat_dat);
 #endif
@@ -596,7 +596,7 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	struct sunxi_dwmac *chip;
 	struct device *dev = &pdev->dev;
 	int ret;
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0))
 	char *mac_temp = NULL;
 #endif
 
@@ -619,7 +619,7 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	chip->dev = dev;
 	chip->res = &stmmac_res;
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0))
 	plat_dat = stmmac_probe_config_dt(pdev, stmmac_res.mac);
 #else
 	plat_dat = stmmac_probe_config_dt(pdev, &stmmac_res.mac);
@@ -635,7 +635,7 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	if (ret < 0)
 		return -EINVAL;
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0))
 #ifdef MODULE
 	get_custom_mac_address(1, "eth", stmmac_res.mac);
 #else
@@ -655,10 +655,11 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	plat_dat->init = sunxi_dwmac_init;
 	plat_dat->exit = sunxi_dwmac_exit;
 	/* must use 0~4G space */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
-	plat_dat->addr64 = 32;
-#else
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)) || \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 21)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)))
 	plat_dat->host_dma_width = 32;
+#else
+	plat_dat->addr64 = 32;
 #endif
 	/* Disable Split Header (SPH) feature for sunxi platfrom as default
 	 * The same issue also detect on intel platfrom, see 41eebbf90dfbcc8ad16d4755fe2cdb8328f5d4a7.
@@ -672,13 +673,19 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 #else
 	if (chip->variant->flags & SUNXI_DWMAC_SPH_DISABLE)
 		plat_dat->sph_disable = true;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0))
 	if (chip->variant->flags & SUNXI_DWMAC_MULTI_MSI)
 		plat_dat->multi_msi_en = true;
 #endif
 	chip->interface = plat_dat->interface;
 #endif
 	plat_dat->clk_csr = 4; /* MDC = AHB(200M)/102 = 2M */
+	if (!plat_dat->has_gmac4) {
+		/* force fix dwmac ip version */
+		plat_dat->has_gmac4 = 1;
+		plat_dat->has_gmac = 0;
+		plat_dat->pmt = 1;
+	}
 
 	ret = sunxi_dwmac_init(pdev, plat_dat->bsp_priv);
 	if (ret)
@@ -688,7 +695,7 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_dvr_probe;
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 	if (chip->variant->flags & SUNXI_DWMAC_MEM_ECC) {
 		ret = sunxi_dwmac_ecc_init(chip);
 		if (ret < 0) {
@@ -703,7 +710,7 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	sunxi_info(&pdev->dev, "probe success (Version %s)\n", DWMAC_MODULE_VERSION);
 
 	return 0;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 err_cfg:
 	stmmac_dvr_remove(&pdev->dev);
 #endif
@@ -748,6 +755,8 @@ static int __maybe_unused sunxi_dwmac_suspend(struct device *dev)
 	sunxi_dwmac_exit(pdev, chip);
 	stmmac_bus_clks_config(priv, false);
 
+	sunxi_info(chip->dev, "suspend finish %d\n", ret);
+
 	return ret;
 }
 
@@ -761,26 +770,40 @@ static int __maybe_unused sunxi_dwmac_resume(struct device *dev)
 
 	stmmac_bus_clks_config(priv, true);
 	sunxi_dwmac_init(pdev, chip);
+	if (ndev && ndev->phydev) {
+		phy_device_reset(ndev->phydev, 1);
+		phy_device_reset(ndev->phydev, 0);
+	}
 	ret = stmmac_resume(dev);
 
 	if (ndev && ndev->phydev) {
-		/* State machine change phy state too early before mdio bus resume.
-		 * WARN_ON would print in mdio_bus_phy_resume if state not equal to PHY_HALTED/PHY_READY/PHY_UP.
-		 * Workaround is change the state back to PHY_UP and modify the state machine work so the judgment can be passed.
-		 */
-		rtnl_lock();
-		mutex_lock(&ndev->phydev->lock);
-		if (ndev->phydev->state == PHY_UP || ndev->phydev->state == PHY_NOLINK) {
-			if (ndev->phydev->state == PHY_NOLINK)
-				ndev->phydev->state = PHY_UP;
-			phy_queue_state_machine(ndev->phydev, HZ);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0))
+		if (ndev->phydev->mac_managed_pm) {
+			sunxi_info(chip->dev, "pm managed by mac, hw init phy\n");
+			phy_init_hw(ndev->phydev);
+		} else {
+#endif
+			/* State machine change phy state too early before mdio bus resume.
+			 * WARN_ON would print in mdio_bus_phy_resume if state not equal to PHY_HALTED/PHY_READY/PHY_UP.
+			 * Workaround is change the state back to PHY_UP and modify the state machine work so the judgment can be passed.
+			 */
+			rtnl_lock();
+			mutex_lock(&ndev->phydev->lock);
+			if (ndev->phydev->state == PHY_UP || ndev->phydev->state == PHY_NOLINK) {
+				if (ndev->phydev->state == PHY_NOLINK)
+					ndev->phydev->state = PHY_UP;
+				phy_queue_state_machine(ndev->phydev, HZ);
+			}
+			mutex_unlock(&ndev->phydev->lock);
+			rtnl_unlock();
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0))
 		}
-		mutex_unlock(&ndev->phydev->lock);
-		rtnl_unlock();
-
+#endif
 		/* suspend error workaround */
 		dev_set_uevent_suppress(&ndev->phydev->mdio.dev, chip->uevent_suppress);
 	}
+
+	sunxi_info(chip->dev, "resume finish %d\n", ret);
 
 	return ret;
 }

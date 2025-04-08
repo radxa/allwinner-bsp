@@ -883,8 +883,8 @@ int dw_infoframe_packet(void)
 	struct dw_video_s   *video = &hdmi->video_dev;
 
 	if (video->mHdmi != DW_TMDS_MODE_HDMI) {
-		hdmi_inf("packet not config when dvi mode\n");
-		return -1;
+		hdmi_inf("dw packet unset when dvi mode\n");
+		return 0;
 	}
 
 	_dw_packet_vsi_config();
@@ -909,5 +909,11 @@ int dw_infoframe_packet(void)
 	dw_write_mask(FC_DATAUTO2, FC_DATAUTO2_AUTO_LINE_SPACING_MASK, 0x1);
 
 	hdmi_trace("dw infoframe config done!\n");
+	return 0;
+}
+
+int dw_fc_iteration_process(void)
+{
+	dw_write(FC_INVIDCONF, dw_read(FC_INVIDCONF));
 	return 0;
 }

@@ -13,8 +13,8 @@
  * GNU General Public License for more details.
  */
 
-#include "di_utils.h"
 #include "di_debug.h"
+#include "di_utils.h"
 
 #include <linux/mutex.h>
 #include <linux/list.h>
@@ -23,6 +23,7 @@
 #include <linux/version.h>
 
 static struct device *dma_dev;
+#define TAG "[DI_UTILS]"
 
 void di_utils_set_dma_dev(struct device *dev)
 {
@@ -35,7 +36,7 @@ static void *di_malloc(__u32 bytes_num, uintptr_t *phy_addr)
 {
 	void *address = NULL;
 
-#if defined(CONFIG_ION_SUNXI)
+#if IS_ENABLED(CONFIG_ION_SUNXI)
 	u32 actual_bytes;
 
 	if (bytes_num != 0) {
@@ -83,7 +84,7 @@ static void *di_malloc(__u32 bytes_num, uintptr_t *phy_addr)
 
 static void di_free(void *virt_addr, void *phy_addr, unsigned int size)
 {
-#if defined(CONFIG_ION_SUNXI)
+#if IS_ENABLED(CONFIG_ION_SUNXI)
 	u32 actual_bytes;
 
 	actual_bytes = PAGE_ALIGN(size);
@@ -182,8 +183,13 @@ static struct di_dma_item *di_dma_item_create(
 
 void di_dma_buf_self_unmap(struct di_dma_item *item)
 {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	dma_buf_unmap_attachment_unlocked(item->attach,
+		item->sgt_org, item->dir);
+#else
 	dma_buf_unmap_attachment(item->attach,
 		item->sgt_org, item->dir);
+#endif
 	dma_buf_detach(item->buf, item->attach);
 	dma_buf_put(item->buf);
 	kfree(item);
@@ -293,18 +299,30 @@ struct di_dma_item *di_dma_buf_self_map(
 		goto out_buf_put;
 	}
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	sgt = dma_buf_map_attachment_unlocked(attach, dir);
+	if (IS_ERR_OR_NULL(sgt)) {
+		DI_ERR(TAG"dma_buf_map_attachment_unlocked fail\n");
+		goto out_buf_detach;
+	}
+#else
 	sgt = dma_buf_map_attachment(attach, dir);
 	if (IS_ERR_OR_NULL(sgt)) {
 		DI_ERR(TAG"dma_buf_map_attachment fail\n");
 		goto out_buf_detach;
 	}
+#endif
 
 	dma_item = di_dma_item_create(dmabuf, attach, sgt, dir);
 	if (dma_item != NULL)
 		return dma_item;
 
 /* out_buf_unmap: */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	dma_buf_unmap_attachment_unlocked(attach, sgt, dir);
+#else
 	dma_buf_unmap_attachment(attach, sgt, dir);
+#endif
 
 out_buf_detach:
 	dma_buf_detach(dmabuf, attach);

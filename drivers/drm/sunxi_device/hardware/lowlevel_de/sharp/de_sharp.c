@@ -38,12 +38,11 @@ struct de_sharp_private {
 	u8 demo_hor_end;
 	u8 demo_ver_start;
 	u8 demo_ver_end;
-	u8 demo_en;
 
 	s32 (*de_sharp_enable)(struct de_sharp_handle *hdl, u32 enable);
 	s32 (*de_sharp_set_size)(struct de_sharp_handle *hdl, u32 width, u32 height);
 	s32 (*de_sharp_set_window)(struct de_sharp_handle *hdl,
-		      u32 win_enable, u32 x, u32 y, u32 w, u32 h);
+		      u32 x, u32 y, u32 w, u32 h);
 };
 
 struct de_sharp_handle *de_sharp_create(struct module_create_info *info)
@@ -70,10 +69,10 @@ s32 de_sharp_set_size(struct de_sharp_handle *hdl, u32 width,
 }
 
 s32 de_sharp_set_window(struct de_sharp_handle *hdl,
-		      u32 win_enable, u32 x, u32 y, u32 w, u32 h)
+		      u32 x, u32 y, u32 w, u32 h)
 {
 	if (hdl->private->de_sharp_set_window)
-		return hdl->private->de_sharp_set_window(hdl, win_enable, x, y, w, h);
+		return hdl->private->de_sharp_set_window(hdl, x, y, w, h);
 	else
 		return 0;
 }
@@ -151,26 +150,43 @@ s32 de35x_sharp_set_size(struct de_sharp_handle *hdl, u32 width,
 	mutex_lock(&priv->lock);
 	reg->size.bits.width = width - 1;
 	reg->size.bits.height = height - 1;
+
+	reg->demo_horz.bits.demo_horz_start =
+	    width * priv->demo_hor_start / 100;
+	reg->demo_horz.bits.demo_horz_end =
+	    width * priv->demo_hor_end / 100;
+	reg->demo_vert.bits.demo_vert_start =
+	    height * priv->demo_ver_start / 100;
+	reg->demo_vert.bits.demo_vert_end =
+	    height * priv->demo_ver_end / 100;
+
 	de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
 	return 0;
 }
 
-s32 de35x_sharp_set_window(struct de_sharp_handle *hdl,
-		      u32 win_enable, u32 x, u32 y, u32 w, u32 h)
+s32 de_sharp_set_demo_mode(struct de_sharp_handle *hdl, bool enable)
 {
 	struct de_sharp_private *priv = hdl->private;
 	struct sharp_reg *reg = de35x_get_sharp_shadow_reg(priv);
 
 	mutex_lock(&priv->lock);
-	if (win_enable) {
-		reg->demo_horz.bits.demo_horz_start = x;
-		reg->demo_horz.bits.demo_horz_end = x + w - 1;
-		reg->demo_vert.bits.demo_vert_start = y;
-		reg->demo_vert.bits.demo_vert_end = y + h - 1;
-	}
-	reg->ctrl.bits.demo_en = win_enable;
+	reg->ctrl.bits.demo_en = enable ? 1 : 0;
+	mutex_unlock(&priv->lock);
 	de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
+	return 0;
+}
+
+s32 de35x_sharp_set_window(struct de_sharp_handle *hdl,
+		      u32 x, u32 y, u32 w, u32 h)
+{
+	struct de_sharp_private *priv = hdl->private;
+
+	mutex_lock(&priv->lock);
+	priv->demo_hor_start = x;
+	priv->demo_hor_end = x + w;
+	priv->demo_ver_start = y;
+	priv->demo_ver_end = y + h - 1;
 	mutex_unlock(&priv->lock);
 
 	return 0;
@@ -364,7 +380,7 @@ int de_sharp_pq_proc(struct de_sharp_handle *hdl, sharp_de35x_t *para)
 
 	if (para->cmd == PQ_READ) {
 		para->value[0] = reg->ctrl.bits.en;
-		/*para->value[1] = reg->ctrl.bits.demo_en;*/
+		para->value[1] = reg->ctrl.bits.demo_en;
 		para->value[2] = reg->horz_smooth.bits.hsmooth_en;
 		para->value[3] = reg->strengths.bits.strength_bp2;
 		para->value[4] = reg->strengths.bits.strength_bp1;
@@ -393,10 +409,9 @@ int de_sharp_pq_proc(struct de_sharp_handle *hdl, sharp_de35x_t *para)
 		para->value[23] = priv->demo_hor_end;
 		para->value[24] = priv->demo_ver_start;
 		para->value[25] = priv->demo_ver_end;
-		para->value[1] = priv->demo_en;
 	} else {
 		reg->ctrl.bits.en = para->value[0];
-		/*reg->ctrl.bits.demo_en = para->value[1];*/
+		reg->ctrl.bits.demo_en = para->value[1];
 		reg->horz_smooth.bits.hsmooth_en = para->value[2];
 		reg->strengths.bits.strength_bp2 = para->value[3];
 		reg->strengths.bits.strength_bp1 = para->value[4];
@@ -425,16 +440,14 @@ int de_sharp_pq_proc(struct de_sharp_handle *hdl, sharp_de35x_t *para)
 		priv->demo_hor_end = para->value[23];
 		priv->demo_ver_start = para->value[24];
 		priv->demo_ver_end = para->value[25];
-		priv->demo_en = para->value[1];
-		reg->ctrl.bits.demo_en = priv->demo_en;
 		reg->demo_horz.bits.demo_horz_start =
-		    reg->size.bits.width * priv->demo_hor_start / 100;
+		    (reg->size.bits.width + 1) * priv->demo_hor_start / 100;
 		reg->demo_horz.bits.demo_horz_end =
-		    reg->size.bits.width * priv->demo_hor_end / 100;
+		    (reg->size.bits.width + 1) * priv->demo_hor_end / 100;
 		reg->demo_vert.bits.demo_vert_start =
-		    reg->size.bits.height * priv->demo_ver_start / 100;
+		    (reg->size.bits.height + 1) * priv->demo_ver_start / 100;
 		reg->demo_vert.bits.demo_vert_end =
-		    reg->size.bits.height * priv->demo_ver_end / 100;
+		    (reg->size.bits.height + 1) * priv->demo_ver_end / 100;
 		de_sharp_request_update(priv, SHARP_PARA_REG_BLK, 1);
 	}
 	return 0;

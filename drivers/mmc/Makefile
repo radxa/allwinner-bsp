@@ -7,6 +7,7 @@ ccflags-y += -I $(srctree)/include/linux/reset
 ccflags-y += -I $(srctree)/drivers/pinctrl/sunxi
 ccflags-y +=  -I $(srctree)/drivers/mmc/core/
 ccflags-y +=  -I $(srctree)/drivers/mmc/host
+ccflags-y += -DDYNAMIC_DEBUG_MODULE
 obj-$(CONFIG_AW_MMC)		+= sunxi_mmc_host.o
 obj-$(CONFIG_AW_MMC_HSQ)               += mmc_hsq.o
 sunxi_mmc_host-$(CONFIG_ARCH_SUN8IW10P1)         += sunxi-smhc.o sunxi-mmc-v5px.o

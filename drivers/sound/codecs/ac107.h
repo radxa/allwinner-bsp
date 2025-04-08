@@ -436,6 +436,8 @@ struct ac107_data {
 
 	unsigned int pcm_bit_first:1;
 	unsigned int frame_sync_width;
+
+	unsigned int dout_drive_level;
 };
 
 #endif

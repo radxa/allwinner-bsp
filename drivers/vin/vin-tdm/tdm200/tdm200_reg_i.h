@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -128,7 +128,6 @@
 #define RX1_HEAD_FIFO_FULL_1			(1 << 23)
 #define LBC0_ERROR				(1 << 24)
 #define LBC1_ERROR				(1 << 25)
-
 
 #define TDM_INTERNAL_STATUS2_REG_OFF		0X028
 #define RX_BUF_FULL_ST				(0XF << 0)

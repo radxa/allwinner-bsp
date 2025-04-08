@@ -38,12 +38,9 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### ###########################################################################
 
-ifneq ($(SERVICES_SC),1)
-
 modules := plato_hdmi
 
 plato_hdmi_type := kernel_module
 plato_hdmi_target := plato_hdmi.ko
 plato_hdmi_makefile := $(THIS_DIR)/Kbuild.mk
 
-endif # SERVICES_SC

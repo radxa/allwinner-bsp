@@ -24,6 +24,7 @@
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include <linux/reset.h>
+#include <linux/version.h>
 
 #include "../common/di_utils.h"
 #include "../common/di_debug.h"
@@ -32,6 +33,7 @@
 #include "di_dev.h"
 
 #define DI_MODULE_NAME "deinterlace"
+#define TAG "[DI]"
 
 #define DI_VERSION_MAJOR 1
 #define DI_VERSION_MINOR 0
@@ -322,8 +324,14 @@ static int di_init_hw(struct di_driver_data *drvdata)
 
 static int di_clk_enable(struct di_driver_data *drvdata)
 {
-	if (!IS_ERR_OR_NULL(drvdata->iclk)) {
-		int ret = clk_prepare_enable(drvdata->iclk);
+	if (!IS_ERR_OR_NULL(drvdata->iclk) && !IS_ERR_OR_NULL(drvdata->clk_source)) {
+		int ret = clk_prepare_enable(drvdata->clk_source);
+		if (ret) {
+			DI_ERR(TAG"try to enable di source clk failed!\n");
+			return ret;
+		}
+
+		ret = clk_prepare_enable(drvdata->iclk);
 
 		if (ret) {
 			DI_ERR(TAG"try to enable di clk failed!\n");
@@ -343,14 +351,40 @@ static int di_clk_enable(struct di_driver_data *drvdata)
 
 static int di_clk_disable(struct di_driver_data *drvdata)
 {
-	if (!IS_ERR_OR_NULL(drvdata->iclk)) {
+	if (!IS_ERR_OR_NULL(drvdata->iclk) && !IS_ERR_OR_NULL(drvdata->clk_source)) {
 		clk_disable_unprepare(drvdata->iclk);
+		clk_disable_unprepare(drvdata->clk_source);
 		if (!IS_ERR_OR_NULL(drvdata->rst_bus_di))
 			reset_control_assert(drvdata->rst_bus_di);
 
 	} else
 		DI_INFO(TAG"di clk handle is invalid!\n");
 	return 0;
+}
+
+static int di_clk_init(struct di_driver_data *drvdata)
+{
+	int ret = 0;
+	long rate = 0;
+
+	ret = clk_set_parent(drvdata->iclk, drvdata->clk_source);
+	if (ret != 0) {
+		DI_ERR(TAG"clk_set_parent() failed! return %d\n", ret);
+		goto err;
+	}
+
+	rate = clk_round_rate(drvdata->iclk, drvdata->iclk_freq);
+	if (clk_set_rate(drvdata->iclk, rate)) {
+		DI_ERR(TAG"clk_set_rate failed\n");
+		goto err;
+	}
+
+	return clk_get_rate(drvdata->iclk);
+
+err:
+	clk_disable_unprepare(drvdata->iclk);
+
+	return -1;
 }
 
 static int di_check_enable_device_locked(
@@ -561,6 +595,14 @@ int di_drv_process_fb(struct di_client *c)
 	if (ret)
 		return ret;
 
+	if (c->fb_arg.size.width >= 1920
+		&& c->fb_arg.size.height >= 1080
+		&& clk_get_rate(drvdata->iclk) < 600000000) {
+		clk_set_rate(drvdata->iclk, 600000000);
+	} else {
+		clk_set_rate(drvdata->iclk, drvdata->iclk_freq);
+	}
+
 	ret = di_dev_apply(c);
 
 	spin_lock_irqsave(&drvdata->queue_lock, flags);
@@ -657,6 +699,30 @@ static int di_parse_dt(struct platform_device *pdev,
 		goto err_out;
 	}
 
+	drvdata->clk_bus = of_clk_get(node, 1);
+	if (IS_ERR_OR_NULL(drvdata->clk_bus)) {
+		DI_ERR(TAG"get clk bus clock failed!\n");
+		ret = -1;
+		if (IS_ERR(drvdata->clk_bus))
+			ret = PTR_ERR(drvdata->clk_bus);
+		goto err_out;
+	}
+
+	drvdata->clk_source = of_clk_get(node, 2);
+	if (IS_ERR_OR_NULL(drvdata->clk_source)) {
+		DI_ERR(TAG"get clk_source clock failed!\n");
+		ret = -1;
+		if (IS_ERR(drvdata->clk_source))
+			ret = PTR_ERR(drvdata->clk_source);
+		goto err_out;
+	}
+
+	ret = of_property_read_u32(node, "clock-frequency", &drvdata->iclk_freq);
+	if (ret) {
+		DI_ERR("Failed to get di clock frequency\n");
+		goto err_out;
+	}
+
 	drvdata->rst_bus_di = devm_reset_control_get(&pdev->dev, "rst_bus_di");
 	if (IS_ERR(drvdata->rst_bus_di)) {
 		DI_ERR(TAG"get di bus reset control  failed!\n");
@@ -664,12 +730,6 @@ static int di_parse_dt(struct platform_device *pdev,
 		goto err_out;
 	}
 
-	drvdata->clk_bus = of_clk_get(node, 1);
-	if (IS_ERR_OR_NULL(drvdata->clk_bus)) {
-		DI_ERR(TAG"get clk_source clock failed!\n");
-		ret = PTR_ERR(drvdata->clk_bus);
-		goto err_out;
-	}
 	/* fixme: set iclk's parent as clk_source */
 
 	/* irq */
@@ -721,11 +781,18 @@ static int di_probe(struct platform_device *pdev)
 	if (ret)
 		goto probe_done;
 
+	ret = di_clk_init(drvdata);
+	if (ret < 0)
+		goto probe_done;
+
+	/*
 	reset_control_deassert(drvdata->rst_bus_di);
+
 	clk_prepare_enable(drvdata->iclk);
 
 	if (!IS_ERR_OR_NULL(drvdata->clk_bus))
 		clk_prepare_enable(drvdata->clk_bus);
+	*/
 
 	di_utils_set_dma_dev(&pdev->dev);
 
@@ -746,7 +813,13 @@ static int di_probe(struct platform_device *pdev)
 		DI_ERR(TAG"cdev add major(%d).\n", MAJOR(drvdata->devt));
 		goto probe_done;
 	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	drvdata->pclass = class_create(DI_MODULE_NAME);
+#else
 	drvdata->pclass = class_create(THIS_MODULE, DI_MODULE_NAME);
+#endif
+
 	if (IS_ERR(drvdata->pclass)) {
 		DI_ERR(TAG"create class error\n");
 		ret = PTR_ERR(drvdata->pclass);
@@ -897,3 +970,6 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("zhengwanyu@allwinnertech.com");
 MODULE_DESCRIPTION("Sunxi De-Interlace");
 MODULE_VERSION("1.0.0");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+MODULE_IMPORT_NS(DMA_BUF);
+#endif

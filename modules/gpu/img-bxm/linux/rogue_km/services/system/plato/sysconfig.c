@@ -1949,14 +1949,23 @@ static PVRSRV_ERROR ConfigPlato(SYS_DATA *psDevData)
 	#endif
 }
 
+#if PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL
+#if defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS)
+/* Variant of the uConfig of the GPU_LOCAL heap. */
+#define GPU_LOCAL_HEAP_CONFIG_TYPE sDLM
+#else /* defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS) */
+#define GPU_LOCAL_HEAP_CONFIG_TYPE sLMA
+#endif /* defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS) */
+#endif /* PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL */
+
 static PVRSRV_ERROR PlatoLocalMemoryTest(PVRSRV_DEVICE_CONFIG *psDevConfig)
 {
 	IMG_UINT64 i, j = 0;
 	IMG_UINT32 tmp = 0;
 	IMG_UINT32 chunk = sizeof(IMG_UINT32) * 10;
 
-	IMG_UINT64 ui64TestMemoryBase = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sStartAddr.uiAddr;
-	IMG_UINT64 ui64TestMemorySize = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uiSize;
+	IMG_UINT64 ui64TestMemoryBase = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sStartAddr.uiAddr;
+	IMG_UINT64 ui64TestMemorySize = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.uiSize;
 
 	PVR_LOG(("- %s: Starting Local memory test from "
 			 "0x%llx to 0x%llx (in CPU space)",
@@ -2058,43 +2067,17 @@ static INLINE void ReleaseLocalMappableMemory(IMG_HANDLE hPCI,
 
 #if (PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL) || (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HYBRID)
 
-static PVRSRV_ERROR InitLocalMemory(SYS_DATA *psDevData,
-									PHYS_HEAP_CONFIG *pasPhysHeaps,
-									IMG_UINT32 uiPhysHeapCount,
-									IMG_HANDLE hPhysHeapPrivData)
+static void ConfigureMappableHeapRegion(SYS_DATA *psDevData,
+                                        IMG_DEV_PHYADDR *psCardBase,
+                                        IMG_CPU_PHYADDR *psStartAddr,
+                                        IMG_UINT64 *puiSize)
 {
 	IMG_UINT64 ui64MappedMemSize = psDevData->ui64MappedMemSize;
 	IMG_UINT64 ui64MappedMemCpuPAddr = psDevData->ui64MappedMemCpuPAddr;
 	IMG_UINT64 ui64MappedMemDevPAddr;
-	PHYS_HEAP_CONFIG *psPhysHeap;
-
-#if (RGX_NUM_OS_SUPPORTED > 1)
-	IMG_UINT64 uiFwCarveoutSize;
-#if defined(SUPPORT_AUTOVZ)
-	/* Carveout out enough LMA memory to hold the heaps of
-	 * all supported OSIDs and the FW page tables */
-	uiFwCarveoutSize = (RGX_NUM_OS_SUPPORTED * RGX_FIRMWARE_RAW_HEAP_SIZE) +
-						RGX_FIRMWARE_MAX_PAGETABLE_SIZE;
-#elif defined(RGX_VZ_STATIC_CARVEOUT_FW_HEAPS)
-	/* Carveout out enough LMA memory to hold the heaps of all supported OSIDs */
-	uiFwCarveoutSize = (RGX_NUM_OS_SUPPORTED * RGX_FIRMWARE_RAW_HEAP_SIZE);
-#else
-	/* Create a memory carveout just for the Host's Firmware heap.
-	 * Guests will allocate their own physical memory. */
-	uiFwCarveoutSize = RGX_FIRMWARE_RAW_HEAP_SIZE;
-#endif
-#endif /* (RGX_NUM_OS_SUPPORTED > 1) */
-
-
-	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL];
-	psPhysHeap->eType = PHYS_HEAP_TYPE_LMA;
-	psPhysHeap->pszPDumpMemspaceName = "LMA";
-	psPhysHeap->psMemFuncs = &gsLocalPhysHeapFuncs;
-	psPhysHeap->hPrivData = hPhysHeapPrivData;
-	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_GPU_LOCAL;
 
 	/* Configure mappable heap region */
-	psPhysHeap->sCardBase.uiAddr = PLATO_DDR_DEV_PHYSICAL_BASE;
+	psCardBase->uiAddr = PLATO_DDR_DEV_PHYSICAL_BASE;
 
 	if (!PLATO_HAS_NON_MAPPABLE(psDevData))
 	{
@@ -2131,11 +2114,13 @@ static PVRSRV_ERROR InitLocalMemory(SYS_DATA *psDevData,
 		 * below based on the mapped memory size (BAR).
 		 */
 		{
-			IMG_UINT32 ui32Shift = 0;
-			IMG_UINT64 ui64Mask;
-			ui32Shift = __builtin_ffsll(psDevData->ui64MappedMemSize)-1;
+#if defined(__linux__)
+			IMG_UINT32 ui32Shift = __ffs64(psDevData->ui64MappedMemSize);
+#else
+			IMG_UINT32 ui32Shift = __builtin_ffsll(psDevData->ui64MappedMemSize)-1;
+#endif
+			IMG_UINT64 ui64Mask = (1ULL << (35U-ui32Shift)) - 1ULL;
 			PVR_ASSERT(ui32Shift < 35U);
-			ui64Mask = (1ULL << (35U-ui32Shift)) - 1ULL;
 			PVR_ASSERT(ui64Mask != 0);
 
 			ui64MappedMemDevPAddr += ui64MappedMemCpuPAddr & (ui64Mask << ui32Shift);
@@ -2161,109 +2146,263 @@ static PVRSRV_ERROR InitLocalMemory(SYS_DATA *psDevData,
 	/* Confidence check on mapped device physical address */
 	PVR_ASSERT(ui64MappedMemDevPAddr >= PLATO_DDR_ALIASED_DEV_PHYSICAL_BASE && ui64MappedMemDevPAddr < PLATO_DDR_ALIASED_DEV_PHYSICAL_END);
 
-	psPhysHeap->sStartAddr.uiAddr = ui64MappedMemCpuPAddr;
-	psPhysHeap->sCardBase.uiAddr = ui64MappedMemDevPAddr;
-	psPhysHeap->uiSize = ui64MappedMemSize;
-#if (RGX_NUM_OS_SUPPORTED > 1)
-	psPhysHeap->uiSize -= uiFwCarveoutSize;
+	psCardBase->uiAddr = ui64MappedMemDevPAddr;
+	psStartAddr->uiAddr = ui64MappedMemCpuPAddr;
+	*puiSize = ui64MappedMemSize;
+}
+
+static void ConfigureNonMappableHeapRegion(SYS_DATA *psDevData,
+                                           IMG_UINT64 ui64MappedMemDevPAddr,
+                                           IMG_DEV_PHYADDR *psCardBase,
+                                           IMG_CPU_PHYADDR *psStartAddr,
+                                           IMG_UINT64 *puiSize)
+{
+	/* Setup non-mappable region if BAR size is less than actual memory size (8GB) */
+	IMG_UINT64 ui64PrecedingRegionBase = 0;
+	IMG_UINT64 ui64PrecedingRegionSize = 0;
+	IMG_UINT64 ui64FollowingRegionBase = 0;
+	IMG_UINT64 ui64FollowingRegionSize = 0;
+
+	/*
+	 * If mapped region is not at the base of memory,
+	 * then it is preceded by a non-mappable region
+	 */
+	 ui64PrecedingRegionBase = PLATO_DDR_ALIASED_DEV_PHYSICAL_BASE;
+	 ui64PrecedingRegionSize = ui64MappedMemDevPAddr - ui64PrecedingRegionBase;
+
+	/*
+	 * If mapped region is not at the end of memory,
+	 * then it is followed by a non-mappable region
+	 */
+	ui64FollowingRegionBase = ui64MappedMemDevPAddr + psDevData->ui64MappedMemSize;
+	ui64FollowingRegionSize =
+		PLATO_DDR_ALIASED_DEV_PHYSICAL_END - (ui64MappedMemDevPAddr + psDevData->ui64MappedMemSize);
+
+	/* Use only bigger region for now */
+	if (ui64FollowingRegionSize > ui64PrecedingRegionSize)
+	{
+		psCardBase->uiAddr = ui64FollowingRegionBase;
+		*puiSize = ui64FollowingRegionSize;
+	}
+	else
+	{
+		psCardBase->uiAddr = ui64PrecedingRegionBase;
+		*puiSize = ui64PrecedingRegionSize;
+	}
+
+	psStartAddr->uiAddr = 0;
+}
+
+#if (PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL) && defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS)
+#define MBtoBytes(val) ((val) << 20)
+
+/* Limited to PLATO_MEMORY_LOCAL */
+#define PHYS_HEAP_SHARED_ID_DLM_BAR PHYS_HEAP_ID_GPU_LOCAL /* 0 */
+#define PHYS_HEAP_SHARED_ID_PDP_LOCAL PHYS_HEAP_ID_PDP_LOCAL /* 1 */
+#define PHYS_HEAP_SHARED_ID_DLM_PRIV PHYS_HEAP_ID_NON_MAPPABLE /* 2 */
+#define PHYS_HEAP_SHARED_ID_GPU_LOCAL 3
+#define PHYS_HEAP_SHARED_ID_GPU_PRIV 4
+#define PHYS_HEAP_DLM_PMB_SHIFT 26 /* 64 MB */
+static PVRSRV_ERROR InitSharedLocalMemory(SYS_DATA *psDevData,
+                                          PHYS_HEAP_CONFIG *pasPhysHeaps,
+                                          IMG_UINT32 uiPhysHeapCount,
+                                          IMG_HANDLE hPhysHeapPrivData)
+{
+	IMG_UINT64 ui64MappedMemDevPAddr;
+	PHYS_HEAP_CONFIG *psPhysHeap;
+	IMG_UINT64 uiCarveoutSize = 0
+		#if defined(SUPPORT_DISPLAY_CLASS)
+		+ RGX_PLATO_RESERVE_DC_MEM_SIZE
+		#endif /* SUPPORT_DISPLAY_CLASS */
+	; /* uiCarveoutSize */
+
+	/* Configure DLM BAR heap */
+	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_SHARED_ID_DLM_BAR];
+	psPhysHeap->eType = PHYS_HEAP_TYPE_DLM_BAR;
+	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_DLM;
+	psPhysHeap->uConfig.sDLM.pszHeapName = "dlm_bar";
+	psPhysHeap->uConfig.sDLM.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sDLM.hPrivData = hPhysHeapPrivData;
+	psPhysHeap->uConfig.sDLM.ui32Log2PMBSize = PHYS_HEAP_DLM_PMB_SHIFT;
+	ConfigureMappableHeapRegion(psDevData,
+	                            &psPhysHeap->uConfig.sDLM.sCardBase,
+	                            &psPhysHeap->uConfig.sDLM.sStartAddr,
+	                            &psPhysHeap->uConfig.sDLM.uiSize);
+	psPhysHeap->uConfig.sDLM.uiSize -= uiCarveoutSize;
+	ui64MappedMemDevPAddr = psPhysHeap->uConfig.sDLM.sCardBase.uiAddr;
+
+	/* Configure DLM PRIV heap */
+	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_SHARED_ID_DLM_PRIV];
+	psPhysHeap->eType = PHYS_HEAP_TYPE_DLM_PRIV;
+	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_DLM;
+	psPhysHeap->uConfig.sDLM.pszHeapName = "dlm_priv";
+	psPhysHeap->uConfig.sDLM.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sDLM.hPrivData = hPhysHeapPrivData;
+	psPhysHeap->uConfig.sDLM.ui32Log2PMBSize = PHYS_HEAP_DLM_PMB_SHIFT;
+	ConfigureNonMappableHeapRegion(psDevData,
+	                               ui64MappedMemDevPAddr,
+	                               &psPhysHeap->uConfig.sDLM.sCardBase,
+	                               &psPhysHeap->uConfig.sDLM.sStartAddr,
+	                               &psPhysHeap->uConfig.sDLM.uiSize);
+
+	/* Configure GPU LOCAL heap */
+	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_SHARED_ID_GPU_LOCAL];
+	psPhysHeap->eType = PHYS_HEAP_TYPE_IMA_BAR;
+	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_GPU_LOCAL;
+	psPhysHeap->uConfig.sIMA.pszPDumpMemspaceName = "LMA";
+	psPhysHeap->uConfig.sIMA.pszHeapName = "ima_gpu_local";
+	psPhysHeap->uConfig.sIMA.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sIMA.hPrivData = hPhysHeapPrivData;
+	psPhysHeap->uConfig.sIMA.ui32PMBStartingMultiple = 0;
+
+	/* Configure GPU PRIV heap */
+	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_SHARED_ID_GPU_PRIV];
+	psPhysHeap->eType = PHYS_HEAP_TYPE_IMA_PRIV;
+	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_GPU_PRIVATE;
+	psPhysHeap->uConfig.sIMA.pszPDumpMemspaceName = "LMA";
+	psPhysHeap->uConfig.sIMA.pszHeapName = "ima_gpu_private";
+	psPhysHeap->uConfig.sIMA.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sIMA.hPrivData = hPhysHeapPrivData;
+	psPhysHeap->uConfig.sIMA.ui32PMBStartingMultiple = 1;
+
+	/* Configure PDP LOCAL heap */
+#if defined(SUPPORT_DISPLAY_CLASS)
+	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_SHARED_ID_PDP_LOCAL];
+	psPhysHeap->eType = PHYS_HEAP_TYPE_LMA;
+	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_DISPLAY;
+	psPhysHeap->uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+	psPhysHeap->uConfig.sLMA.pszHeapName = "lma_pdp_local_display";
+	psPhysHeap->uConfig.sLMA.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sLMA.hPrivData = hPhysHeapPrivData;
+
+	psPhysHeap->uConfig.sLMA.sCardBase.uiAddr = PLATO_DDR_DEV_PHYSICAL_BASE;
+	psPhysHeap->uConfig.sLMA.sStartAddr.uiAddr =
+		pasPhysHeaps[PHYS_HEAP_SHARED_ID_DLM_BAR].uConfig.sDLM.sStartAddr.uiAddr +
+		pasPhysHeaps[PHYS_HEAP_SHARED_ID_DLM_BAR].uConfig.sDLM.uiSize;
+	psPhysHeap->uConfig.sLMA.uiSize = RGX_PLATO_RESERVE_DC_MEM_SIZE;
+
+#endif /* defined(SUPPORT_DISPLAY_CLASS) */
+
+	return PVRSRV_OK;
+}
+
+#else /* (PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL) && defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS) */
+
+static PVRSRV_ERROR InitLocalMemory(SYS_DATA *psDevData,
+									PHYS_HEAP_CONFIG *pasPhysHeaps,
+									IMG_UINT32 uiPhysHeapCount,
+									IMG_HANDLE hPhysHeapPrivData)
+{
+	IMG_UINT64 ui64MappedMemDevPAddr;
+	PHYS_HEAP_CONFIG *psPhysHeap;
+
+#if (RGX_NUM_DRIVERS_SUPPORTED > 1)
+	IMG_UINT64 uiFwCarveoutSize;
+#if defined(SUPPORT_AUTOVZ)
+	/* Carveout out enough LMA memory to hold the heaps of
+	 * all supported OSIDs and the FW page tables */
+	uiFwCarveoutSize = (RGX_NUM_DRIVERS_SUPPORTED * RGX_FIRMWARE_RAW_HEAP_SIZE) +
+						RGX_FIRMWARE_MAX_PAGETABLE_SIZE;
+#elif defined(RGX_VZ_STATIC_CARVEOUT_FW_HEAPS)
+	/* Carveout out enough LMA memory to hold the heaps of all supported OSIDs */
+	uiFwCarveoutSize = (RGX_NUM_DRIVERS_SUPPORTED * RGX_FIRMWARE_RAW_HEAP_SIZE);
+#else
+	/* Create a memory carveout just for the Host's Firmware heap.
+	 * Guests will allocate their own physical memory. */
+	uiFwCarveoutSize = RGX_FIRMWARE_RAW_HEAP_SIZE;
+#endif
+#endif /* (RGX_NUM_DRIVERS_SUPPORTED > 1) */
+
+
+	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL];
+	psPhysHeap->eType = PHYS_HEAP_TYPE_LMA;
+	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_GPU_LOCAL;
+	psPhysHeap->uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+	psPhysHeap->uConfig.sLMA.pszHeapName = "lma_gpu_local";
+	psPhysHeap->uConfig.sLMA.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sLMA.hPrivData = hPhysHeapPrivData;
+
+	ConfigureMappableHeapRegion(psDevData,
+	                            &psPhysHeap->uConfig.sLMA.sCardBase,
+	                            &psPhysHeap->uConfig.sLMA.sStartAddr,
+	                            &psPhysHeap->uConfig.sLMA.uiSize);
+	ui64MappedMemDevPAddr = psPhysHeap->uConfig.sLMA.sCardBase.uiAddr;
+
+#if (RGX_NUM_DRIVERS_SUPPORTED > 1)
+	psPhysHeap->uConfig.sLMA.uiSize -= uiFwCarveoutSize;
 #endif
 #if defined(SUPPORT_DISPLAY_CLASS)
-	psPhysHeap->uiSize -= RGX_PLATO_RESERVE_DC_MEM_SIZE;
+	psPhysHeap->uConfig.sLMA.uiSize -= RGX_PLATO_RESERVE_DC_MEM_SIZE;
 #endif
 
 	/* Setup non-mappable region if BAR size is less than actual memory size (8GB) */
 	if (PLATO_HAS_NON_MAPPABLE(psDevData))
 	{
-		IMG_UINT64 ui64PrecedingRegionBase = 0;
-		IMG_UINT64 ui64PrecedingRegionSize = 0;
-		IMG_UINT64 ui64FollowingRegionBase = 0;
-		IMG_UINT64 ui64FollowingRegionSize = 0;
-
 		psPhysHeap = &pasPhysHeaps[PHYS_HEAP_ID_NON_MAPPABLE];
 		psPhysHeap->eType = PHYS_HEAP_TYPE_LMA;
-		psPhysHeap->pszPDumpMemspaceName = "LMA";
-		psPhysHeap->psMemFuncs = &gsLocalPhysHeapFuncs;
-		psPhysHeap->hPrivData = hPhysHeapPrivData;
 		psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_GPU_PRIVATE;
-		psPhysHeap->sCardBase.uiAddr = PLATO_DDR_DEV_PHYSICAL_BASE;
+		psPhysHeap->uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+		psPhysHeap->uConfig.sLMA.pszHeapName = "lma_gpu_private";
+		psPhysHeap->uConfig.sLMA.psMemFuncs = &gsLocalPhysHeapFuncs;
+		psPhysHeap->uConfig.sLMA.hPrivData = hPhysHeapPrivData;
 
-		/*
-		 * If mapped region is not at the base of memory,
-		 * then it is preceded by a non-mappable region
-		 */
-		 ui64PrecedingRegionBase = PLATO_DDR_ALIASED_DEV_PHYSICAL_BASE;
-		 ui64PrecedingRegionSize = ui64MappedMemDevPAddr - ui64PrecedingRegionBase;
-
-		/*
-		 * If mapped region is not at the end of memory,
-		 * then it is followed by a non-mappable region
-		 */
-		ui64FollowingRegionBase = ui64MappedMemDevPAddr + psDevData->ui64MappedMemSize;
-		ui64FollowingRegionSize =
-			PLATO_DDR_ALIASED_DEV_PHYSICAL_END - (ui64MappedMemDevPAddr + psDevData->ui64MappedMemSize);
-
-		/* Use only bigger region for now */
-		if (ui64FollowingRegionSize > ui64PrecedingRegionSize)
-		{
-			psPhysHeap->sCardBase.uiAddr = ui64FollowingRegionBase;
-			psPhysHeap->uiSize = ui64FollowingRegionSize;
-		}
-		else
-		{
-			psPhysHeap->sCardBase.uiAddr = ui64PrecedingRegionBase;
-			psPhysHeap->uiSize = ui64PrecedingRegionSize;
-		}
-
-		psPhysHeap->sStartAddr.uiAddr = 0;
+		ConfigureNonMappableHeapRegion(psDevData,
+		                               ui64MappedMemDevPAddr,
+		                               &psPhysHeap->uConfig.sLMA.sCardBase,
+		                               &psPhysHeap->uConfig.sLMA.sStartAddr,
+		                               &psPhysHeap->uConfig.sLMA.uiSize);
 
 		PVR_LOG(("Added non-mappable local memory region. Base = 0x%016llx, Size=0x%016llx",
-					psPhysHeap->sCardBase.uiAddr,
-					psPhysHeap->uiSize));
+					psPhysHeap->uConfig.sLMA.sCardBase.uiAddr,
+					psPhysHeap->uConfig.sLMA.uiSize));
 
-		PVR_ASSERT(psPhysHeap->uiSize < SYS_DEV_MEM_REGION_SIZE);
+		PVR_ASSERT(psPhysHeap->uConfig.sLMA.uiSize < SYS_DEV_MEM_REGION_SIZE);
 	}
 
-#if (RGX_NUM_OS_SUPPORTED > 1)
+#if (RGX_NUM_DRIVERS_SUPPORTED > 1)
 	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_ID_FW_LOCAL];
 	psPhysHeap->eType = PHYS_HEAP_TYPE_LMA;
-	psPhysHeap->pszPDumpMemspaceName = "LMA";
-	psPhysHeap->psMemFuncs = &gsLocalPhysHeapFuncs;
-	psPhysHeap->hPrivData = hPhysHeapPrivData;
-	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_FW_MAIN;
+	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_FW_SHARED;
+	psPhysHeap->uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+	psPhysHeap->uConfig.sLMA.pszHeapName = "lma_fw_local";
+	psPhysHeap->uConfig.sLMA.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sLMA.hPrivData = hPhysHeapPrivData;
 
 	psPhysHeap->sCardBase.uiAddr =
-		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sCardBase.uiAddr +
-		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uiSize;
+		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.sCardBase.uiAddr +
+		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.uiSize;
 
 	psPhysHeap->sStartAddr.uiAddr =
-		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sStartAddr.uiAddr +
-		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uiSize;
-	psPhysHeap->uiSize = RGX_FIRMWARE_RAW_HEAP_SIZE;
+		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.sStartAddr.uiAddr +
+		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.uiSize;
+	psPhysHeap->uConfig.sLMA.uiSize = RGX_FIRMWARE_RAW_HEAP_SIZE;
 #endif
 
 #if defined(SUPPORT_DISPLAY_CLASS)
 	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_ID_PDP_LOCAL];
 	psPhysHeap->eType = PHYS_HEAP_TYPE_LMA;
-	psPhysHeap->pszPDumpMemspaceName = "LMA";
-	psPhysHeap->psMemFuncs = &gsLocalPhysHeapFuncs;
-	psPhysHeap->hPrivData = hPhysHeapPrivData;
 	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_DISPLAY;
+	psPhysHeap->uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+	psPhysHeap->uConfig.sLMA.pszHeapName = "lma_pdp_local_display";
+	psPhysHeap->uConfig.sLMA.psMemFuncs = &gsLocalPhysHeapFuncs;
+	psPhysHeap->uConfig.sLMA.hPrivData = hPhysHeapPrivData;
 
-	psPhysHeap->sCardBase.uiAddr = PLATO_DDR_DEV_PHYSICAL_BASE;
+	psPhysHeap->uConfig.sLMA.sCardBase.uiAddr = PLATO_DDR_DEV_PHYSICAL_BASE;
 
-	psPhysHeap->sStartAddr.uiAddr =
-#if (RGX_NUM_OS_SUPPORTED > 1)
-		pasPhysHeaps[PHYS_HEAP_ID_FW_LOCAL].sStartAddr.uiAddr +
-		pasPhysHeaps[PHYS_HEAP_ID_FW_LOCAL].uiSize;
+	psPhysHeap->uConfig.sLMA.sStartAddr.uiAddr =
+#if (RGX_NUM_DRIVERS_SUPPORTED > 1)
+		pasPhysHeaps[PHYS_HEAP_ID_FW_LOCAL].uConfig.sLMA.sStartAddr.uiAddr +
+		pasPhysHeaps[PHYS_HEAP_ID_FW_LOCAL].uConfig.sLMA.uiSize;
 #else
-		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sStartAddr.uiAddr +
-		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uiSize;
+		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.sStartAddr.uiAddr +
+		pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.uiSize;
 #endif
-	psPhysHeap->uiSize = RGX_PLATO_RESERVE_DC_MEM_SIZE;
+	psPhysHeap->uConfig.sLMA.uiSize = RGX_PLATO_RESERVE_DC_MEM_SIZE;
 #endif
 
 	return PVRSRV_OK;
 }
+#endif /* (PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL) && defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS) */
 #endif /* (PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL) || (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HYBRID) */
 
 #if (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HOST) || (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HYBRID)
@@ -2278,17 +2417,18 @@ static PVRSRV_ERROR InitHostMemory(SYS_DATA *psDevData,
 
 	psPhysHeap = &pasPhysHeaps[PHYS_HEAP_ID_CPU_LOCAL];
 	psPhysHeap->eType = PHYS_HEAP_TYPE_UMA;
-	psPhysHeap->pszPDumpMemspaceName = "SYSMEM";
-	psPhysHeap->psMemFuncs = &gsHostPhysHeapFuncs;
-	psPhysHeap->hPrivData = hPhysHeapPrivData;
 #if (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HOST)
 	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_GPU_LOCAL;
+	psPhysHeap->uConfig.sUMA.pszHeapName = "uma_gpu_local";
 #elif (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HYBRID)
 	psPhysHeap->ui32UsageFlags = PHYS_HEAP_USAGE_CPU_LOCAL;
+	psPhysHeap->uConfig.sUMA.pszHeapName = "uma_cpu_local";
 	PVR_DPF((PVR_DBG_WARNING, "Initialising CPU_LOCAL UMA Host PhysHeaps"));
 #endif
-
-	psPhysHeap->sCardBase.uiAddr = PLATO_HOSTRAM_DEV_PHYSICAL_BASE;
+	psPhysHeap->uConfig.sUMA.pszPDumpMemspaceName = "SYSMEM";
+	psPhysHeap->uConfig.sUMA.psMemFuncs = &gsHostPhysHeapFuncs;
+	psPhysHeap->uConfig.sUMA.hPrivData = hPhysHeapPrivData;
+	psPhysHeap->uConfig.sUMA.sCardBase.uiAddr = PLATO_HOSTRAM_DEV_PHYSICAL_BASE;
 
 	return PVRSRV_OK;
 }
@@ -2323,8 +2463,10 @@ static PVRSRV_ERROR InitHybridMemory(SYS_DATA *psDevData,
 	}
 
 	/* Adjust the pdump memory space names */
-	pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].pszPDumpMemspaceName = "LMA";
-	pasPhysHeaps[PHYS_HEAP_ID_PDP_LOCAL].pszPDumpMemspaceName = "LMA";
+	pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+	pasPhysHeaps[PHYS_HEAP_ID_PDP_LOCAL].uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+	pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.sLMA.pszHeapName = "lma_gpu_local";
+	pasPhysHeaps[PHYS_HEAP_ID_PDP_LOCAL].uConfig.sLMA.pszHeapName = "lma_pdp_local";
 
 	return PVRSRV_OK;
 }
@@ -2335,7 +2477,15 @@ static PVRSRV_ERROR InitMemory(SYS_DATA *psDevData,
 							   PHYS_HEAP_CONFIG **ppasPhysHeapsOut,
 							   IMG_UINT32 *puiPhysHeapCountOut)
 {
+#if defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS)
+#if (PLATO_MEMORY_CONFIG != PLATO_MEMORY_LOCAL)
+#error "Shared sysconfig only supported on Local memory configuration (PLATO_MEMORY_LOCAL)"
+#endif
+	/* IMA & DLM Heap */
+	IMG_UINT32 uiHeapCount = 2;
+#else
 	IMG_UINT32 uiHeapCount = 1;
+#endif
 	PHYS_HEAP_CONFIG *pasPhysHeaps;
 	PVRSRV_ERROR eError;
 
@@ -2347,7 +2497,7 @@ static PVRSRV_ERROR InitMemory(SYS_DATA *psDevData,
 	uiHeapCount++;
 #endif
 
-#if (RGX_NUM_OS_SUPPORTED > 1)
+#if (RGX_NUM_DRIVERS_SUPPORTED > 1)
 #if (PLATO_MEMORY_CONFIG != PLATO_MEMORY_HYBRID)
 #error "VZ support implemented only hybrid memory configuration (PLATO_MEMORY_HYBRID)"
 #endif
@@ -2357,6 +2507,10 @@ static PVRSRV_ERROR InitMemory(SYS_DATA *psDevData,
 	if (PLATO_HAS_NON_MAPPABLE(psDevData))
 	{
 		uiHeapCount++;
+#if defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS)
+		/* IMA & DLM Heap */
+		uiHeapCount++;
+#endif
 	}
 
 	pasPhysHeaps = OSAllocZMem(sizeof(*pasPhysHeaps) * uiHeapCount);
@@ -2366,8 +2520,13 @@ static PVRSRV_ERROR InitMemory(SYS_DATA *psDevData,
 	}
 
 #if (PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL)
+#if defined(PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS)
+	eError = InitSharedLocalMemory(psDevData, pasPhysHeaps,
+	                               uiHeapCount, psDevConfig);
+#else
 	eError = InitLocalMemory(psDevData, pasPhysHeaps,
-							 uiHeapCount, psDevConfig);
+	                         uiHeapCount, psDevConfig);
+#endif
 #elif (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HOST)
 	eError = InitHostMemory(psDevData, pasPhysHeaps,
 							uiHeapCount, psDevConfig);
@@ -2403,8 +2562,8 @@ void PlatoLocalCpuPAddrToDevPAddr(IMG_HANDLE hPrivData,
 
 	/* Optimise common case */
 	psDevPAddr[0].uiAddr = psCpuPAddr[0].uiAddr -
-		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sStartAddr.uiAddr +
-		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sCardBase.uiAddr;
+		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sStartAddr.uiAddr +
+		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sCardBase.uiAddr;
 
 	if (ui32NumOfAddr > 1)
 	{
@@ -2412,8 +2571,8 @@ void PlatoLocalCpuPAddrToDevPAddr(IMG_HANDLE hPrivData,
 		for (ui32Idx = 1; ui32Idx < ui32NumOfAddr; ++ui32Idx)
 		{
 			psDevPAddr[ui32Idx].uiAddr = psCpuPAddr[ui32Idx].uiAddr -
-				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sStartAddr.uiAddr +
-				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sCardBase.uiAddr;
+				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sStartAddr.uiAddr +
+				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sCardBase.uiAddr;
 		}
 	}
 }
@@ -2428,8 +2587,8 @@ void PlatoLocalDevPAddrToCpuPAddr(IMG_HANDLE hPrivData,
 	IMG_UINT64	uiMaxSize;
 	PVRSRV_DEVICE_CONFIG *psDevConfig = (PVRSRV_DEVICE_CONFIG *)hPrivData;
 
-	sMappableRegionCardBase = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sCardBase;
-	uiMaxSize = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uiSize;
+	sMappableRegionCardBase = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sCardBase;
+	uiMaxSize = psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.uiSize;
 
 #if defined(SUPPORT_DISPLAY_CLASS)
 	uiMaxSize += RGX_PLATO_RESERVE_DC_MEM_SIZE;
@@ -2443,8 +2602,8 @@ void PlatoLocalDevPAddrToCpuPAddr(IMG_HANDLE hPrivData,
 
 	/* Optimise common case */
 	psCpuPAddr[0].uiAddr = psDevPAddr[0].uiAddr -
-		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sCardBase.uiAddr +
-		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sStartAddr.uiAddr;
+		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sCardBase.uiAddr +
+		psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sStartAddr.uiAddr;
 
 	if (ui32NumOfAddr > 1)
 	{
@@ -2458,8 +2617,8 @@ void PlatoLocalDevPAddrToCpuPAddr(IMG_HANDLE hPrivData,
 			}
 
 			psCpuPAddr[ui32Idx].uiAddr = psDevPAddr[ui32Idx].uiAddr -
-				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sCardBase.uiAddr +
-				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].sStartAddr.uiAddr;
+				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sCardBase.uiAddr +
+				psDevConfig->pasPhysHeaps[PHYS_HEAP_ID_GPU_LOCAL].uConfig.GPU_LOCAL_HEAP_CONFIG_TYPE.sStartAddr.uiAddr;
 		}
 	}
 
@@ -2861,7 +3020,7 @@ PVRSRV_ERROR SysGetPlatoGPUTemp(SYS_DATA * psDevData, IMG_UINT32 *ui32Temp)
 	ui32Value = OSReadHWReg32(pvSystemTempRegs, 0x10) & 0xFFF;
 
 	ui32Value = ((ui32Value * 352) / 4096) - 109;
-#endif  // PLATO_TEMPA_SENSOR_IMPLEMENTED
+#endif // PLATO_TEMPA_SENSOR_IMPLEMENTED
 
 	*ui32Temp = ui32Value;
 

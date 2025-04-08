@@ -44,7 +44,9 @@
 #include <linux/sunxi_blkpstore.h>
 
 
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 #define NCAT
+#endif
 
 struct bdev_info part;
 
@@ -78,10 +80,14 @@ struct bdev_info part;
 #define SDXC_DAT_STARV_ERR	SDXC_VOLTAGE_CHANGE_DONE
 
 
-#ifndef NCAT
-#define SUNXI_MMC_GATR		(0x60)
-#define SUNXI_MMC_MODR		(0x90)
-#define SUNXI_MMC_RST		(0x2C0)
+#ifdef NCAT
+#define SUNXI_MMC_GATR		(0xd2c)
+#define SUNXI_MMC_MODR		(0xd20)
+#define SUNXI_MMC_RST		(0xd2c)
+#elif OCAT
+#define SUNXI_MMC_GATR         (0x60)
+#define SUNXI_MMC_MODR         (0x90)
+#define SUNXI_MMC_RST          (0x2C0)
 #else
 #define SUNXI_MMC_GATR		(0x84c)
 #define SUNXI_MMC_MODR		(0x838)
@@ -132,7 +138,7 @@ static void sunxi_mmc_mbusrst_host(char *host)
 
 	u32 rval = 0;
 	rval = readl(ccmu_reg + SUNXI_MMC_GATR);
-	rval &= ~((1u<<2)|(1u<<18));
+	rval &= ~((1u<<0)|(1u<<16));
 	writel(rval, ccmu_reg + SUNXI_MMC_GATR);
 
 	rval = readl(ccmu_reg + SUNXI_MMC_MODR);
@@ -144,11 +150,10 @@ static void sunxi_mmc_mbusrst_host(char *host)
 	writel(rval, ccmu_reg + SUNXI_MMC_MODR);
 
 	rval = readl(ccmu_reg + SUNXI_MMC_GATR);
-	rval |= ((1u<<2)|(1u<<18));
+	rval |= ((1u<<0)|(1u<<16));
 	writel(rval, ccmu_reg + SUNXI_MMC_GATR);
 }
-#else
-
+#elif OCAT
 static void sunxi_mmc_mbusrst_host(char *host)
 {
 	char *ccmu_reg = gccmu_base_reg;
@@ -178,8 +183,29 @@ static void sunxi_mmc_mbusrst_host(char *host)
 	rval |= (1u<<10);
 	writel(rval, ccmu_reg + SUNXI_MMC_GATR);
 }
-#endif
+#else
+static void sunxi_mmc_mbusrst_host(char *host)
+{
+	char *ccmu_reg = gccmu_base_reg;
 
+	u32 rval = 0;
+	rval = readl(ccmu_reg + SUNXI_MMC_GATR);
+	rval &= ~((1u<<2)|(1u<<18));
+	writel(rval, ccmu_reg + SUNXI_MMC_GATR);
+
+	rval = readl(ccmu_reg + SUNXI_MMC_MODR);
+	rval &= ~((1<<31));
+	writel(rval, ccmu_reg + SUNXI_MMC_MODR);
+
+	rval = readl(ccmu_reg + SUNXI_MMC_MODR);
+	rval |= (1<<31);
+	writel(rval, ccmu_reg + SUNXI_MMC_MODR);
+
+	rval = readl(ccmu_reg + SUNXI_MMC_GATR);
+	rval |= ((1u<<2)|(1u<<18));
+	writel(rval, ccmu_reg + SUNXI_MMC_GATR);
+}
+#endif
 
 static const char mtsdat[512] = {
 	0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00,
@@ -251,23 +277,18 @@ static const char mtsdat[512] = {
 	0xff, 0x77, 0x77, 0xff, 0x77, 0xbb, 0xdd, 0xee,
 };
 
-/*
- *static void buf_dumphex32(char *name, const char *base, int len)
- *{
- *#ifdef MMC_DEBUG
- *    u32 i;
- *
- *    pr_cont("dump %s\n", name);
- *
- *    for (i = 0; i < len; i += 4) {
- *        if (!(i&0xf))
- *            pr_cont("\n0x%p : ", base + i);
- *        pr_cont("0x%08x ", *((u32 *)&base[i]));
- *    }
- *    pr_cont("\n");
- *#endif
- *}
- */
+static void buf_dumphex32(char *name, const char *base, int len)
+{
+	u32 i;
+
+	pr_cont("dump %s\n", name);
+	for (i = 0; i < len; i += 4) {
+		if (!(i&0xf))
+			pr_cont("\n0x%px : ", base + i);
+		pr_cont("0x%08x ", *((u32 *)&base[i]));
+	}
+	pr_cont("\n");
+}
 
 static void sunxi_mmc_regs_save(char *host)
 {
@@ -347,6 +368,7 @@ static int sunxi_mmc_mupdate_clk(char *host)
 
 	if (rval & SDXC_START) {
 		mmcerr("fatal err update clk timeout\n");
+		buf_dumphex32("mmc host", host, 1024);
 		return -EIO;
 	}
 

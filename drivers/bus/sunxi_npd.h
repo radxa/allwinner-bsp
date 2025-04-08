@@ -56,7 +56,7 @@ static int pmu_pick[PMU_MAX] = {
 	MBUS_PMU_VE_R,
 	MBUS_PMU_VE_RW,
 	MBUS_PMU_G2D,
-	MBUS_PMU_DI,
+	MBUS_PMU_CSI,
 };
 #endif
 

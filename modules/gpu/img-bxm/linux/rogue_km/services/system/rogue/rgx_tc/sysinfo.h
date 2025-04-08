@@ -50,8 +50,16 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /*!< System specific poll/timeout details */
 #if defined(VIRTUAL_PLATFORM)
 #define MAX_HW_TIME_US                           (5000000)
+#define EVENT_OBJECT_TIMEOUT_US                  (120000000)
 #else
 #define MAX_HW_TIME_US                           (500000)
+
+#if defined(TC_APOLLO_TCF5)
+#define EVENT_OBJECT_TIMEOUT_US                  (2000000)
+#else
+#define EVENT_OBJECT_TIMEOUT_US                  (100000)
+#endif
+
 #endif
 
 #define DEVICES_WATCHDOG_POWER_ON_SLEEP_TIMEOUT  (1500)//(10000)

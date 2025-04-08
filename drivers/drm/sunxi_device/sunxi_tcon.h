@@ -19,6 +19,8 @@
 #include "tcon_top.h"
 #include "dsi_v1.h"
 
+typedef int (*set_dsi_vfp_callback_t)(struct device *);
+typedef int (*get_dsi_line_callback_t)(struct device *);
 enum disp_interface_type {
 	INTERFACE_LCD = 0,
 	INTERFACE_DSI = 1,
@@ -46,6 +48,9 @@ struct disp_output_config {
 	irq_handler_t irq_handler;
 	void *irq_data;
 	void *private_data;
+	set_dsi_vfp_callback_t set_dsi_vfp;
+	get_dsi_line_callback_t get_dsi_line;
+	struct device *dev;
 };
 
 struct tcon_device {
@@ -83,5 +88,7 @@ int sunxi_tcon_hdmi_open(struct device *dev, u8 src);
 int sunxi_tcon_hdmi_close(struct device *dev);
 int sunxi_tcon_mode_init(struct device *tcon_dev, struct disp_output_config *disp_cfg);
 int sunxi_tcon_mode_exit(struct device *tcon_dev);
+void sunxi_tcon_vrr_set(struct device *tcon_dev, struct disp_output_config *disp_cfg);
+struct resource *sunxi_tcon_get_res(struct device *tcon_dev);
 
 #endif

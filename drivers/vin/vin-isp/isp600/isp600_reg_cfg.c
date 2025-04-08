@@ -33,6 +33,7 @@ int isp_virtual_find_ch[ISP600_MAX_NUM] = {
 	0, 1, 2, 3,
 };
 
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 int isp_virtual_find_logic[ISP600_MAX_NUM + 3] = {
        0, 0, 0, 0, 4, 5, 6,
 };
@@ -44,6 +45,11 @@ int isp_virtual_find_sel[ISP600_MAX_NUM + 3] = {
 int isp_ch_find[ISP600_MAX_NUM + 3] = {
        0, 1, 2, 3, 0, 0, 0,
 };
+#else
+int isp_virtual_find_logic[ISP600_MAX_NUM] = {
+       0, 0, 0, 0,
+};
+#endif
 
 
 /*
@@ -125,7 +131,7 @@ void bsp_isp_map_reg_addr(unsigned long id, unsigned long base)
 	isp_regs[id].isp_global_cfg0 = (ISP_GLOBAL_CFG0_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_GLOBAL_CFG0_REG);
 	isp_regs[id].isp_global_cfg1 = (ISP_GLOBAL_CFG1_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_GLOBAL_CFG1_REG);
 	isp_regs[id].isp_lbc_time_cycle = (ISP_LBC_TIME_CYCLE_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_LBC_TIME_CYCLE_REG);
-#if defined CONFIG_ARCH_SUN55IW3
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 	isp_regs[id].isp_save_load_addr = (unsigned int *) (base + ISP_LOAD_REG_OFFSET + ISP_SAVE_LOAD_ADDR_REG);
 #endif
 	isp_regs[id].isp_input_size = (ISP_INPUT_SIZE_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_INPUT_SIZE_REG);
@@ -161,7 +167,7 @@ void bsp_isp_map_load_dram_addr(unsigned long id, unsigned long base)
 	isp_regs[id].isp_global_cfg0 = (ISP_GLOBAL_CFG0_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_GLOBAL_CFG0_REG);
 	isp_regs[id].isp_global_cfg1 = (ISP_GLOBAL_CFG1_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_GLOBAL_CFG1_REG);
 	isp_regs[id].isp_lbc_time_cycle = (ISP_LBC_TIME_CYCLE_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_LBC_TIME_CYCLE_REG);
-#if defined CONFIG_ARCH_SUN55IW3
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 	isp_regs[id].isp_save_load_addr = (unsigned int *) (base + ISP_LOAD_REG_OFFSET + ISP_SAVE_LOAD_ADDR_REG);
 #endif
 	isp_regs[id].isp_input_size = (ISP_INPUT_SIZE_REG_t *) (base + ISP_LOAD_REG_OFFSET + ISP_INPUT_SIZE_REG);
@@ -332,6 +338,11 @@ void bsp_isp_clr_internal_status0(unsigned long id, unsigned int flag)
 unsigned int bsp_isp_get_internal_status1(unsigned long id, unsigned int flag)
 {
 	return isp_regs[id].isp_inter_status1->dwval & flag;
+}
+
+unsigned int bsp_isp_get_isp_cur_id(unsigned long id)
+{
+	return (isp_regs[id].isp_inter_status1->dwval & ISP_CUR_ID_MASK) >> ISP_CUR_ID;
 }
 
 unsigned int bsp_isp_get_internal_status2(unsigned long id, unsigned int flag)

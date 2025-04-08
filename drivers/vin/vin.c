@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * vin.c for all v4l2 subdev manage
  *
@@ -73,7 +72,7 @@ module_param(i2c1_addr, uint, S_IRUGO | S_IWUSR);
 module_param_string(act_name, act_name, sizeof(act_name), S_IRUGO | S_IWUSR);
 module_param(act_slave, uint, S_IRUGO | S_IWUSR);
 module_param(use_sensor_list, uint, S_IRUGO | S_IWUSR);
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if defined VIN_MAX_PINCTRL
 char *vind_pin_name[VIN_MAX_PINCTRL] = {"vind_mclkpin", "vind_mcsipin", "vind_mipipin"};
 #endif
 
@@ -519,8 +518,8 @@ assert_reset_csi:
 		vin_print("csi clk ioremap failed\n");
 		return -EIO;
 	}
-	/* FPGA verification only enables csi/isp reset and gating */
-	writel(0x00010001, (clk_base + 0x1844));  /* CSI RET GATING */
+	writel(0x00000001, (clk_base + 0x1844));
+	writel(0x00010001, (clk_base + 0x1844)); /* CSI RET GATING */
 	writel(0x00010001, (clk_base + 0x1864)); /* ISP RET GATING */
 	return 0;
 
@@ -571,6 +570,7 @@ static int vin_bridge_ch_en(struct vin_core *vinc, int on_idx)
 {
 #if defined VIPP_200 && !defined CONFIG_ARCH_SUN55IW3 && !defined CONFIG_ARCH_SUN60Iw1
 	struct vin_md *vind = dev_get_drvdata(vinc->v4l2_dev->dev);
+	struct csi_dev *csi = v4l2_get_subdevdata(vinc->vid_cap.pipe.sd[VIN_IND_CSI]);
 	struct tdm_rx_dev *tdm_rx = NULL;
 	int i = 0;
 
@@ -607,8 +607,24 @@ static int vin_bridge_ch_en(struct vin_core *vinc, int on_idx)
 			case ISP_SEHDR_MODE:
 			case ISP_COMANDING_MODE:
 			case ISP_NORMAL_MODE:
-				csic_ccu_f2s0_bridge_clk_en(on_idx, vinc->tdm_rx_sel);
-				csic_top_f2s0_bridge_en(vind->id, on_idx, vinc->tdm_rx_sel);
+				if (((vind->bridge_en_count == 0) && (vinc->csi_ch != 0xff) && (vinc->csi_ch & 0xf0))) {
+						for (i = 0; i < VIN_MAX_DEV; i++) {
+							if (vind->vinc[i] == NULL)
+								continue;
+							if (vind->vinc[i]->csi_ch == 0xff)
+								continue;
+							csic_ccu_f2s0_bridge_clk_en(on_idx, vind->vinc[i]->tdm_rx_sel);
+							csic_top_f2s0_bridge_en(vind->id, on_idx, vind->vinc[i]->tdm_rx_sel);
+						}
+				} else if (vinc->dma_merge_mode == 1 && vinc->id % 4 == 0) {
+					for (i = 0; i < csi->bus_info.ch_total_num; i++) {
+						csic_ccu_f2s0_bridge_clk_en(on_idx, vinc->tdm_rx_sel + i);
+						csic_top_f2s0_bridge_en(vind->id, on_idx, vinc->tdm_rx_sel + i);
+					}
+				} else {
+					csic_ccu_f2s0_bridge_clk_en(on_idx, vinc->tdm_rx_sel);
+					csic_top_f2s0_bridge_en(vind->id, on_idx, vinc->tdm_rx_sel);
+				}
 				break;
 			}
 		} else {
@@ -650,8 +666,24 @@ static int vin_bridge_ch_en(struct vin_core *vinc, int on_idx)
 				case ISP_SEHDR_MODE:
 				case ISP_COMANDING_MODE:
 				case ISP_NORMAL_MODE:
-					csic_top_f2s0_bridge_en(vind->id, on_idx, vinc->tdm_rx_sel);
-					csic_ccu_f2s0_bridge_clk_en(on_idx, vinc->tdm_rx_sel);
+					if ((vinc->csi_ch == 0xff) && (vinc->dma_merge_mode != 1)) {
+						csic_top_f2s0_bridge_en(vind->id, on_idx, vinc->tdm_rx_sel);
+						csic_ccu_f2s0_bridge_clk_en(on_idx, vinc->tdm_rx_sel);
+					} else if (vinc->dma_merge_mode == 1 && vinc->id % 4 == 0) {
+						for (i = 0; i < csi->bus_info.ch_total_num; i++) {
+							csic_top_f2s0_bridge_en(vind->id, on_idx, vinc->tdm_rx_sel + i);
+							csic_ccu_f2s0_bridge_clk_en(on_idx, vinc->tdm_rx_sel + i);
+						}
+					} else if ((vind->bridge_en_count == 0) && (vinc->csi_ch != 0xff) && (vinc->csi_ch & 0xf0)) {
+						for (i = 0; i < VIN_MAX_DEV; i++) {
+							if (vind->vinc[i] == NULL)
+								continue;
+							if (vind->vinc[i]->csi_ch == 0xff)
+								continue;
+							csic_top_f2s0_bridge_en(vind->id, on_idx, vind->vinc[i]->tdm_rx_sel);
+							csic_ccu_f2s0_bridge_clk_en(on_idx, vind->vinc[i]->tdm_rx_sel);
+						}
+					}
 					break;
 				}
 			}
@@ -775,7 +807,7 @@ static void vin_md_set_power(struct vin_md *vind, int on)
 			csic_feature_list_get(vind->id, &vind->csic_fl);
 			csic_version_get(vind->id, &vind->csic_ver);
 			csic_top_version_read_en(vind->id, 0);
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10P1) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10P1) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 			cmb_phy_top_enable();
 			csic_isp_bridge_enable(vind->id);
 #endif
@@ -787,6 +819,7 @@ static void vin_md_set_power(struct vin_md *vind, int on)
 	if (on) {
 		vin_md_clk_enable(vind);
 		usleep_range(100, 120);
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW1)
 #ifdef MULTI_FRM_MERGE_INT
 		csic_ccu_bk_intpool_clk_gating_en(1);
 		csic_bk_intpool_src_sel(vind->id, vind->bk_intpool);
@@ -794,18 +827,19 @@ static void vin_md_set_power(struct vin_md *vind, int on)
 		csic_bk_intpool_trig_level(vind->id, vind->bk_intpool.trig_level);
 		csic_bk_intpool_en(vind->id, 1);
 #endif
+#endif
 #if !defined NO_SUPPROT_CCU_PLATDORM
 		vin_ccu_clk_gating_en(1);
 		csic_isp_bridge_enable(vind->id);
 		csic_top_isp_bridge_ch_enable(vind->id);
 #endif
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		csic_ccu_mcsi_combo_clk_en(0, 1);
 #endif
 #ifdef SUPPORT_ISP_TDM
 		for (i = 0; i < VIN_MAX_CSI; i++)
 			csic_ccu_mcsi_parser_clk_en(i, 1);
-#if !defined ISP_600
+#if !defined (CONFIG_ARCH_SUN55IW3) && !defined (CONFIG_ARCH_SUN60IW1) && !defined (CONFIG_ARCH_SUN60IW2)
 		for (i = 0; i < VIN_MAX_ISP; i++)
 			csic_ccu_misp_isp_clk_en(i, 1);
 #else
@@ -824,11 +858,11 @@ static void vin_md_set_power(struct vin_md *vind, int on)
 		csic_mulp_int_enable(vind->id, MULF_DONE | MULF_ERR);
 #endif
 
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		cmb_phy_top_enable();
 #endif
 	} else {
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		cmb_phy_top_disable();
 #endif
 
@@ -1097,7 +1131,7 @@ error:
 static int vin_pin_enable(struct vin_md *vind)
 {
 	int ret = 0;
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	int i;
 	for (i = 0; i < VIN_MAX_PINCTRL; i++) {
 		ret = regulator_enable(vind->vin_pinctrl[i]);
@@ -1113,7 +1147,7 @@ static int vin_pin_enable(struct vin_md *vind)
 static int vin_pin_disable(struct vin_md *vind)
 {
 	int ret = 0;
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	int i;
 	for (i = 0; i < VIN_MAX_PINCTRL; i++) {
 		ret = regulator_disable(vind->vin_pinctrl[i]);
@@ -1129,7 +1163,7 @@ static int vin_pin_disable(struct vin_md *vind)
 static int vin_video_core_s_power(struct v4l2_subdev *sd, int on)
 {
 	int ret = 0 ;
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	ret = v4l2_subdev_call(sd, core, s_power, on);
 #endif
 	return ret;
@@ -1318,8 +1352,8 @@ static int __vin_pipeline_s_stream(struct vin_pipeline *p, int on_idx)
 		/* close */
 		{ VIN_IND_CAPTURE, VIN_IND_SCALER, VIN_IND_ISP, VIN_IND_TDM_RX, VIN_IND_CSI,
 			VIN_IND_MIPI, VIN_IND_SENSOR }, /* online */
-		{ VIN_IND_CAPTURE, VIN_IND_TDM_RX, VIN_IND_ISP, VIN_IND_SCALER, VIN_IND_CSI,
-			VIN_IND_MIPI, VIN_IND_SENSOR }, /* offline */
+		{ VIN_IND_TDM_RX, VIN_IND_CSI, VIN_IND_MIPI, VIN_IND_SENSOR, VIN_IND_ISP,
+			VIN_IND_CAPTURE, VIN_IND_SCALER }, /* offline */
 		/* open */
 		{ VIN_IND_TDM_RX, VIN_IND_MIPI, VIN_IND_ISP, VIN_IND_SCALER, VIN_IND_CAPTURE,
 			VIN_IND_CSI, VIN_IND_SENSOR},
@@ -1391,6 +1425,10 @@ static int __vin_pipeline_s_stream(struct vin_pipeline *p, int on_idx)
 			csic_isp_input_select(vind->id, vinc->isp_sel, i, vinc->csi_sel, i);
 		csic_vipp_input_select(vind->id, vinc->vipp_sel, vinc->isp_sel, vinc->isp_tx_ch);
 #endif
+#ifdef CSIC_SDRAM_DFS
+	csic_chfreq_rdy_en(vind->id);
+	csic_chfreq_ddr_time_set(vind->id, vind->dram_dfs_time);
+#endif
 	}
 
 	on = on_idx ? 1 : 0;
@@ -1404,13 +1442,8 @@ static int __vin_pipeline_s_stream(struct vin_pipeline *p, int on_idx)
 		}
 	}
 #endif
-#ifdef CSIC_SDRAM_DFS
-	csic_chfreq_rdy_en(vind->id);
-	csic_chfreq_ddr_time_set(vind->id, vind->dram_dfs_time);
-#endif
 	if (on)
 		vin_bridge_ch_en(vinc, on);
-
 	for (i = 0; i < VIN_IND_ACTUATOR; i++) {
 		unsigned int idx = seq[on_idx][i];
 		if (!p->sd[idx] || !p->sd[idx]->entity.graph_obj.mdev)
@@ -1581,7 +1614,7 @@ static int __vin_subdev_unregister(struct v4l2_subdev *sd,
 
 static int __vin_handle_sensor_info(unsigned int i, struct sensor_instance *inst)
 {
-#ifndef CONFIG_VIN_INIT_MELIS
+#if !IS_ENABLED(CONFIG_VIN_INIT_MELIS)
 	if (inst->cam_type == SENSOR_RAW) {
 		inst->is_bayer_raw = 1;
 		inst->is_isp_used = 1;
@@ -2296,7 +2329,7 @@ static int vind_irq_request(struct vin_md *vind, int i)
 }
 #endif
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if defined VIN_MAX_PINCTRL
 static int vin_pinpower_get_set(struct device *dev, struct vin_md *vind, char *name, int i)
 {
 	int ret;
@@ -2369,7 +2402,7 @@ static int vin_probe(struct platform_device *pdev)
 		vind->dram_dfs_time = 150;
 	}
 #endif
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if defined VIN_MAX_PINCTRL
 	for (i = 0; i < VIN_MAX_PINCTRL; i++) {
 		ret = vin_pinpower_get_set(dev, vind, vind_pin_name[i], i);
 		if (ret < 0)
@@ -2393,7 +2426,7 @@ static int vin_probe(struct platform_device *pdev)
 	 else
 		csic_ccu_set_base_addr((unsigned long)vind->ccu_base);
 
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1)
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW10) || IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	vind->cmb_top_base = of_iomap(np, 2);
 	if (!vind->cmb_top_base)
 		vin_warn("vin failed to get cmb top base register!\n");
@@ -2468,7 +2501,7 @@ static int vin_probe(struct platform_device *pdev)
 		goto err_clk;
 
 	vind->user_subdev_api = 0;
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	vin_pin_enable(vind);
 #endif
 #if IS_ENABLED(CONFIG_PM)
@@ -2494,7 +2527,7 @@ static int vin_probe(struct platform_device *pdev)
 #if !defined CONFIG_VIN_INIT_MELIS
 	vin_md_clk_disable(vind);
 #endif
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	vin_pin_disable(vind);
 #endif
 	mutex_lock(&vind->media_dev.graph_mutex);
@@ -2555,7 +2588,7 @@ static int vin_remove(struct platform_device *pdev)
 	media_device_unregister(&vind->media_dev);
 	media_device_cleanup(&vind->media_dev);
 	mutex_destroy(&vind->mclk_pin_lock);
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	vin_pin_put(vind);
 #endif
 #if IS_ENABLED(CONFIG_VIN_INIT_MELIS)
@@ -2680,6 +2713,12 @@ static int __init vin_init(void)
 		return ret;
 	}
 
+	ret = platform_driver_register(&vin_driver);
+	if (ret) {
+		vin_err("Sunxi vin register driver failed!\n");
+		return ret;
+	}
+
 	ret = sunxi_vin_debug_register_driver();
 	if (ret) {
 		vin_err("Sunxi vin debug register driver failed!\n");
@@ -2689,12 +2728,6 @@ static int __init vin_init(void)
 	ret = sunxi_mipi_debug_register_driver();
 	if (ret) {
 		vin_err("Sunxi mipi debug register driver failed!\n");
-		return ret;
-	}
-
-	ret = platform_driver_register(&vin_driver);
-	if (ret) {
-		vin_err("Sunxi vin register driver failed!\n");
 		return ret;
 	}
 

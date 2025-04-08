@@ -16,15 +16,6 @@
 #include "de_cdc_type.h"
 #include "de_cdc.h"
 
-struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info);
-
-enum gtm_status {
-	/* module only alloc mem*/
-	CDC_GTM_INVAID = 0x1 << 0,
-	/* module has inited pri para */
-	CDC_GTM_INITED = 0x1 << 1,
-};
-
 enum {
 	DE_SDR = 0,
 	DE_WCG,
@@ -52,60 +43,14 @@ struct de_cdc_private {
 	u32 reg_blk_num;
 	struct de_reg_block reg_blks[CDC_REG_BLK_NUM];
 	struct de_reg_block shadow_blks[CDC_REG_BLK_NUM];
+	struct de_csc_handle *icsc;
+	struct de_csc_handle *ocsc;
+	const struct de_cdc_desc *desc;
 
 	enum de_format_space in_px_fmt_space;
-	enum gtm_status gtm_status;
 	u32 convert_type;
-	u8 has_csc;
 	struct mutex lock;
-
-	s32 (*de_cdc_enable)(struct de_cdc_handle *hdl, u32 enable);
-	s32 (*de_cdc_apply_csc)(struct de_cdc_handle *hdl,
-			struct de_csc_info *in_info, struct de_csc_info *out_info);
-	s32 (*de_cdc_dump_state)(struct drm_printer *p, struct de_cdc_handle *hdl);
-	s32 (*de_cdc_update_local_param)(struct de_cdc_handle *hdl);
 };
-
-
-struct de_cdc_handle *de_cdc_create(struct module_create_info *info)
-{
-	return de35x_cdc_create(info);
-
-}
-
-s32 de_cdc_apply_csc(struct de_cdc_handle *hdl,
-	struct de_csc_info *in_info, struct de_csc_info *out_info)
-{
-	if (hdl->private->de_cdc_apply_csc)
-		return hdl->private->de_cdc_apply_csc(hdl, in_info, out_info);
-	else
-		return 0;
-}
-
-s32 de_cdc_enable(struct de_cdc_handle *hdl, u32 enable)
-{
-	DRM_DEBUG_DRIVER("[SUNXI-DE] %s %d \n", __FUNCTION__, __LINE__);
-	if (hdl->private->de_cdc_enable)
-		return hdl->private->de_cdc_enable(hdl, enable);
-	else
-		return 0;
-}
-
-s32 de_cdc_dump_state(struct drm_printer *p, struct de_cdc_handle *hdl)
-{
-	if (hdl->private->de_cdc_dump_state)
-		return hdl->private->de_cdc_dump_state(p, hdl);
-	else
-		return 0;
-}
-
-s32 de_cdc_update_local_param(struct de_cdc_handle *hdl)
-{
-	if (hdl->private->de_cdc_update_local_param)
-		return hdl->private->de_cdc_update_local_param(hdl);
-	else
-		return 0;
-}
 
 static void cdc_set_block_dirty(
 	struct de_cdc_private *priv, u32 blk_id, u32 dirty)
@@ -152,6 +97,28 @@ static inline struct cdc_reg *de35x_get_cdc_shadow_reg(struct de_cdc_private *pr
 	return (struct cdc_reg *)(priv->shadow_blks[0].vir_addr);
 }
 
+s32 de_cdc_dump_state(struct drm_printer *p, struct de_cdc_handle *hdl)
+{
+	struct de_cdc_private *priv = hdl->private;
+	struct cdc_reg *reg = de35x_get_cdc_shadow_reg(priv);
+	unsigned long base = (unsigned long)hdl->private->reg_blks[0].reg_addr;
+	unsigned long de_base = (unsigned long)hdl->cinfo.de_reg_base;
+
+	drm_printf(p, "\n\tcdc@%8x: %sable\n", (unsigned int)(base - de_base), reg->ctl.bits.en ? "en" : "dis");
+
+	if (hdl->support_gtm) {
+		drm_printf(p, "\n\tgtm %sable\n", reg->ctl.bits.gtm_en ? "en" : "dis");
+	}
+
+	if (priv->icsc) {
+		de_csc_dump_state(p, priv->icsc);
+	}
+	if (priv->ocsc) {
+		de_csc_dump_state(p, priv->ocsc);
+	}
+
+	return 0;
+}
 
 static u32 de35x_cdc_get_wcg_type(struct de_csc_info *info)
 {
@@ -331,29 +298,43 @@ static void de35x_cdc_set_lut(struct cdc_reg *reg, u32 **lut_ptr)
 	memcpy((void *)reg->lut7, (void *)lut_ptr[7], sizeof(reg->lut7));
 }
 
-s32 de35x_cdc_enable(struct de_cdc_handle *hdl, u32 enable)
+s32 de_cdc_enable(struct de_cdc_handle *hdl, u32 enable)
 {
 	struct de_cdc_private *priv = hdl->private;
 	struct cdc_reg *reg = de35x_get_cdc_shadow_reg(priv);
 
 	mutex_lock(&priv->lock);
 	if (!enable) {
+		if (priv->icsc && priv->ocsc) {
+			de_csc_apply(priv->icsc, NULL, NULL, NULL, 0, 0);
+			de_csc_apply(priv->ocsc, NULL, NULL, NULL, 0, 0);
+		}
 		reg->ctl.dwval = 0;
 		priv->convert_type = DE_TFC_INIT;
 		priv->in_px_fmt_space = 0xFF;
-		priv->gtm_status &= !CDC_GTM_INITED;
 	} else
-		reg->ctl.dwval = 1;
+		reg->ctl.bits.en = 1;
 	de_cdc_request_update(priv, CDC_REG_BLK_CTL, 1);
 	mutex_unlock(&priv->lock);
 	return 0;
 }
 
-s32 de35x_cdc_apply_csc(struct de_cdc_handle *hdl,
-	struct de_csc_info *in_info, struct de_csc_info *out_info)
+bool de_cdc_gtm_is_enabled(struct de_cdc_handle *hdl)
 {
 	struct de_cdc_private *priv = hdl->private;
 	struct cdc_reg *reg = de35x_get_cdc_shadow_reg(priv);
+	if (!hdl->support_gtm)
+		return 0;
+
+	return !!reg->ctl.bits.gtm_en;
+}
+
+s32 de_cdc_apply(struct de_cdc_handle *hdl,
+	struct de_csc_info *in_info, struct de_csc_info *out_info, bool gtm_enable)
+{
+	struct de_cdc_private *priv = hdl->private;
+	struct cdc_reg *reg = de35x_get_cdc_shadow_reg(priv);
+	u32 icsc_coeff[16], ocsc_coeff[16];
 
 	u32 in_type, out_type;
 	u32 convert_type;
@@ -369,59 +350,24 @@ s32 de35x_cdc_apply_csc(struct de_cdc_handle *hdl,
 		u32 *lut_ptr[DE_CDC_LUT_NUM];
 		u32 i;
 
+		/* only enable cdc first */
 		reg->ctl.dwval = 1;
 		reg->cdc_size.bits.cdc_width = out_info->width - 1;
 		reg->cdc_size.bits.cdc_height = out_info->height - 1;
-		if (convert_type == DE_TFC_HDR102SDR) {
-			if (!(priv->gtm_status & CDC_GTM_INITED)) {
-				/*
-				   when tigerlcd is written once, the parameters of tigerlcd are
-				   used by default, and the default value is not written manually.
-				   After each disable, tasklet set rcq dirty will re-refresh the
-				   default value of the register to the value written by tigerlcd.
-				*/
-				//TODO: TIGER LCD support later
-				//if (tigerlcd_writing != 10) {
-				//	reg->dynamic_mode.bits.dynamic_mode_en = 1;
-				//	reg->gtm_hl_th.bits.hl_th = 0x2ec;
-				//	reg->gtm_hl_ratio.bits.th_hig_pct = 0x19;
-				//	reg->gtm_hl_ratio.bits.th_low_pct = 0x0d;
-				//	reg->gtm_src_nit_range.bits.src_nit_hig = 0x5dc;
-				//	reg->gtm_src_nit_range.bits.src_nit_low = 0x3e8;
-				//}
-				reg->gtm_src_max_nit.bits.src_max_nit = 0x3e8;
-				reg->gtm_src_max_nit.bits.max_nit_idx = 0xf;
-				reg->gtm_gamut_fration.bits.fraction_bit = 0xa;
-				reg->gtm_gamut_coef[0].dwval = 0x000006a2;
-				reg->gtm_gamut_coef[1].dwval = 0x0000fda7;
-				reg->gtm_gamut_coef[2].dwval = 0x0000ffb6;
-				reg->gtm_gamut_coef[3].dwval = 0x0000ff81;
-				reg->gtm_gamut_coef[4].dwval = 0x00000486;
-				reg->gtm_gamut_coef[5].dwval = 0x0000fff8;
-				reg->gtm_gamut_coef[6].dwval = 0x0000ffee;
-				reg->gtm_gamut_coef[7].dwval = 0x0000ff9a;
-				reg->gtm_gamut_coef[8].dwval = 0x00000478;
-
-				for (i = 0; i < 1024; i++) {
-					reg->curve[i].bits.hig_curve_val = GTM_CURVE_HIG[i];
-					reg->curve[i].bits.low_curve_val = GTM_CURVE_LOW[i];
-				}
-				de_cdc_request_update(priv, CDC_REG_BLK_CURVE, 1);
-				priv->gtm_status |= CDC_GTM_INITED;
-			}
+		if (hdl->support_gtm && convert_type == DE_TFC_HDR102SDR && gtm_enable) {
 			reg->ctl.bits.gtm_en = 1;
 		} else {
-			priv->gtm_status &= !CDC_GTM_INITED;
 			reg->ctl.bits.gtm_en = 0;
 		}
 		de_cdc_request_update(priv, CDC_REG_BLK_CTL, 1);
 
-		if (priv->has_csc) {
+		if (hdl->private->desc->support_csc) {
 			struct de_csc_info icsc_out, ocsc_in;
-			u32 *icsc_coeff, *ocsc_coeff;
 
 			icsc_out.eotf = in_info->eotf;
 			memcpy((void *)&ocsc_in, out_info, sizeof(ocsc_in));
+
+			/* use icsc to convert yuv to rgb, and reset yuv using ocsc */
 			if (convert_type == DE_TFC_HDR102SDR) {
 				if (in_info->px_fmt_space == DE_FORMAT_SPACE_RGB) {
 					icsc_out.px_fmt_space = DE_FORMAT_SPACE_RGB;
@@ -464,9 +410,8 @@ s32 de35x_cdc_apply_csc(struct de_cdc_handle *hdl,
 					return -1;
 				}
 			}
-
-			de_csc_coeff_calc(in_info, &icsc_out, &icsc_coeff);
-			de_csc_coeff_calc(&ocsc_in, out_info, &ocsc_coeff);
+			de_csc_apply(priv->icsc, in_info, &icsc_out, icsc_coeff, 0, 1);
+			de_csc_apply(priv->ocsc, &ocsc_in, out_info, ocsc_coeff, 0, 1);
 			de35x_cdc_set_csc_coeff(reg, icsc_coeff, ocsc_coeff);
 			de_cdc_request_update(priv, CDC_REG_BLK_CTL, 1);
 		} else {
@@ -474,6 +419,7 @@ s32 de35x_cdc_apply_csc(struct de_cdc_handle *hdl,
 			out_info->eotf = in_info->eotf;
 		}
 
+		/* no need to update lut */
 		if ((convert_type == priv->convert_type)
 			&& (in_info->px_fmt_space == priv->in_px_fmt_space)) {
 			mutex_unlock(&priv->lock);
@@ -497,7 +443,7 @@ s32 de35x_cdc_apply_csc(struct de_cdc_handle *hdl,
 		mutex_unlock(&priv->lock);
 	} else {
 		mutex_unlock(&priv->lock);
-		de35x_cdc_enable(hdl, 0);
+		de_cdc_enable(hdl, 0);
 		memcpy((void *)out_info, (void *)in_info, sizeof(*out_info));
 	}
 
@@ -559,48 +505,74 @@ static int clip_nit_idx(int clipnit)
 	return clipnit_idx;
 }
 
-s32 de35x_cdc_update_local_param(struct de_cdc_handle *hdl)
+s32 de_cdc_update_local_param(struct de_cdc_handle *hdl)
 {
 	struct de_cdc_private *priv = hdl->private;
-	struct cdc_reg *reg = NULL;
+	struct cdc_reg *reg = de35x_get_cdc_shadow_reg(priv);
 	int ratio = 0;
 	int clipnit = 0;
 	int clipidx = 0;
+	u32 hw_hl;
 
+	WARN_ON(!hdl->support_gtm);
 	DRM_DEBUG_DRIVER("[%s]-%d\n", __func__, __LINE__);
-	reg = de35x_get_cdc_reg(priv);
+	if (reg->ctl.bits.en != 0 || reg->dynamic_mode.bits.dynamic_mode_en != 0) {
+		hw_hl = readl(priv->reg_blks[0].reg_addr + 0x108);
 
-	if (reg->ctl.bits.en == 0 && reg->dynamic_mode.bits.dynamic_mode_en == 0) {
-		return 0;
+		ratio = sw_highlight_ratio(hw_hl,
+					   reg->cdc_size.bits.cdc_width,
+					   reg->cdc_size.bits.cdc_height,
+					   reg->gtm_hl_ratio.bits.th_low_pct,
+					   reg->gtm_hl_ratio.bits.th_hig_pct,
+					   reg->dynamic_mode.bits.dynamic_mode_en);
+		clipnit = clip_nit_gen(ratio,
+					   reg->gtm_src_nit_range.bits.src_nit_low,
+					   reg->gtm_src_nit_range.bits.src_nit_hig,
+					   reg->dynamic_mode.bits.dynamic_mode_en);
+
+		clipidx = clip_nit_idx(clipnit);
+		reg->gtm_hl_val.bits.hl_val = 0;
+		reg->gtm_hl_ratio.bits.hl_ratio = ratio;
+		reg->gtm_src_max_nit.bits.src_max_nit = clipnit;
+		reg->gtm_src_max_nit.bits.max_nit_idx = clipidx;
+		de_cdc_request_update(priv, CDC_REG_BLK_CTL, 1);
 	}
-#ifdef SUPPORT_AHB_READ
-	reg->gtm_hl_val.dwval = readl(priv->reg_blks[0].reg_addr + 0x108);
-#else
-	reg->gtm_hl_val.dwval = 0;
-#endif
-	ratio = sw_highlight_ratio(reg->gtm_hl_val.bits.hl_val,
-							   reg->cdc_size.bits.cdc_width,
-							   reg->cdc_size.bits.cdc_height,
-							   reg->gtm_hl_ratio.bits.th_low_pct,
-							   reg->gtm_hl_ratio.bits.th_hig_pct,
-							   reg->dynamic_mode.bits.dynamic_mode_en);
-	clipnit = clip_nit_gen(ratio,
-						   reg->gtm_src_nit_range.bits.src_nit_low,
-						   reg->gtm_src_nit_range.bits.src_nit_hig,
-						   reg->dynamic_mode.bits.dynamic_mode_en);
-
-	clipidx = clip_nit_idx(clipnit);
-	reg->gtm_hl_val.bits.hl_val = 0;
-	reg->gtm_hl_ratio.bits.hl_ratio = ratio;
-	reg->gtm_src_max_nit.bits.src_max_nit = clipnit;
-	reg->gtm_src_max_nit.bits.max_nit_idx = clipidx;
-
-	cdc_set_block_dirty(priv, CDC_REG_BLK_CTL, 1);
-
 	return 0;
 }
 
-struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info)
+static int de_gtm_param_init(struct de_cdc_handle *hdl)
+{
+	struct cdc_reg *reg = de35x_get_cdc_shadow_reg(hdl->private);
+	int i;
+
+	/* setup default val without update */
+	reg->dynamic_mode.bits.dynamic_mode_en = 1;
+	reg->gtm_hl_th.bits.hl_th = 0x2ec;
+	reg->gtm_hl_ratio.bits.th_hig_pct = 0x19;
+	reg->gtm_hl_ratio.bits.th_low_pct = 0x0d;
+	reg->gtm_src_nit_range.bits.src_nit_hig = 0x5dc;
+	reg->gtm_src_nit_range.bits.src_nit_low = 0x3e8;
+	reg->gtm_src_max_nit.bits.src_max_nit = 0x3e8;
+	reg->gtm_src_max_nit.bits.max_nit_idx = 0xf;
+	reg->gtm_gamut_fration.bits.fraction_bit = 0xa;
+	reg->gtm_gamut_coef[0].dwval = 0x000006a2;
+	reg->gtm_gamut_coef[1].dwval = 0x0000fda7;
+	reg->gtm_gamut_coef[2].dwval = 0x0000ffb6;
+	reg->gtm_gamut_coef[3].dwval = 0x0000ff81;
+	reg->gtm_gamut_coef[4].dwval = 0x00000486;
+	reg->gtm_gamut_coef[5].dwval = 0x0000fff8;
+	reg->gtm_gamut_coef[6].dwval = 0x0000ffee;
+	reg->gtm_gamut_coef[7].dwval = 0x0000ff9a;
+	reg->gtm_gamut_coef[8].dwval = 0x00000478;
+
+	for (i = 0; i < 1024; i++) {
+		reg->curve[i].bits.hig_curve_val = GTM_CURVE_HIG[i];
+		reg->curve[i].bits.low_curve_val = GTM_CURVE_LOW[i];
+	}
+	return 0;
+}
+
+struct de_cdc_handle *de_cdc_create(struct module_create_info *info)
 {
 	int i;
 	struct de_cdc_handle *hdl;
@@ -608,8 +580,12 @@ struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info)
 	struct de_reg_mem_info *reg_mem_info;
 	struct de_reg_mem_info *reg_shadow;
 	struct de_cdc_private *priv;
+	struct csc_extra_create_info excsc;
+	struct module_create_info csc;
 	u8 __iomem *reg_base;
 	const struct de_cdc_desc *desc;
+	bool no_such_hw;
+	bool csc_and_gtm;
 
 	desc = get_cdc_desc(info);
 	if (!desc)
@@ -617,10 +593,12 @@ struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info)
 
 	hdl = kmalloc(sizeof(*hdl), GFP_KERNEL | __GFP_ZERO);
 	hdl->private = kmalloc(sizeof(*hdl->private), GFP_KERNEL | __GFP_ZERO);
+	hdl->support_gtm = desc->support_gtm;
 	memcpy(&hdl->cinfo, info, sizeof(*info));
 
 	reg_base = info->de_reg_base + info->reg_offset + desc->reg_offset;
 	priv = hdl->private;
+	priv->desc = desc;
 	reg_mem_info = &(priv->reg_mem_info);
 
 	reg_mem_info->size = sizeof(struct cdc_reg);
@@ -632,14 +610,27 @@ struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info)
 		     info->id, reg_mem_info->size);
 		return ERR_PTR(-ENOMEM);
 	}
+	no_such_hw = !desc->support_csc && desc->support_gtm;
+	no_such_hw |= desc->support_csc && !desc->support_gtm;
+	if (desc->support_csc) {
+		memcpy(&csc, info, sizeof(*info));
+		excsc.type = CDC_CSC;
+		excsc.extra_id = 0;
+		csc.extra = &excsc;
+		hdl->private->icsc = de_csc_create(&csc);
+		excsc.extra_id = 1;
+		hdl->private->ocsc = de_csc_create(&csc);
+		WARN_ON(!hdl->private->icsc || !hdl->private->ocsc);
+	}
 
+	WARN(no_such_hw, "CDC hw not support yet, must add new reg size\n");
+	csc_and_gtm = desc->support_csc && desc->support_gtm;
 
 	block = &(priv->reg_blks[CDC_REG_BLK_CTL]);
 	block->phy_addr = reg_mem_info->phy_addr;
 	block->vir_addr = reg_mem_info->vir_addr;
-	block->size = (info->id == 0) ? 0x140 : 0x04;
+	block->size = csc_and_gtm ? 0x140 : 0x04;
 	block->reg_addr = reg_base;
-	priv->has_csc = (info->id == 0) ? 1 : 0;
 
 	block = &(priv->reg_blks[CDC_REG_BLK_LUT0]);
 	block->phy_addr = reg_mem_info->phy_addr + 0x1000;
@@ -699,7 +690,6 @@ struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info)
 
 	priv->convert_type = DE_TFC_INIT;
 	priv->in_px_fmt_space = 0xFF;
-	priv->gtm_status = CDC_GTM_INVAID;
 
 	hdl->block_num = priv->reg_blk_num;
 	hdl->block = kmalloc(sizeof(block[0]) * hdl->block_num, GFP_KERNEL | __GFP_ZERO);
@@ -722,8 +712,7 @@ struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info)
 	block = &(priv->shadow_blks[CDC_REG_BLK_CTL]);
 	block->phy_addr = reg_shadow->phy_addr;
 	block->vir_addr = reg_shadow->vir_addr;
-	block->size = (info->id == 0) ? 0x140 : 0x04;
-	priv->has_csc = (info->id == 0) ? 1 : 0;
+	block->size = csc_and_gtm ? 0x140 : 0x04;
 
 	block = &(priv->shadow_blks[CDC_REG_BLK_LUT0]);
 	block->phy_addr = reg_shadow->phy_addr + 0x1000;
@@ -771,72 +760,36 @@ struct de_cdc_handle *de35x_cdc_create(struct module_create_info *info)
 	block->size = 1024 * 4;
 
 	mutex_init(&priv->lock);
-	hdl->private->de_cdc_enable = de35x_cdc_enable;
-	hdl->private->de_cdc_apply_csc = de35x_cdc_apply_csc;
-	hdl->private->de_cdc_update_local_param = de35x_cdc_update_local_param;
+
+	if (hdl->support_gtm)
+		de_gtm_param_init(hdl);
 
 	return hdl;
 }
 
+int de_gtm_pq_proc(struct de_cdc_handle *hdl, hdr_module_param_t *para)
+{
+	struct de_cdc_private *priv = hdl->private;
+	struct cdc_reg *reg = de35x_get_cdc_shadow_reg(priv);
 
+	WARN_ON(!hdl->support_gtm);
 
-
-
-
-//int de_gtm_pq_proc(u32 sel, u32 cmd, u32 subcmd, void *data)
-//{
-//	u32 i = 0;
-//	struct de_cdc_private *priv = NULL;
-//	struct cdc_reg *reg = NULL;
-//	hdr_module_param_t *para = NULL;
-//	DE_INFO("sel=%d, cmd=%d, subcmd=%d, data=%px\n", sel, cmd, subcmd, data);
-//	para = (hdr_module_param_t *)data;
-//
-//	if (para == NULL) {
-//		DRM_ERROR("para NULL\n");
-//		return -1;
-//	}
-//
-//	for (i = 0; i < GLB_MAX_CDC_NUM; i++) {
-//		if (cdc_priv_alloced[i] == 0) {
-//			continue;
-//		}
-//		priv = &cdc_priv[i];
-//		reg = de35x_get_cdc_reg(priv);
-//
-//		if (subcmd == 16) { /* read */
-//			para->value[0] = reg->ctl.bits.gtm_en;
-//			para->value[0] = reg->dynamic_mode.bits.dynamic_mode_en;
-//			para->value[1] = reg->gtm_hl_th.bits.hl_th;
-//			para->value[2] = reg->gtm_hl_ratio.bits.th_hig_pct;
-//			para->value[3] = reg->gtm_hl_ratio.bits.th_low_pct;
-//			para->value[4] = reg->gtm_src_nit_range.bits.src_nit_hig;
-//			para->value[5] = reg->gtm_src_nit_range.bits.src_nit_low;
-//		} else { /* write */
-//			//TODO: TIGER LCD support later
-//			//tigerlcd_writing = 10;
-//			reg->dynamic_mode.bits.dynamic_mode_en = para->value[0];
-//			reg->gtm_hl_th.bits.hl_th = para->value[1];
-//			reg->gtm_hl_ratio.bits.th_hig_pct = para->value[2];
-//			reg->gtm_hl_ratio.bits.th_low_pct = para->value[3];
-//			reg->gtm_src_nit_range.bits.src_nit_hig = para->value[4];
-//			reg->gtm_src_nit_range.bits.src_nit_low = para->value[5];
-//			reg->gtm_src_max_nit.bits.src_max_nit = 0x3e8;
-//			reg->gtm_src_max_nit.bits.max_nit_idx = 0xf;
-//			reg->gtm_gamut_fration.bits.fraction_bit = 0xa;
-//			reg->gtm_gamut_coef[0].dwval = 0x000006a2;
-//			reg->gtm_gamut_coef[1].dwval = 0x0000fda7;
-//			reg->gtm_gamut_coef[2].dwval = 0x0000ffb6;
-//			reg->gtm_gamut_coef[3].dwval = 0x0000ff81;
-//			reg->gtm_gamut_coef[4].dwval = 0x00000486;
-//			reg->gtm_gamut_coef[5].dwval = 0x0000fff8;
-//			reg->gtm_gamut_coef[6].dwval = 0x0000ffee;
-//			reg->gtm_gamut_coef[7].dwval = 0x0000ff9a;
-//			reg->gtm_gamut_coef[8].dwval = 0x00000478;
-//			cdc_set_block_dirty(priv, CDC_REG_BLK_CTL, 1);
-//		}
-//	}
-//	return 0;
-//}
-
-
+	if (para->cmd == PQ_READ) { /* read */
+		para->value[0] = reg->ctl.bits.gtm_en;
+		para->value[0] = reg->dynamic_mode.bits.dynamic_mode_en;
+		para->value[1] = reg->gtm_hl_th.bits.hl_th;
+		para->value[2] = reg->gtm_hl_ratio.bits.th_hig_pct;
+		para->value[3] = reg->gtm_hl_ratio.bits.th_low_pct;
+		para->value[4] = reg->gtm_src_nit_range.bits.src_nit_hig;
+		para->value[5] = reg->gtm_src_nit_range.bits.src_nit_low;
+	} else { /* write */
+		reg->dynamic_mode.bits.dynamic_mode_en = para->value[0];
+		reg->gtm_hl_th.bits.hl_th = para->value[1];
+		reg->gtm_hl_ratio.bits.th_hig_pct = para->value[2];
+		reg->gtm_hl_ratio.bits.th_low_pct = para->value[3];
+		reg->gtm_src_nit_range.bits.src_nit_hig = para->value[4];
+		reg->gtm_src_nit_range.bits.src_nit_low = para->value[5];
+		de_cdc_request_update(priv, CDC_REG_BLK_CTL, 1);
+	}
+	return 0;
+}

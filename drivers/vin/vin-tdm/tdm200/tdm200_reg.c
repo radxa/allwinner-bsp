@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -487,6 +487,17 @@ void csic_tdm_rx_head_fifo_depth(unsigned int sel, unsigned int ch, unsigned int
 {
 	vin_reg_clr_set(csic_tdm_base[sel] + TMD_RX0_OFFSET + ch*AMONG_RX_OFFSET + TDM_RX_FIFO_DEPTH_REG_OFF,
 			TDM_RX_HEAD_FIFO_DEPTH_MASK, depth << TDM_RX_HEAD_FIFO_DEPTH);
+}
+
+void csic_tdm_rx_data_fifo_clear(unsigned int sel)
+{
+	int i = 0;
+	for (i = 0; i < 4; i++) {
+		vin_reg_clr_set(csic_tdm_base[sel] + TMD_RX0_OFFSET + i*AMONG_RX_OFFSET + TDM_RX_FIFO_DEPTH_REG_OFF,
+			TDM_RX_HEAD_FIFO_DEPTH_MASK, 0 << TDM_RX_HEAD_FIFO_DEPTH);
+		vin_reg_clr_set(csic_tdm_base[sel] + TMD_RX0_OFFSET + i*AMONG_RX_OFFSET + TDM_RX_FIFO_DEPTH_REG_OFF,
+				TDM_RX_DATA_FIFO_DEPTH_MASK, 0 << TDM_RX_DATA_FIFO_DEPTH);
+	}
 }
 
 void csic_tdm_rx_pkg_line_words(unsigned int sel, unsigned int ch, unsigned int words)

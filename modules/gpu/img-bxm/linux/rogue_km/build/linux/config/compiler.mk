@@ -65,10 +65,10 @@ define calculate-compiler-preferred-target
    ifneq ($$(filter i386-% i486-% i586-% i686-%,$$($(1)_compiler_preferred_target)),)
     $(1)_compiler_preferred_target := i386-linux-gnu
    endif
-   ifneq ($$(filter aarch64-poky-linux,$$($(1)_compiler_preferred_target)),)
+   ifneq ($$(filter aarch64-poky-linux arm64-%,$$($(1)_compiler_preferred_target)),)
     $(1)_compiler_preferred_target := aarch64-linux-gnu
    endif
-   ifneq ($$(filter armv7a-cros-linux-gnueabi armv7l-tizen-linux-gnueabi,$$($(1)_compiler_preferred_target)),)
+   ifneq ($$(filter armv7a-cros-linux-gnueabi armv7a-cros-linux-gnueabihf,$$($(1)_compiler_preferred_target)),)
     $(1)_compiler_preferred_target := arm-linux-gnueabi
    endif
    ifneq ($$(filter arm-linux-android,$$($(1)_compiler_preferred_target)),)
@@ -91,22 +91,27 @@ define calculate-compiler-preferred-target
  endif
 endef
 
-define cross-compiler-name
+# Generate a modified CC line to be used in gathering information about system
+#
+# $(1) - name of symbol to store the modified CC line
+# $(2) - expanded CROSS_COMPILE or CROSS_COMPILE_SECONDARY
+# $(3) - the name of CC variable, unexpanded, e.g. CC or CC_SECONDARY
+define cross-compiler-cmd
  ifeq ($$(_CLANG),true)
   ifneq ($(strip $(2)),)
    ifeq ($(1):$(CROSS_TRIPLE),_cc_secondary:mips64el-linux-android)
-    $(1) := $(3) -target mipsel-linux-android -Qunused-arguments
+    $(1) := $($(3)) -target mipsel-linux-android -Qunused-arguments
    else
-    $(1) := $(3) -target $$(patsubst %-,%,$$(notdir $(2))) -Qunused-arguments
+    $(1) := $($(3)) -target $$(patsubst %-,%,$$(notdir $(2))) -Qunused-arguments
    endif
   else
-   $(1) := $(3) -Qunused-arguments
+   $(1) := $($(3)) -Qunused-arguments
   endif
  else
-  ifeq ($$(origin CC),file)
-   $(1) := $(2)$(3)
+  ifeq ($$(origin $(3)),file)
+   $(1) := $(2)$($(3))
   else
-   $(1) := $(3)
+   $(1) := $($(3))
   endif
  endif
 endef
@@ -135,7 +140,12 @@ ifeq ($(host_compiler_preferred_target),aarch64-linux-gnu)
  HOST_PRIMARY_ARCH := host_aarch64
  HOST_32BIT_ARCH   := host_armhf
 else
+ifeq ($(host_compiler_preferred_target),riscv64-linux-gnu)
+ HOST_PRIMARY_ARCH := host_riscv64
+ HOST_32BIT_ARCH   := host_riscv64
+else
  $(error Unknown host compiler target architecture $(host_compiler_preferred_target))
+endif
 endif
 endif
 endif
@@ -208,8 +218,8 @@ else
  _kernel_primary_arch :=
 endif
 
-$(eval $(call cross-compiler-name,_cc,$(CROSS_COMPILE),$(CC)))
-$(eval $(call cross-compiler-name,_cc_secondary,$(if $(CROSS_COMPILE_SECONDARY),$(CROSS_COMPILE_SECONDARY),$(CROSS_COMPILE)),$(CC_SECONDARY)))
+$(eval $(call cross-compiler-cmd,_cc,$(CROSS_COMPILE),CC))
+$(eval $(call cross-compiler-cmd,_cc_secondary,$(if $(CROSS_COMPILE_SECONDARY),$(CROSS_COMPILE_SECONDARY),$(CROSS_COMPILE)),CC_SECONDARY))
 $(eval $(call calculate-compiler-preferred-target,target,$(_cc)))
 $(eval $(call include-compiler-file,$(target_compiler_preferred_target)))
 
@@ -290,21 +300,21 @@ ifeq ($(SUPPORT_NEUTRINO_PLATFORM),)
  #
  ifeq ($(SUPPORT_ANDROID_PLATFORM)$(SUPPORT_ARC_PLATFORM),1)
   ifeq ($(_CLANG),true)
-   LIBGCC_PREBUILT_PATH := $(ANDROID_ROOT)/prebuilts/gcc/linux-x86
-   ifeq ($(filter-out arm%,$(ARCH)),)
-    LIBGCC := $(LIBGCC_PREBUILT_PATH)/aarch64/aarch64-linux-android-4.9/lib/gcc/aarch64-linux-android/4.9.x/libgcc.a
-    LIBGCC_SECONDARY := $(LIBGCC_PREBUILT_PATH)/arm/arm-linux-androideabi-4.9/lib/gcc/arm-linux-androideabi/4.9.x/libgcc.a
+   # Reset LIBGCC and LIBGCC_SECONDARY to drop libgcc.a completely when using clang toolchain 13+.
+   ifeq ($(__clang_ge_13),1)
+    override LIBGCC :=
+    override LIBGCC_SECONDARY :=
    else
-    LIBGCC := $(LIBGCC_PREBUILT_PATH)/x86/x86_64-linux-android-4.9/lib/gcc/x86_64-linux-android/4.9.x/libgcc.a
-    LIBGCC_SECONDARY := $(LIBGCC_PREBUILT_PATH)/x86/x86_64-linux-android-4.9/lib/gcc/x86_64-linux-android/4.9.x/32/libgcc.a
-   endif
-   # Reset LIBGCC and LIBGCC_SECONDARY if libgcc.a is not available so as to move to LLVM tools later
-   ifeq ($(wildcard $(LIBGCC))$(wildcard $(LIBGCC_SECONDARY)),)
-    ifeq ($(__clang_ge_13),1)
-     override LIBGCC :=
-     override LIBGCC_SECONDARY :=
+    LIBGCC_PREBUILT_PATH := $(ANDROID_ROOT)/prebuilts/gcc/linux-x86
+    ifeq ($(filter-out arm%,$(ARCH)),)
+     LIBGCC := $(LIBGCC_PREBUILT_PATH)/aarch64/aarch64-linux-android-4.9/lib/gcc/aarch64-linux-android/4.9.x/libgcc.a
+     LIBGCC_SECONDARY := $(LIBGCC_PREBUILT_PATH)/arm/arm-linux-androideabi-4.9/lib/gcc/arm-linux-androideabi/4.9.x/libgcc.a
     else
-     $(error Must specify clang toolchain 13+ when libgcc.a is not available.)
+     LIBGCC := $(LIBGCC_PREBUILT_PATH)/x86/x86_64-linux-android-4.9/lib/gcc/x86_64-linux-android/4.9.x/libgcc.a
+     LIBGCC_SECONDARY := $(LIBGCC_PREBUILT_PATH)/x86/x86_64-linux-android-4.9/lib/gcc/x86_64-linux-android/4.9.x/32/libgcc.a
+    endif
+    ifeq ($(wildcard $(LIBGCC))$(wildcard $(LIBGCC_SECONDARY)),)
+     $(error Must use clang toolchain 13+ when libgcc.a is not available.)
     endif
    endif
   endif

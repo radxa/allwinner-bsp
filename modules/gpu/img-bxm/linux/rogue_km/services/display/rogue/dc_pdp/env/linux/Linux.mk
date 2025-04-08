@@ -38,8 +38,6 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### ###########################################################################
 
-ifneq ($(SERVICES_SC),1)
-
 ifeq ($(PVR_ARCH),rogue)
 modules := dc_pdp
 
@@ -48,4 +46,3 @@ dc_pdp_target := dc_pdp.ko
 dc_pdp_makefile := $(THIS_DIR)/Kbuild.mk
 endif
 
-endif # SERVICES_SC

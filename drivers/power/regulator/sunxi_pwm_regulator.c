@@ -12,17 +12,9 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/err.h>
-#include <linux/regulator/driver.h>
-#include <linux/regulator/machine.h>
-#include <linux/regulator/of_regulator.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
+#include "sunxi-power-regulator.h"
 #include <linux/pwm.h>
 #include <linux/gpio/consumer.h>
-#include <linux/delay.h>
 
 struct pwm_continuous_reg_data {
 	unsigned int min_uV_dutycycle;

@@ -23,6 +23,7 @@
 #include <sound/jack.h>
 
 #include "snd_sunxi_jack.h"
+#include "snd_sunxi_adapter.h"
 
 #define DETWORK_DTIME	10
 
@@ -292,32 +293,6 @@ static int sunxi_jack_resume(struct snd_soc_card *card)
 	return 0;
 }
 
-/* jack mode selection interface probe */
-void sunxi_jack_typec_mode_set(struct sunxi_jack_typec_cfg *jack_typec_cfg,
-			       enum sunxi_jack_modes mode)
-{
-	int i;
-	struct sunxi_jack_pins *jack_pins = jack_typec_cfg->jack_pins;
-	struct sunxi_jack_modes_map *modes_map = jack_typec_cfg->modes_map;
-
-	if (!modes_map || !jack_pins) {
-		SND_LOG_ERR("modes map or jack pins is NULL\n");
-		return;
-	}
-
-	if (mode >= SND_JACK_MODE_CNT || modes_map[mode].type == SND_JACK_MODE_NULL) {
-		SND_LOG_WARN("missing mode value,mode:%d\n", mode);
-		return;
-	}
-
-	for (i = 0; i < jack_typec_cfg->sw_pin_max; ++i) {
-		if (!jack_pins[i].used || modes_map[mode].map_value[i] == 0xf)
-			continue;
-		gpio_set_value(jack_pins[i].pin, modes_map[mode].map_value[i]);
-	}
-}
-EXPORT_SYMBOL(sunxi_jack_typec_mode_set);
-
 static int sunxi_jack_typec_init(struct sunxi_jack_extcon *jack_extcon)
 {
 	int ret, i;
@@ -419,20 +394,12 @@ static int sunxi_jack_typec_init(struct sunxi_jack_extcon *jack_extcon)
 
 static void sunxi_jack_typec_exit(struct sunxi_jack_extcon *jack_extcon)
 {
-	struct platform_device *pdev = jack_extcon->pdev;
 	struct sunxi_jack_typec_cfg *jack_typec_cfg = &jack_extcon->jack_typec_cfg;
-	struct sunxi_jack_pins *jack_pins = jack_typec_cfg->jack_pins;
-	int i;
 
 	SND_LOG_DEBUG("\n");
 
 	sunxi_jack_typec_mode_set(jack_typec_cfg, SND_JACK_MODE_USB);
 	SND_LOG_DEBUG("typec mode set to usb\n");
-
-	for (i = 0; i < jack_typec_cfg->sw_pin_max; ++i) {
-		if (jack_pins[i].used)
-			devm_gpio_free(&pdev->dev, jack_pins[i].pin);
-	}
 }
 
 /*******************************************************************************
@@ -513,7 +480,6 @@ int snd_sunxi_jack_extcon_init(void *jack_data)
 
 	return 0;
 }
-EXPORT_SYMBOL(snd_sunxi_jack_extcon_init);
 
 void snd_sunxi_jack_extcon_exit(void *jack_data)
 {
@@ -544,7 +510,6 @@ void snd_sunxi_jack_extcon_exit(void *jack_data)
 
 	return;
 }
-EXPORT_SYMBOL(snd_sunxi_jack_extcon_exit);
 
 /*******************************************************************************
  * for machcine
@@ -561,6 +526,9 @@ int snd_sunxi_jack_extcon_register(struct snd_soc_card *card)
 	}
 	sunxi_jack.card = card;
 
+	sunxi_jack.type = 0;
+	sunxi_jack.type_old = 0;
+	sunxi_jack.system_sta = JACK_SYS_STA_INIT;
 	ret = snd_sunxi_card_jack_new(sunxi_jack.card, "Headphones",
 				      SND_JACK_HEADSET
 				      | SND_JACK_HEADPHONE

@@ -12,6 +12,14 @@ config AW_VIRTUAL_AC_POWER
 	  This driver provides support for the power supply features of
 	  virtual ac power supply.
 
+config AW_GPIO_VBUS_POWER
+	tristate "gpio charger Power Supply Driver"
+	select POWER_SUPPLY
+	select IIO
+	help
+	  This driver provides support for the power supply features of
+	  virtual ac power supply.
+
 config AW_MFD_AXP2101
 	tristate
 	select MFD_CORE
@@ -30,6 +38,16 @@ config AW_MFD_AXP2101_I2C
 	  This driver include only the core APIs. You have to select individual
 	  components like regulators or the PEK (Power Enable Key) under the
 	  corresponding menus.
+
+config AW_MFD_SOC_PMU
+	tristate
+	select MFD_CORE
+	select HAS_IOMEM
+
+config AW_MFD_PMU_SOC_MMIO
+	tristate
+	select AW_MFD_SOC_PMU
+	select REGMAP_MMIO
 
 config AW_MFD_PMU_EXT
 	tristate
@@ -91,18 +109,15 @@ config AW_REGULATOR_PMU_EXT
 	  This driver provides support for the voltage regulators on the
 	  PMU_EXT PMIC.
 
-if AW_REGULATOR_PMU_EXT
+endif
 
-config AW_AXP1530_WORKAROUND_DVM
-	bool "AXP1530_EXT DVM"
-	default n
+config AW_REGULATOR_SOC_PMU
+	tristate "SOC PMICs Power regulator"
+	select AW_MFD_PMU_SOC_MMIO
+	select REGULATOR
 	help
-	  Say Y here if you want to enable axp1530 DVM function
-
-endif
-
-
-endif
+	  This driver provides support for the voltage regulators on the
+	  SOC PMICs.
 
 config AW_REGULATOR_PWM
 	tristate "SUNXI PWM voltage regulator"
@@ -110,6 +125,20 @@ config AW_REGULATOR_PWM
 	help
 	  This driver supports PWM controlled voltage regulators. PWM
 	  duty cycle can increase or decrease the voltage.
+
+config AW_REGULATOR_VIRTUAL_CONSUMER
+	tristate "SUNXI VIRTUAL_CONSUMER"
+	help
+	  This driver supports virtual consumer get the regualtor.
+
+comment "Regulator Functions"
+
+config AW_AXP1530_WORKAROUND_DVM
+	bool "AXP1530 SW DVM"
+	depends on AW_REGULATOR_PMU_EXT || AW_REGULATOR_AXP2101
+	default n
+	help
+	  Say Y here if you want to enable axp1530 DVM function
 
 comment "Powerkey Drivers"
 
@@ -119,6 +148,7 @@ config AW_INPUT_AXP2101_PEK
 	tristate "X-POWERS AXP2101 Power Button Driver"
 	depends on !UML
 	depends on AW_MFD_AXP2101
+	select INPUT
 	help
 	  Say Y here if you want to enable power key reporting via the
 	  AXP20X PMIC.
@@ -142,6 +172,7 @@ config AW_AXP803_POWER
 config AW_AXP2202_POWER
 	tristate "AXP2202 Power Supply Driver"
 	select POWER_SUPPLY
+	select EXTCON
 	help
 	  This driver provides support for the power supply features of
 	  AXP2202 PMIC.
@@ -159,6 +190,28 @@ config AW_AXP22X_POWER
 	help
 	  This driver provides support for the power supply features of
 	  AXP221/AXP223 PMIC.
+
+config AW_AXP515_POWER
+	tristate "AXP515 Power Supply Driver"
+	select POWER_SUPPLY
+	select EXTCON
+	help
+	  This driver provides support for the power supply features of
+	  AXP515 PMIC.
+
+config AW_AXP515_ACIN_POWER
+	tristate "AXP515 Power Virtual ACIN"
+	select POWER_SUPPLY
+	help
+	  This driver provides support for ACIN function in
+	  AXP515 PMIC.
+
+config AW_AXP2101_POWER
+	tristate "AXP2101 Power Supply Driver"
+	select POWER_SUPPLY
+	help
+	  This driver provides support for the power supply features of
+	  AXP2101 PMIC.
 
 endif
 
@@ -187,6 +240,40 @@ config AW_AXP2601_POWER
 	help
 	  This driver provides support for the power supply features of
 	  AXP2601 PMIC.
+
+config AW_AXP2602_POWER
+	tristate "AXP2602 Power Supply Driver"
+	depends on AW_MFD_BMU_EXT
+	select POWER_SUPPLY
+	help
+	  This driver provides support for the power supply features of
+	  AXP2602 PMIC.
+
+endif
+
+comment "Power Notifier Drivers"
+
+config AW_POWER_NOTIFIER
+	tristate "Allwinner Power Notifier support"
+	depends on AW_BSP
+	help
+	  Allwinner Power Notifier.
+
+	  This option is of interest only to developers who need to
+	  develop on AllWinner SoC.
+
+	  If unsure, say N.
+
+comment "Power Temp Ctrl Drivers"
+
+if AW_MFD_AXP2101
+
+config AW_AXP8191_TEMP_CTRL
+	tristate "AXP8191 Temp Ctrl Drivers"
+	depends on AW_BSP
+	help
+	  This driver provides support for the temp ctrl features of
+	  AXP8191 PMIC.
 
 endif
 

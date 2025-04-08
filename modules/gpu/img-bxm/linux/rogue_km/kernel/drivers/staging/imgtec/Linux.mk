@@ -38,11 +38,7 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### ###########################################################################
 
-modules := adf_pdp tc drm_nulldisp drm_pdp plato drm_rk drm_pdp2_hdmi cdma loki
-
-adf_pdp_type := kernel_module
-adf_pdp_target := adf_pdp.ko
-adf_pdp_makefile := $(THIS_DIR)/Kbuild.mk
+modules := tc drm_nulldisp drm_pdp plato drm_rk drm_pdp2_hdmi cdma loki
 
 tc_type := kernel_module
 tc_target := tc.ko

@@ -52,6 +52,7 @@ struct di_driver_data {
 	struct clk *iclk;
 	int iclk_freq;	/* clk frequence */
 	struct reset_control *rst_bus_di;
+	struct reset_control *rst_bus_desys;
 
 	struct mutex mlock;
 	struct list_head clients;
@@ -84,9 +85,12 @@ int di_drv_client_inc(struct di_client *c);
 int di_drv_client_dec(struct di_client *c);
 bool di_drv_is_valid_client(struct di_client *c);
 int di_drv_process_fb(struct di_client *c);
+int di_drv_clients_set_tnrpara(struct di_client *client, struct tnr_module_param_pqd *data, int update);
+int di_drv_get_global_tnr_pqpara(struct tnr_module_param_t *data);
 
 void amp_deinterlace_init(void *amp_ops);
 int amp_deinterlace_start_ack(void);
 int amp_deinterlace_stop_ack(void);
 void amp_deinterlace_exit(void);
+
 #endif /* #ifndef _DI_DRIVER_H_ */

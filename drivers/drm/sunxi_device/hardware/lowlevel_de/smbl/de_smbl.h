@@ -27,6 +27,8 @@
 
 struct de_smbl_handle {
 	struct module_create_info cinfo;
+	bool support_csc;
+    int hue_default_value;
 	unsigned int block_num;
 	struct de_reg_block **block;
 	struct de_smbl_private *private;
@@ -42,19 +44,22 @@ enum disp_smbl_dirty_flags {
 };
 
 struct disp_smbl_info {
+	u32 demo_en;
 	struct drm_rect window;
 	u32 enable;
 	struct drm_rect size;
 	u32 backlight;
+	u32 backlight_after_dimming;
 	u32 backlight_dimming;
 	enum disp_smbl_dirty_flags flags;
 };
 
 int de_smbl_apply_csc(struct de_smbl_handle *hdl, u32 w, u32 h, const struct de_csc_info *in_info,
-		    const struct de_csc_info *out_info, const struct bcsh_info *bcsh);
-s32 de_smbl_tasklet(struct de_smbl_handle *hdl);
+		    const struct de_csc_info *out_info, const struct bcsh_info *bcsh, const struct ctm_info *ctm);
+s32 de_smbl_update_local_param(struct de_smbl_handle *hdl);
 s32 de_smbl_apply(struct de_smbl_handle *hdl, struct disp_smbl_info *info);
-s32 de_smbl_get_status(struct de_smbl_handle *hdl);
+s32 de_smbl_get_status(struct de_smbl_handle *hdl, struct disp_smbl_info *info);
+void de_smbl_dump_state(struct drm_printer *p, struct de_smbl_handle *hdl);
 struct de_smbl_handle *de_smbl_create(struct module_create_info *info);
 s32 de_smbl_enable_ahb_read(struct de_smbl_handle *hdl, bool en);
 

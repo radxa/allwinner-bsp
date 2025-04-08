@@ -117,6 +117,13 @@ struct dma_buf_param {
 	unsigned int phy_addr;	/* [out] */
 };
 
+struct cedarv_env_infomation_compat {
+	unsigned int phymem_start;
+	int phymem_total_size;
+	uint64_t  address_macc;
+	unsigned int from_kernel;
+};
+
 struct cache_range {
 	uint64_t start;
 	uint64_t end;

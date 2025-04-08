@@ -1154,7 +1154,6 @@ static int sensor_reg_init(struct sensor_info *info)
 	}
 	sensor_s_exp_gain(sd, &exp_gain);
 	sensor_s_streamon(sd);
-
 #if VIN_FALSE
 	if (sensor_otp_enable == -1) {
 		sensor_write(sd, 0xfe, 0x01); // color bar

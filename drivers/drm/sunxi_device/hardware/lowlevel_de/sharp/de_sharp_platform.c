@@ -26,6 +26,9 @@ static struct de_sharp_desc *de352_sharp[] = {
 	&vch0_sharp,
 };
 
+static struct de_sharp_desc *de355_sharp[] = {
+	&vch0_sharp,
+};
 
 static struct de_version_sharp de350 = {
 	.version = 0x350,
@@ -39,8 +42,14 @@ static struct de_version_sharp de352 = {
 	.sharp = &de352_sharp[0],
 };
 
+static struct de_version_sharp de355 = {
+	.version = 0x355,
+	.sharp_cnt = ARRAY_SIZE(de355_sharp),
+	.sharp = &de355_sharp[0],
+};
+
 static struct de_version_sharp *de_version[] = {
-	&de350, &de352,
+	&de350, &de352, &de355
 };
 
 const struct de_sharp_desc *get_sharp_desc(struct module_create_info *info)

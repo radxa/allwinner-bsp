@@ -20,5 +20,6 @@ void sunxidrm_debug_term(void);
 void sunxidrm_debug_trace_begin(u32 crtc);
 void sunxidrm_debug_trace_frame(u32 crtc, u32 plane, struct drm_framebuffer *fb);
 void sunxidrm_debug_trace_framebuffer_unmap(struct drm_framebuffer *fb);
+int sunxidrm_debug_show(struct seq_file *sfile, void *offset);
 
 #endif

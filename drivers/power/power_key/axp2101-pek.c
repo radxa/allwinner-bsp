@@ -15,18 +15,8 @@
  */
 #define pr_fmt(x) KBUILD_MODNAME ": " x
 
-#include <linux/errno.h>
-#include <linux/irq.h>
-#include <linux/init.h>
-#include <linux/input.h>
-#include <linux/interrupt.h>
-#include <linux/kernel.h>
-#include <power/axp2101.h>
-#include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/regmap.h>
-#include <linux/slab.h>
-#include <linux/of.h>
+#include "sunxi-power-powerkey.h"
+#include "axp2101.h"
 
 #define AXP20X_PEK_STARTUP_MASK		(0x03)
 #define AXP20X_PEK_SHUTDOWN_MASK	(0x0c)
@@ -590,6 +580,57 @@ static int axp2585_config_set(struct axp20x_pek *axp20x_pek)
 	return 0;
 }
 
+static int axp515_config_set(struct axp20x_pek *axp20x_pek)
+{
+	struct axp20x_dev *axp20x_dev = axp20x_pek->axp20x;
+	struct regmap *regmap = axp20x_dev->regmap;
+	struct pk_dts *pk_dts = &axp20x_pek->pk_dts;
+	unsigned int val;
+
+	/* onlevel setting */
+	regmap_read(regmap, AXP515_POK_SET, &val);
+	if (pk_dts->pmu_powkey_on_time < 512)
+		val &= 0xf3;
+	else if (pk_dts->pmu_powkey_on_time < 1000) {
+		val &= 0xf3;
+		val |= 0x04;
+	} else if (pk_dts->pmu_powkey_on_time < 2000) {
+		val &= 0xf3;
+		val |= 0x08;
+	} else {
+		val &= 0xf3;
+		val |= 0x0c;
+	}
+	regmap_write(regmap, AXP515_POK_SET, val);
+
+	/* pok long time set */
+	if (pk_dts->pmu_powkey_long_time < 1000)
+		pk_dts->pmu_powkey_long_time = 1000;
+
+	if (pk_dts->pmu_powkey_long_time > 2500)
+		pk_dts->pmu_powkey_long_time = 2500;
+
+	regmap_read(regmap, AXP515_POK_SET, &val);
+	val &= 0x3f;
+	val |= (((pk_dts->pmu_powkey_long_time - 1000) / 500)
+		<< 6);
+	regmap_write(regmap, AXP515_POK_SET, val);
+
+	/* pek offlevel poweroff time set */
+	if (pk_dts->pmu_powkey_off_time < 4500)
+		pk_dts->pmu_powkey_off_time = 4500;
+
+	if (pk_dts->pmu_powkey_off_time > 10500)
+		pk_dts->pmu_powkey_off_time = 10500;
+
+	regmap_read(regmap, AXP515_POK_SET, &val);
+	val &= 0xfc;
+	val |= ((pk_dts->pmu_powkey_off_time - 4500) / 2000);
+	regmap_write(regmap, AXP515_POK_SET, val);
+
+	return 0;
+}
+
 static int axp2202_config_set(struct axp20x_pek *axp20x_pek)
 {
 	struct axp20x_dev *axp20x_dev = axp20x_pek->axp20x;
@@ -680,12 +721,12 @@ static int axp8191_config_set(struct axp20x_pek *axp20x_pek)
 	unsigned int val;
 
 	regmap_read(regmap, AXP8191_PONLEVEL_SET, &val);
-	if (pk_dts->pmu_powkey_on_time < 128)
+	if (pk_dts->pmu_powkey_on_time < 512)
 		val &= 0xFC;
-	else if (pk_dts->pmu_powkey_on_time < 512) {
+	else if (pk_dts->pmu_powkey_on_time < 1000) {
 		val &= 0xFC;
 		val |= 0x01;
-	} else if (pk_dts->pmu_powkey_on_time < 1000) {
+	} else if (pk_dts->pmu_powkey_on_time < 2000) {
 		val &= 0xFC;
 		val |= 0x02;
 	} else {
@@ -950,6 +991,9 @@ static void axp20x_dts_param_set(struct axp20x_pek *axp20x_pek)
 		case AXP2585_ID:
 			axp2585_config_set(axp20x_pek);
 			break;
+		case AXP515_ID:
+			axp515_config_set(axp20x_pek);
+			break;
 		case AXP803_ID:
 			axp803_config_set(axp20x_pek);
 			break;
@@ -1012,6 +1056,9 @@ static int axp20x_pek_probe(struct platform_device *pdev)
 	switch (axp20x->variant) {
 	case AXP2585_ID:
 		idev->name = "axp2585-pek";
+		break;
+	case AXP515_ID:
+		idev->name = "axp515-pek";
 		break;
 	case AXP2202_ID:
 		idev->name = "axp2202-pek";
@@ -1181,11 +1228,13 @@ static const struct dev_pm_ops axp2101_powerkey_pm_ops = {
 
 static struct of_device_id axp_match_table[] = {
 	{ .compatible = "x-powers,axp2585-pek" },
+	{ .compatible = "x-powers,axp515-pek" },
 	{ .compatible = "x-powers,axp2202-pek" },
 	{ .compatible = "x-powers,axp803-pek" },
 	{ .compatible = "x-powers,axp806-pek" },
 	{ .compatible = "x-powers,axp152-pek" },
 	{ .compatible = "x-powers,axp8191-pek" },
+	{ .compatible = "x-powers,axp1530-pek" },
 { /* sentinel */ },
 };
 

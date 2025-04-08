@@ -108,6 +108,7 @@ target_neutral_types := \
  gunzip_files \
  hidl \
  java_archive \
+ lws_cache_tarball_neutral \
  module_group \
  opencl_signature_header \
  pds_header \
@@ -180,6 +181,10 @@ define cc-is-clang
 $(call cc-check,$(patsubst @%,%,$(CC)),$(OUT),--clang)
 endef
 
+define cc-is-macos-clang
+$(if $(and $(call cc-is-clang),$(findstring $(TARGET_OS),darwin)),true,false)
+endef
+
 define cc-option
 $(call cc-check,$(patsubst @%,%,$(CC)),$(OUT),$(1))
 endef
@@ -190,6 +195,10 @@ endef
 
 define host-cc-is-clang
 $(call cc-check,$(patsubst @%,%,$(HOST_CC)),$(OUT),--clang)
+endef
+
+define host-cc-is-macos-clang
+$(if $(and $(call host-cc-is-clang),$(findstring $(HOST_OS),darwin)),true,false)
 endef
 
 define host-cc-option
@@ -303,5 +312,6 @@ endef
 
 define aidl_headers
 $(addprefix $(1)/$($(1)_type)/$($(1)_intf_path)/, \
-	$(foreach _i,$($(1)_intf_class),$(_i).h))
+	$(foreach _i,$($(1)_intf_class),Bn$(_i).h Bp$(_i).h I$(_i).h) \
+	$(foreach _i,$($(1)_intf_type),Bn$(_i).h Bp$(_i).h))
 endef

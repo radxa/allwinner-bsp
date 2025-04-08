@@ -24,15 +24,18 @@ struct de_cdc_handle {
 	unsigned int block_num;
 	struct de_reg_block **block;
 	struct de_cdc_private *private;
+	bool support_gtm;
 };
 
+bool de_cdc_gtm_is_enabled(struct de_cdc_handle *hdl);
 struct de_cdc_handle *de_cdc_create(struct module_create_info *info);
-s32 de_cdc_apply_csc(struct de_cdc_handle *hdl,
-	struct de_csc_info *in_info, struct de_csc_info *out_info);
+s32 de_cdc_apply(struct de_cdc_handle *hdl,
+	struct de_csc_info *in_info, struct de_csc_info *out_info, bool gtm_enable);
 s32 de_cdc_enable(struct de_cdc_handle *hdl, u32 enable);
 void de_cdc_update_regs(struct de_cdc_handle *hdl);
 s32 de_cdc_dump_state(struct drm_printer *p, struct de_cdc_handle *hdl);
 s32 de_cdc_update_local_param(struct de_cdc_handle *hdl);
+int de_gtm_pq_proc(struct de_cdc_handle *hdl, hdr_module_param_t *para);
 
 
 #endif /* #ifndef _DE_CDC_H_ */

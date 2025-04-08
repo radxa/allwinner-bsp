@@ -18,20 +18,10 @@
 #include "spi-sunxi-debug.h"
 
 #define SUNXI_SPI_DEV_NAME "sunxi-spi-ng"
-#define SUNXI_SPI_MODULE_VERSION "2.4.3"
+#define SUNXI_SPI_MODULE_VERSION "2.5.4"
 
 static int sunxi_spi_debug_mask;
 module_param_named(spi_debug_mask, sunxi_spi_debug_mask, int, 0664);
-
-static const u32 sunxi_spi_sample_mode[] = {
-	0x100, /* SUNXI_SPI_SAMP_DELAY_CYCLE_0_0 */
-	0x000, /* SUNXI_SPI_SAMP_DELAY_CYCLE_0_5 */
-	0x010, /* SUNXI_SPI_SAMP_DELAY_CYCLE_1_0 */
-	0x110, /* SUNXI_SPI_SAMP_DELAY_CYCLE_1_5 */
-	0x101, /* SUNXI_SPI_SAMP_DELAY_CYCLE_2_0 */
-	0x001, /* SUNXI_SPI_SAMP_DELAY_CYCLE_2_5 */
-	0x011  /* SUNXI_SPI_SAMP_DELAY_CYCLE_3_0 */
-};
 
 static void sunxi_spi_dump_regs(struct sunxi_spi *sspi)
 {
@@ -162,22 +152,6 @@ static void sunxi_spi_set_spi(struct sunxi_spi *sspi)
 	writel(reg_val, sspi->base_addr + SUNXI_SPI_GC_REG);
 }
 
-static void sunxi_spi_bus_sample_mode(struct sunxi_spi *sspi, u32 mode)
-{
-	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_GC_REG);
-
-	switch (mode) {
-	case SUNXI_SPI_SAMP_MODE_OLD:
-		reg_val &= ~SUNXI_SPI_GC_MODE_SEL;
-		break;
-	case SUNXI_SPI_SAMP_MODE_NEW:
-		reg_val |= SUNXI_SPI_GC_MODE_SEL;
-		break;
-	}
-
-	writel(reg_val, sspi->base_addr + SUNXI_SPI_GC_REG);
-}
-
 static void sunxi_spi_set_master(struct sunxi_spi *sspi)
 {
 	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_GC_REG);
@@ -211,36 +185,6 @@ static void sunxi_spi_start_xfer(struct sunxi_spi *sspi)
 	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_TC_REG);
 	reg_val |= SUNXI_SPI_TC_XCH;
 	writel(reg_val, sspi->base_addr + SUNXI_SPI_TC_REG);
-}
-
-static void sunxi_spi_set_sample_mode(struct sunxi_spi *sspi, u32 mode)
-{
-	u32 reg_old, reg_new;
-	u32 sdm, sdc, sdc1;
-
-	reg_new = reg_old = readl(sspi->base_addr + SUNXI_SPI_TC_REG);
-
-	sdm = (sunxi_spi_sample_mode[mode] >> 8) & 0xf;
-	sdc = (sunxi_spi_sample_mode[mode] >> 4) & 0xf;
-	sdc1 = (sunxi_spi_sample_mode[mode] >> 0) & 0xf;
-
-	if (sdm)
-		reg_new |= SUNXI_SPI_TC_SDM;
-	else
-		reg_new &= ~SUNXI_SPI_TC_SDM;
-
-	if (sdc)
-		reg_new |= SUNXI_SPI_TC_SDC;
-	else
-		reg_new &= ~SUNXI_SPI_TC_SDC;
-
-	if (sdc1)
-		reg_new |= SUNXI_SPI_TC_SDC1;
-	else
-		reg_new &= ~SUNXI_SPI_TC_SDC1;
-
-	if (reg_new != reg_old)
-		writel(reg_new, sspi->base_addr + SUNXI_SPI_TC_REG);
 }
 
 static void sunxi_spi_set_dummy_type(struct sunxi_spi *sspi, bool ddb)
@@ -371,7 +315,7 @@ static void sunxi_spi_config_tc(struct sunxi_spi *sspi, u32 config)
 static void sunxi_spi_enable_irq(struct sunxi_spi *sspi, u32 bitmap)
 {
 	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_INT_CTL_REG);
-	bitmap &= SUNXI_SPI_INT_CTL_MASK;
+	bitmap &= SUNXI_SPI_INT_MASK;
 	reg_val |= bitmap;
 	writel(reg_val, sspi->base_addr + SUNXI_SPI_INT_CTL_REG);
 }
@@ -379,24 +323,24 @@ static void sunxi_spi_enable_irq(struct sunxi_spi *sspi, u32 bitmap)
 static void sunxi_spi_disable_irq(struct sunxi_spi *sspi, u32 bitmap)
 {
 	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_INT_CTL_REG);
-	bitmap &= SUNXI_SPI_INT_CTL_MASK;
+	bitmap &= SUNXI_SPI_INT_MASK;
 	reg_val &= ~bitmap;
 	writel(reg_val, sspi->base_addr + SUNXI_SPI_INT_CTL_REG);
 }
 
 static inline u32 sunxi_spi_qry_irq_enable(struct sunxi_spi *sspi)
 {
-	return (SUNXI_SPI_INT_CTL_MASK & readl(sspi->base_addr + SUNXI_SPI_INT_CTL_REG));
+	return (SUNXI_SPI_INT_MASK & readl(sspi->base_addr + SUNXI_SPI_INT_CTL_REG));
 }
 
 static inline u32 sunxi_spi_qry_irq_pending(struct sunxi_spi *sspi)
 {
-	return (SUNXI_SPI_INT_STA_MASK & readl(sspi->base_addr + SUNXI_SPI_INT_STA_REG));
+	return (SUNXI_SPI_INT_MASK & readl(sspi->base_addr + SUNXI_SPI_INT_STA_REG));
 }
 
 static void sunxi_spi_clr_irq_pending(struct sunxi_spi *sspi, u32 bitmap)
 {
-	bitmap &= SUNXI_SPI_INT_STA_MASK;
+	bitmap &= SUNXI_SPI_INT_MASK;
 	writel(bitmap, sspi->base_addr + SUNXI_SPI_INT_STA_REG);
 }
 
@@ -522,26 +466,6 @@ static inline u32 sunxi_spi_get_rxfifo_cnt(struct sunxi_spi *sspi)
 	return FIELD_GET(SUNXI_SPI_FIFO_STA_RX_CNT, readl(sspi->base_addr + SUNXI_SPI_FIFO_STA_REG));
 }
 
-static void sunxi_spi_set_sample_delay_sw(struct sunxi_spi *sspi, u32 status)
-{
-	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_SAMP_DL_REG);
-
-	if (status)
-		reg_val |= SUNXI_SPI_SAMP_DL_SW_EN;
-	else
-		reg_val &= ~SUNXI_SPI_SAMP_DL_SW_EN;
-
-	writel(reg_val, sspi->base_addr + SUNXI_SPI_SAMP_DL_REG);
-}
-
-static void sunxi_spi_set_sample_delay(struct sunxi_spi *sspi, u32 sample_delay)
-{
-	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_SAMP_DL_REG);
-	reg_val &= ~SUNXI_SPI_SAMP_DL_SW;
-	reg_val |= FIELD_PREP(SUNXI_SPI_SAMP_DL_SW, sample_delay);
-	writel(reg_val, sspi->base_addr + SUNXI_SPI_SAMP_DL_REG);
-}
-
 static void sunxi_spi_set_bc_tc_stc(struct sunxi_spi *sspi, u32 tx_len, u32 rx_len, u32 stc_len, u32 dummy_cnt)
 {
 	u32 reg_val;
@@ -639,88 +563,104 @@ static void sunxi_spi_soft_reset(struct sunxi_spi *sspi)
 		 */
 		ndelay(10 * (wait_cycle + 1) * 32);
 		if (sunxi_spi_get_rxfifo_cnt(sspi) > 0) {
-			sunxi_spi_reset_fifo(sspi);
+			sunxi_spi_reset_rxfifo(sspi);
 			sunxi_debug(sspi->dev, "get quirk %#x and fixed\n", NEW_SAMPLE_MODE_RST);
 		}
 	}
 }
 
-/* SPI Controller Hardware Register Operation End */
-
-static void sunxi_spi_delay_chain_init(struct sunxi_spi *sspi)
+static inline bool sunxi_spi_is_fifo_empty(struct sunxi_spi *sspi)
 {
-	if ((sspi->bus_mode & (SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND)) &&
-		(sspi->data->quirk_flag & NEW_SAMPLE_MODE)) {
-		sunxi_spi_bus_sample_mode(sspi, SUNXI_SPI_SAMP_MODE_NEW);
-		if (sspi->bus_sample_mode == SUNXI_SPI_SAMP_MODE_MANUAL) {
-			sunxi_spi_set_sample_mode(sspi, sspi->spi_sample_mode);
-			if (sspi->spi_sample_delay) {
-				sunxi_spi_set_sample_delay_sw(sspi, true);
-				sunxi_spi_set_sample_delay(sspi, sspi->spi_sample_delay);
-			}
-		}
-	} else {
-		sunxi_spi_bus_sample_mode(sspi, SUNXI_SPI_SAMP_MODE_OLD);
-		if (sspi->bus_sample_mode == SUNXI_SPI_SAMP_MODE_MANUAL)
-			sunxi_spi_set_sample_mode(sspi, sspi->spi_sample_mode);
+	u32 cnt = 0;
+
+	cnt += sunxi_spi_get_rxfifo_cnt(sspi) + sunxi_spi_get_rxbuf_cnt(sspi);
+	cnt += sunxi_spi_get_txfifo_cnt(sspi) + sunxi_spi_get_txbuf_cnt(sspi);
+	cnt += sunxi_spi_get_tx_shift_buf_cnt(sspi);
+
+	return !cnt;
+}
+
+static void sunxi_spi_set_wait_cnt(struct sunxi_spi *sspi, u32 wait_cnt)
+{
+	u32 reg_val;
+	u32 reg_old;
+	if (wait_cnt) {
+		reg_val = readl(sspi->base_addr + SUNXI_SPI_WAIT_CNT_REG);
+		reg_old = reg_val;
+		reg_val &= ~SUNXI_SPI_WAIT_CNT_WCC;
+		reg_val |= FIELD_PREP(SUNXI_SPI_WAIT_CNT_WCC, wait_cnt);
+		if (reg_val != reg_old)
+			writel(reg_val, sspi->base_addr + SUNXI_SPI_WAIT_CNT_REG);
 	}
 }
 
-static void sunxi_spi_set_delay_chain(struct sunxi_spi *sspi, u32 clk)
-{
-	u32 spi_sample_mode;
+/* SPI Controller Hardware Register Operation End */
 
-	switch (sspi->bus_sample_mode) {
-	case SUNXI_SPI_SAMP_MODE_AUTO:
-		if ((sspi->bus_mode & (SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND)) &&
-			(sspi->data->quirk_flag & NEW_SAMPLE_MODE)) {
-			if (clk >= SUNXI_SPI_SAMP_HIGH_FREQ)
-				spi_sample_mode = SUNXI_SPI_SAMP_DELAY_CYCLE_0_5;
-			else
-				spi_sample_mode = SUNXI_SPI_SAMP_DELAY_CYCLE_0_0;
-		} else {
-			if (clk >= SUNXI_SPI_SAMP_HIGH_FREQ)
-				spi_sample_mode = SUNXI_SPI_SAMP_DELAY_CYCLE_1_0;
-			else if (clk <= SUNXI_SPI_SAMP_LOW_FREQ)
-				spi_sample_mode = SUNXI_SPI_SAMP_DELAY_CYCLE_0_0;
-			else
-				spi_sample_mode = SUNXI_SPI_SAMP_DELAY_CYCLE_0_5;
-		}
-		if (sspi->spi_sample_mode != spi_sample_mode) {
-			sunxi_spi_set_sample_mode(sspi, spi_sample_mode);
-			sspi->spi_sample_mode = spi_sample_mode;
-		}
-		break;
-	case SUNXI_SPI_SAMP_MODE_MANUAL:
-		break;
-	default:
-		sunxi_err(sspi->dev, "unsupport sample mode %d\n", sspi->bus_sample_mode);
+u32 sunxi_spi_word_delay_wcc(struct spi_transfer *t, u32 effective_speed_hz)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
+	u32 value = t->word_delay.value;
+	u8 unit = t->word_delay.unit;
+#else
+	u32 value = t->word_delay;
+	u8 unit = t->cs_change_delay_unit;
+#endif
+
+	if (likely(value == 0))
+		return 0;
+
+	/* t(ns) = 10^9 / clk
+	 *   wcc = delay(ns) / t(ns)
+	 *       = clk * delay(ns) / 10^9
+	 *       = clk / 10^3 * delay(ns) / 10^6
+	 */
+	switch (unit) {
+	case SPI_DELAY_UNIT_NSECS:
+		return effective_speed_hz / 1000 * value / 1000000;
+	case SPI_DELAY_UNIT_USECS:
+		return effective_speed_hz / 1000 * value / 1000;
+	case SPI_DELAY_UNIT_SCK:
+		return value;
 	}
+
+	return 0;
+}
+
+static void sunxi_spi_set_byte_interval(struct sunxi_spi *sspi, struct spi_transfer *t)
+{
+	u32 wait_clk_count;
+
+	wait_clk_count = sunxi_spi_word_delay_wcc(t, sspi->pre_speed_hz);
+	sunxi_spi_set_wait_cnt(sspi, wait_clk_count);
 }
 
 static int sunxi_spi_set_clk(struct sunxi_spi *sspi, u32 clk)
 {
 	u32 new_clk;
 	u32 old_clk = clk_get_rate(sspi->mclk);
+	int ret;
 
 	if (old_clk == clk)
 		return old_clk;
 
 	new_clk = clk_round_rate(sspi->mclk, clk);
-	if (new_clk != clk) {
+	if (new_clk != clk)
 		sunxi_warn(sspi->dev, "clk %d not support, round to nearly %d\n", clk, new_clk);
-	}
 
 	if ((new_clk > sspi->ctlr->max_speed_hz) || (new_clk < sspi->ctlr->min_speed_hz)) {
 		sunxi_err(sspi->dev, "set clk freq %d not support", new_clk);
 		return -EINVAL;
 	}
 
-	if (clk_set_rate(sspi->mclk, new_clk)) {
-		sunxi_err(sspi->dev, "set clk freq %d failed\n", new_clk);
+	clk_disable(sspi->mclk);
+	ret = clk_set_rate(sspi->mclk, new_clk);
+	if (ret) {
+		sunxi_err(sspi->dev, "set clk freq %d failed %d\n", new_clk, ret);
 		clk_set_rate(sspi->mclk, old_clk);
-		return -EINVAL;
+		clk_enable(sspi->mclk);
+		return ret;
 	}
+	clk_enable(sspi->mclk);
 
 	sunxi_debug(sspi->dev, "set clk freq %d success\n", new_clk);
 
@@ -747,7 +687,7 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 	sspi->pdev->id = sspi->bus_num;
 
 	sspi->mem_res = platform_get_resource(sspi->pdev, IORESOURCE_MEM, 0);
-	if (IS_ERR_OR_NULL(sspi->mem_res)) {
+	if (!sspi->mem_res) {
 		sunxi_err(sspi->dev, "failed to get mem resource\n");
 		ret = -EINVAL;
 		goto out;
@@ -766,9 +706,9 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 	 */
 	if (of_property_read_bool(np, "sunxi,rspi-use-sys-dma")) {
 		sspi->dma_sel_base = devm_ioremap(sspi->dev, sspi->data->dma_sel_addr + sspi->data->dma_sel_offset, 4);
-		if (IS_ERR_OR_NULL(sspi->dma_sel_base)) {
-			sunxi_err(sspi->dev, "failed to get dma select resource\n");
-			ret = -EINVAL;
+		if (IS_ERR(sspi->dma_sel_base)) {
+			ret = PTR_ERR(sspi->dma_sel_base);
+			sunxi_err(sspi->dev, "failed to get dma select resource %d\n", ret);
 			goto out;
 		}
 		/* R_SPI DMA SEL : 0-DSP_DMA(default) 1-SYS_DMA */
@@ -810,12 +750,16 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 	if (sspi->bus_mode & sspi->data->hw_bus_mode) {
 		switch (sspi->bus_mode) {
 		case SUNXI_SPI_BUS_SLAVE:
+#if IS_ENABLED(CONFIG_AW_SPI_NG_CAMERA)
 		case SUNXI_SPI_BUS_CAMERA:
+#endif
 			if (!IS_ENABLED(CONFIG_SPI_SLAVE)) {
 				sunxi_err(sspi->dev, "CONFIG_SPI_SLAVE not enable under slave mode\n");
 				ret = -EINVAL;
 				goto out;
 			}
+			of_property_read_u32(np, "sunxi,spi-slave-cs", &sspi->slave_cs);
+			sunxi_info(sspi->dev, "slave use chip select %d\n", sspi->slave_cs);
 			break;
 		case SUNXI_SPI_BUS_NOR:
 		case SUNXI_SPI_BUS_NAND:
@@ -824,8 +768,18 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 				sunxi_info(sspi->dev, "bus in flash mode, cs force use software control\n");
 			}
 			break;
-		default:
+		case SUNXI_SPI_BUS_MASTER:
+#if IS_ENABLED(CONFIG_AW_SPI_NG_BIT)
+		case SUNXI_SPI_BUS_BIT:
+#endif
+#if IS_ENABLED(CONFIG_AW_SPI_NG_DBI)
+		case SUNXI_SPI_BUS_DBI:
+#endif
 			break;
+		default:
+			sunxi_err(sspi->dev, "unsupport driver feature %#x\n", sspi->bus_mode);
+			ret = -EINVAL;
+			goto out;
 		}
 	} else {
 		sunxi_err(sspi->dev, "unsupport hw bus mode %#x\n", sspi->bus_mode);
@@ -833,39 +787,11 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 		goto out;
 	}
 
-	ret = of_property_read_u32(np, "sample_mode", &sspi->spi_sample_mode);
-	if (ret)
-		sspi->spi_sample_mode = SUNXI_SPI_SAMP_MODE_DL_DEFAULT;
-	ret = of_property_read_u32(np, "sample_delay", &sspi->spi_sample_delay);
-	if (ret)
-		sspi->spi_sample_delay = SUNXI_SPI_SAMP_MODE_DL_DEFAULT;
-	if (sspi->spi_sample_mode == SUNXI_SPI_SAMP_MODE_DL_DEFAULT && sspi->spi_sample_delay == SUNXI_SPI_SAMP_MODE_DL_DEFAULT) {
-		sspi->bus_sample_mode = SUNXI_SPI_SAMP_MODE_AUTO;
-		sspi->spi_sample_mode = sspi->spi_sample_delay = 0;
-	} else {
-		sspi->bus_sample_mode = SUNXI_SPI_SAMP_MODE_MANUAL;
-		if ((sspi->bus_mode & (SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND)) &&
-			(sspi->data->quirk_flag & NEW_SAMPLE_MODE)) {
-			if (sspi->spi_sample_mode > SUNXI_SPI_SAMP_DELAY_CYCLE_3_0) {
-				sunxi_warn(sspi->dev, "sample mode %d over new delay cycle\n", sspi->spi_sample_mode);
-				sspi->spi_sample_mode = SUNXI_SPI_SAMP_DELAY_CYCLE_0_0;
-			}
-			if (sspi->spi_sample_delay > SUNXI_SPI_SAMPLE_DELAY_CHAIN_MAX) {
-				sunxi_warn(sspi->dev, "sample delay %d over new delay chain\n", sspi->spi_sample_delay);
-				sspi->spi_sample_delay = SUNXI_SPI_SAMPLE_DELAY_CHAIN_MIN;
-			}
-		} else {
-			if (sspi->spi_sample_mode > SUNXI_SPI_SAMP_DELAY_CYCLE_1_0) {
-				sunxi_warn(sspi->dev, "sample mode %d over old delay cycle\n", sspi->spi_sample_mode);
-				sspi->spi_sample_mode = SUNXI_SPI_SAMP_DELAY_CYCLE_0_0;
-			}
-			sspi->spi_sample_delay = 0;
-		}
-	}
+	sunxi_spi_resource_get_calibrate(sspi);
 
 	/* ioremap */
 	sspi->base_addr = devm_ioremap_resource(sspi->dev, sspi->mem_res);
-	if (IS_ERR_OR_NULL(sspi->base_addr)) {
+	if (IS_ERR(sspi->base_addr)) {
 		ret = PTR_ERR(sspi->base_addr);
 		sunxi_err(sspi->dev, "failed to ioremap resource %d\n", ret);
 		goto out;
@@ -882,26 +808,35 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 
 	/* clock */
 	sspi->pclk = devm_clk_get(sspi->dev, "pll");
-	if (IS_ERR_OR_NULL(sspi->pclk)) {
-		ret = PTR_ERR(sspi->pclk);
-		sunxi_err(sspi->dev, "failed to get pll clk %d\n", ret);
-		goto out;
+	if (IS_ERR(sspi->pclk)) {
+		sspi->pclk = of_clk_get(sspi->pdev->dev.of_node, 0);
+		if (IS_ERR_OR_NULL(sspi->pclk)) {
+			ret = PTR_ERR(sspi->pclk);
+			sunxi_err(sspi->dev, "failed to get pll clk %d\n", ret);
+			goto out;
+		}
 	}
 	sspi->mclk = devm_clk_get(sspi->dev, "mod");
-	if (IS_ERR_OR_NULL(sspi->mclk)) {
-		ret = PTR_ERR(sspi->mclk);
-		sunxi_err(sspi->dev, "failed to get mod clk %d\n", ret);
-		goto out;
+	if (IS_ERR(sspi->mclk)) {
+		sspi->mclk = of_clk_get(sspi->pdev->dev.of_node, 1);
+		if (IS_ERR_OR_NULL(sspi->mclk)) {
+			ret = PTR_ERR(sspi->mclk);
+			sunxi_err(sspi->dev, "failed to get mod clk %d\n", ret);
+			goto out;
+		}
 	}
 	sspi->bus_clk = devm_clk_get(sspi->dev, "bus");
-	if (IS_ERR_OR_NULL(sspi->bus_clk)) {
-		ret = PTR_ERR(sspi->bus_clk);
-		sunxi_err(sspi->dev, "failed to get bus clk %d\n", ret);
-		goto out;
+	if (IS_ERR(sspi->bus_clk)) {
+		sspi->bus_clk = of_clk_get(sspi->pdev->dev.of_node, 1);
+		if (IS_ERR_OR_NULL(sspi->bus_clk)) {
+			ret = PTR_ERR(sspi->bus_clk);
+			sunxi_err(sspi->dev, "failed to get bus clk %d\n", ret);
+			goto out;
+		}
 	}
 	if (sspi->bus_mode == SUNXI_SPI_BUS_CAMERA) {
 		sspi->ahb_clk = devm_clk_get(sspi->dev, "ahb");
-		if (IS_ERR_OR_NULL(sspi->bus_clk)) {
+		if (IS_ERR(sspi->bus_clk)) {
 			ret = PTR_ERR(sspi->bus_clk);
 			sunxi_err(sspi->dev, "failed to get ahb clk %d\n", ret);
 			goto out;
@@ -909,8 +844,8 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 	}
 
 	/* reset */
-	sspi->reset = devm_reset_control_get(sspi->dev, NULL);
-	if (IS_ERR_OR_NULL(sspi->reset)) {
+	sspi->reset = devm_reset_control_get_optional(sspi->dev, NULL);
+	if (IS_ERR(sspi->reset)) {
 		ret = PTR_ERR(sspi->reset);
 		sunxi_err(sspi->dev, "failed to get reset control %d\n", ret);
 		goto out;
@@ -927,8 +862,6 @@ static int sunxi_spi_resource_get(struct sunxi_spi *sspi)
 	/* resource data dump */
 	sunxi_info(sspi->dev, "bus num_%d mode_%d freq_%d\n", sspi->bus_num, sspi->bus_mode, sspi->bus_freq);
 	sunxi_info(sspi->dev, "cs num_%d mode_%d\n", sspi->cs_num, sspi->cs_mode);
-	if (sspi->bus_sample_mode == SUNXI_SPI_SAMP_MODE_MANUAL)
-		sunxi_info(sspi->dev, "spi manual set sample mode_%d, delay_%d\n", sspi->spi_sample_mode, sspi->spi_sample_delay);
 
 	return 0;
 
@@ -967,9 +900,9 @@ err0:
 
 static int sunxi_spi_release_dma(struct sunxi_spi *sspi)
 {
-	if (sspi->ctlr->dma_tx)
+	if (!IS_ERR_OR_NULL(sspi->ctlr->dma_tx))
 		dma_release_channel(sspi->ctlr->dma_tx);
-	if (sspi->ctlr->dma_rx)
+	if (!IS_ERR_OR_NULL(sspi->ctlr->dma_rx))
 		dma_release_channel(sspi->ctlr->dma_rx);
 
 	return 0;
@@ -1063,11 +996,12 @@ static int sunxi_spi_setup(struct spi_device *spi)
 static void sunxi_spi_set_cs(struct spi_device *spi, bool status)
 {
 	struct sunxi_spi *sspi = spi_controller_get_devdata(spi->controller);
+	u16 cs = spi_controller_is_slave(spi->controller) ? sspi->slave_cs : spi->chip_select;
 	int ret;
 
-	ret = sunxi_spi_ss_select(sspi, spi->chip_select);
+	ret = sunxi_spi_ss_select(sspi, cs);
 	if (ret < 0) {
-		sunxi_warn(sspi->dev, "cs %d over range, need control by software\n", spi->chip_select);
+		sunxi_warn(sspi->dev, "cs %d over range, need control by software\n", cs);
 		return ;
 	}
 
@@ -1089,6 +1023,9 @@ static int sunxi_spi_prepare_message(struct spi_controller *ctlr, struct spi_mes
 	struct sunxi_spi *sspi = spi_controller_get_devdata(ctlr);
 
 	if (spi_controller_is_slave(ctlr)) {
+		/* Some invisible data in fifo may not clear under slave mode, clean it by reset controller */
+		sunxi_spi_reset_fifo(sspi);
+		sunxi_spi_soft_reset(sspi);
 		if (sspi->ready_gpio > 0) {
 			/* delay some times to make sure gpio irq can detect the reverse */
 			sunxi_spi_set_ready_status(sspi, 0);
@@ -1099,11 +1036,9 @@ static int sunxi_spi_prepare_message(struct spi_controller *ctlr, struct spi_mes
 				sunxi_spi_camera_enable_vsync(sspi);
 				break;
 			case SUNXI_SPI_CAMERA_FRAMEHEAD:
-				sunxi_spi_soft_reset(sspi);
 				sunxi_spi_camera_enable_framehead(sspi);
 				break;
 			case SUNXI_SPI_CAMERA_IDLEWAIT:
-				sunxi_spi_soft_reset(sspi);
 				sunxi_spi_camera_enable_idlewait(sspi);
 				break;
 			}
@@ -1241,7 +1176,7 @@ static int sunxi_spi_mode_check_slave(struct sunxi_spi *sspi, struct spi_transfe
 	sunxi_spi_disable_quad(sspi);
 	sunxi_spi_disable_dual(sspi);
 	sunxi_spi_set_bc_tc_stc(sspi, 0, 0, 0, 0);
-	sunxi_spi_set_slv_sample_mode(sspi, 0);
+	sunxi_spi_set_slv_sample_mode(sspi, 1);
 
 	if (t->tx_buf && t->rx_buf) {
 		/* full duplex */
@@ -1268,11 +1203,9 @@ static int sunxi_spi_mode_check_slave(struct sunxi_spi *sspi, struct spi_transfe
 			sunxi_spi_set_slv_dir(sspi, 0);
 			switch (t->rx_nbits) {
 			case SPI_NBITS_QUAD:
-				sunxi_spi_set_slv_sample_mode(sspi, 1);
 				sspi->mode_type = QUAD_HALF_DUPLEX_RX;
 				break;
 			case SPI_NBITS_DUAL:
-				sunxi_spi_set_slv_sample_mode(sspi, 1);
 				sspi->mode_type = DUAL_HALF_DUPLEX_RX;
 				break;
 			default:
@@ -1297,11 +1230,10 @@ static int sunxi_spi_mode_check(struct sunxi_spi *sspi, struct spi_transfer *t)
 		ret = sunxi_dbi_mode_check_dbi(sspi, t);
 		break;
 	default:
-		if (spi_controller_is_slave(sspi->ctlr)) {
+		if (spi_controller_is_slave(sspi->ctlr))
 			ret = sunxi_spi_mode_check_slave(sspi, t);
-		} else {
+		else
 			ret = sunxi_spi_mode_check_master(sspi, t);
-		}
 	}
 
 	return ret;
@@ -1312,8 +1244,10 @@ static int sunxi_spi_cpu_rx(struct sunxi_spi *sspi, struct spi_transfer *t)
 	unsigned rx_len = t->len;
 	u8 *rx_buf = (u8 *)t->rx_buf;
 	int poll_time = SUNXI_SPI_POLL_TIMEOUT;
+	unsigned long flags = 0;
 
-	while (rx_len && poll_time) {
+	raw_spin_lock_irqsave(&sspi->lock, flags);
+	while (rx_len && (poll_time > 0)) {
 		if (sunxi_spi_get_rxfifo_cnt(sspi)) {
 			*rx_buf++ =  readb(sspi->base_addr + SUNXI_SPI_RXDATA_REG);
 			--rx_len;
@@ -1322,9 +1256,10 @@ static int sunxi_spi_cpu_rx(struct sunxi_spi *sspi, struct spi_transfer *t)
 			--poll_time;
 		}
 	}
+	raw_spin_unlock_irqrestore(&sspi->lock, flags);
 
 	if (poll_time <= 0) {
-		sunxi_err(sspi->dev, "cpu receive data time out\n");
+		sunxi_err(sspi->dev, "cpu rx time out with left len %d\n", rx_len);
 		sspi->result = -1;
 		return -ETIME;
 	}
@@ -1340,8 +1275,7 @@ static int sunxi_spi_cpu_tx(struct sunxi_spi *sspi, struct spi_transfer *t)
 	unsigned long flags = 0;
 
 	raw_spin_lock_irqsave(&sspi->lock, flags);
-
-	while (tx_len && poll_time) {
+	while (tx_len && (poll_time > 0)) {
 		if (sunxi_spi_get_txfifo_cnt(sspi) >= sspi->data->tx_fifosize) {
 			--poll_time;
 		} else {
@@ -1350,11 +1284,10 @@ static int sunxi_spi_cpu_tx(struct sunxi_spi *sspi, struct spi_transfer *t)
 			poll_time = SUNXI_SPI_POLL_TIMEOUT;
 		}
 	}
-
 	raw_spin_unlock_irqrestore(&sspi->lock, flags);
 
 	if (poll_time <= 0) {
-		sunxi_err(sspi->dev, "cpu transfer data time out\n");
+		sunxi_err(sspi->dev, "cpu tx time out with left len %d\n", tx_len);
 		sspi->result = -1;
 		return -ETIME;
 	}
@@ -1475,7 +1408,7 @@ static int sunxi_spi_config_dma_rx(struct sunxi_spi *sspi, struct spi_transfer *
 	dma_conf.src_addr = sspi->base_addr_phy + SUNXI_SPI_RXDATA_REG;
 
 	/* @BugFix :
-	 * There is an issue in controller that RX_RDY trigger is not controllable before 1886
+	 * There is an issue in controller that RX_RDY trigger is not controllable before sun8iw21
 	 * If is in slave mode, we use the DMA RX configuration by fixed value
 	 */
 	if (spi_controller_is_slave(sspi->ctlr) && (sspi->data->quirk_flag & DMA_FORCE_FIXED)) {
@@ -1533,6 +1466,7 @@ static int sunxi_spi_dma_rx(struct sunxi_spi *sspi, struct spi_transfer *t)
 {
 	int ret = 0;
 
+	sunxi_spi_enable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_RX_DRQ_EN);
 	ret = sunxi_spi_config_dma_rx(sspi, t);
 	dma_async_issue_pending(sspi->ctlr->dma_rx);
 
@@ -1543,6 +1477,7 @@ static int sunxi_spi_dma_tx(struct sunxi_spi *sspi, struct spi_transfer *t)
 {
 	int ret = 0;
 
+	sunxi_spi_enable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_TX_DRQ_EN);
 	ret = sunxi_spi_config_dma_tx(sspi, t);
 	dma_async_issue_pending(sspi->ctlr->dma_tx);
 
@@ -1566,8 +1501,8 @@ static int sunxi_spi_xfer_master(struct spi_device *spi, struct spi_transfer *t)
 		}
 	}
 
-	sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_TC_EN);
-	sunxi_spi_start_xfer(sspi);
+	sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_TC);
+	sunxi_spi_set_byte_interval(sspi, t);
 
 	switch (sspi->mode_type) {
 	case SINGLE_HALF_DUPLEX_RX:
@@ -1575,10 +1510,12 @@ static int sunxi_spi_xfer_master(struct spi_device *spi, struct spi_transfer *t)
 	case QUAD_HALF_DUPLEX_RX:
 		if (can_dma) {
 			sunxi_debug(sspi->dev, "master xfer rx by dma %d\n", t->len);
-			sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_TC_EN);
+			sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_TC);
 			sunxi_spi_dma_rx(sspi, t);
+			sunxi_spi_start_xfer(sspi);
 		} else {
 			sunxi_debug(sspi->dev, "master xfer rx by cpu %d\n", t->len);
+			sunxi_spi_start_xfer(sspi);
 			ret = sunxi_spi_cpu_rx(sspi, t);
 		}
 		break;
@@ -1588,19 +1525,23 @@ static int sunxi_spi_xfer_master(struct spi_device *spi, struct spi_transfer *t)
 		if (can_dma) {
 			sunxi_debug(sspi->dev, "master xfer tx by dma %d\n", t->len);
 			sunxi_spi_dma_tx(sspi, t);
+			sunxi_spi_start_xfer(sspi);
 		} else {
 			sunxi_debug(sspi->dev, "master xfer tx by cpu %d\n", t->len);
+			sunxi_spi_start_xfer(sspi);
 			ret = sunxi_spi_cpu_tx(sspi, t);
 		}
 		break;
 	case SINGLE_FULL_DUPLEX_TX_RX:
 		if (can_dma) {
 			sunxi_debug(sspi->dev, "master xfer tx & rx by dma %d\n", t->len);
-			sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_TC_EN);
+			sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_TC);
 			sunxi_spi_dma_tx(sspi, t);
 			sunxi_spi_dma_rx(sspi, t);
+			sunxi_spi_start_xfer(sspi);
 		} else {
 			sunxi_debug(sspi->dev, "master xfer tx & rx by cpu %d\n", t->len);
+			sunxi_spi_start_xfer(sspi);
 			sunxi_spi_cpu_tx_rx(sspi, t);
 		}
 		break;
@@ -1638,17 +1579,16 @@ static int sunxi_spi_xfer_slave(struct spi_device *spi, struct spi_transfer *t)
 
 	sspi->slave_aborted = false;
 
-	/* In slave mode we didn't care about fifo overflow or not */
-	sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_TX_OVF_EN | SUNXI_SPI_INT_CTL_RX_OVF_EN);
+	/* In slave mode we didn't care about fifo overflow/underrun or not */
+	sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_TX_OVF | SUNXI_SPI_INT_RX_OVF |
+								SUNXI_SPI_INT_RX_UDR | SUNXI_SPI_INT_TX_UDR);
 	if (sspi->bus_mode == SUNXI_SPI_BUS_CAMERA && sspi->camera_mode == SUNXI_SPI_CAMERA_VSYNC)
-		sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_SVE_EN);
+		sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_SVE);
 
 	switch (sspi->mode_type) {
 	case SINGLE_HALF_DUPLEX_RX:
 	case DUAL_HALF_DUPLEX_RX:
 	case QUAD_HALF_DUPLEX_RX:
-		if (sspi->bus_mode == SUNXI_SPI_BUS_CAMERA && sspi->camera_mode == SUNXI_SPI_CAMERA_FRAMEHEAD)
-			t->len -= sspi->camera_framehead_len;
 		if (can_dma) {
 			sunxi_debug(sspi->dev, "slave xfer rx by dma %d\n", t->len);
 			if (sspi->data->quirk_flag & DMA_FORCE_FIXED)
@@ -1658,8 +1598,8 @@ static int sunxi_spi_xfer_slave(struct spi_device *spi, struct spi_transfer *t)
 		} else {
 			sunxi_debug(sspi->dev, "slave xfer rx by cpu %d\n", t->len);
 			sunxi_spi_set_fifo_trig_level_rx(sspi, t->len - 1);
-			sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_STA_RX_RDY);
-			sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_RX_RDY_EN);
+			sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_RX_RDY);
+			sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_RX_RDY);
 			sunxi_spi_set_ready_status(sspi, 1);
 			goto wait;
 		}
@@ -1671,7 +1611,7 @@ static int sunxi_spi_xfer_slave(struct spi_device *spi, struct spi_transfer *t)
 			sunxi_debug(sspi->dev, "slave xfer tx by dma %d\n", t->len);
 			sunxi_spi_dma_tx(sspi, t);
 			/* Waiting for DMA fill data into fifo */
-			while (!sunxi_spi_get_txfifo_cnt(sspi) && poll_time--)
+			while (!sunxi_spi_get_txfifo_cnt(sspi) && (--poll_time > 0))
 				;
 			if (poll_time <= 0) {
 				sunxi_err(sspi->dev, "timeout for waiting fill data into fifo\n");
@@ -1682,8 +1622,8 @@ static int sunxi_spi_xfer_slave(struct spi_device *spi, struct spi_transfer *t)
 			sunxi_debug(sspi->dev, "slave xfer tx by cpu %d\n", t->len);
 			ret = sunxi_spi_cpu_tx(sspi, t);
 		}
-		sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_STA_TX_EMP);
-		sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_TX_EMP_EN);
+		sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_TX_EMP);
+		sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_TX_EMP);
 		sunxi_spi_set_ready_status(sspi, 1);
 		break;
 	case SINGLE_FULL_DUPLEX_TX_RX:
@@ -1708,12 +1648,11 @@ static int sunxi_spi_xfer_slave(struct spi_device *spi, struct spi_transfer *t)
 			if (ret < 0)
 				goto out;
 			sunxi_spi_set_fifo_trig_level_rx(sspi, t->len - 1);
-			sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_STA_RX_RDY);
-			sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_RX_RDY_EN);
+			sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_RX_RDY);
+			sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_RX_RDY);
 			sunxi_spi_set_ready_status(sspi, 1);
 			goto wait;
 		}
-		break;
 		break;
 	default:
 		sunxi_err(sspi->dev, "unknown slave transfer mode type %d\n", sspi->mode_type);
@@ -1744,14 +1683,11 @@ out:
 		default:
 			break;
 		}
-		if (sspi->bus_mode == SUNXI_SPI_BUS_CAMERA && sspi->camera_mode == SUNXI_SPI_CAMERA_FRAMEHEAD) {
-			/* In framehead mode controller will not received frame head into fifo.
-			 * Readback these data from register and put into rx_buf to reach one completely transfer.
-			 */
-			memmove(t->rx_buf + sspi->camera_framehead_len, t->rx_buf, t->len);
-			sunxi_spi_camera_get_frame_head(sspi, t->rx_buf, sspi->camera_framehead_len);
-			t->len += sspi->camera_framehead_len;
-		}
+		/* In framehead mode controller will not received frame head into fifo.
+		 * Readback these data from register and save in buffer may someone need it.
+		 */
+		if (sspi->bus_mode == SUNXI_SPI_BUS_CAMERA && sspi->camera_mode == SUNXI_SPI_CAMERA_FRAMEHEAD)
+			sunxi_spi_camera_get_frame_head(sspi, sspi->camera_framehead, sspi->camera_framehead_len);
 	}
 
 	if (ret < 0 && can_dma) {
@@ -1778,6 +1714,7 @@ static int sunxi_spi_xfer_dbi(struct spi_device *spi, struct spi_transfer *t)
 		t->len = rx_len;
 		if (can_dma) {
 			sunxi_debug(sspi->dev, "dbi xfer rx by dma %d\n", t->len);
+			sunxi_dbi_enable_dma(sspi);
 			sunxi_spi_dma_rx(sspi, t);
 		} else {
 			sunxi_debug(sspi->dev, "dbi xfer rx by cpu %d\n", t->len);
@@ -1787,6 +1724,7 @@ static int sunxi_spi_xfer_dbi(struct spi_device *spi, struct spi_transfer *t)
 	case SINGLE_HALF_DUPLEX_TX:
 		if (can_dma) {
 			sunxi_debug(sspi->dev, "dbi xfer tx by dma %d\n", t->len);
+			sunxi_dbi_enable_dma(sspi);
 			sunxi_spi_dma_tx(sspi, t);
 		} else {
 			sunxi_debug(sspi->dev, "dbi xfer tx by cpu %d\n", t->len);
@@ -1850,27 +1788,23 @@ static int sunxi_spi_transfer_one(struct spi_controller *ctlr, struct spi_device
 		sunxi_dbi_disable_irq(sspi, SUNXI_DBI_INT_EN_MASK);
 		sunxi_dbi_clr_irq_pending(sspi, SUNXI_DBI_INT_STA_MASK);
 		sunxi_dbi_enable_irq(sspi, sspi->dbi_irqbit);
-		if (sunxi_spi_can_dma(spi->controller, spi, t)) {
-			sunxi_spi_enable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_DRQ_EN);
-			sunxi_dbi_enable_dma(sspi);
-		} else {
-			sunxi_spi_disable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_DRQ_EN);
-			sunxi_dbi_disable_dma(sspi);
-		}
+		sunxi_spi_disable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_DRQ_EN);
+		sunxi_dbi_disable_dma(sspi);
 		break;
+	case SUNXI_SPI_BUS_MASTER:
+	case SUNXI_SPI_BUS_NOR:
+	case SUNXI_SPI_BUS_NAND:
+		if (!sunxi_spi_is_fifo_empty(sspi))
+			sunxi_spi_reset_fifo(sspi);
+	fallthrough;
 	default:
-		/* reset fifo */
-		sunxi_spi_reset_fifo(sspi);
 		sunxi_spi_set_fifo_trig_level_rx(sspi, sspi->rx_triglevel);
 		sunxi_spi_set_fifo_trig_level_tx(sspi, sspi->tx_triglevel);
 
-		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_MASK);
-		sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_STA_MASK);
-		sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_ERR);
-		if (sunxi_spi_can_dma(spi->controller, spi, t))
-			sunxi_spi_enable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_DRQ_EN);
-		else
-			sunxi_spi_disable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_DRQ_EN);
+		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_MASK);
+		sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_MASK);
+		sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_ERR);
+		sunxi_spi_disable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_DRQ_EN);
 	}
 
 	ret = sunxi_spi_mode_check(sspi, t);
@@ -1882,8 +1816,10 @@ static int sunxi_spi_transfer_one(struct spi_controller *ctlr, struct spi_device
 	sspi->result = 0;
 	reinit_completion(&sspi->done);
 
-	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA)
-		sunxi_spi_dump_data(sspi->dev, t->tx_buf, t->len);
+	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA) {
+		sunxi_spi_dump_data(sspi->dev, t->tx_buf, t->len, "txbuf-: ");
+		sunxi_spi_dump_data(sspi->dev, t->rx_buf, t->len, "rxbuf-: ");
+	}
 	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_REG)
 		sunxi_spi_dump_regs(sspi);
 
@@ -1905,8 +1841,10 @@ static int sunxi_spi_transfer_one(struct spi_controller *ctlr, struct spi_device
 
 	if (ret < 0 || sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_REG)
 		sunxi_spi_dump_regs(sspi);
-	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA)
-		sunxi_spi_dump_data(sspi->dev, t->rx_buf, t->len);
+	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA) {
+		sunxi_spi_dump_data(sspi->dev, t->tx_buf, t->len, "txbuf+: ");
+		sunxi_spi_dump_data(sspi->dev, t->rx_buf, t->len, "rxbuf+: ");
+	}
 
 out:
 	switch (sspi->bus_mode) {
@@ -1917,11 +1855,12 @@ out:
 		sunxi_dbi_disable_irq(sspi, SUNXI_DBI_INT_EN_MASK);
 		break;
 	default:
-		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_MASK);
+		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_MASK);
 	}
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_AW_MTD_SPINAND)
 static int sunxi_spi_xfer_tx_rx(struct spi_device *spi, struct spi_transfer *tx, struct spi_transfer *rx)
 {
 	struct sunxi_spi *sspi = spi_controller_get_devdata(spi->controller);
@@ -1931,12 +1870,11 @@ static int sunxi_spi_xfer_tx_rx(struct spi_device *spi, struct spi_transfer *tx,
 	/* Reset spi burst cause in flash mode it will send tx/rx in one transfer */
 	sunxi_spi_set_bc_tc_stc(sspi, tx->len, rx->len, tx->len, 0);
 
-	sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_TC_EN);
+	sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_TC);
 	sunxi_spi_start_xfer(sspi);
 
 	if (sunxi_spi_can_dma(spi->controller, spi, tx)) {
 		sunxi_debug(sspi->dev, "flash xfer2 tx by dma %d\n", tx->len);
-		sunxi_spi_enable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_TX_DRQ_EN);
 		sunxi_spi_dma_tx(sspi, tx);
 	} else {
 		sunxi_debug(sspi->dev, "flash xfer2 tx by cpu %d\n", tx->len);
@@ -1946,8 +1884,7 @@ static int sunxi_spi_xfer_tx_rx(struct spi_device *spi, struct spi_transfer *tx,
 
 	if (sunxi_spi_can_dma(spi->controller, spi, rx)) {
 		sunxi_debug(sspi->dev, "flash xfer2 rx by dma %d\n", rx->len);
-		sunxi_spi_enable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_RX_DRQ_EN);
-		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_TC_EN);
+		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_TC);
 		sunxi_spi_dma_rx(sspi, rx);
 	} else {
 		sunxi_debug(sspi->dev, "flash xfer2 rx by cpu %d\n", rx->len);
@@ -2014,14 +1951,14 @@ static int sunxi_spi_transfer_more(struct spi_controller *ctlr, struct spi_devic
 		}
 	}
 
-	/* reset fifo */
-	sunxi_spi_reset_fifo(sspi);
+	if (!sunxi_spi_is_fifo_empty(sspi))
+		sunxi_spi_reset_fifo(sspi);
 	sunxi_spi_set_fifo_trig_level_rx(sspi, sspi->rx_triglevel);
 	sunxi_spi_set_fifo_trig_level_tx(sspi, sspi->tx_triglevel);
 
-	sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_MASK);
-	sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_STA_MASK);
-	sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_CTL_ERR);
+	sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_MASK);
+	sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_MASK);
+	sunxi_spi_enable_irq(sspi, SUNXI_SPI_INT_ERR);
 
 	ret = sunxi_spi_mode_check(sspi, rx);
 	if (ret < 0) {
@@ -2037,21 +1974,21 @@ static int sunxi_spi_transfer_more(struct spi_controller *ctlr, struct spi_devic
 
 	if (tx_xfer_cnt > 1) {
 		if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA)
-			sunxi_spi_dump_data(sspi->dev, tx_sum.tx_buf, tx_sum.len);
+			sunxi_spi_dump_data(sspi->dev, tx_sum.tx_buf, tx_sum.len, "txbuf-: ");
 		ret = sunxi_spi_xfer_tx_rx(spi, &tx_sum, rx);
 	} else {
 		if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA)
-			sunxi_spi_dump_data(sspi->dev, tx[0]->tx_buf, tx[0]->len);
+			sunxi_spi_dump_data(sspi->dev, tx[0]->tx_buf, tx[0]->len, "txbuf-: ");
 		ret = sunxi_spi_xfer_tx_rx(spi, tx[0], rx);
 	}
 
 	if (ret < 0 || sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_REG)
 		sunxi_spi_dump_regs(sspi);
 	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA)
-		sunxi_spi_dump_data(sspi->dev, rx->rx_buf, rx->len);
+		sunxi_spi_dump_data(sspi->dev, rx->rx_buf, rx->len, "rxbuf+: ");
 
 out:
-	sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_MASK);
+	sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_MASK);
 	if (tx_xfer_cnt > 1)
 		devm_kfree(sspi->dev, tmpbuf);
 	return ret;
@@ -2177,6 +2114,7 @@ out:
 	spi_finalize_current_message(ctlr);
 	return ret;
 }
+#endif /* CONFIG_AW_MTD_SPINAND */
 
 #if IS_ENABLED(CONFIG_AW_SPI_NG_ATOMIC_XFER)
 static int sunxi_spi_xfer_atomic(struct spi_device *spi, struct spi_transfer *t)
@@ -2211,14 +2149,14 @@ static int sunxi_spi_xfer_atomic(struct spi_device *spi, struct spi_transfer *t)
 		goto out;
 	}
 
-	while (--poll_time) {
+	while (--poll_time > 0) {
 		status = sunxi_spi_qry_irq_pending(sspi);
 		sunxi_spi_clr_irq_pending(sspi, status);
 		sunxi_debug(sspi->dev, "spi irq handler status(%#x)\n", status);
-		if (status & SUNXI_SPI_INT_STA_TC) {
+		if (status & SUNXI_SPI_INT_TC) {
 			sunxi_debug(sspi->dev, "xfer atomic irq tc comes\n");
 			break;
-		} else if (status & SUNXI_SPI_INT_STA_ERR) {
+		} else if (status & SUNXI_SPI_INT_ERR) {
 			sunxi_err(sspi->dev, "xfer atomic irq status error %#x\n", status);
 			sspi->result = -1;
 			break;
@@ -2261,14 +2199,14 @@ static int sunxi_spi_transfer_one_atomic(struct spi_controller *ctlr, struct spi
 	case SUNXI_SPI_BUS_MASTER:
 	case SUNXI_SPI_BUS_NOR:
 	case SUNXI_SPI_BUS_NAND:
-		/* reset fifo */
-		sunxi_spi_reset_fifo(sspi);
+		if (!sunxi_spi_is_fifo_empty(sspi))
+			sunxi_spi_reset_fifo(sspi);
 		sunxi_spi_set_fifo_trig_level_rx(sspi, sspi->rx_triglevel);
 		sunxi_spi_set_fifo_trig_level_tx(sspi, sspi->tx_triglevel);
 
 		sunxi_spi_disable_dma_irq(sspi, SUNXI_SPI_FIFO_CTL_DRQ_EN);
-		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_CTL_MASK);
-		sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_STA_MASK);
+		sunxi_spi_disable_irq(sspi, SUNXI_SPI_INT_MASK);
+		sunxi_spi_clr_irq_pending(sspi, SUNXI_SPI_INT_MASK);
 		break;
 	default:
 		sunxi_err(sspi->dev, "unsupport xfer atomic bus mode %d\n", sspi->bus_mode);
@@ -2284,8 +2222,10 @@ static int sunxi_spi_transfer_one_atomic(struct spi_controller *ctlr, struct spi
 
 	sspi->result = 0;
 
-	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA)
-		sunxi_spi_dump_data(sspi->dev, t->tx_buf, t->len);
+	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA) {
+		sunxi_spi_dump_data(sspi->dev, t->tx_buf, t->len, "txbuf-: ");
+		sunxi_spi_dump_data(sspi->dev, t->rx_buf, t->len, "rxbuf-: ");
+	}
 	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_REG)
 		sunxi_spi_dump_regs(sspi);
 
@@ -2293,8 +2233,10 @@ static int sunxi_spi_transfer_one_atomic(struct spi_controller *ctlr, struct spi
 
 	if (ret < 0 || sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_REG)
 		sunxi_spi_dump_regs(sspi);
-	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA)
-		sunxi_spi_dump_data(sspi->dev, t->rx_buf, t->len);
+	if (sunxi_spi_debug_mask & SUNXI_SPI_DEBUG_DUMP_DATA) {
+		sunxi_spi_dump_data(sspi->dev, t->tx_buf, t->len, "txbuf+: ");
+		sunxi_spi_dump_data(sspi->dev, t->rx_buf, t->len, "rxbuf+: ");
+	}
 
 out:
 	return ret;
@@ -2322,7 +2264,7 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(sunxi_spi_sync_atomic);
-#endif
+#endif /* CONFIG_AW_SPI_NG_ATOMIC_XFER */
 
 static void sunxi_spi_bus_handler(struct sunxi_spi *sspi)
 {
@@ -2331,80 +2273,38 @@ static void sunxi_spi_bus_handler(struct sunxi_spi *sspi)
 
 	enable = sunxi_spi_qry_irq_enable(sspi);
 	status = sunxi_spi_qry_irq_pending(sspi);
-	sunxi_spi_clr_irq_pending(sspi, status);
 	sunxi_debug(sspi->dev, "spi irq handler enable(%#x) status(%#x)\n", enable, status);
+	irq = enable & status;
+	sunxi_spi_clr_irq_pending(sspi, irq);
+	sunxi_spi_disable_irq(sspi, irq);
 
-	if ((enable & SUNXI_SPI_INT_CTL_SVE_EN) && (status & SUNXI_SPI_INT_STA_SVEI)) {
-		sunxi_err(sspi->dev, "irq slave vsync error\n");
-		irq |= SUNXI_SPI_INT_CTL_SVE_EN;
-		sspi->result = -1;
-		compelte = true;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_SS_EN) && (status & SUNXI_SPI_INT_STA_SSI)) {
-		sunxi_debug(sspi->dev, "irq bus cs invalid detect\n");
-		irq |= SUNXI_SPI_INT_CTL_SS_EN;
-		sspi->result = -1;
-		compelte = true;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_TC_EN) && (status & SUNXI_SPI_INT_STA_TC)) {
+	if (irq & SUNXI_SPI_INT_SVE)
+		sunxi_warn(sspi->dev, "irq slave vsync error detect\n");
+	if (irq & SUNXI_SPI_INT_SSI)
+		sunxi_warn(sspi->dev, "irq bus cs invalid detect\n");
+	if (irq & SUNXI_SPI_INT_TC) {
 		sunxi_debug(sspi->dev, "irq bus tc comes\n");
-		irq |= SUNXI_SPI_INT_CTL_TC_EN;
 		compelte = true;
 	}
-	if ((enable & SUNXI_SPI_INT_CTL_TX_UDR_EN) && (status & SUNXI_SPI_INT_STA_TX_UDR)) {
-		sunxi_err(sspi->dev, "irq bus txfifo underrun\n");
-		irq |= SUNXI_SPI_INT_CTL_TX_UDR_EN;
-		sspi->result = -1;
-		compelte = true;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_TX_OVF_EN) && (status & SUNXI_SPI_INT_STA_TX_OVF)) {
-		sunxi_err(sspi->dev, "irq bus txfifo overflow\n");
-		irq |= SUNXI_SPI_INT_CTL_TX_OVF_EN;
+	if (irq & (SUNXI_SPI_INT_TX_UDR | SUNXI_SPI_INT_TX_OVF)) {
+		sunxi_err(sspi->dev, "irq bus txfifo underrun/overflow %#x\n", irq);
 		sunxi_spi_reset_txfifo(sspi);
 		sspi->result = -1;
 		compelte = true;
 	}
-	if ((enable & SUNXI_SPI_INT_CTL_RX_UDR_EN) && (status & SUNXI_SPI_INT_STA_RX_UDR)) {
-		sunxi_err(sspi->dev, "irq bus rxfifo underrun\n");
-		irq |= SUNXI_SPI_INT_CTL_RX_UDR_EN;
-		sspi->result = -1;
-		compelte = true;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_RX_OVF_EN) && (status & SUNXI_SPI_INT_STA_RX_OVF)) {
-		sunxi_err(sspi->dev, "irq bus rxfifo overflow\n");
-		irq |= SUNXI_SPI_INT_CTL_RX_OVF_EN;
+	if (irq & (SUNXI_SPI_INT_RX_UDR | SUNXI_SPI_INT_RX_OVF)) {
+		sunxi_err(sspi->dev, "irq bus rxfifo underrun/overflow %#x\n", irq);
 		sunxi_spi_reset_rxfifo(sspi);
 		sspi->result = -1;
 		compelte = true;
 	}
-	if ((enable & SUNXI_SPI_INT_CTL_TX_FUL_EN) && (status & SUNXI_SPI_INT_STA_TX_FULL)) {
-		sunxi_debug(sspi->dev, "irq bus txfifo full\n");
-		irq |= SUNXI_SPI_INT_CTL_TX_FUL_EN;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_TX_EMP_EN) && (status & SUNXI_SPI_INT_STA_TX_EMP)) {
-		sunxi_debug(sspi->dev, "irq bus txfifo empty\n");
-		irq |= SUNXI_SPI_INT_CTL_TX_EMP_EN;
+	if (irq & (SUNXI_SPI_INT_RX_RDY | SUNXI_SPI_INT_TX_EMP)) {
+		sunxi_debug(sspi->dev, "irq bus rxfifo(txfifo) ready(empty) %#x\n", irq);
 		compelte = true;
 	}
-	if ((enable & SUNXI_SPI_INT_CTL_TX_ERQ_EN) && (status & SUNXI_SPI_INT_STA_TX_RDY)) {
-		sunxi_debug(sspi->dev, "irq bus txfifo ready\n");
-		irq |= SUNXI_SPI_INT_CTL_TX_ERQ_EN;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_RX_FUL_EN) && (status & SUNXI_SPI_INT_STA_RX_FULL)) {
-		sunxi_debug(sspi->dev, "irq bus rxfifo full\n");
-		irq |= SUNXI_SPI_INT_CTL_RX_FUL_EN;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_RX_EMP_EN) && (status & SUNXI_SPI_INT_STA_RX_EMP)) {
-		sunxi_debug(sspi->dev, "irq bus rxfifo empty\n");
-		irq |= SUNXI_SPI_INT_CTL_RX_EMP_EN;
-	}
-	if ((enable & SUNXI_SPI_INT_CTL_RX_RDY_EN) && (status & SUNXI_SPI_INT_STA_RX_RDY)) {
-		sunxi_debug(sspi->dev, "irq bus rxfifo ready\n");
-		irq |= SUNXI_SPI_INT_CTL_RX_RDY_EN;
-		compelte = true;
-	}
+	if (irq & (SUNXI_SPI_INT_TX_FULL | SUNXI_SPI_INT_TX_RDY | SUNXI_SPI_INT_RX_FULL | SUNXI_SPI_INT_RX_EMP))
+		sunxi_debug(sspi->dev, "irq bus fifo status %#x\n", irq);
 
-	sunxi_spi_disable_irq(sspi, irq);
 	if (compelte)
 		complete(&sspi->done);
 }
@@ -2455,14 +2355,9 @@ static int sunxi_spi_clk_init(struct sunxi_spi *sspi, u32 clk)
 	int ret = 0;
 	long rate = 0;
 
-	ret = reset_control_assert(sspi->reset);
+	ret = reset_control_reset(sspi->reset);
 	if (ret) {
-		sunxi_err(sspi->dev, "failed to assert reset %d\n", ret);
-		goto err0;
-	}
-	ret = reset_control_deassert(sspi->reset);
-	if (ret) {
-		sunxi_err(sspi->dev, "failed to deassert reset %d\n", ret);
+		sunxi_err(sspi->dev, "failed to do reset %d\n", ret);
 		goto err0;
 	}
 
@@ -2590,7 +2485,6 @@ static int sunxi_spi_hw_init(struct sunxi_spi *sspi, u32 freq)
 		goto err2;
 	}
 
-	/* reset fifo */
 	sunxi_spi_reset_fifo(sspi);
 	sunxi_spi_set_fifo_trig_level_rx(sspi, sspi->rx_triglevel);
 	sunxi_spi_set_fifo_trig_level_tx(sspi, sspi->tx_triglevel);
@@ -2635,6 +2529,7 @@ static int sunxi_spi_hw_exit(struct sunxi_spi *sspi)
 	return 0;
 }
 
+#ifndef CONFIG_AW_BSP_LOWMEM
 static ssize_t sunxi_spi_info_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct platform_device *pdev = to_platform_device(dev);
@@ -2663,7 +2558,7 @@ static ssize_t sunxi_spi_info_show(struct device *dev, struct device_attribute *
 		"sspi->cs_mode  = %d\n"
 		"sspi->cs_num   = %d\n"
 		"sspi->pre_speed_hz = %d\n"
-		"sspi->bus_sample_mode  = %d [%s]\n"
+		"sspi->bus_sample_mode  = %d [%s] [%s]\n"
 		"sspi->spi_sample_mode  = %#x\n"
 		"sspi->spi_sample_delay = %#x\n",
 		sunxi_spi_get_ver_h(sspi), sunxi_spi_get_ver_l(sspi),
@@ -2674,7 +2569,9 @@ static ssize_t sunxi_spi_info_show(struct device *dev, struct device_attribute *
 		ctlr->min_speed_hz, ctlr->max_speed_hz,
 		sspi->base_addr, sspi->irq, sspi->bus_mode, sspi->bus_num, sspi->bus_freq,
 		sspi->cs_mode, sspi->cs_num, sspi->pre_speed_hz,
-		sspi->bus_sample_mode, sspi->bus_sample_mode == SUNXI_SPI_SAMP_MODE_AUTO ? "auto" : "manual",
+		sspi->bus_sample_mode,
+		sspi->bus_sample_mode == SUNXI_SPI_SAMP_MODE_AUTO ? "auto" : "manual",
+		sspi->bus_sample_type == SUNXI_SPI_SAMP_TYPE_NEW ? "new" : "old",
 		sspi->spi_sample_mode, sspi->spi_sample_delay);
 }
 
@@ -2750,6 +2647,7 @@ static void sunxi_spi_remove_sysfs(struct sunxi_spi *sspi)
 	for (i = 0; i < ARRAY_SIZE(sunxi_spi_debug_attr); i++)
 		device_remove_file(sspi->dev, &sunxi_spi_debug_attr[i]);
 }
+#endif /* CONFIG_AW_BSP_LOWMEM */
 
 static int sunxi_spi_probe(struct platform_device *pdev)
 {
@@ -2783,6 +2681,7 @@ static int sunxi_spi_probe(struct platform_device *pdev)
 	switch (sspi->bus_mode) {
 	case SUNXI_SPI_BUS_SLAVE:
 	case SUNXI_SPI_BUS_CAMERA:
+		sspi->camera_framehead = devm_kzalloc(sspi->dev, SUNXI_SPI_FRAMEHEAD_MAX, GFP_KERNEL);
 		sspi->ctlr = devm_spi_alloc_slave(sspi->dev, 0);
 		break;
 	case SUNXI_SPI_BUS_DBI:
@@ -2811,7 +2710,9 @@ static int sunxi_spi_probe(struct platform_device *pdev)
 	sspi->ctlr->min_speed_hz	= SUNXI_SPI_MIN_FREQUENCY;
 	sspi->ctlr->max_speed_hz	= sspi->bus_freq;
 	sspi->ctlr->use_gpio_descriptors = true;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
 	sspi->ctlr->max_native_cs	= SUNXI_SPI_CS_MAX;
+#endif
 	sspi->ctlr->max_dma_len		= PAGE_SIZE;
 	sspi->ctlr->dma_alignment	= dma_get_cache_alignment();
 	switch (sspi->bus_mode) {
@@ -2826,13 +2727,21 @@ static int sunxi_spi_probe(struct platform_device *pdev)
 	case SUNXI_SPI_BUS_DBI:
 		sspi->ctlr->bits_per_word_mask = SPI_BPW_MASK(8);
 		sspi->ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_LSB_FIRST | sspi->data->master_mode_extra;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+		sspi->ctlr->flags = SPI_CONTROLLER_GPIO_SS;
+#else
 		sspi->ctlr->flags = SPI_MASTER_GPIO_SS;
+#endif
 		break;
 	case SUNXI_SPI_BUS_BIT:
 		sspi->use_dma = false; /* Bit-Aligned only support cpu mode */
 		sspi->ctlr->bits_per_word_mask = SPI_BPW_RANGE_MASK(1, 32);
 		sspi->ctlr->mode_bits = SPI_CS_HIGH | SPI_3WIRE;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+		sspi->ctlr->flags = SPI_CONTROLLER_HALF_DUPLEX | SPI_CONTROLLER_GPIO_SS;
+#else
 		sspi->ctlr->flags = SPI_CONTROLLER_HALF_DUPLEX | SPI_MASTER_GPIO_SS;
+#endif
 		break;
 	default:
 		sunxi_err(sspi->dev, "spi bus mode %d unsupport\n", sspi->bus_mode);
@@ -2855,9 +2764,11 @@ static int sunxi_spi_probe(struct platform_device *pdev)
 		sspi->ctlr->slave_abort = sunxi_spi_slave_abort;
 		break;
 	case SUNXI_SPI_BUS_NAND:
+#if IS_ENABLED(CONFIG_AW_MTD_SPINAND)
 		/* Optimize transfer logic for nand flash to get faster speed and performance */
 		sspi->ctlr->transfer_one_message = sunxi_spi_transfer_one_message;
 		break;
+#endif
 	case SUNXI_SPI_BUS_MASTER:
 	case SUNXI_SPI_BUS_NOR:
 	case SUNXI_SPI_BUS_DBI:
@@ -2908,7 +2819,10 @@ static int sunxi_spi_probe(struct platform_device *pdev)
 		goto err2;
 	}
 
+#ifndef CONFIG_AW_BSP_LOWMEM
 	sunxi_spi_create_sysfs(sspi);
+	sunxi_spi_create_calibrate_sysfs(sspi);
+#endif
 
 	sunxi_info(sspi->dev, "probe success (Version %s)\n", SUNXI_SPI_MODULE_VERSION);
 
@@ -2926,14 +2840,17 @@ static int sunxi_spi_remove(struct platform_device *pdev)
 {
 	struct sunxi_spi *sspi = spi_controller_get_devdata(platform_get_drvdata(pdev));
 
+#ifndef CONFIG_AW_BSP_LOWMEM
+	sunxi_spi_remove_calibrate_sysfs(sspi);
 	sunxi_spi_remove_sysfs(sspi);
+#endif
 	sunxi_spi_hw_exit(sspi);
 	sunxi_spi_release_dma(sspi);
 
 	return 0;
 }
 
-static int sunxi_spi_suspend(struct device *dev)
+static int __maybe_unused sunxi_spi_suspend(struct device *dev)
 {
 	struct spi_controller *ctlr = dev_get_drvdata(dev);
 	struct sunxi_spi *sspi = spi_controller_get_devdata(ctlr);
@@ -2951,7 +2868,7 @@ static int sunxi_spi_suspend(struct device *dev)
 	return 0;
 }
 
-static int sunxi_spi_resume(struct device *dev)
+static int __maybe_unused sunxi_spi_resume(struct device *dev)
 {
 	struct spi_controller *ctlr = dev_get_drvdata(dev);
 	struct sunxi_spi *sspi = spi_controller_get_devdata(ctlr);
@@ -2974,13 +2891,18 @@ static int sunxi_spi_resume(struct device *dev)
 	return 0;
 }
 
-static const struct dev_pm_ops sunxi_spi_dev_pm_ops = {
-	.suspend = sunxi_spi_suspend,
-	.resume  = sunxi_spi_resume,
+static SIMPLE_DEV_PM_OPS(sunxi_spi_dev_pm_ops, sunxi_spi_suspend, sunxi_spi_resume);
+
+static struct sunxi_spi_hw_data sunxi_spi_data_v0_90 = {
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_FLASH,
+	.master_mode_extra = SPI_TX_DUAL | SPI_RX_DUAL,
+	.quirk_flag = DMA_FORCE_FIXED,
+	.rx_fifosize = 64,
+	.tx_fifosize = 64,
 };
 
 static struct sunxi_spi_hw_data sunxi_spi_data_v0_91 = {
-	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND,
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_FLASH,
 	.master_mode_extra = SPI_TX_DUAL | SPI_TX_QUAD | SPI_RX_DUAL | SPI_RX_QUAD,
 	.quirk_flag = DMA_FORCE_FIXED,
 	.rx_fifosize = 64,
@@ -2988,7 +2910,7 @@ static struct sunxi_spi_hw_data sunxi_spi_data_v0_91 = {
 };
 
 static struct sunxi_spi_hw_data sunxi_spi_data_v1_1 = {
-	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND,
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_FLASH,
 	.master_mode_extra = SPI_TX_DUAL | SPI_TX_QUAD | SPI_RX_DUAL | SPI_RX_QUAD,
 	.quirk_flag = NEW_SAMPLE_MODE | NEW_SAMPLE_MODE_RST,
 	.rx_fifosize = 64,
@@ -2996,7 +2918,7 @@ static struct sunxi_spi_hw_data sunxi_spi_data_v1_1 = {
 };
 
 static struct sunxi_spi_hw_data sunxi_spi_data_v1_2 = {
-	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_DBI | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND,
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_DBI | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_FLASH,
 	.master_mode_extra = SPI_TX_DUAL | SPI_TX_QUAD | SPI_RX_DUAL | SPI_RX_QUAD,
 	.quirk_flag = NEW_SAMPLE_MODE | NEW_SAMPLE_MODE_RST,
 	.rx_fifosize = 64,
@@ -3004,7 +2926,7 @@ static struct sunxi_spi_hw_data sunxi_spi_data_v1_2 = {
 };
 
 static struct sunxi_spi_hw_data sunxi_spi_data_v1_3 = {
-	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND,
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_FLASH,
 	.master_mode_extra = SPI_TX_DUAL | SPI_TX_QUAD | SPI_RX_DUAL | SPI_RX_QUAD,
 	.quirk_flag = INDEPENDENT_BSR | NEW_SAMPLE_MODE | NEW_SAMPLE_MODE_RST,
 	.rx_fifosize = 128,
@@ -3017,7 +2939,7 @@ static struct sunxi_spi_hw_data sunxi_spi_data_v1_3 = {
 };
 
 static struct sunxi_spi_hw_data sunxi_spi_data_v1_4 = {
-	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_DBI | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND,
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_DBI | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_FLASH,
 	.master_mode_extra = SPI_TX_DUAL | SPI_TX_QUAD | SPI_RX_DUAL | SPI_RX_QUAD,
 	.quirk_flag = INDEPENDENT_BSR | NEW_SAMPLE_MODE | NEW_SAMPLE_MODE_RST,
 	.rx_fifosize = 128,
@@ -3030,7 +2952,16 @@ static struct sunxi_spi_hw_data sunxi_spi_data_v1_4 = {
 };
 
 static struct sunxi_spi_hw_data sunxi_spi_data_v1_5 = {
-	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_NOR | SUNXI_SPI_BUS_NAND | SUNXI_SPI_BUS_CAMERA,
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_FLASH | SUNXI_SPI_BUS_CAMERA,
+	.master_mode_extra = SPI_TX_DUAL | SPI_TX_QUAD | SPI_RX_DUAL | SPI_RX_QUAD,
+	.slave_mode_extra = SPI_RX_DUAL | SPI_RX_QUAD,
+	.quirk_flag = INDEPENDENT_BSR | NEW_SAMPLE_MODE,
+	.rx_fifosize = 128,
+	.tx_fifosize = 128,
+};
+
+static struct sunxi_spi_hw_data sunxi_spi_data_v1_6 = {
+	.hw_bus_mode = SUNXI_SPI_BUS_MASTER | SUNXI_SPI_BUS_SLAVE | SUNXI_SPI_BUS_DBI | SUNXI_SPI_BUS_BIT | SUNXI_SPI_BUS_FLASH | SUNXI_SPI_BUS_CAMERA,
 	.master_mode_extra = SPI_TX_DUAL | SPI_TX_QUAD | SPI_RX_DUAL | SPI_RX_QUAD,
 	.slave_mode_extra = SPI_RX_DUAL | SPI_RX_QUAD,
 	.quirk_flag = INDEPENDENT_BSR | NEW_SAMPLE_MODE,
@@ -3039,16 +2970,19 @@ static struct sunxi_spi_hw_data sunxi_spi_data_v1_5 = {
 };
 
 static const struct of_device_id sunxi_spi_match[] = {
-	/* 1823 */
+	/* sun8iw11 */
+	{ .compatible = "allwinner,sunxi-spi-v0.90", .data = &sunxi_spi_data_v0_90 },
+	/* sun50iw9 */
 	{ .compatible = "allwinner,sunxi-spi-v0.91", .data = &sunxi_spi_data_v0_91 },
-	/* 1886 */
+	/* sun8iw21/sun20iw5/sun20iw1 */
 	{ .compatible = "allwinner,sunxi-spi-v1.1", .data = &sunxi_spi_data_v1_1 },
 	{ .compatible = "allwinner,sunxi-spi-v1.2", .data = &sunxi_spi_data_v1_2 },
-	/* 1890/1885/1903 */
+	/* sun55iw3/sun60iw1/sun60iw2/sun65iw1/sun252iw1 */
 	{ .compatible = "allwinner,sunxi-spi-v1.3", .data = &sunxi_spi_data_v1_3 },
 	{ .compatible = "allwinner,sunxi-spi-v1.4", .data = &sunxi_spi_data_v1_4 },
-	/* 1911 */
+	/* sun55iw5/sun55iw6 */
 	{ .compatible = "allwinner,sunxi-spi-v1.5", .data = &sunxi_spi_data_v1_5 },
+	{ .compatible = "allwinner,sunxi-spi-v1.6", .data = &sunxi_spi_data_v1_6 },
 	{},
 };
 MODULE_DEVICE_TABLE(of, sunxi_spi_match);

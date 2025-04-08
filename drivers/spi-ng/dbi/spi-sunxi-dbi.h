@@ -8,10 +8,7 @@
 #ifndef _SUNXI_SPI_DBI_H_
 #define _SUNXI_SPI_DBI_H_
 
-#include <linux/ctype.h>
-#include <linux/spi/spi.h>
 #include "../spi-sunxi.h"
-#include "spi-sunxi-dbi-api.h"
 
 /* DBI Control Register 0 */
 #define SUNXI_DBI_CTL0_REG		(0x100)
@@ -91,15 +88,28 @@
 /* DBI debug Register 1 */
 #define SUNXI_DBI_DEBUG_REG1	(0x128)
 
-extern void sunxi_dbi_disable_dma(struct sunxi_spi *sspi);
-extern void sunxi_dbi_enable_dma(struct sunxi_spi *sspi);
-extern u32 sunxi_dbi_qry_irq_pending(struct sunxi_spi *sspi);
-extern void sunxi_dbi_clr_irq_pending(struct sunxi_spi *sspi, u32 bitmap);
-extern u32 sunxi_dbi_qry_irq_enable(struct sunxi_spi *sspi);
-extern void sunxi_dbi_disable_irq(struct sunxi_spi *sspi, u32 bitmap);
-extern void sunxi_dbi_enable_irq(struct sunxi_spi *sspi, u32 bitmap);
-extern void sunxi_dbi_config(struct sunxi_spi *sspi);
-extern int sunxi_dbi_mode_check_dbi(struct sunxi_spi *sspi, struct spi_transfer *t);
-extern void sunxi_dbi_handler(struct sunxi_spi *sspi);
+#if IS_ENABLED(CONFIG_AW_SPI_NG_DBI)
+void sunxi_dbi_disable_dma(struct sunxi_spi *sspi);
+void sunxi_dbi_enable_dma(struct sunxi_spi *sspi);
+u32 sunxi_dbi_qry_irq_pending(struct sunxi_spi *sspi);
+void sunxi_dbi_clr_irq_pending(struct sunxi_spi *sspi, u32 bitmap);
+u32 sunxi_dbi_qry_irq_enable(struct sunxi_spi *sspi);
+void sunxi_dbi_disable_irq(struct sunxi_spi *sspi, u32 bitmap);
+void sunxi_dbi_enable_irq(struct sunxi_spi *sspi, u32 bitmap);
+void sunxi_dbi_config(struct sunxi_spi *sspi);
+int sunxi_dbi_mode_check_dbi(struct sunxi_spi *sspi, struct spi_transfer *t);
+void sunxi_dbi_handler(struct sunxi_spi *sspi);
+#else
+static inline void sunxi_dbi_disable_dma(struct sunxi_spi *sspi) {};
+static inline void sunxi_dbi_enable_dma(struct sunxi_spi *sspi) {};
+static inline u32 sunxi_dbi_qry_irq_pending(struct sunxi_spi *sspi) { return -EINVAL; };
+static inline void sunxi_dbi_clr_irq_pending(struct sunxi_spi *sspi, u32 bitmap) {};
+static inline u32 sunxi_dbi_qry_irq_enable(struct sunxi_spi *sspi) { return -EINVAL; };
+static inline void sunxi_dbi_disable_irq(struct sunxi_spi *sspi, u32 bitmap) {};
+static inline void sunxi_dbi_enable_irq(struct sunxi_spi *sspi, u32 bitmap) {};
+static inline void sunxi_dbi_config(struct sunxi_spi *sspi) {};
+static inline int sunxi_dbi_mode_check_dbi(struct sunxi_spi *sspi, struct spi_transfer *t) { return -EINVAL; };
+static inline void sunxi_dbi_handler(struct sunxi_spi *sspi) {};
+#endif
 
 #endif /* _SUNXI_SPI_DBI_H_ */

@@ -118,7 +118,10 @@ void sunxi_hdmi_extcon_exit(struct sunxi_codec *codec)
 static int sunxi_data_fmt_get_data_fmt(struct snd_kcontrol *kcontrol,
 				       struct snd_ctl_elem_value *ucontrol)
 {
-	ucontrol->value.integer.value[0] = snd_sunxi_hdmi_get_fmt();
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_codec *codec = snd_soc_component_get_drvdata(component);
+
+	ucontrol->value.integer.value[0] = codec->hdmi_fmt;
 
 	return 0;
 }
@@ -126,7 +129,10 @@ static int sunxi_data_fmt_get_data_fmt(struct snd_kcontrol *kcontrol,
 static int sunxi_data_fmt_set_data_fmt(struct snd_kcontrol *kcontrol,
 				       struct snd_ctl_elem_value *ucontrol)
 {
-	snd_sunxi_hdmi_set_fmt(ucontrol->value.integer.value[0]);
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_codec *codec = snd_soc_component_get_drvdata(component);
+
+	codec->hdmi_fmt = ucontrol->value.integer.value[0];
 
 	return 0;
 }
@@ -145,13 +151,14 @@ static const struct snd_kcontrol_new data_fmt_controls[] = {
 int snd_sunxi_hdmi_add_controls(struct snd_soc_component *component)
 {
 	int ret;
+	struct sunxi_codec *codec = snd_soc_component_get_drvdata(component);
 
 	if (!component) {
 		SND_LOG_ERR("component is err\n");
 		return -1;
 	}
 
-	snd_sunxi_hdmi_set_fmt(HDMI_FMT_PCM);
+	codec->hdmi_fmt = HDMI_FMT_PCM;
 
 	ret = snd_soc_add_component_controls(component,
 					     data_fmt_controls,
@@ -271,7 +278,7 @@ void snd_sunxi_hdmi_shutdown(void)
 {
 	SND_LOG_DEBUG("\n");
 
-	g_hdmi_priv.update_param = 0;
+	memset(&g_hdmi_priv, 0, sizeof(struct sunxi_hdmi_priv));
 
 	if (g_hdmi_func.hdmi_audio_enable)
 		g_hdmi_func.hdmi_audio_enable(0, 1);
@@ -282,6 +289,24 @@ static void sunxi_codec_dai_shutdown(struct snd_pcm_substream *substream, struct
 	SND_LOG_DEBUG("\n");
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		snd_sunxi_hdmi_shutdown();
+}
+
+static int sunxi_codec_dai_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
+{
+	struct snd_soc_component *component = dai->component;
+	struct sunxi_codec *codec = snd_soc_component_get_drvdata(component);
+	int ret;
+
+	SND_LOG_DEBUG("\n");
+
+	ret = snd_sunxi_extparam_set_state_sync(component->card->name, EXTPARAM_ID_HDMI_FMT,
+						(void *)&codec->hdmi_fmt);
+	if (ret) {
+		SND_LOG_ERR("extparam set state sync failed\n");
+		return ret;
+	}
+
+	return 0;
 }
 
 static int sunxi_codec_dai_hw_params(struct snd_pcm_substream *substream,
@@ -295,7 +320,6 @@ static int sunxi_codec_dai_hw_params(struct snd_pcm_substream *substream,
 	SND_LOG_DEBUG("\n");
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		codec->hdmi_fmt = snd_sunxi_hdmi_get_fmt();
 		SND_LOG_DEBUG("hdmi fmt -> %d\n", codec->hdmi_fmt);
 		ret = snd_sunxi_hdmi_hw_params(params, codec->hdmi_fmt);
 		if (ret) {
@@ -324,12 +348,14 @@ static int sunxi_codec_dai_prepare(struct snd_pcm_substream *substream, struct s
 }
 
 static const struct snd_soc_dai_ops sunxi_codec_dai_ops = {
+	.startup	= sunxi_codec_dai_startup,
 	.hw_params	= sunxi_codec_dai_hw_params,
 	.prepare	= sunxi_codec_dai_prepare,
 	.shutdown	= sunxi_codec_dai_shutdown,
 };
 
 static struct snd_soc_dai_driver sunxi_codec_dai = {
+	.name = DRV_NAME,
 	.playback = {
 		.stream_name	= "Playback",
 		.channels_min	= 1,
@@ -377,8 +403,6 @@ static int sunxi_codec_component_probe(struct snd_soc_component *component)
 		SND_LOG_ERR("add hdmiaudio kcontrols failed\n");
 		return -1;
 	}
-
-	codec->hdmi_fmt = snd_sunxi_hdmi_get_fmt();
 
 	return 0;
 }
@@ -482,5 +506,5 @@ module_exit(sunxi_hdmi_codec_dev_exit);
 
 MODULE_AUTHOR("huhaoxin@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.3");
+MODULE_VERSION("1.0.5");
 MODULE_DESCRIPTION("sunxi soundcard codec of hdmi");

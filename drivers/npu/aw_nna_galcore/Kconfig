@@ -2,8 +2,9 @@
 
 config AW_NNA_GALCORE
 	depends on (ARCH_SUNXI)
+	select SYNC_FILE
 	tristate "aw nna galcore driver"
-	default m
+	default n
 	help
 	 Choose Y to enable aw nna galcore driver
 

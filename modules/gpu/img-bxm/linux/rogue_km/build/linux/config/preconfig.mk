@@ -85,6 +85,14 @@ $$(error Supported values are: $$(_supported_values))
 endif
 endef
 
+define CheckValueInRange
+ifneq ($$(shell test $$($(1)) -ge $(2) -a $$($(1)) -le $(3) && echo 1), 1)
+$$(warning *** Value of $(1) out of range: $$($(1)))
+$$(warning *** $(1) was set via: $(origin $(1)))
+$$(error Supported range is $(2) to $(3))
+endif
+endef
+
 ifeq ($(SUPPORT_NEUTRINO_PLATFORM),1)
 include ../common/neutrino/preconfig_neutrino.mk
 _CC := $(CC)
@@ -186,7 +194,7 @@ ifeq ($(USE_LTO),1)
  ifeq ($(is_android_build),false)
   ifeq ($(call compiler-is-clang,CC),true)
    ifneq ($(filter file,$(origin USE_LTO)),)
-	USE_LTO := 0
+    USE_LTO := 0
    endif
   endif
  endif
@@ -275,9 +283,7 @@ TARGETING_MIPS := $(shell \
 HOST_CC_IS_LINUX := $(shell \
  $(HOST_CC) -dM -E - </dev/null | grep __linux__ >/dev/null 2>&1 && echo 1)
 
-ifneq ($(strip $(KERNELDIR)),)
 include ../config/kernel_version.mk
-endif
 
 # The user didn't set CROSS_COMPILE. There's probably nothing wrong
 # with that, but we'll let them know anyway.
@@ -320,7 +326,7 @@ define calculate-os
   else ifeq ($$(triplet_os),w64-mingw32)
    $(1)_OS := windows
   else ifneq ($$(findstring linux-gnu,$$(triplet_os)),)
-   ifneq ($$(filter buildroot cros tizen,$$(triplet_vendor)),)
+   ifneq ($$(filter buildroot cros,$$(triplet_vendor)),)
     $(1)_OS := $$(triplet_vendor)
    else ifneq ($$(filter none pc unknown,$$(triplet_vendor)),)
     $(1)_OS := linux
@@ -329,6 +335,8 @@ define calculate-os
     $$(warning Assuming $(1) is a standard Linux distro)
     $(1)_OS := linux
    endif
+  else ifneq ($$(findstring apple-darwin,$$(triplet_os)),)
+   $(1)_OS := darwin
   else
    $$(warning Could not determine $(1)_OS so assuming Linux)
    $(1)_OS := linux
@@ -392,7 +400,7 @@ $(foreach _o,SYS_CFLAGS SYS_CXXFLAGS SYS_INCLUDES SYS_EXE_LDFLAGS SYS_LIB_LDFLAG
 # Check for words in EXCLUDED_APIS that aren't understood by the
 # common/apis/*.mk files. This should be kept in sync with all the tests on
 # EXCLUDED_APIS in those files
-_excludable_apis := camerahal composerhal hwperftools memtrackhal opencl opengl opengles1 opengles3 openglsc2 rogue2d scripts sensorhal servicestools thermalhal unittests vulkan
+_excludable_apis := camerahal composerhal hwperftools memtrackhal opencl opengl opengles1 opengles3 rogue2d scripts sensorhal servicestools thermalhal unittests vulkan
 _excluded_apis := $(subst $(comma),$(space),$(EXCLUDED_APIS))
 
 _unrecognised := $(strip $(filter-out $(_excludable_apis),$(_excluded_apis)))
@@ -443,7 +451,7 @@ ifeq ($(RGX_BVNC),)
    override PVR_USC_ARCH := volcanic
    override PVR_TPU_ARCH := volcanic
    override PVR_FBC_ARCH := volcanic
-  endif 
+  endif
   override HWDEFS_DIR := $(TOP)/hwdefs/$(PVR_ARCH_DEFS)
  else
   # If neither are set the build can not proceed
@@ -517,7 +525,7 @@ else
  $(error The file $(RGX_BVNC_CORE_KM) does not exist. \
     Valid BVNCs: $(ALL_KM_BVNCS))
  endif
- 
+
  # Check BNC config version
  ALL_KM_BNCS := \
   $(patsubst rgxconfig_km_%.h,%,\
@@ -538,4 +546,3 @@ else
 endif # RGX_BVNC not set
 
 endif # INTERNAL_CLOBBER_ONLY not true
-

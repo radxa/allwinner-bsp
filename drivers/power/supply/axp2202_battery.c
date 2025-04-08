@@ -1,35 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define pr_fmt(x) KBUILD_MODNAME ": " x "\n"
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include "linux/irq.h"
-#include <linux/slab.h>
-#include <linux/interrupt.h>
-#include <linux/device.h>
-#include <linux/mutex.h>
-#include <linux/param.h>
-#include <linux/jiffies.h>
-#include <linux/platform_device.h>
-#include <linux/power_supply.h>
-#include <linux/fs.h>
-#include <linux/kernel.h>
-#include <linux/ktime.h>
-#include <linux/of.h>
-#include <linux/timekeeping.h>
-#include <linux/types.h>
-#include <linux/string.h>
-#include <asm/irq.h>
-#include <linux/cdev.h>
-#include <linux/delay.h>
-#include <linux/pm_runtime.h>
-#include <linux/kthread.h>
-#include <linux/freezer.h>
-#include <linux/err.h>
-#include "power/axp2101.h"
-
-#include <linux/err.h>
 #include "axp2202_charger.h"
 
 #define DIVIDE_BY_64(n) (((n) >> 6) << 6)
@@ -39,21 +10,31 @@ struct axp2202_bat_power {
 	struct device             *dev;
 	struct regmap             *regmap;
 	struct power_supply       *bat_supply;
-	struct power_supply       *qc_psy;
 	struct delayed_work        bat_supply_mon;
 	struct delayed_work        bat_power_curve;
-	struct delayed_work        bat_qc_temp_process;
 	struct axp_config_info     dts_info;
 	struct wakeup_source       *ws;
-	struct wakeup_source       *bat_qc_temp_ws;
 
-	int                        bat_qc_temp_set_limit;
+	bool			qc_supply_exist;
+	bool			qc_supply_probe_finish;
+	bool			qc_bat_exist;
+	struct power_supply	*qc_psy;
+	struct device_node	*qc_supply_np;
+
+	int			charger_cooler_type;
+
+	/* charge_limit_process */
+	atomic_t		pmu_limit_status;
+
+	/* charge_cycle_count */
+	atomic_t	 	charge_cycle_count;
 };
 
 static enum power_supply_property axp2202_bat_props[] = {
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_CAPACITY_ALERT_MIN,
 	POWER_SUPPLY_PROP_TEMP,
@@ -72,7 +53,105 @@ static enum power_supply_property axp2202_bat_props[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CYCLE_COUNT,
+	POWER_SUPPLY_PROP_MANUFACTURE_YEAR,
+	POWER_SUPPLY_PROP_MANUFACTURE_MONTH,
+	POWER_SUPPLY_PROP_MANUFACTURE_DAY,
 };
+
+static int axp2202_qc_power_get(struct axp2202_bat_power *bat_power)
+{
+	struct device_node *np = NULL;
+	static int check_count = 1;
+	int ret = 0;
+
+	if (bat_power->qc_supply_exist)
+		return ret;
+
+	if (check_count == 2)
+		return -1;
+
+	bat_power->qc_supply_exist = false;
+	bat_power->qc_supply_probe_finish = false;
+
+	if (of_find_property(bat_power->dev->of_node, "det_qc_supply", NULL)) {
+		np = of_parse_phandle(bat_power->dev->of_node, "det_qc_supply", 0);
+		if (!of_device_is_available(np)) {
+			bat_power->qc_psy =  NULL;
+			bat_power->qc_supply_np =  NULL;
+			ret = -1;
+		} else {
+			bat_power->qc_psy = devm_power_supply_get_by_phandle(bat_power->dev,
+							"det_qc_supply");
+			bat_power->qc_supply_np = np;
+			if (!(bat_power->qc_psy) || (IS_ERR(bat_power->qc_psy))) {
+				return -EPROBE_DEFER;
+			}
+		}
+	} else {
+			bat_power->qc_psy =  NULL;
+			bat_power->qc_supply_np =  NULL;
+			ret = -1;
+	}
+
+	if (!ret)
+		bat_power->qc_supply_exist = true;
+
+	check_count = 2;
+	return ret;
+}
+
+static int _axp2202_qc_para_get(struct axp2202_bat_power *bat_power, enum power_supply_property psp, const char *name, int paras)
+{
+	union power_supply_propval val;
+	int _paras = -1;
+
+	if (name != NULL) {
+		of_property_read_u32(bat_power->qc_supply_np, name, &_paras);
+	}
+
+	if (_paras < 0) {
+		val.intval = paras;
+	} else {
+		val.intval = _paras;
+	}
+
+	_paras = psp;
+
+	if (_paras > -1) {
+		power_supply_get_property(bat_power->qc_psy, psp, &val);
+	}
+
+	return val.intval;
+}
+
+static int axp2202_qc_para_get(struct axp2202_bat_power *bat_power)
+{
+	struct axp_config_info *axp_config = &bat_power->dts_info;
+	static int check_count = 1;
+	int ret = 0;
+
+	ret = axp2202_qc_power_get(bat_power);
+	if (ret) {
+		return ret;
+	}
+
+	if (check_count == 2)
+		return 0;
+
+	/* get ichg limit paras */
+	axp_config->pmu_runtime_chgcur = _axp2202_qc_para_get(bat_power, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, NULL, axp_config->pmu_runtime_chgcur);
+	axp_config->pmu_bat_charge_control_lim = _axp2202_qc_para_get(bat_power, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, NULL, axp_config->pmu_bat_charge_control_lim);
+
+	/* get battery exist */
+	bat_power->qc_bat_exist = _axp2202_qc_para_get(bat_power, POWER_SUPPLY_PROP_CALIBRATE, NULL, 0);
+
+	PMIC_INFO("axp2202:pmu_runtime_chgcur:%d\n", axp_config->pmu_runtime_chgcur);
+	PMIC_INFO("axp2202:pmu_bat_charge_control_lim:%d\n", axp_config->pmu_bat_charge_control_lim);
+	PMIC_INFO("axp2202:qc_bat_exist:%d\n", bat_power->qc_bat_exist);
+	check_count = 2;
+	return 0;
+}
 
 static int axp2202_get_vbat_vol(struct power_supply *ps,
 			     union power_supply_propval *val)
@@ -129,12 +208,17 @@ static int axp2202_get_bat_health(struct power_supply *ps,
 	ret = regmap_read(regmap, AXP2202_COMM_STAT0, &reg_value);
 	ret = regmap_read(regmap, AXP2202_COMM_FAULT, &reg_value2);
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, val);
-		if (val->intval)
+	if (bat_power->qc_supply_exist) {
+		if (bat_power->qc_bat_exist)
 			reg_value |= AXP2202_MASK_BAT_STAT;
 		else
 			reg_value &= ~(AXP2202_MASK_BAT_STAT);
+
+		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_PRESENT, val);
+		if (val->intval == POWER_SUPPLY_HEALTH_DEAD)
+			reg_value |= AXP2202_MASK_BAT_ACT_STAT;
+		else
+			reg_value &= ~(AXP2202_MASK_BAT_ACT_STAT);
 	}
 
 	if (reg_value & AXP2202_MASK_BAT_STAT) {
@@ -340,17 +424,16 @@ static int axp2202_get_ichg_lim(struct power_supply *ps,
 	return 0;
 }
 
-static int axp2202_get_bat_status(struct power_supply *ps,
+static int _axp2202_get_bat_status(struct axp2202_bat_power *bat_power,
 				  union power_supply_propval *val)
 {
-	struct axp2202_bat_power *bat_power = power_supply_get_drvdata(ps);
 	struct regmap *regmap = bat_power->regmap;
 	unsigned int data;
 	int ret;
 
 	ret = regmap_read(regmap, AXP2202_COMM_STAT1, &data);
 	if (ret < 0) {
-		PMIC_DEV_DEBUG(&ps->dev, "error read AXP2202_COM_STAT1\n");
+		PMIC_DEBUG("error read AXP2202_COM_STAT1\n");
 		return ret;
 	}
 
@@ -373,7 +456,7 @@ static int axp2202_get_bat_status(struct power_supply *ps,
 		break;
 	}
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (bat_power->qc_supply_exist) {
 		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, val);
 	}
 
@@ -390,6 +473,17 @@ static int axp2202_get_bat_status(struct power_supply *ps,
 	}
 
 	return 0;
+}
+
+static int axp2202_get_bat_status(struct power_supply *ps,
+				  union power_supply_propval *val)
+{
+	struct axp2202_bat_power *bat_power = power_supply_get_drvdata(ps);
+	int ret;
+
+	ret = _axp2202_get_bat_status(bat_power, val);
+
+	return ret;
 }
 
 static int axp2202_get_soc(struct power_supply *ps,
@@ -434,9 +528,15 @@ static int axp2202_get_charger_count(struct power_supply *ps,
 	struct axp2202_bat_power *bat_power = power_supply_get_drvdata(ps);
 	struct axp_config_info *axp_config = &bat_power->dts_info;
 	unsigned int data;
+	int charge_cycle_count = 0, reduce_cap;
 
-	data = axp_config->pmu_battery_cap;
-	val->intval = data * 1000;
+	charge_cycle_count = atomic_read(&bat_power->charge_cycle_count);
+
+	data = axp_config->pmu_battery_cap * 1000;
+	reduce_cap = charge_cycle_count * axp_config->pmu_bat_cycle_cap_reduce;
+	data -= reduce_cap;
+
+	val->intval = data;
 	return 0;
 }
 
@@ -548,14 +648,14 @@ static int axp2202_get_bat_present(struct power_supply *ps,
 	unsigned int data;
 	int ret;
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, val);
+	if (bat_power->qc_supply_exist) {
+		val->intval = bat_power->qc_bat_exist;
 		return 0;
 	}
 
 	ret = regmap_read(regmap, AXP2202_COMM_STAT0, &data);
 	if (ret < 0) {
-		PMIC_DEV_DEBUG(&ps->dev, "error read AXP2202_COM_STAT1\n");
+		PMIC_DEV_DEBUG(&ps->dev, "error read AXP2202_COM_STAT0\n");
 		return ret;
 	}
 
@@ -661,6 +761,29 @@ static int axp2202_set_bat_max_voltage(struct regmap *regmap, int mV)
 	return 0;
 }
 
+static int axp2202_set_status(struct axp2202_bat_power *bat_power, int status)
+{
+	union power_supply_propval qc_val;
+	struct regmap *regmap = bat_power->regmap;
+
+	if (!status) {
+		PMIC_INFO("disable charge\n");
+		if (bat_power->qc_supply_exist) {
+			qc_val.intval = 1;
+			power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
+		}
+		regmap_update_bits(regmap, AXP2202_MODULE_EN, BIT(1), 0);
+	} else {
+		PMIC_INFO("enable charge\n");
+		if (bat_power->qc_supply_exist) {
+			qc_val.intval = 2;
+			power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
+		}
+		regmap_update_bits(regmap, AXP2202_MODULE_EN, BIT(1), BIT(1));
+	}
+	return 0;
+}
+
 static int _axp2202_reset_mcu(struct regmap *regmap)
 {
 	int ret = 0;
@@ -684,7 +807,7 @@ static int axp2202_reset_mcu(struct axp2202_bat_power *bat_power)
 	union power_supply_propval qc_val;
 	struct regmap *regmap = bat_power->regmap;
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (bat_power->qc_supply_exist) {
 		qc_val.intval = 1;
 		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
 	}
@@ -694,7 +817,7 @@ static int axp2202_reset_mcu(struct axp2202_bat_power *bat_power)
 	ret = _axp2202_reset_mcu(regmap);
 
 	msleep(500);
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (bat_power->qc_supply_exist) {
 		qc_val.intval = 2;
 		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
 	}
@@ -898,6 +1021,7 @@ static int axp2202_bat_get_property(struct power_supply *psy,
 	int ret = 0;
 
 	struct axp2202_bat_power *bat_power = power_supply_get_drvdata(psy);
+	struct axp_config_info *axp_config = &bat_power->dts_info;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_MODEL_NAME:
@@ -955,6 +1079,9 @@ static int axp2202_bat_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
 		val->intval = bat_power->dts_info.pmu_battery_cap * 1000;
 		break;
+	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		val->intval = bat_power->dts_info.pmu_battery_cap * 1000;
+		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		ret = axp2202_get_soc(psy, val); // unit %;
 		if (ret < 0)
@@ -966,6 +1093,12 @@ static int axp2202_bat_get_property(struct power_supply *psy,
 			return ret;
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
+		if (bat_power->qc_supply_exist) {
+			if ((val->intval > 0) && !bat_power->qc_supply_probe_finish) {
+				val->intval = axp_vts_to_temp(val->intval, axp_config);
+				break;
+			}
+		}
 		ret = axp2202_get_temp(psy, val);
 		if (ret < 0)
 			return ret;
@@ -976,7 +1109,11 @@ static int axp2202_bat_get_property(struct power_supply *psy,
 			return ret;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (bat_power->charger_cooler_type) {
+			val->intval = atomic_read(&bat_power->pmu_limit_status);
+			break;
+		}
+		if (bat_power->qc_supply_exist) {
 			power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, val);
 		} else {
 			ret = axp2202_get_ichg_lim(psy, val);
@@ -1045,6 +1182,18 @@ static int axp2202_bat_get_property(struct power_supply *psy,
 		if (ret < 0)
 			return ret;
 		break;
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+		val->intval = -1;
+		break;
+	case POWER_SUPPLY_PROP_MANUFACTURE_YEAR:
+		val->intval = bat_power->dts_info.pmu_bat_manufacture_year;
+		break;
+	case POWER_SUPPLY_PROP_MANUFACTURE_MONTH:
+		val->intval = bat_power->dts_info.pmu_bat_manufacture_month;
+		break;
+	case POWER_SUPPLY_PROP_MANUFACTURE_DAY:
+		val->intval = bat_power->dts_info.pmu_bat_manufacture_day;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -1065,26 +1214,35 @@ static int axp2202_bat_set_property(struct power_supply *psy,
 		ret = axp2202_set_lowsocth(regmap, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (bat_power->qc_supply_exist) {
 			power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, val);
 			break;
 		}
 		ret = axp2202_set_ichg(regmap, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
-		if (val->intval == 1) {
-			lim_cur = bat_power->dts_info.pmu_bat_charge_control_lim;
-		} else if (val->intval == 2) {
-			lim_cur = bat_power->dts_info.pmu_runtime_chgcur;
+		if (!bat_power->charger_cooler_type) {
+			if (val->intval == 1) {
+				lim_cur = bat_power->dts_info.pmu_bat_charge_control_lim;
+			} else if (val->intval == 2) {
+				lim_cur = bat_power->dts_info.pmu_runtime_chgcur;
+			} else {
+				lim_cur = 0;
+			}
 		} else {
-			lim_cur = 0;
+			atomic_set(&bat_power->pmu_limit_status, val->intval);
+			if (val->intval == PAUSE_CHARGING_STATE) {
+				lim_cur = 0;
+			} else if (val->intval == LIMIT_CUR_STATE) {
+				lim_cur = bat_power->dts_info.pmu_bat_charge_control_lim;
+			} else if (val->intval == NORMAL_STATE) {
+				lim_cur = bat_power->dts_info.pmu_runtime_chgcur;
+			} else {
+				break;
+			}
 		}
 		PMIC_INFO("ichg set:%d\n", lim_cur);
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-			if (bat_power->dts_info.pmu_bat_temp_enable) {
-				if (bat_power->bat_qc_temp_set_limit < lim_cur)
-					lim_cur = bat_power->bat_qc_temp_set_limit;
-			}
+		if (bat_power->qc_supply_exist) {
 			qc_val.intval = lim_cur;
 			power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &qc_val);
 			break;
@@ -1093,6 +1251,19 @@ static int axp2202_bat_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
 		ret = axp2202_set_bat_max_voltage(regmap, val->intval);
+		break;
+	case POWER_SUPPLY_PROP_CALIBRATE:
+		if (bat_power->qc_supply_exist) {
+			if ((val->intval == 1) && !bat_power->qc_supply_probe_finish) {
+				bat_power->qc_supply_probe_finish = true;
+			}
+		}
+		break;
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+		atomic_set(&bat_power->charge_cycle_count, val->intval);
+		break;
+	case POWER_SUPPLY_PROP_STATUS:
+		ret = axp2202_set_status(bat_power, val->intval);
 		break;
 	default:
 		ret = -EINVAL;
@@ -1118,6 +1289,15 @@ static int axp2202_usb_power_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
 		ret = 0;
 		break;
+	case POWER_SUPPLY_PROP_CALIBRATE:
+		ret = 0;
+		break;
+	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+		ret = 1;
+		break;
+	case POWER_SUPPLY_PROP_STATUS:
+		ret = 1;
+		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -1138,7 +1318,7 @@ static const struct power_supply_desc axp2202_bat_desc = {
 static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 {
 	struct axp_config_info *axp_config = &bat_power->dts_info;
-	union power_supply_propval qc_val;
+	union power_supply_propval bat_val;
 	int ret = 0;
 	int val;
 	uint8_t data[2];
@@ -1152,15 +1332,20 @@ static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 		return ret;
 	}
 
+	/* init bat cycle*/
+	atomic_set(&bat_power->charge_cycle_count, 0);
+	axp_config->pmu_bat_cycle_cap_reduce *= axp_config->pmu_battery_cap * 10 / axp_config->pmu_bat_cycle_life;
+
+	/* default sets */
+	atomic_set(&bat_power->pmu_limit_status, 0);
+
 	/* get battery exist*/
-	if (!(bat_power->qc_psy) || (IS_ERR(bat_power->qc_psy))) {
+	if (!bat_power->qc_supply_exist) {
 		regmap_read(bat_power->regmap, AXP2202_COMM_STAT0, &val);
 		if (!(val & AXP2202_MASK_BAT_STAT))
 			battery_exist = 0;
 	} else {
-		power_supply_get_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, &qc_val);
-		if (!qc_val.intval)
-			battery_exist = 0;
+		battery_exist = bat_power->qc_bat_exist;
 	}
 
 	/* update battery model*/
@@ -1175,19 +1360,20 @@ static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 	PMIC_DEV_DEBUG(bat_power->dev, "axp2202 model update ok:battery_exist:%d\n", battery_exist);
 	/*end of update battery model*/
 
+	if (!bat_power->qc_supply_exist) {
+		/* set pre-charge current to 128mA*/
+		val = 0x02;
+		regmap_update_bits(bat_power->regmap, AXP2202_IPRECHG_CFG, 0x0f, val);
 
-	/* set pre-charge current to 128mA*/
-	val = 0x02;
-	regmap_update_bits(bat_power->regmap, AXP2202_IPRECHG_CFG, 0x0f, val);
-
-	/* set terminal charge current */
-	if (axp_config->pmu_terminal_chgcur < 64)
-		val = 0x01;
-	else if (axp_config->pmu_terminal_chgcur > 960)
-		val = 0x0f;
-	else
-		val = axp_config->pmu_terminal_chgcur / 64;
-	regmap_update_bits(bat_power->regmap, AXP2202_ITERM_CFG, 0x0f, val);
+		/* set terminal charge current */
+		if (axp_config->pmu_terminal_chgcur < 64)
+			val = 0x01;
+		else if (axp_config->pmu_terminal_chgcur > 960)
+			val = 0x0f;
+		else
+			val = axp_config->pmu_terminal_chgcur / 64;
+		regmap_update_bits(bat_power->regmap, AXP2202_ITERM_CFG, 0x0f, val);
+	}
 
 	if (!battery_exist)
 		axp_config->pmu_bat_temp_enable = 0;
@@ -1243,7 +1429,7 @@ static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 			regmap_write(bat_power->regmap, AXP2202_VHTF_WORK, val);
 		}
 
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (bat_power->qc_supply_exist) {
 			val = axp_config->pmu_bat_charge_ltf / 32;
 			regmap_write(bat_power->regmap, AXP2202_VLTF_WORK, val);
 			val = axp_config->pmu_bat_charge_htf / 2;
@@ -1286,7 +1472,7 @@ static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 
 		regmap_write(bat_power->regmap, AXP2202_JEITA_CV_CFG, val);
 
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (bat_power->qc_supply_exist) {
 			val = axp_config->pmu_jetia_cool / 32;
 			regmap_write(bat_power->regmap, AXP2202_VLTF_CHG, val);
 			val = axp_config->pmu_jetia_warm / 2;
@@ -1296,13 +1482,15 @@ static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 		regmap_update_bits(bat_power->regmap, AXP2202_JEITA_CFG, AXP2202_JEITA_ENABLE_MARK, 0);
 	}
 
-	/* set CHGLED */
-	regmap_read(bat_power->regmap, AXP2202_CHGLED_CFG, &reg_value);
-	reg_value &= 0xf8;
-	if (axp_config->pmu_chgled_func) {
-		reg_value |= axp_config->pmu_chgled_type;
-		regmap_write(bat_power->regmap, AXP2202_CHGLED_CFG, reg_value);
+	if (!bat_power->qc_supply_exist) {
+		/* set CHGLED */
+		regmap_read(bat_power->regmap, AXP2202_CHGLED_CFG, &reg_value);
+		reg_value &= 0xf8;
+		if (axp_config->pmu_chgled_func) {
+			reg_value |= axp_config->pmu_chgled_type;
+			regmap_write(bat_power->regmap, AXP2202_CHGLED_CFG, reg_value);
 		}
+	}
 
 	/* set charger voltage limit */
 	if (axp_config->pmu_init_chgvol < 4100) {
@@ -1319,26 +1507,24 @@ static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 		regmap_update_bits(bat_power->regmap, AXP2202_VTERM_CFG, 0x07, AXP2202_CHRG_CTRL1_TGT_5_0V);
 	}
 
-	/*  charger change current can be divided by 64 */
-	axp_config->pmu_runtime_chgcur = clamp_val(axp_config->pmu_runtime_chgcur, 0, 3072);
-	axp_config->pmu_suspend_chgcur = clamp_val(axp_config->pmu_suspend_chgcur, 0, 3072);
-	axp_config->pmu_shutdown_chgcur = clamp_val(axp_config->pmu_shutdown_chgcur, 0, 3072);
-	axp_config->pmu_bat_charge_control_lim = clamp_val(axp_config->pmu_bat_charge_control_lim, 0, 3072);
+	if (!bat_power->qc_supply_exist) {
+		/*  charger change current can be divided by 64 */
+		axp_config->pmu_runtime_chgcur = clamp_val(axp_config->pmu_runtime_chgcur, 0, 3072);
+		axp_config->pmu_suspend_chgcur = clamp_val(axp_config->pmu_suspend_chgcur, 0, 3072);
+		axp_config->pmu_shutdown_chgcur = clamp_val(axp_config->pmu_shutdown_chgcur, 0, 3072);
+		axp_config->pmu_bat_charge_control_lim = clamp_val(axp_config->pmu_bat_charge_control_lim, 0, 3072);
 
-	axp_config->pmu_runtime_chgcur = DIVIDE_BY_64(axp_config->pmu_runtime_chgcur);
-	axp_config->pmu_suspend_chgcur = DIVIDE_BY_64(axp_config->pmu_suspend_chgcur);
-	axp_config->pmu_shutdown_chgcur = DIVIDE_BY_64(axp_config->pmu_shutdown_chgcur);
-	axp_config->pmu_bat_charge_control_lim = DIVIDE_BY_64(axp_config->pmu_bat_charge_control_lim);
+		axp_config->pmu_runtime_chgcur = DIVIDE_BY_64(axp_config->pmu_runtime_chgcur);
+		axp_config->pmu_suspend_chgcur = DIVIDE_BY_64(axp_config->pmu_suspend_chgcur);
+		axp_config->pmu_shutdown_chgcur = DIVIDE_BY_64(axp_config->pmu_shutdown_chgcur);
+		axp_config->pmu_bat_charge_control_lim = DIVIDE_BY_64(axp_config->pmu_bat_charge_control_lim);
 
-	/*  set charger charge current */
-	if (!(bat_power->qc_psy) || (IS_ERR(bat_power->qc_psy))) {
+		/*  set charger charge current */
 		val = axp_config->pmu_runtime_chgcur / 64;
 		regmap_update_bits(bat_power->regmap, AXP2202_ICC_CFG, GENMASK(5, 0),
 					   val);
-	} else {
-		qc_val.intval = axp_config->pmu_runtime_chgcur;
-		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &qc_val);
 	}
+
 
 	/* set gauge_thld */
 	val = clamp_val(axp_config->pmu_battery_warning_level1 - 5, 0, 15) << 4;
@@ -1353,12 +1539,24 @@ static int axp2202_init_chip(struct axp2202_bat_power *bat_power)
 		val = ((data[0] & GENMASK(5, 0)) << 0x08) | (data[1]);
 		PMIC_WARN("bat_vol:%d\n\n", val);
 		if (val < 3500) {
-			axp2202_reset_mcu(bat_power);
-			regmap_write(bat_power->regmap, AXP2202_CURVE_CHECK, 0x81);
-			PMIC_WARN("adapt reset gauge: soc > 60%% , bat_vol < 3500\n");
+			_axp2202_get_bat_status(bat_power, &bat_val);
+			if (bat_val.intval == POWER_SUPPLY_STATUS_CHARGING) {
+				axp2202_reset_mcu(bat_power);
+				regmap_write(bat_power->regmap, AXP2202_CURVE_CHECK, 0x81);
+				PMIC_WARN("adapt reset gauge: soc > 60%% , bat_vol < 3500\n");
+			}
 		} else {
 			regmap_write(bat_power->regmap, AXP2202_CURVE_CHECK, 0x00);
 		}
+	}
+
+	/* init charger cooling type */
+	if (of_find_property(bat_power->dev->of_node, "#cooling-cells", NULL)) {
+		PMIC_INFO("charger cooling type: new\n");
+		bat_power->charger_cooler_type = 1;
+	} else {
+		PMIC_INFO("charger cooling type: old\n");
+		bat_power->charger_cooler_type = 0;
 	}
 
 	return ret;
@@ -1393,9 +1591,11 @@ static irqreturn_t axp2202_irq_handler_bat_stat_change(int irq, void *data)
 		PMIC_DEBUG("interrupt:battery under temp work");
 		break;
 	case AXP2202_IRQ_NEWSOC:
-		if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+		if (bat_power->qc_supply_exist) {
 			if (bat_power->dts_info.pmu_bat_temp_enable) {
-				schedule_delayed_work(&bat_power->bat_qc_temp_process, 0);
+				union power_supply_propval qc_val;
+				qc_val.intval = 1;
+				power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_TEMP, &qc_val);
 			}
 		}
 		PMIC_DEBUG("interrupt:battery new soc");
@@ -1416,9 +1616,11 @@ static irqreturn_t axp2202_irq_handler_bat_temp_change(int irq, void *data)
 
 	power_supply_changed(bat_power->bat_supply);
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+	if (bat_power->qc_supply_exist) {
 		if (bat_power->dts_info.pmu_bat_temp_enable) {
-			schedule_delayed_work(&bat_power->bat_qc_temp_process, 0);
+			union power_supply_propval qc_val;
+			qc_val.intval = 1;
+			power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_TEMP, &qc_val);
 		}
 	}
 
@@ -1521,6 +1723,12 @@ static int axp2202_bat_dt_parse(struct device_node *node,
 	AXP_OF_PROP_READ(pmu_bat_temp_para16,               0);
 
 	AXP_OF_PROP_READ(pmu_bat_charge_control_lim,        600);
+	AXP_OF_PROP_READ(pmu_bat_cycle_life,                800);
+	AXP_OF_PROP_READ(pmu_bat_cycle_cap_reduce,          20);
+
+	AXP_OF_PROP_READ(pmu_bat_manufacture_year,       2024);
+	AXP_OF_PROP_READ(pmu_bat_manufacture_month,         1);
+	AXP_OF_PROP_READ(pmu_bat_manufacture_day,           1);
 
 	axp_config->wakeup_bat_in =
 		of_property_read_bool(node, "wakeup_bat_in");
@@ -1610,13 +1818,13 @@ static void axp2202_bat_power_monitor(struct work_struct *work)
 	default:
 		regmap_read(bat_power->regmap, AXP2202_GAUGE_SOC, &reg_value);
 		if (reg_value == 100) {
-			if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+			if (bat_power->qc_supply_exist) {
 				qc_val.intval = 1;
 				power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
 			}
 			regmap_update_bits(bat_power->regmap, AXP2202_MODULE_EN, BIT(1), 0);
 		} else {
-			if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
+			if (bat_power->qc_supply_exist) {
 				qc_val.intval = 2;
 				power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_val);
 			}
@@ -1648,7 +1856,7 @@ static void axp2202_bat_power_curve_monitor(struct work_struct *work)
 
 		rest_vol = reg_value & 0x7F;
 		if (blance_vol >= 1) {
-			if (!(bat_power->qc_psy) || (IS_ERR(bat_power->qc_psy))) {
+			if (!bat_power->qc_supply_exist) {
 				ret = regmap_read(regmap, AXP2202_COMM_STAT0, &reg_value);
 				reg_value &= AXP2202_MASK_VBUS_STAT;
 			} else {
@@ -1674,60 +1882,6 @@ static void axp2202_bat_power_curve_monitor(struct work_struct *work)
 	}
 }
 
-static void axp2202_qc_temp_process_monitor(struct work_struct *work)
-{
-	struct axp2202_bat_power *bat_power =
-		container_of(work, typeof(*bat_power), bat_qc_temp_process.work);
-	struct axp_config_info *axp_config = &bat_power->dts_info;
-	union power_supply_propval qc_status_val, qc_cur_val, val;
-	static int charge_status = 2;
-	int tmp;
-
-	axp2202_get_temp(bat_power->bat_supply, &val);
-	tmp = val.intval;
-
-	if (charge_status != 1 && ((tmp <= axp_vts_to_temp(axp_config->pmu_bat_charge_ltf, axp_config)) || (tmp >= axp_vts_to_temp(axp_config->pmu_bat_charge_htf, axp_config)))) {
-		PMIC_DEBUG("bat temp(%d) is over/under than chage mode temp(%d/%d): hold wake lock and discharge\n", tmp,
-				 axp_vts_to_temp(axp_config->pmu_bat_charge_htf, axp_config), axp_vts_to_temp(axp_config->pmu_bat_charge_ltf, axp_config));
-		qc_status_val.intval = 1;
-	} else if (charge_status == 1 && (tmp > (axp_vts_to_temp(axp_config->pmu_bat_charge_ltf, axp_config) + 30) && (tmp < (axp_vts_to_temp(axp_config->pmu_bat_charge_htf, axp_config) - 30)))) {
-		PMIC_DEBUG("release wake lock and recharge:bat_temp:%d\n", tmp);
-		qc_status_val.intval = 2;
-	}
-
-	if ((charge_status != qc_status_val.intval) && (qc_status_val.intval != 0)) {
-		charge_status = qc_status_val.intval;
-		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_STATUS, &qc_status_val);
-		if (charge_status == 1) {
-			__pm_stay_awake(bat_power->bat_qc_temp_ws);
-		} else {
-			__pm_relax(bat_power->bat_qc_temp_ws);
-		}
-	}
-
-	if (axp_config->pmu_jetia_en && (charge_status == 2)) {
-		if ((tmp <= axp_vts_to_temp(axp_config->pmu_jetia_cool, axp_config)) || (tmp >= axp_vts_to_temp(axp_config->pmu_jetia_warm, axp_config))) {
-			PMIC_DEBUG("bat temp(%d) is over/under than chage mode temp(%d/%d):limit chgcur\n", tmp,
-					 axp_vts_to_temp(axp_config->pmu_jetia_warm, axp_config), axp_vts_to_temp(axp_config->pmu_jetia_cool, axp_config));
-			qc_cur_val.intval = axp_config->pmu_runtime_chgcur / 2;
-		} else if ((tmp > (axp_vts_to_temp(axp_config->pmu_jetia_cool, axp_config) + 30)) && (tmp < (axp_vts_to_temp(axp_config->pmu_jetia_warm, axp_config) - 30))) {
-			PMIC_DEBUG("restore bat chgcur:bat_temp:%d\n", tmp);
-			qc_cur_val.intval = axp_config->pmu_runtime_chgcur;
-		}
-	}
-
-	if ((bat_power->bat_qc_temp_set_limit != qc_cur_val.intval) && (qc_cur_val.intval != 0)) {
-		bat_power->bat_qc_temp_set_limit = qc_cur_val.intval;
-		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &qc_cur_val);
-	}
-	PMIC_DEBUG("%s:%d bat_temp:%d, charge_status:%d, lim_cur:%d\n", __func__, __LINE__, tmp, charge_status, bat_power->bat_qc_temp_set_limit);
-	power_supply_changed(bat_power->bat_supply);
-
-	if ((charge_status == 1) || (bat_power->bat_qc_temp_set_limit < axp_config->pmu_runtime_chgcur)) {
-		schedule_delayed_work(&bat_power->bat_qc_temp_process, msecs_to_jiffies(5 * 1000));
-	}
-}
-
 static int axp2202_battery_probe(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -1737,7 +1891,7 @@ static int axp2202_battery_probe(struct platform_device *pdev)
 	struct power_supply_config psy_cfg = {};
 	struct axp20x_dev *axp_dev = dev_get_drvdata(pdev->dev.parent);
 	struct device_node *node = pdev->dev.of_node;
-	struct device_node *np = NULL;
+	union power_supply_propval val;
 
 	if (!of_device_is_available(node)) {
 		PMIC_ERR("axp2202-battery device is not configed\n");
@@ -1763,28 +1917,16 @@ static int axp2202_battery_probe(struct platform_device *pdev)
 	/* for device tree parse */
 	axp2202_bat_parse_device_tree(bat_power);
 
-	if (of_find_property(bat_power->dev->of_node, "det_qc_supply", NULL)) {
-		np = of_parse_phandle(bat_power->dev->of_node, "det_qc_supply", 0);
-		if (!of_device_is_available(np)) {
-			PMIC_INFO("axp2202:no quick charge\n");
-			bat_power->qc_psy =  NULL;
-		} else {
-			bat_power->qc_psy = devm_power_supply_get_by_phandle(bat_power->dev, "det_qc_supply");
-			PMIC_INFO("axp2202:used quick charge\n");
-			if (!(bat_power->qc_psy) || (IS_ERR(bat_power->qc_psy)))
-				return -EPROBE_DEFER;
-			of_property_read_u32(np, "pmu_runtime_chgcur", &ret);
-			if (ret) {
-				bat_power->dts_info.pmu_runtime_chgcur = ret;
-			} else {
-				bat_power->dts_info.pmu_runtime_chgcur = 2000;
-			}
-			regmap_update_bits(bat_power->regmap, AXP2202_MODULE_EN, BIT(1), 0);
-			regmap_update_bits(bat_power->regmap, AXP2202_VTERM_CFG, 0x07, AXP2202_CHRG_CTRL1_TGT_4_0V);
-		}
+	ret = axp2202_qc_para_get(bat_power);
+	if (!ret) {
+		PMIC_INFO("axp2202:used quick charge, paras init finish\n");
+		regmap_update_bits(bat_power->regmap, AXP2202_MODULE_EN, BIT(1), 0);
+		regmap_update_bits(bat_power->regmap, AXP2202_VTERM_CFG, 0x07, AXP2202_CHRG_CTRL1_TGT_4_0V);
+	} else if (ret == -EPROBE_DEFER) {
+		PMIC_INFO("axp2202:used quick charge, paras init later\n");
+		return ret;
 	} else {
 		PMIC_INFO("axp2202:no quick charge\n");
-		bat_power->qc_psy =  NULL;
 	}
 
 	ret = axp2202_init_chip(bat_power);
@@ -1852,13 +1994,9 @@ static int axp2202_battery_probe(struct platform_device *pdev)
 		schedule_delayed_work(&bat_power->bat_power_curve, msecs_to_jiffies(30 * 1000));
 	}
 
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-		if (bat_power->dts_info.pmu_bat_temp_enable) {
-			bat_power->bat_qc_temp_ws = wakeup_source_register(&pdev->dev, "bat_qc_temp_proce");
-			bat_power->bat_qc_temp_set_limit = bat_power->dts_info.pmu_runtime_chgcur;
-			INIT_DELAYED_WORK(&bat_power->bat_qc_temp_process, axp2202_qc_temp_process_monitor);
-			schedule_delayed_work(&bat_power->bat_qc_temp_process, msecs_to_jiffies(5 * 1000));
-		}
+	if (bat_power->qc_supply_exist) {
+		val.intval = 1;
+		power_supply_set_property(bat_power->qc_psy, POWER_SUPPLY_PROP_CALIBRATE, &val);
 	}
 	return ret;
 
@@ -1959,13 +2097,10 @@ static void axp2202_bat_shutdown(struct platform_device *pdev)
 	if (reg_value & 0x80) {
 		cancel_delayed_work_sync(&bat_power->bat_power_curve);
 	}
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-		if (bat_power->dts_info.pmu_bat_temp_enable) {
-			cancel_delayed_work_sync(&bat_power->bat_qc_temp_process);
-		}
-	}
 
-	axp2202_charger_ichg_set(bat_power, bat_power->dts_info.pmu_shutdown_chgcur);
+	if (!bat_power->qc_supply_exist) {
+		axp2202_charger_ichg_set(bat_power, bat_power->dts_info.pmu_shutdown_chgcur);
+	}
 
 }
 
@@ -1975,16 +2110,14 @@ static int axp2202_bat_suspend(struct platform_device *pdev, pm_message_t state)
 	int reg_value;
 
 	cancel_delayed_work_sync(&bat_power->bat_supply_mon);
+	atomic_set(&bat_power->pmu_limit_status, 0);
 	regmap_read(bat_power->regmap, AXP2202_CURVE_CHECK, &reg_value);
 	if (reg_value & 0x80) {
 		cancel_delayed_work_sync(&bat_power->bat_power_curve);
 	}
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-		if (bat_power->dts_info.pmu_bat_temp_enable) {
-			cancel_delayed_work_sync(&bat_power->bat_qc_temp_process);
-		}
+	if (!bat_power->qc_supply_exist) {
+		axp2202_charger_ichg_set(bat_power, bat_power->dts_info.pmu_suspend_chgcur);
 	}
-	axp2202_charger_ichg_set(bat_power, bat_power->dts_info.pmu_suspend_chgcur);
 	axp2202_bat_virq_dts_set(bat_power, false);
 	return 0;
 }
@@ -2001,12 +2134,9 @@ static int axp2202_bat_resume(struct platform_device *pdev)
 	if (reg_value & 0x80) {
 		schedule_delayed_work(&bat_power->bat_power_curve, 0);
 	}
-	if (bat_power->qc_psy && (!IS_ERR(bat_power->qc_psy))) {
-		if (bat_power->dts_info.pmu_bat_temp_enable) {
-			schedule_delayed_work(&bat_power->bat_qc_temp_process, 0);
-		}
+	if (!bat_power->qc_supply_exist) {
+		axp2202_charger_ichg_set(bat_power, bat_power->dts_info.pmu_runtime_chgcur);
 	}
-	axp2202_charger_ichg_set(bat_power, bat_power->dts_info.pmu_runtime_chgcur);
 	axp2202_bat_virq_dts_set(bat_power, true);
 	return 0;
 }

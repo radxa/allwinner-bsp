@@ -15,7 +15,7 @@
 #include "linux/pm_runtime.h"
 #include "linux/pm_domain.h"
 #include "linux/hwspinlock.h"
-#include <sunxi-g2d.h>
+#include <uapi/linux/sunxi-g2d.h>
 
 #define CREATE_TRACE_POINTS
 #include "g2d_trace.h"

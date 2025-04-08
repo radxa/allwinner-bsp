@@ -4,37 +4,6 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs none /dev
 
-/sbin/insmod /lib/modules/$(uname -r)/irq-sunxi-wakeupgen.ko;
-/sbin/insmod /lib/modules/$(uname -r)/ccu-sunxi-rtc.ko;
-/sbin/insmod /lib/modules/$(uname -r)/ccu-sunxi-ng.ko;
-/sbin/insmod /lib/modules/$(uname -r)/ccu-sun50iw10.ko;
-/sbin/insmod /lib/modules/$(uname -r)/ccu-sun50iw10-r.ko;
-/sbin/insmod /lib/modules/$(uname -r)/pinctrl-sunxi.ko;
-/sbin/insmod /lib/modules/$(uname -r)/pinctrl-sun50iw10p1.ko;
-/sbin/insmod /lib/modules/$(uname -r)/pinctrl-sun50iw10p1-r.ko;
-/sbin/insmod /lib/modules/$(uname -r)/virt-dma.ko;
-/sbin/insmod /lib/modules/$(uname -r)/sunxi-dma.ko;
-/sbin/insmod /lib/modules/$(uname -r)/sunxi-uart.ko;
-/sbin/insmod /lib/modules/$(uname -r)/rtc-sunxi.ko;
-
-/sbin/insmod /lib/modules/$(uname -r)/i2c-core.ko;
-/sbin/insmod /lib/modules/$(uname -r)/i2c-dev.ko;
-/sbin/insmod /lib/modules/$(uname -r)/i2c-sunxi.ko;
-/sbin/insmod /lib/modules/$(uname -r)/sunxi-iommu.ko;
-/sbin/insmod /lib/modules/$(uname -r)/mfd-core.ko;
-/sbin/insmod /lib/modules/$(uname -r)/regmap-i2c.ko;
-/sbin/insmod /lib/modules/$(uname -r)/irq-sun8i-nmi.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp2101.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp2101-i2c.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp2101-regulator.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp2101-pek.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp803_ac_power.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp803_battery.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp803_usb_power.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp2202_battery.ko;
-/sbin/insmod /lib/modules/$(uname -r)/axp2202_usb_power.ko;
-/sbin/insmod /lib/modules/$(uname -r)/virtual.ko;
-
 exec < /dev/console > /dev/console 2>&1
 
 refind_root()
@@ -42,19 +11,21 @@ refind_root()
 	local BOOT_NAND=/dev/nand0
 	local BOOT_EMMC=/dev/mmcblk0
 	local BOOT_NOR=/dev/mtdblock0
-	local BOOT_DEV ROOT_DEVICE
+	local BOOT_UFS=/dev/sda
 
-	if [ -e $BOOT_NAND ]; then
-		BOOT_DEV=$BOOT_NAND
-	elif [ -e $BOOT_EMMC ]; then
-		BOOT_DEV=$BOOT_EMMC
-	elif [ -e $BOOT_NOR ]; then
-		BOOT_DEV=$BOOT_NOR
-	fi
+	rootfs_dir="$BOOT_EMMC $BOOT_UFS $BOOT_NOR $BOOT_NAND"
 
-	if [ -n "$BOOT_DEV" ]; then
-		ROOT_DEVICE=`fdisk -l $BOOT_DEV | awk '/rootfs/{print "'$BOOT_DEV'p"$1}'`
-	fi
+	for dir in ${rootfs_dir}; do
+		if [ "${dir}" == "${BOOT_UFS}" ]; then
+			ROOT_DEVICE=`fdisk -l $dir | awk '/rootfs/{print "'$dir'"$1}'`
+		else
+			ROOT_DEVICE=`fdisk -l $dir | awk '/rootfs/{print "'$dir'p"$1}'`
+		fi
+		if [ -n "$ROOT_DEVICE" ]; then
+			break
+		fi
+	done
+
 	echo $ROOT_DEVICE
 }
 
@@ -88,9 +59,11 @@ echo [$0]: RootDevice is \"$ROOT_DEVICE\" , GPT_SUPPORT=$GPT_SUPPORT
 if [ "x$GPT_SUPPORT" = "x1" ]; then
 	NAND_DEF_DEVICE=nand0p5
 	SDMMC_DEF_DEVICE=mmcblk0p5
+	UFS_DEF_DEVICE=sda5
 else
 	NAND_DEF_DEVICE=nandd
 	SDMMC_DEF_DEVICE=mmcblk0p7
+	UFS_DEF_DEVICE=sda5
 fi
 
 # $1: the name of block device
@@ -139,13 +112,14 @@ load_nand()
 	if [ ! -f $NAND_MODULE ]; then
 		echo [$0]: $NAND_MODULE does not exist!
 #		return 1
+	else
+		insmod $NAND_MODULE
+		if [ $? -ne 0 ]; then
+			echo [$0]: $NAND_MODULE is invalid!
+#			return 2
+		fi
 	fi
 
-	insmod $NAND_MODULE
-	if [ $? -ne 0 ]; then
-		echo [$0]: $NAND_MODULE is invalid!
-#		return 2
-	fi
 	wait_for_ready $1
 	if [ $? -eq 0 ]; then
 		do_mount $1
@@ -160,14 +134,24 @@ load_emmc()
 	if [ ! -f $EMMC_MODULE ]; then
 		echo [$0]: $EMMC_MODULE does not exist!
 #		return 1
+	else
+		insmod $EMMC_MODULE
+		if [ $? -ne 0 ]; then
+			echo [$0]: $EMMC_MODULE is invalid!
+#			return 2
+		fi
 	fi
 
-	insmod $EMMC_MODULE
-	if [ $? -ne 0 ]; then
-		echo [$0]: $EMMC_MODULE is invalid!
-#		return 2
+	wait_for_ready $1
+	if [ $? -eq 0 ]; then
+		local root_dev=$(refind_root)
+		[ -z "$root_dev" ] && root_dev=$1
+		do_mount $root_dev
 	fi
+}
 
+load_ufs()
+{
 	wait_for_ready $1
 	if [ $? -eq 0 ]; then
 		local root_dev=$(refind_root)
@@ -184,12 +168,12 @@ load_mtdblock()
 	if [ ! -f $NOR_MODULE ]; then
 		echo [$0]: $NOR_MODULE does not exist!
 #		return 1
-	fi
-
-	insmod $NOR_MODULE
-	if [ $? -ne 0 ]; then
-		echo [$0]: $NOR_MODULE is invalid!
-#		return 2
+	else
+		insmod $NOR_MODULE
+		if [ $? -ne 0 ]; then
+			echo [$0]: $NOR_MODULE is invalid!
+#			return 2
+		fi
 	fi
 
 	wait_for_ready $1
@@ -206,6 +190,9 @@ case $ROOT_DEVICE in
 		;;
 	/dev/mmc*)
 		load_emmc $ROOT_DEVICE
+		;;
+	/dev/sda*)
+		load_ufs $ROOT_DEVICE
 		;;
 	/dev/mtdblock*)
 		load_mtdblock $ROOT_DEVICE

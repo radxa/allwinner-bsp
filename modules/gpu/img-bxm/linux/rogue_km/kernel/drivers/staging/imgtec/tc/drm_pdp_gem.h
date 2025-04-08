@@ -53,16 +53,11 @@
 #include <drm/drmP.h>
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 #include <drm/drm_gem.h>
-#endif
 
 #include "drm_pdp_drv.h"
 #include "pvr_dma_resv.h"
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
-extern const struct drm_gem_object_funcs pdp_gem_funcs;
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) */
 extern const struct vm_operations_struct pdp_gem_vm_ops;
 
 struct pdp_gem_private;

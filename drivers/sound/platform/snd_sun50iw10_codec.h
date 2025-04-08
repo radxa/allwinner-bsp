@@ -376,6 +376,7 @@ struct sunxi_codec {
 	struct sunxi_jack_extcon_priv jack_extcon_priv;
 
 	struct sunxi_audio_status audio_sta;
+	enum SND_SUNXI_CLK_STATUS clk_sta;
 
 	unsigned int pa_pin_max;
 	struct snd_sunxi_pacfg *pa_cfg;

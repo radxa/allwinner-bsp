@@ -7,8 +7,8 @@
 
 #define SUNXI_MODNAME "spi"
 #include <sunxi-log.h>
-#include "spi-sunxi-debug.h"
 #include "spi-sunxi-camera.h"
+#include "../spi-sunxi-debug.h"
 
 /* SPI Controller Hardware Register Operation Start */
 
@@ -69,7 +69,7 @@ static void sunxi_spi_camera_vsync_input_select(struct sunxi_spi *sspi, bool edg
 static void sunxi_spi_camera_set_vsync_freq_relation(struct sunxi_spi *sspi, u32 ahb_clk, u32 sclk)
 {
 	u32 reg_val = readl(sspi->base_addr + SUNXI_SPI_SVCN_REG);
-	u8 val = DIV_ROUND_UP(ahb_clk, sclk) - 1;
+	u8 val = (ahb_clk / sclk) - 1;
 
 	reg_val &= ~SUNXI_SPI_SVCN_SFT;
 	reg_val |= FIELD_PREP(SUNXI_SPI_SVCN_SFT, val);
@@ -98,7 +98,7 @@ static int sunxi_spi_camera_set_frame_head(struct sunxi_spi *sspi, u8 *buf, int 
 	u64 reg_val = 0;
 	int i;
 
-	if (len > 8)
+	if (len > SUNXI_SPI_FRAMEHEAD_MAX)
 		return -EINVAL;
 
 	for (i = len; i > 0; i--)
@@ -114,7 +114,7 @@ int sunxi_spi_camera_get_frame_head(struct sunxi_spi *sspi, u8 *buf, int len)
 	u64 reg_val = 0;
 	int i;
 
-	if (len > 8)
+	if (len > SUNXI_SPI_FRAMEHEAD_MAX)
 		return -EINVAL;
 
 	reg_val |= readl(sspi->base_addr + SUNXI_SPI_SFHHR_REG);
@@ -174,7 +174,7 @@ int sunxi_spi_camera_set_vsync(struct spi_device *spi, u32 len)
 #else
 		sunxi_spi_camera_set_vsync_freq_relation(sspi, 24000000, clk_get_rate(sspi->mclk));
 #endif
-		sunxi_spi_camera_vsync_input_select(sspi, (spi->mode & SPI_CS_HIGH));
+		sunxi_spi_camera_vsync_input_select(sspi, !(spi->mode & SPI_CS_HIGH));
 		sunxi_spi_camera_set_vsync_cycle_number(sspi, len);
 	} else {
 		sunxi_err(sspi->dev, "vsync set unsupport, bus_%#x camera_%d\n", sspi->bus_mode, sspi->camera_mode);
@@ -191,7 +191,7 @@ int sunxi_spi_camera_set_framehead_flag(struct spi_device *spi, u8 *buf, int len
 	int ret = 0;
 
 	if (sspi->bus_mode == SUNXI_SPI_BUS_CAMERA && sspi->camera_mode == SUNXI_SPI_CAMERA_FRAMEHEAD) {
-		if (len > 8) {
+		if (len > SUNXI_SPI_FRAMEHEAD_MAX) {
 			sunxi_err(sspi->dev, "set framehead len %d overflow\n", len);
 			ret = -EINVAL;
 		} else {
@@ -214,11 +214,11 @@ int sunxi_spi_camera_get_framehead_flag(struct spi_device *spi, u8 *buf, int len
 	int ret = 0;
 
 	if (sspi->bus_mode == SUNXI_SPI_BUS_CAMERA && sspi->camera_mode == SUNXI_SPI_CAMERA_FRAMEHEAD) {
-		if (len > 8 || len != sspi->camera_framehead_len) {
+		if (len > SUNXI_SPI_FRAMEHEAD_MAX || len != sspi->camera_framehead_len) {
 			sunxi_err(sspi->dev, "get framehead len %d not correct\n", len);
 			ret = -EINVAL;
 		} else {
-			sunxi_spi_camera_get_frame_head(sspi, buf, len);
+			memcpy(buf, sspi->camera_framehead, min(len, sspi->camera_framehead_len));
 		}
 	} else {
 		sunxi_err(sspi->dev, "framehead get unsupport, bus_%#x camera_%d\n", sspi->bus_mode, sspi->camera_mode);

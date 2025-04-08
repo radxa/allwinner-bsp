@@ -17,26 +17,25 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/acpi.h>
-#include <linux/err.h>
-#include <linux/i2c.h>
-#include <linux/module.h>
-#include <power/pmu-ext.h>
-#include <linux/of.h>
-#include <linux/regmap.h>
-#include <linux/slab.h>
-#include <linux/version.h>
+#include "sunxi-power-mfd.h"
+#include "pmu-ext.h"
 
 static const struct of_device_id pmu_ext_i2c_of_match_table[] = {
 	{ .compatible = "ext,tcs4838", .data = (void *)TCS4838_ID },
 	{ .compatible = "ext,sy8827g", .data = (void *)SY8827G_ID },
 	{ .compatible = "ext,axp1530", .data = (void *)AXP1530_ID },
+	{ .compatible = "ext,aw37501", .data = (void *)AW37501_ID },
+	{ .compatible = "ext,ocp2131", .data = (void *)OCP2131_ID },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, pmu_ext_i2c_of_match_table);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 static int pmu_ext_i2c_probe(struct i2c_client *client,
 			      const struct i2c_device_id *ids)
+#else
+static int pmu_ext_i2c_probe(struct i2c_client *client)
+#endif
 {
 	struct pmu_ext_dev *ext;
 	int ret;

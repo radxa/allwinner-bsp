@@ -38,12 +38,9 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### ###########################################################################
 
-ifneq ($(SERVICES_SC),1)
-
 modules := dc_fbdev
 
 dc_fbdev_type := kernel_module
 dc_fbdev_target := dc_fbdev.ko
 dc_fbdev_makefile := $(THIS_DIR)/Kbuild.mk
 
-endif # SERVICES_SC

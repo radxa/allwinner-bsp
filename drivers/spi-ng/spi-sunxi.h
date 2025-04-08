@@ -24,10 +24,15 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/spi/spi.h>
+#include <linux/spi/sunxi-spi.h>
 #include <dt-bindings/spi/sunxi-spi.h>
 
 #define SUNXI_SPI_XFER_TIMEOUT	(5000)
+#ifdef CONFIG_AW_IC_BOARD
 #define SUNXI_SPI_POLL_TIMEOUT	(0x1ffffff)
+#else
+#define SUNXI_SPI_POLL_TIMEOUT (0x3ffff)
+#endif
 
 #define SUNXI_SPI_CS_MAX		(4)			/* SPI Controller support max chip select */
 #define SUNXI_SPI_FIFO_DEFAULT	(64)		/* SPI Controller default fifo depth */
@@ -51,9 +56,6 @@
 	#define SUNXI_SPI_GC_MODE_SEL		BIT(2)	/* Sample Timing Mode Select */
 	#define SUNXI_SPI_GC_MODE			BIT(1)	/* SPI Function Mode Select */
 	#define SUNXI_SPI_GC_EN				BIT(0)	/* SPI Module Enable Control */
-	/* non-Register */
-	#define SUNXI_SPI_SAMP_MODE_OLD		(0)
-	#define SUNXI_SPI_SAMP_MODE_NEW		(1)
 
 /* SPI Transfer Control Register */
 #define SUNXI_SPI_TC_REG		(0x08)
@@ -78,43 +80,25 @@
 	#define SUNXI_SPI_TC_CPOL		BIT(1)	/* SPI Clock Polarity Control */
 	#define SUNXI_SPI_TC_CPHA		BIT(0)	/* SPI Clock/Data Phase Control */
 
-/* SPI Interrupt Control Register */
+/* SPI Interrupt Control/Status Register */
 #define SUNXI_SPI_INT_CTL_REG	(0x10)
-	#define SUNXI_SPI_INT_CTL_SVE_EN	BIT(14)	/* Slave Vsync Error Enable */
-	#define SUNXI_SPI_INT_CTL_SS_EN		BIT(13)	/* SSI Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_TC_EN		BIT(12)	/* Transfer Completed Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_TX_UDR_EN	BIT(11)	/* TX FIFO Underrun Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_TX_OVF_EN	BIT(10)	/* TX FIFO Overflow Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_RX_UDR_EN	BIT(9)	/* RX FIFO Underrun Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_RX_OVF_EN	BIT(8)	/* RX FIFO Overflow Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_TX_FUL_EN	BIT(6)	/* TX FIFO Full Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_TX_EMP_EN	BIT(5)	/* TX FIFO Empty Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_TX_ERQ_EN	BIT(4)	/* TX FIFO Empty Request Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_RX_FUL_EN	BIT(2)	/* RX FIFO Full Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_RX_EMP_EN	BIT(1)	/* RX FIFO Empty Interrupt Enable */
-	#define SUNXI_SPI_INT_CTL_RX_RDY_EN	BIT(0)	/* RX FIFO Ready Request Interrupt Enable */
-	/* non-Register */
-	#define SUNXI_SPI_INT_CTL_ERR	(SUNXI_SPI_INT_CTL_TX_OVF_EN|SUNXI_SPI_INT_CTL_RX_UDR_EN|SUNXI_SPI_INT_CTL_RX_OVF_EN)	/* No TX FIFO Underrun */
-	#define SUNXI_SPI_INT_CTL_MASK	(GENMASK(14, 8) | GENMASK(6, 4) | GENMASK(2, 0))
-
-/* SPI Interrupt Status Register */
 #define SUNXI_SPI_INT_STA_REG	(0x14)
-	#define SUNXI_SPI_INT_STA_SVEI		BIT(14)	/* Slave Vsync Error Interrupt */
-	#define SUNXI_SPI_INT_STA_SSI		BIT(13)	/* SS Invalid Interrupt */
-	#define SUNXI_SPI_INT_STA_TC		BIT(12)	/* Transfer Completed */
-	#define SUNXI_SPI_INT_STA_TX_UDR	BIT(11)	/* TX FIFO Underrun */
-	#define SUNXI_SPI_INT_STA_TX_OVF	BIT(10)	/* TX FIFO Overflow */
-	#define SUNXI_SPI_INT_STA_RX_UDR	BIT(9)	/* RX FIFO Underrun */
-	#define SUNXI_SPI_INT_STA_RX_OVF	BIT(8)	/* RX FIFO Overflow */
-	#define SUNXI_SPI_INT_STA_TX_FULL	BIT(6)	/* TX FIFO Full */
-	#define SUNXI_SPI_INT_STA_TX_EMP	BIT(5)	/* TX FIFO Empty */
-	#define SUNXI_SPI_INT_STA_TX_RDY	BIT(4)	/* TX FIFO Ready */
-	#define SUNXI_SPI_INT_STA_RX_FULL	BIT(2)	/* RX FIFO Full */
-	#define SUNXI_SPI_INT_STA_RX_EMP	BIT(1)	/* RX FIFO Empty */
-	#define SUNXI_SPI_INT_STA_RX_RDY	BIT(0)	/* RX FIFO Ready */
+	#define SUNXI_SPI_INT_SVE		BIT(14)	/* Slave Vsync Error Interrupt */
+	#define SUNXI_SPI_INT_SSI		BIT(13)	/* SS Invalid Interrupt */
+	#define SUNXI_SPI_INT_TC		BIT(12)	/* Transfer Completed Interrupt */
+	#define SUNXI_SPI_INT_TX_UDR	BIT(11)	/* TX FIFO Underrun Interrupt */
+	#define SUNXI_SPI_INT_TX_OVF	BIT(10)	/* TX FIFO Overflow Interrupt */
+	#define SUNXI_SPI_INT_RX_UDR	BIT(9)	/* RX FIFO Underrun Interrupt */
+	#define SUNXI_SPI_INT_RX_OVF	BIT(8)	/* RX FIFO Overflow Interrupt */
+	#define SUNXI_SPI_INT_TX_FULL	BIT(6)	/* TX FIFO Full Interrupt */
+	#define SUNXI_SPI_INT_TX_EMP	BIT(5)	/* TX FIFO Empty Interrupt */
+	#define SUNXI_SPI_INT_TX_RDY	BIT(4)	/* TX FIFO Ready Request Interrupt */
+	#define SUNXI_SPI_INT_RX_FULL	BIT(2)	/* RX FIFO Full Interrupt */
+	#define SUNXI_SPI_INT_RX_EMP	BIT(1)	/* RX FIFO Empty Interrupt */
+	#define SUNXI_SPI_INT_RX_RDY	BIT(0)	/* RX FIFO Ready Request Interrupt */
 	/* non-Register */
-	#define SUNXI_SPI_INT_STA_ERR	(SUNXI_SPI_INT_STA_TX_OVF|SUNXI_SPI_INT_STA_RX_UDR|SUNXI_SPI_INT_STA_RX_OVF)	/* No TX FIFO Underrun */
-	#define SUNXI_SPI_INT_STA_MASK	(GENMASK(14, 8) | GENMASK(6, 4) | GENMASK(2, 0))
+	#define SUNXI_SPI_INT_ERR	(SUNXI_SPI_INT_TX_OVF|SUNXI_SPI_INT_RX_UDR|SUNXI_SPI_INT_RX_OVF)	/* No TX FIFO Underrun */
+	#define SUNXI_SPI_INT_MASK	(GENMASK(14, 8) | GENMASK(6, 4) | GENMASK(2, 0))
 
 /* SPI FIFO Control Register */
 #define SUNXI_SPI_FIFO_CTL_REG	(0x18)
@@ -133,24 +117,16 @@
 /* SPI FIFO Status Register */
 #define SUNXI_SPI_FIFO_STA_REG	(0x1C)
 	#define SUNXI_SPI_FIFO_STA_TB_WR	BIT(31)			/* TX FIFO Write Buffer Write Enable */
-	#define SUNXI_SPI_FIFO_STA_TB_CNT	GENMASK(30, 28)	/* TX FIFO Write Buffer Counter - Unused after 1890 */
+	#define SUNXI_SPI_FIFO_STA_TB_CNT	GENMASK(30, 28)	/* TX FIFO Write Buffer Counter - Unused after sun55iw3 */
 	#define SUNXI_SPI_FIFO_STA_TX_CNT	GENMASK(23, 16)	/* TX FIFO Counter */
 	#define SUNXI_SPI_FIFO_STA_RB_WR	BIT(15)			/* RX FIFO Read Buffer Write Enable */
-	#define SUNXI_SPI_FIFO_STA_RB_CNT	GENMASK(14, 12)	/* RX FIFO Read Buffer Counter - Unused after 1890 */
+	#define SUNXI_SPI_FIFO_STA_RB_CNT	GENMASK(14, 12)	/* RX FIFO Read Buffer Counter - Unused after sun55iw3 */
 	#define SUNXI_SPI_FIFO_STA_RX_CNT	GENMASK(7, 0)	/* RX FIFO Counter */
 
 /* SPI Wait Clock Counter Register */
 #define SUNXI_SPI_WAIT_CNT_REG	(0x20)
 	#define SUNXI_SPI_WAIT_CNT_SWC	GENMASK(19, 16)	/* Dual mode direction switch wait clock counter (for master mode only) */
 	#define SUNXI_SPI_WAIT_CNT_WCC	GENMASK(15, 0)	/* Wait Clock Counter (In Master mode) */
-
-/* SPI Sample Delay Register */
-#define SUNXI_SPI_SAMP_DL_REG	(0x28)
-	#define SUNXI_SPI_SAMP_DL_CAL_START	BIT(15)			/* Sample Delay Calibration Start */
-	#define SUNXI_SPI_SAMP_DL_CAL_DONE	BIT(14)			/* Sample Delay Calibration Done */
-	#define SUNXI_SPI_SAMP_DL			GENMASK(13, 8)	/* Sample Delay */
-	#define SUNXI_SPI_SAMP_DL_SW_EN		BIT(7)			/* Sample Delay Software Enable */
-	#define SUNXI_SPI_SAMP_DL_SW		GENMASK(5, 0)	/* Sample Delay Software */
 
 /* SPI Master Burst Counter Register */
 #define SUNXI_SPI_MBC_REG	(0x30)
@@ -185,30 +161,6 @@
 	#define SUNXI_SPI_BUF_STA_TB_CNT		GENMASK(18, 16)	/* TX FIFO Write Buffer Counter */
 	#define SUNXI_SPI_BUF_STA_RB_CNT		GENMASK(7, 0)	/* RX FIFO Read Buffer Counter */
 
-#define SUNXI_SPI_SAMP_HIGH_FREQ	(60000000)	/* sample mode threshold frequency */
-#define SUNXI_SPI_SAMP_LOW_FREQ		(24000000)	/* sample mode threshold frequency */
-#define SUNXI_SPI_SAMP_MODE_DL_DEFAULT	(0xaaaaffff)
-
-enum sunxi_spi_sample_mode {
-	SUNXI_SPI_SAMP_MODE_AUTO = 0,
-	SUNXI_SPI_SAMP_MODE_MANUAL = 1,
-};
-
-enum sunxi_spi_sample_delay_cycle {
-	SUNXI_SPI_SAMP_DELAY_CYCLE_0_0 = 0,
-	SUNXI_SPI_SAMP_DELAY_CYCLE_0_5 = 1,
-	SUNXI_SPI_SAMP_DELAY_CYCLE_1_0 = 2,
-	SUNXI_SPI_SAMP_DELAY_CYCLE_1_5 = 3,
-	SUNXI_SPI_SAMP_DELAY_CYCLE_2_0 = 4,
-	SUNXI_SPI_SAMP_DELAY_CYCLE_2_5 = 5,
-	SUNXI_SPI_SAMP_DELAY_CYCLE_3_0 = 6,
-};
-
-enum sunxi_spi_sample_delay_chain {
-	SUNXI_SPI_SAMPLE_DELAY_CHAIN_MIN = 0,
-	SUNXI_SPI_SAMPLE_DELAY_CHAIN_MAX = 63,
-};
-
 enum sunxi_spi_mode_type {
 	MODE_TYPE_NULL,
 	SINGLE_HALF_DUPLEX_RX,		/* single mode, half duplex read */
@@ -221,8 +173,8 @@ enum sunxi_spi_mode_type {
 };
 
 enum sunxi_spi_quirk_flags {
-	DMA_FORCE_FIXED = BIT(0),	/* workaround for spi RX_FIFO underrun issue. fixed on 1886 */
-	INDEPENDENT_BSR = BIT(1),	/* identify SPI_BSR register exsit or not. addition on 1890 */
+	DMA_FORCE_FIXED = BIT(0),	/* workaround for spi RX_FIFO underrun issue. fixed on sun8iw21 */
+	INDEPENDENT_BSR = BIT(1),	/* identify SPI_BSR register exsit or not. addition on sun55iw3 */
 	NEW_SAMPLE_MODE = BIT(2),	/* new mode of sample timing including maximum 3 cycle delay and delay chain control. */
 	NEW_SAMPLE_MODE_RST = BIT(3),	/* workaround for invisible fifo under new sample mode synchronize issue. */
 };
@@ -269,6 +221,7 @@ struct sunxi_spi {
 	u8 tx_triglevel;
 	int irq;
 	bool use_dma;
+	u32 bus_sample_type;
 	u32 bus_sample_mode;
 	u32 spi_sample_mode;
 	u32 spi_sample_delay;
@@ -278,6 +231,8 @@ struct sunxi_spi {
 	char *ready_label;
 	bool ready_status;
 	struct completion ready_done;
+	/* For slave */
+	u32 slave_cs;
 
 	/* spi driver data */
 	u32 base_addr_phy;
@@ -298,10 +253,12 @@ struct sunxi_spi {
 	/* spi camera function */
 	u32 camera_mode;
 	int camera_framehead_len;
+	u8 *camera_framehead;
 };
 
 #include "dbi/spi-sunxi-dbi.h"
 #include "bit/spi-sunxi-bit.h"
 #include "camera/spi-sunxi-camera.h"
+#include "calibrate/spi-sunxi-calibrate.h"
 
 #endif	/* _SUNXI_SPI_H_ */

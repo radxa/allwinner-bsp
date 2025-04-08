@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -206,6 +206,7 @@ enum frmae_cnt_mode {
 	FRAME_START,
 	FRAME_END,
 };
+
 /* register data struct */
 
 struct csic_dma_top_cfg {
@@ -387,6 +388,8 @@ void csic_dma_cap_status(unsigned int sel, struct dma_capture_status *status);
 void csic_dma_int_enable(unsigned int sel, enum dma_int_sel interrupt);
 void csic_dma_int_disable(unsigned int sel, enum dma_int_sel interrupt);
 void csic_dma_int_get_status(unsigned int sel, struct dma_int_status *status);
+unsigned int csic_dma_get_pclk_cnt_line_min(unsigned int sel);
+unsigned int csic_dma_get_pclk_cnt_line_max(unsigned int sel);
 void csic_dma_int_get_status_and_chn(unsigned int sel,
 			struct dma_int_status *status, unsigned int *id);
 void csic_dma_line_cnt(unsigned int sel, int line);

@@ -15,6 +15,8 @@
 #ifndef __PINCTRL_SUNXI_H
 #define __PINCTRL_SUNXI_H
 
+#define SUNXI_MODNAME "pin"
+#include <sunxi-log.h>
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
 #include <linux/pinctrl/pinconf-generic.h>
@@ -99,6 +101,14 @@
 
 #define SUN55IW3_PK_BASE	0x0500
 
+#ifndef	GPIO_LINE_DIRECTION_OUT
+#define	GPIO_LINE_DIRECTION_OUT	0
+#endif
+
+#ifndef	GPIO_LINE_DIRECTION_IN
+#define	GPIO_LINE_DIRECTION_IN	1
+#endif
+
 enum sunxi_desc_bias_voltage {
 	BIAS_VOLTAGE_NONE,
 	/*
@@ -133,6 +143,9 @@ enum sunxi_pinctrl_hw_type {
 	SUNXI_PCTL_HW_TYPE_4,  /* Newer chips: sun60iw2 */
 	SUNXI_PCTL_HW_TYPE_5,  /* Support self-adaption */
 	SUNXI_PCTL_HW_TYPE_6,  /* chips: sun55iw3-prcm */
+	SUNXI_PCTL_HW_TYPE_7,  /* chips: sun55iw6-prcm */
+	SUNXI_PCTL_HW_TYPE_8,  /* chips: sun300iw1-r */
+	SUNXI_PCTL_HW_TYPE_9,  /* chips: sun8iw20 */
 	/* Add new types here ... */
 	SUNXI_PCTL_HW_TYPE_CNT,
 };
@@ -141,7 +154,9 @@ enum sunxi_pinctrl_hw_type {
 struct sunxi_pinctrl_hw_info {
 	u8 initial_bank_offset;	/* First bank offset to pin base */
 	u8 mux_regs_offset;	/* Configure Register's offset */
-	u8 data_regs_offset;	/* Data Register's offset */
+	u32 data_regs_offset;	/* Data Register's offset */
+	u32 data_set_regs_offset;	/* Set Data Register's offset */
+	u32 data_clr_regs_offset;	/* Clear data Register's offset */
 	u8 dlevel_regs_offset;	/* Multi Driving Register's offset */
 	u8 bank_mem_size;  	/* Size of the basic registers (including CFG/DAT/DRV/PUL) of any bank  */
 	u8 pull_regs_offset;	/* Pull Register's offset */
@@ -165,6 +180,9 @@ struct sunxi_pinctrl_hw_info {
 	u32 pio_pow_ctrl_reg;
 	bool power_mode_reverse;  /* true: GPIO_POW_VAL and GPIO_POW_MID_SEL bit reverse, A523 SOC, for example */
 	bool power_mode_detect;  /* true: Config voltage withstand by reading power_mode_val_reg */
+	bool data_reg_irregular;
+	bool data_set_mode_select; /* true: change the value of pin by data_set and data_cle reg */
+	u32 data_mem_size;
 };
 
 /* Indexed by `enum sunxi_pinctrl_hw_type` */
@@ -198,6 +216,7 @@ struct sunxi_pinctrl_desc {
 	bool				disable_strict_mode;
 	enum sunxi_desc_bias_voltage	io_bias_cfg_variant;
 	bool				pf_power_source_switch;
+	bool				auto_power_source_switch;
 	enum sunxi_pinctrl_hw_type	hw_type;
 };
 
@@ -338,8 +357,47 @@ static inline u32 sunxi_mux_offset(u16 pin)
 static inline u32 sunxi_data_reg(u16 pin, enum sunxi_pinctrl_hw_type hw_type)
 {
 	u8 bank = pin / PINS_PER_BANK;
-	u32 offset = sunxi_pinctrl_recalc_offset(hw_type, bank);
-	offset += sunxi_pinctrl_hw_info[hw_type].data_regs_offset;
+	u32 offset;
+
+	if (sunxi_pinctrl_hw_info[hw_type].data_reg_irregular) {
+		offset = sunxi_pinctrl_hw_info[hw_type].data_regs_offset +
+				pin / PINS_PER_BANK * sunxi_pinctrl_hw_info[hw_type].data_mem_size;
+	} else {
+		offset = sunxi_pinctrl_recalc_offset(hw_type, bank);
+		offset += sunxi_pinctrl_hw_info[hw_type].data_regs_offset;
+	}
+	offset += pin % PINS_PER_BANK / DATA_PINS_PER_REG * 0x04;
+	return round_down(offset, 4);
+}
+
+static inline u32 sunxi_set_data_reg(u16 pin, enum sunxi_pinctrl_hw_type hw_type)
+{
+	u8 bank = pin / PINS_PER_BANK;
+	u32 offset;
+
+	if (sunxi_pinctrl_hw_info[hw_type].data_reg_irregular) {
+		offset = sunxi_pinctrl_hw_info[hw_type].data_set_regs_offset +
+				pin / PINS_PER_BANK * sunxi_pinctrl_hw_info[hw_type].data_mem_size;
+	} else {
+		offset = sunxi_pinctrl_recalc_offset(hw_type, bank);
+		offset += sunxi_pinctrl_hw_info[hw_type].data_set_regs_offset;
+	}
+	offset += pin % PINS_PER_BANK / DATA_PINS_PER_REG * 0x04;
+	return round_down(offset, 4);
+}
+
+static inline u32 sunxi_clr_data_reg(u16 pin, enum sunxi_pinctrl_hw_type hw_type)
+{
+	u8 bank = pin / PINS_PER_BANK;
+	u32 offset;
+
+	if (sunxi_pinctrl_hw_info[hw_type].data_reg_irregular) {
+		offset = sunxi_pinctrl_hw_info[hw_type].data_clr_regs_offset +
+				pin / PINS_PER_BANK * sunxi_pinctrl_hw_info[hw_type].data_mem_size;
+	} else {
+		offset = sunxi_pinctrl_recalc_offset(hw_type, bank);
+		offset += sunxi_pinctrl_hw_info[hw_type].data_clr_regs_offset;
+	}
 	offset += pin % PINS_PER_BANK / DATA_PINS_PER_REG * 0x04;
 	return round_down(offset, 4);
 }

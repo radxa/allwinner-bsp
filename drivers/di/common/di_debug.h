@@ -16,7 +16,7 @@
 #ifndef _DI_DEBUG_H_
 #define _DI_DEBUG_H_
 
-#include <linux/printk.h>
+#include <sunxi-log.h>
 
 /*
  * debug control, you can switch on (delete 'x' suffix)
@@ -47,26 +47,17 @@ extern int debug_mask;
 
 #define DI_ERR(...)                      \
 do {                                     \
-	if (debug_mask >= DEBUG_LEVEL_ERR \
-		&& debug_mask < DEBUG_LEVEL_TEST) { \
-		PRINT(__VA_ARGS__);              \
-	}                                    \
+	sunxi_err(NULL, __VA_ARGS__); \
 } while (0)
 
 #define DI_INFO(...)                      \
 do {                                      \
-	if (debug_mask >= DEBUG_LEVEL_INFO \
-		&& debug_mask < DEBUG_LEVEL_TEST) { \
-		PRINT(__VA_ARGS__);               \
-	}                                     \
+	sunxi_info(NULL, __VA_ARGS__); \
 } while (0)
 
 #define DI_DEBUG(...)                      \
 do {                                       \
-	if (debug_mask >= DEBUG_LEVEL_DEBUG \
-		&& debug_mask < DEBUG_LEVEL_TEST) { \
-		PRINT(__VA_ARGS__);                \
-	}                                      \
+	sunxi_debug(NULL, __VA_ARGS__); \
 } while (0)
 
 #define DI_TEST(...)                      \

@@ -23,6 +23,11 @@
 #include "snd_sunxi_owa.h"
 
 struct sunxi_owa_clk {
+	/* parent clk */
+	struct clk *clk_pll_audio0_4x;
+	struct clk *clk_pll_audio1_4x;
+	struct clk *clk_pll_peri0_300;
+
 	/* module clk */
 	struct clk *clk_owa_tx;
 	struct clk *clk_owa_rx;
@@ -61,6 +66,26 @@ sunxi_owa_clk_t *snd_owa_clk_init(struct platform_device *pdev)
 		goto err_get_clk_bus;
 	}
 
+	/* get parent clk */
+	clk->clk_pll_audio0_4x = of_clk_get_by_name(np, "clk_pll_audio0_4x");
+	if (IS_ERR_OR_NULL(clk->clk_pll_audio0_4x)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_INIT, "clk_pll_audio0_4x get failed\n");
+		ret = PTR_ERR(clk->clk_pll_audio0_4x);
+		goto err_get_clk_pll_audio0_4x;
+	}
+	clk->clk_pll_audio1_4x = of_clk_get_by_name(np, "clk_pll_audio1_4x");
+	if (IS_ERR_OR_NULL(clk->clk_pll_audio1_4x)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_INIT, "clk_pll_audio1_4x get failed\n");
+		ret = PTR_ERR(clk->clk_pll_audio1_4x);
+		goto err_get_clk_pll_audio1_4x;
+	}
+	clk->clk_pll_peri0_300 = of_clk_get_by_name(np, "clk_pll_peri0_300");
+	if (IS_ERR_OR_NULL(clk->clk_pll_peri0_300)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_INIT, "clk_pll_peri0_300 get failed\n");
+		ret = PTR_ERR(clk->clk_pll_peri0_300);
+		goto err_get_clk_pll_peri0_300;
+	}
+
 	/* get owa clk */
 	clk->clk_owa_tx = of_clk_get_by_name(np, "clk_owa_tx");
 	if (IS_ERR_OR_NULL(clk->clk_owa_tx)) {
@@ -80,6 +105,12 @@ sunxi_owa_clk_t *snd_owa_clk_init(struct platform_device *pdev)
 err_get_clk_owa_rx:
 	clk_put(clk->clk_owa_tx);
 err_get_clk_owa_tx:
+	clk_put(clk->clk_pll_peri0_300);
+err_get_clk_pll_peri0_300:
+	clk_put(clk->clk_pll_audio1_4x);
+err_get_clk_pll_audio1_4x:
+	clk_put(clk->clk_pll_audio0_4x);
+err_get_clk_pll_audio0_4x:
 	clk_put(clk->clk_bus);
 err_get_clk_bus:
 err_get_clk_rst:
@@ -95,6 +126,9 @@ void snd_owa_clk_exit(void *clk_orig)
 
 	clk_put(clk->clk_owa_rx);
 	clk_put(clk->clk_owa_tx);
+	clk_put(clk->clk_pll_peri0_300);
+	clk_put(clk->clk_pll_audio0_4x);
+	clk_put(clk->clk_pll_audio1_4x);
 	clk_put(clk->clk_bus);
 
 	kfree(clk);
@@ -134,6 +168,22 @@ int snd_owa_clk_enable(void *clk_orig)
 
 	SND_LOG_DEBUG("\n");
 
+	if (clk_prepare_enable(clk->clk_pll_audio0_4x)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_EN, "clk_pll_audio0_4x enable failed\n");
+		ret = -EINVAL;
+		goto err_enable_clk_pll_audio0_4x;
+	}
+	if (clk_prepare_enable(clk->clk_pll_audio1_4x)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_EN, "clk_pll_audio1_4x enable failed\n");
+		ret = -EINVAL;
+		goto err_enable_clk_pll_audio1_4x;
+	}
+	if (clk_prepare_enable(clk->clk_pll_peri0_300)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_EN, "clk_pll_peri0_300 enable failed\n");
+		ret = -EINVAL;
+		goto err_enable_clk_pll_peri0_300;
+	}
+
 	if (clk_prepare_enable(clk->clk_owa_tx)) {
 		SND_LOG_ERR("clk_owa_tx enable failed\n");
 		ret = -EINVAL;
@@ -151,6 +201,12 @@ int snd_owa_clk_enable(void *clk_orig)
 err_enable_clk_owa_rx:
 	clk_disable_unprepare(clk->clk_owa_tx);
 err_enable_clk_owa_tx:
+	clk_disable_unprepare(clk->clk_pll_peri0_300);
+err_enable_clk_pll_peri0_300:
+	clk_disable_unprepare(clk->clk_pll_audio1_4x);
+err_enable_clk_pll_audio1_4x:
+	clk_disable_unprepare(clk->clk_pll_audio0_4x);
+err_enable_clk_pll_audio0_4x:
 	return ret;
 }
 
@@ -172,11 +228,38 @@ void snd_owa_clk_disable(void *clk_orig)
 
 	clk_disable_unprepare(clk->clk_owa_rx);
 	clk_disable_unprepare(clk->clk_owa_tx);
+	clk_disable_unprepare(clk->clk_pll_peri0_300);
+	clk_disable_unprepare(clk->clk_pll_audio0_4x);
+	clk_disable_unprepare(clk->clk_pll_audio1_4x);
 }
 
 int snd_owa_clk_rate(void *clk_orig, unsigned int freq_in, unsigned int freq_out)
 {
+	struct sunxi_owa_clk *clk = (struct sunxi_owa_clk *)clk_orig;
+
 	SND_LOG_DEBUG("\n");
+
+	if (freq_in % 24576000 == 0) {
+		if (clk_set_parent(clk->clk_owa_tx, clk->clk_pll_audio0_4x)) {
+			SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_SET, "set owa tx parent clk failed\n");
+			return -EINVAL;
+		}
+	} else {
+		if (clk_set_parent(clk->clk_owa_tx, clk->clk_pll_audio1_4x)) {
+			SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_SET, "set owa tx parent clk failed\n");
+			return -EINVAL;
+		}
+	}
+
+	if (clk_set_rate(clk->clk_owa_tx, freq_out)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_SET, "clk owa tx set rate failed\n");
+		return -EINVAL;
+	}
+
+	if (clk_set_parent(clk->clk_owa_rx, clk->clk_pll_peri0_300)) {
+		SND_LOG_ERR_STD(E_OWA_SWDEP_CLK_SET, "set clk_owa_rx parent clk failed\n");
+		return -EINVAL;
+	}
 
 	return 0;
 }

@@ -14,8 +14,11 @@
 #define MIPI_DSI_MODE_VIDEO_BURST	(1<<1)
 #define MIPI_DSI_MODE_NO_EOT_PACKET	(1<<9)
 #define MIPI_DSI_CLOCK_NON_CONTINUOUS	(1<<10)
+#define MIPI_DSI_EN_3DFIFO		(1<<21)
 #define MIPI_DSI_SLAVE_MODE		(1<<22)
-#define MIPI_DSI_TO_INCELL		(1<<23)
+#define MIPI_DSI_MODE_VRR               (1<<24)
+#define MIPI_DSI_SYNC_INCELL            (1<<25)
+#define MIPI_DSI_ASYNC_INCELL           (1<<26)
 
 /* lvds */
 #define MEDIA_BUS_FMT_RGB666_1X7X3_SPWG         0x1010

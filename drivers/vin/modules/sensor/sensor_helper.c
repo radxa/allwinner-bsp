@@ -415,6 +415,7 @@ static void sensor_fill_mbus_fmt(struct v4l2_subdev *sd,
 	res->res_wdr_mode = ws->wdr_mode;
 	res->res_lp_mode = ws->lp_mode;
 	res->res_time_hs = info->time_hs;
+	res->res_deskew = info->deskew;
 	res->fps = ws->fps_fixed;
 	res->pclk_dly = ws->pclk_dly;
 }

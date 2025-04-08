@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+
 /*
  * A V4L2 driver for nvp6134 cameras and AHD Coax protocol.
  *

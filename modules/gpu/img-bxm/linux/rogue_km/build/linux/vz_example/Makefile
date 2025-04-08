@@ -48,13 +48,22 @@ VMM_TYPE := stub
 KERNEL_COMPONENTS := srvkm
 EXCLUDED_APIS="camerahal composerhal hwperftools memtrackhal opencl opengl opengles1 opengles3 openglsc2 rogue2d scripts sensorhal servicestools thermalhal unittests vulkan"
 
+PVR_DRM_MODESET_DRIVER_NAME := nulldisp
+
 ifeq ($(SUPPORT_GPUVIRT_VALIDATION),1)
 # if validation is enabled, disable real virtualization
-PVRSRV_VZ_NUM_OSID := 1
+RGX_NUM_DRIVERS_SUPPORTED := 1
 GPUVIRT_VALIDATION_NUM_OS ?= 8
 else
 # Setting the maximum number of OSIDs supported
-PVRSRV_VZ_NUM_OSID ?= 8
+RGX_NUM_DRIVERS_SUPPORTED ?= 8
+endif
+
+ifeq ($(RGX_BVNC),33.15.11.3)
+# Rogue Anthill cores support a maximum of 2 OSIDs in hardware
+ifeq ($(RGX_NUM_DRIVERS_SUPPORTED),8)
+		RGX_NUM_DRIVERS_SUPPORTED := 2
+endif
 endif
 
 # (optional) use static vz memory model, defaulting to dynamic mode otherwise
@@ -66,10 +75,6 @@ endif
 # (optional) Some GPUs do not have scratch registers for virtualisation use.
 # Disable HW register support and fall back on state variables from shared memory
 #SUPPORT_AUTOVZ_HW_REGS := 0
-
-# (optional) The hypervisor does not allow OS 0 to access the memory region after the firmware heaps
-# Implement and define a separate carveout for persistent fw MMU Px allocations
-#PVR_AUTOVZ_OVERRIDE_FW_MMU_CARVEOUT_BASE_ADDR := 0x530000000
 
 # Should be last
 include ../config/core.mk

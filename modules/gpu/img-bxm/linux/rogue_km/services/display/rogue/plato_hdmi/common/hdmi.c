@@ -413,7 +413,7 @@ static void HdmiMISRHandler(struct work_struct *work)
 #if defined(HDMI_DEBUG)
     {
         DTD * dtd = &psDeviceData->videoParams.mDtdList[psDeviceData->videoParams.mDtdActiveIndex];
-        HDMI_DEBUG_PRINT("- %s: Final HDMI timing configuration: \n\nmHdmi: %d\nmEncodingOut: %d\nmColorRes: %d\nmPixelRep: %d\n \
+        HDMI_DEBUG_PRINT("- %s: Final HDMI timing configuration: \n\nmHdmi: %d\nmEncodingOut: %d\nmColorRes: %d\nmPixelRep: %d\n\
 \nDTD Info: \n\tmCode: %d\n\tmPixelRep: %d\n\tmPixelClock: %d\n\tmInterlaced: %d\n\tmHActive: %d\n\tmHBlanking: %d\n\tmHBorder: %d\n\t\
 mHImageSize: %d\n\tmHFrontPorchWidth: %d\n\tmHSyncPulseWidth: %d\n\tmHsyncPolarity: %d\n\tmVActive: %d\n\tmVBlanking: %d\n\tmVBorder: %d\n\t\
 mVImageSize: %d\n\tmVFrontPorchWidth: %d\n\tmVSyncPulseWidth: %d\n\tmVsyncPolarity: %d\n\n", __func__, psDeviceData->videoParams.mHdmi,
@@ -437,7 +437,7 @@ dtd->mVImageSize, dtd->mVFrontPorchWidth, dtd->mVSyncPulseWidth, dtd->mVSyncPola
 
     if (eError != PVRSRV_OK)
     {
-        HDMI_ERROR_PRINT("- %s: PDP initialization failed \n", __func__);
+        HDMI_ERROR_PRINT("- %s: PDP initialization failed\n", __func__);
     }
 
 }

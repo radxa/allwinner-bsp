@@ -939,28 +939,7 @@ sunxi_mmc_set_timing(struct device *dev, struct device_attribute *attr,
 
 	mmc_claim_host(mmc);
 
-	switch (value) {
-	case MMC_TIMING_MMC_HS:
-		mmc->card->mmc_avail_type &= ~(EXT_CSD_CARD_TYPE_HS200 | EXT_CSD_CARD_TYPE_HS400
-									| EXT_CSD_CARD_TYPE_HS400ES | EXT_CSD_CARD_TYPE_DDR_52);
-		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_HS;
-		break;
-	case MMC_TIMING_MMC_DDR52:
-		mmc->card->mmc_avail_type &= ~(EXT_CSD_CARD_TYPE_HS200 | EXT_CSD_CARD_TYPE_HS400
-									| EXT_CSD_CARD_TYPE_HS400ES);
-		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_DDR_52;
-		break;
-	case MMC_TIMING_MMC_HS200:
-		mmc->card->mmc_avail_type &= ~(EXT_CSD_CARD_TYPE_HS400 | EXT_CSD_CARD_TYPE_HS400ES);
-		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_HS200;
-		break;
-	case MMC_TIMING_MMC_HS400:
-		mmc->card->mmc_avail_type |= EXT_CSD_CARD_TYPE_DDR_52 | EXT_CSD_CARD_TYPE_HS400 | EXT_CSD_CARD_TYPE_HS400ES;
-		break;
-	default:
-		printk("don't support the timing, support emmc timing only\n");
-		break;
-	}
+	sunxi_mmc_select_timing(mmc, value);
 
 	mmc_release_host(mmc);
 	printk("emmc timing setting is over, need reinit now\n");

@@ -16,7 +16,11 @@
  */
 
 #define SUNXI_MODNAME	"VE"
-#include <sunxi-log.h>
+#include "cedar_ve.h"
+#include <asm/dma.h>
+#include <asm/siginfo.h>
+#include <asm/signal.h>
+#include <asm/cacheflush.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/ioctl.h>
@@ -28,13 +32,10 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/preempt.h>
-#include <linux/cdev.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #include <linux/rmap.h>
-#include <linux/wait.h>
-#include <linux/semaphore.h>
 #include <linux/poll.h>
 #include <linux/spinlock.h>
 #include <linux/sched.h>
@@ -43,125 +44,31 @@
 #include <linux/kthread.h>
 #include <linux/delay.h>
 #include <linux/scatterlist.h>
-#include <asm/uaccess.h>
-#include <asm/io.h>
-#include <asm/dma.h>
 #include <linux/mm.h>
-#include <asm/siginfo.h>
-#include <asm/signal.h>
-#include <sunxi-clk.h>
 #include <linux/debugfs.h>
 #include <linux/pm_runtime.h>
-#include <sunxi-sid.h>
 #include <linux/devfreq.h>
-
-#if IS_ENABLED(CONFIG_SUNXI_MPP)
-#include <linux/mpp.h>
-#endif
-
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/of_irq.h>
-
-#include "cedar_ve.h"
-#include "ve_mem_list.h"
+#include <linux/of_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-buf.h>
-//#include <linux/sunxi_mbus.h>
 #include <linux/reset.h>
-#include <asm/cacheflush.h>
 #include <linux/dma-mapping.h>
 #include <linux/version.h>
-
-struct regulator *regu;
+#if IS_ENABLED(CONFIG_SUNXI_MPP)
+#include <linux/mpp.h>
+#endif
+#include <sunxi-clk.h>
+#include <sunxi-sid.h>
 
 #define DRV_VERSION "1.0.0"
-
-#undef USE_CEDAR_ENGINE
-
-#ifndef CEDARDEV_MAJOR
-#define CEDARDEV_MAJOR (150)
-#endif
-#ifndef CEDARDEV_MINOR
-#define CEDARDEV_MINOR (0)
-#endif
-
-#define MACC_REGS_BASE		(0x01C0E000)
-
-#ifndef CONFIG_OF
-#define SUNXI_IRQ_VE		(90)
-#endif
-
-/* just for decoder case with v5v200 */
-#if IS_ENABLED(CONFIG_ARCH_SUN8IW16P1)
-	#define VE_POWER_MANAGE_VALID (1)
-#else
-	#define VE_POWER_MANAGE_VALID (0)
-#endif
-
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
-	#define VE_SUPPORT_MAP_MAX_VE_FREQ_BY_VF (1)
-	#define VE_SUPPORT_DVFS                  (1)
-#else
-	#define VE_SUPPORT_MAP_MAX_VE_FREQ_BY_VF (0)
-	#define VE_SUPPORT_DVFS                  (0)
-#endif
-
-
-#define CEDAR_DEBUG
-#if IS_ENABLED(CONFIG_AW_LOG_VERBOSE)
-#define VE_LOGK(fmt, arg...) pr_info(fmt, ## arg)
-#define VE_LOGV(fmt, arg...)
-#define VE_LOGD(fmt, arg...) sunxi_debug(NULL, fmt, ## arg)
-#define VE_LOGI(fmt, arg...) sunxi_info(NULL,  fmt, ## arg)
-#define VE_LOGW(fmt, arg...) sunxi_warn(NULL,  fmt, ## arg)
-#define VE_LOGE(fmt, arg...) sunxi_err(NULL,   fmt, ## arg)
-#else
-#define VE_LOGK(fmt, arg...) pr_info(fmt, ##arg)
-#define VE_LOGV(fmt, arg...)
-#define VE_LOGD(fmt, arg...) sunxi_debug(NULL, "%d %s(): "fmt, __LINE__, __func__, ## arg)
-#define VE_LOGI(fmt, arg...) sunxi_info(NULL,  "%d %s(): "fmt, __LINE__, __func__, ## arg)
-#define VE_LOGW(fmt, arg...) sunxi_warn(NULL,  "%d %s(): "fmt, __LINE__, __func__, ## arg)
-#define VE_LOGE(fmt, arg...) sunxi_err(NULL,   "%d %s(): "fmt, __LINE__, __func__, ## arg)
-#endif
 
 #define VE_CLK_HIGH_WATER  (900)
 #define VE_CLK_LOW_WATER   (50)
 
 #define PRINTK_IOMMU_ADDR 0
-#define MAX_VE_DEBUG_INFO_NUM (16)
-
-#define MAX_VE_LOAD_PARAM_CHANNEL (16)
-
-#define SET_VE_FREQ_BY_REG 0
-/* the struct must be same with cedarc/ve/veAw/veAw.h */
-struct debug_head_info {
-	unsigned int pid;
-	unsigned int tid;
-	unsigned int length;
-};
-struct ve_debug_info {
-	struct debug_head_info head_info;
-	char *data;
-};
-
-#define VE_DEBUGFS_MAX_CHANNEL 16
-#define VE_DEBUGFS_BUF_SIZE 1024
-
-struct ve_debugfs_proc {
-	unsigned int	len;
-	char			data[VE_DEBUGFS_BUF_SIZE * VE_DEBUGFS_MAX_CHANNEL];
-};
-
-struct ve_debugfs_buffer {
-	unsigned char	 cur_channel_id;
-	unsigned int	proc_len[VE_DEBUGFS_MAX_CHANNEL];
-	char			*proc_buf[VE_DEBUGFS_MAX_CHANNEL];
-	char			*data;
-	struct mutex lock_proc;
-};
-struct ve_debugfs_buffer ve_debug_proc_info;
 
 struct __cedarv_task {
 	int task_prio;
@@ -180,21 +87,9 @@ struct cedarv_engine_task {
 	unsigned int is_first_task;
 };
 
-struct cedarv_engine_task_info {
-	int task_prio;
-	unsigned int frametime;
-	unsigned int total_time;
-};
-
 struct cedarv_regop {
 	unsigned long addr;
 	unsigned int value;
-};
-
-struct cedarv_env_infomation_compat {
-	unsigned int phymem_start;
-	int	 phymem_total_size;
-	u32	 address_macc;
 };
 
 struct __cedarv_task_compat {
@@ -210,423 +105,72 @@ struct cedarv_regop_compat {
 	unsigned int value;
 };
 
-struct VE_PROC_INFO {
-	unsigned char   channel_id;
-	unsigned int	proc_info_len;
-};
-
-struct ve_case_load_info {
-	struct ve_case_load_param load_param;
-	int is_used;
-	u32 process_channel_id;
-};
-
-
-int g_dev_major = CEDARDEV_MAJOR;
-int g_dev_minor = CEDARDEV_MINOR;
-/* S_IRUGO represent that g_dev_major can be read,but canot be write */
-module_param(g_dev_major, int, 0444);
-module_param(g_dev_minor, int, 0444);
-
-struct iomap_para {
-	volatile char *regs_ve;
-	volatile char *regs_sys_cfg;
-	volatile unsigned int *regs_ccmu;
-	unsigned int *prcm_bass_vir;/* PRCM: power reset clock management */
-};
-
-static DECLARE_WAIT_QUEUE_HEAD(wait_ve);
-
-struct cedar_dev {
-	struct cdev cdev;				 /* char device struct				   */
-	struct device *dev;				 /* ptr to class device struct		   */
-	struct device *plat_dev;	     /* ptr to class device struct		   */
-	struct class  *class;			 /* class for auto create device node  */
-
-	struct semaphore sem;			 /* mutual exclusion semaphore		   */
-	spinlock_t lock;
-	wait_queue_head_t wq;			 /* wait queue for poll ops			   */
-
-	struct iomap_para iomap_addrs;	 /* io remap addrs					   */
-
-	struct timer_list cedar_engine_timer;
-	struct timer_list cedar_engine_timer_rel;
-
-	u32 irq;						 /* cedar video engine irq number	   */
-	u32 de_irq_flag;					/* flag of video decoder engine irq generated */
-	u32 de_irq_value;					/* value of video decoder engine irq		  */
-	u32 en_irq_flag;					/* flag of video encoder engine irq generated */
-	u32 en_irq_value;					/* value of video encoder engine irq		  */
-	u32 irq_has_enable;
-	int ref_count;
-	int last_min_freq;
-
-	u32 jpeg_irq_flag;					  /* flag of video jpeg dec irq generated */
-	u32 jpeg_irq_value;					  /* value of video jpeg dec  irq */
-
-	struct mutex lock_vdec;
-	struct mutex lock_jdec;
-	struct mutex lock_venc;
-	struct mutex lock_00_reg;
-	struct mutex lock_04_reg;
-	struct aw_mem_list_head	   list;		/* buffer list */
-	struct mutex lock_mem;
-	unsigned char bMemDevAttachFlag;
-	u32 power_manage_request_ref;
-	struct ve_debug_info  debug_info[MAX_VE_DEBUG_INFO_NUM];
-	int debug_info_cur_index;
-	struct mutex lock_debug_info;
-	struct reset_control *reset;
-	struct clk *ve_clk;
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
-	struct reset_control *reset_ve;
-	struct clk *bus_ve3_clk;
-	struct clk *bus_ve_clk;
-	struct clk *mbus_ve3_clk;
-#else
-	struct clk *bus_clk;
-	struct clk *mbus_clk;
-#endif
-	struct clk *parent_clk;
-	struct clk *power_clk;
-	struct dentry *debug_root;
-
-	struct regulator *regulator;
-	int               voltage; /* mv */
-	int bInitEndFlag;
-
-	struct ve_case_load_info load_infos[MAX_VE_LOAD_PARAM_CHANNEL];
-	int user_setting_ve_freq; /* MHz */
-};
-
-struct ve_info { /* each object will bind a new file handler */
-	unsigned int set_vol_flag;
-
-	struct mutex lock_flag_io;
-	u32 lock_flags; /* if flags is 0, means unlock status */
-	u32 process_channel_id;
-};
-
-struct user_iommu_param {
-	int				fd;
-	unsigned int	iommu_addr;
-};
-
 struct dma_buf_info {
 	struct aw_mem_list_head i_list;
-	int				fd;
-	unsigned long	addr;
-	struct dma_buf	*dma_buf;
+	int fd;
+	unsigned long addr;
+	struct dma_buf *dma_buf;
 	struct dma_buf_attachment *attachment;
-	struct sg_table	*sgt;
-	int    p_id;
-	struct file *filp;
+	struct sg_table *sgt;
+	int p_id;
+	struct cedar_dev *cedar_devp;
 };
 
-static struct cedar_dev *cedar_devp;
+static struct cedar_ve_quirks cedar_ve_quirk;
+static struct cedar_ve_quirks cedar_ve1_quirk;
+static struct cedar_ve_quirks cedar_ve2_quirk;
+static void set_system_register(struct cedar_dev *cedar_devp);
+static int map_dma_buf_addr(struct cedar_dev *cedar_devp,
+			    int fd, unsigned int *addr);
+static void unmap_dma_buf_addr(struct cedar_dev *cedar_devp,
+			       int unmap_all, int fd);
 
-static u32 process_channel_id_cnt;
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+#ifdef CONFIG_AW_VIDEO_KERNEL_ENC
+extern int SetVeSuspend(void);
+extern int SetVeResume(void);
+#endif
+#endif
 
-/*
- * Video engine interrupt service routine
- * To wake up ve wait queue
+/* note: clk control sequence, must be obeyed!!!
+ * enable  : deassert->[set rate]->mbus->bus->module
+ * disable : module->bus->mbus->assert
+ * set rate: disable module -> [set rate] -> enable module
  */
+static int enable_cedar_hw_clk_reset(struct cedar_dev *cedar_devp);
+static void disable_cedar_hw_clk_reset(struct cedar_dev *cedar_devp);
+static int enable_cedar_hw_clk_module(struct cedar_dev *cedar_devp);
+static void disable_cedar_hw_clk_module(struct cedar_dev *cedar_devp);
+static long setup_ve_freq(struct cedar_dev *cedar_devp, int ve_freq);
 
-
-#if IS_ENABLED(CONFIG_ARM64)
-#if (IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN50IW9)) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
-extern void cedar_dma_flush_range(const void *, const void *);
-#else
-extern void cedar_dma_flush_range(const void *, size_t);
-#endif
-#else
-extern void cedar_dma_flush_range(const void *, const void *);
-#endif
-static int map_dma_buf_addr(int fd, unsigned int *addr, struct file *filp);
-static void unmap_dma_buf_addr(int unmap_all, int fd, struct file *filp);
-
+/* note: Video engine interrupt service routine to wake up ve wait queue. */
 static irqreturn_t VideoEngineInterupt(int irq, void *dev)
 {
-	unsigned long ve_int_status_reg;
-	unsigned long ve_int_ctrl_reg;
-	unsigned int status;
-	volatile int val;
-	int modual_sel;
-	unsigned int interrupt_enable;
-	struct iomap_para addrs = cedar_devp->iomap_addrs;
+	struct cedar_dev *cedar_devp = (struct cedar_dev *)dev;
+	(void)irq;
 
-	modual_sel = readl(addrs.regs_ve + 0x0);
-#if IS_ENABLED(CONFIG_ARCH_SUN3IW1P1)
-	if (modual_sel&0xa) {
-		if ((modual_sel&0xb) == 0xb) {
-			/* jpg enc */
-			ve_int_status_reg = (unsigned long)(addrs.regs_ve + 0xb00 + 0x1c);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xb00 + 0x14);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0x7);
-			status = readl((void *)ve_int_status_reg);
-			status &= 0xf;
-		} else {
-			/* isp */
-			ve_int_status_reg = (unsigned long)(addrs.regs_ve + 0xa00 + 0x10);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xa00 + 0x08);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0x1);
-			status = readl((void *)ve_int_status_reg);
-			status &= 0x1;
-		}
-
-		if (status && interrupt_enable) {
-			/* disable interrupt */
-			if ((modual_sel & 0xb) == 0xb) {
-				ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xb00 + 0x14);
-				val = readl((void *)ve_int_ctrl_reg);
-				writel(val & (~0x7), (void *)ve_int_ctrl_reg);
-			} else {
-				ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xa00 + 0x08);
-				val = readl((void *)ve_int_ctrl_reg);
-				writel(val & (~0x1), (void *)ve_int_ctrl_reg);
-			}
-
-			cedar_devp->en_irq_value = 1;	/* hx modify 2011-8-1 16:08:47 */
-			cedar_devp->en_irq_flag = 1;
-			/* any interrupt will wake up wait queue */
-			wake_up(&wait_ve);		  /* ioctl */
-		}
-	}
-#else
-	if (modual_sel&(3<<6)) {
-		if (modual_sel&(1<<7)) {
-			/* avc enc */
-			ve_int_status_reg = (unsigned long)(addrs.regs_ve + 0xb00 + 0x1c);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xb00 + 0x14);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0x7);
-			status = readl((void *)ve_int_status_reg);
-			status &= 0xf;
-		} else {
-			/* isp */
-			ve_int_status_reg = (unsigned long)(addrs.regs_ve + 0xa00 + 0x10);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xa00 + 0x08);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0x1);
-			status = readl((void *)ve_int_status_reg);
-			status &= 0x1;
-		}
-
-		/* modify by fangning 2013-05-22 */
-		if (status && interrupt_enable) {
-			/* disable interrupt */
-			/* avc enc */
-			if (modual_sel&(1<<7)) {
-				ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xb00 + 0x14);
-				val = readl((void *)ve_int_ctrl_reg);
-				writel(val & (~0x7), (void *)ve_int_ctrl_reg);
-			} else {
-				/* isp */
-				ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xa00 + 0x08);
-				val = readl((void *)ve_int_ctrl_reg);
-				writel(val & (~0x1), (void *)ve_int_ctrl_reg);
-			}
-			/* hx modify 2011-8-1 16:08:47 */
-			cedar_devp->en_irq_value = 1;
-			cedar_devp->en_irq_flag = 1;
-			/* any interrupt will wake up wait queue */
-			wake_up(&wait_ve);
-		}
-	}
-#endif
-
-#if ((defined CONFIG_ARCH_SUN8IW8P1) || (defined CONFIG_ARCH_SUN50I) || \
-	(defined CONFIG_ARCH_SUN8IW12P1) || (defined CONFIG_ARCH_SUN8IW17P1) \
-	|| (defined CONFIG_ARCH_SUN8IW16P1) || (defined CONFIG_ARCH_SUN8IW19P1))
-	if (modual_sel&(0x20)) {
-		ve_int_status_reg = (unsigned long)(addrs.regs_ve + 0xe00 + 0x1c);
-		ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xe00 + 0x14);
-		interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0x38);
-
-		status = readl((void *)ve_int_status_reg);
-
-		if ((status&0x7) && interrupt_enable) {
-			/* disable interrupt */
-			val = readl((void *)ve_int_ctrl_reg);
-			writel(val & (~0x38), (void *)ve_int_ctrl_reg);
-
-			cedar_devp->jpeg_irq_value = 1;
-			cedar_devp->jpeg_irq_flag = 1;
-
-			/* any interrupt will wake up wait queue */
-			wake_up(&wait_ve);
-		}
-	}
-#endif
-
-	modual_sel &= 0xf;
-	if (modual_sel <= 6) {
-		/* estimate Which video format */
-		switch (modual_sel) {
-		case 0: /* mpeg124 */
-			ve_int_status_reg = (unsigned long)
-				(addrs.regs_ve + 0x100 + 0x1c);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0x100 + 0x14);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0x7c);
-			break;
-		case 1: /* h264 */
-			ve_int_status_reg = (unsigned long)
-				(addrs.regs_ve + 0x200 + 0x28);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0x200 + 0x20);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0xf);
-			break;
-		case 2: /* vc1 */
-			ve_int_status_reg = (unsigned long)(addrs.regs_ve +
-				0x300 + 0x2c);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0x300 + 0x24);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0xf);
-			break;
-		case 3: /* rv */
-			ve_int_status_reg = (unsigned long)
-				(addrs.regs_ve + 0x400 + 0x1c);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0x400 + 0x14);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0xf);
-			break;
-		case 4: /* hevc */
-			ve_int_status_reg = (unsigned long)
-				(addrs.regs_ve + 0x500 + 0x38);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0x500 + 0x30);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0xf);
-			break;
-		case 6: /* scaledown */
-			ve_int_status_reg = (unsigned long)(addrs.regs_ve + 0xF00 +0x08);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0xF00 + 0x04);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0x1);
-			break;
-		default:
-			ve_int_status_reg = (unsigned long)(addrs.regs_ve + 0x100 + 0x1c);
-			ve_int_ctrl_reg = (unsigned long)(addrs.regs_ve + 0x100 + 0x14);
-			interrupt_enable = readl((void *)ve_int_ctrl_reg) & (0xf);
-			VE_LOGW("ve mode :%x " "not defined!\n", modual_sel);
-			break;
-		}
-
-		status = readl((void *)ve_int_status_reg);
-
-		/* modify by fangning 2013-05-22 */
-		if ((status&0xf) && interrupt_enable) {
-			/* disable interrupt */
-			if (modual_sel == 0) {
-				val = readl((void *)ve_int_ctrl_reg);
-				writel(val & (~0x7c), (void *)ve_int_ctrl_reg);
-			} else if (modual_sel == 6) {
-				val = readl((void *)ve_int_ctrl_reg);
-				writel(val & (~0x1), (void *)ve_int_ctrl_reg);
-			} else {
-				val = readl((void *)ve_int_ctrl_reg);
-				writel(val & (~0xf), (void *)ve_int_ctrl_reg);
-			}
-			cedar_devp->de_irq_value = 1;
-			cedar_devp->de_irq_flag = 1;
-			/* any interrupt will wake up wait queue */
-			wake_up(&wait_ve);
-		}
-	}
+	ve_irq_work(cedar_devp);
 
 	return IRQ_HANDLED;
 }
 
-static int clk_status;
-static LIST_HEAD(run_task_list);
-static LIST_HEAD(del_task_list);
-#define CEDAR_RUN_LIST_NONULL	-1
-#define CEDAR_NONBLOCK_TASK	 0
-#define CEDAR_BLOCK_TASK 1
-#define CLK_REL_TIME 10000
-#define TIMER_CIRCLE 50
-#define TASK_INIT	   0x00
-#define TASK_TIMEOUT   0x55
-#define TASK_RELEASE   0xaa
-#define SIG_CEDAR		35
-
-static long setup_ve_freq(int ve_freq)
-{
-	long ret = 0;
-	/* note now we not support set parent clk */
-	if (ve_freq >= VE_CLK_LOW_WATER && ve_freq <= VE_CLK_HIGH_WATER) {
-		if (clk_set_rate(cedar_devp->ve_clk, ve_freq * 1000000)) {
-			VE_LOGW("set clock failed\n");
-		}
-	}
-	ret = clk_get_rate(cedar_devp->ve_clk);
-	VE_LOGV("VE real_freq = %ld MHz\n", ret / 1000000);
-	return ret;
-}
-
-#if VE_SUPPORT_DVFS
-
-enum VE_PERFORMANCE_LEVEL {
-	VE_PERFORMANCE_LEVEL_1,
-	VE_PERFORMANCE_LEVEL_2,
-	VE_PERFORMANCE_LEVEL_3,
-	VE_PERFORMANCE_LEVEL_4,
-};
-
-#define LEVELE_1_START_PIXELS (0)
-#define LEVELE_1_END_PIXELS   (1280*736*60)
-
-#define LEVELE_2_START_PIXELS (1280*736*60+1)
-#define LEVELE_2_END_PIXELS   (1920*1088*30)
-
-#define LEVELE_3_START_PIXELS (1920*1088*30+1)
-#define LEVELE_3_END_PIXELS   (1920*1088*60)
-
-#define LEVELE_4_START_PIXELS (1920*1088*60+1)
-#define LEVELE_4_END_PIXELS   (3840*2176*30)
-
-#define LEVELE_MAX_END_PIXELS (7680*4320*60)
-
-#define VE_PERFORMANCE_MAX_FREQ (900)
-
-struct performat_info{
-	unsigned int codec_formmat;
-	unsigned int level_performance;
-	unsigned int start_pixels;
-	unsigned int end_pixels;
-	unsigned int ve_freq;
-};
-
-/* max performance about sun55iw3(aw1890/a523):
-* h264     -- 4k30fps
-* h265/vp9 -- 4k60fps
-*/
-struct performat_info decoder_perform_sun55iw3[] = {
-	/* codec_format           level                     start_pixels           end_pixels        ve_freq */
-	{VE_DECODER_FORMAT_H264,   VE_PERFORMANCE_LEVEL_1, LEVELE_1_START_PIXELS,  LEVELE_1_END_PIXELS,   100},
-	{VE_DECODER_FORMAT_H264,   VE_PERFORMANCE_LEVEL_2, LEVELE_2_START_PIXELS,  LEVELE_2_END_PIXELS,   200},
-	{VE_DECODER_FORMAT_H264,   VE_PERFORMANCE_LEVEL_3, LEVELE_3_START_PIXELS,  LEVELE_3_END_PIXELS,   350},
-	{VE_DECODER_FORMAT_H264,   VE_PERFORMANCE_LEVEL_4, LEVELE_4_START_PIXELS,  LEVELE_MAX_END_PIXELS, VE_PERFORMANCE_MAX_FREQ },
-
-	{VE_DECODER_FORMAT_H265,   VE_PERFORMANCE_LEVEL_1, LEVELE_1_START_PIXELS,  LEVELE_1_END_PIXELS,   100},
-	{VE_DECODER_FORMAT_H265,   VE_PERFORMANCE_LEVEL_2, LEVELE_2_START_PIXELS,  LEVELE_2_END_PIXELS,   150},
-	{VE_DECODER_FORMAT_H265,   VE_PERFORMANCE_LEVEL_3, LEVELE_3_START_PIXELS,  LEVELE_3_END_PIXELS,   350},
-	{VE_DECODER_FORMAT_H265,   VE_PERFORMANCE_LEVEL_4, LEVELE_4_START_PIXELS,  LEVELE_MAX_END_PIXELS, VE_PERFORMANCE_MAX_FREQ },
-
-	{VE_DECODER_FORMAT_VP9,    VE_PERFORMANCE_LEVEL_1, LEVELE_1_START_PIXELS,  LEVELE_1_END_PIXELS,   150},
-	{VE_DECODER_FORMAT_VP9,    VE_PERFORMANCE_LEVEL_2, LEVELE_2_START_PIXELS,  LEVELE_2_END_PIXELS,   200},
-	{VE_DECODER_FORMAT_VP9,    VE_PERFORMANCE_LEVEL_3, LEVELE_3_START_PIXELS,  LEVELE_3_END_PIXELS,   350},
-	{VE_DECODER_FORMAT_VP9,    VE_PERFORMANCE_LEVEL_4, LEVELE_4_START_PIXELS,  LEVELE_MAX_END_PIXELS, VE_PERFORMANCE_MAX_FREQ },
-
-	{VE_DECODER_FORMAT_OTHER,  VE_PERFORMANCE_LEVEL_1, LEVELE_1_START_PIXELS,  LEVELE_MAX_END_PIXELS, VE_PERFORMANCE_MAX_FREQ },
-};
-
-/* if the process abort, this will remove case load by process id */
-static void remove_case_load_param_by_process_id_sun55iw3(u32 cur_process_channel_id)
+static void vdfs_remove_case_load_param(struct cedar_dev *cedar_devp, u32 channel_id)
 {
 	int i = 0;
 	unsigned long flags;
+	struct ve_case_load_info *load_info = NULL;
+
+	if (cedar_devp->case_load_channels == 0)
+		return;
 
 	spin_lock_irqsave(&cedar_devp->lock, flags);
 
-	for (i = 0; i < MAX_VE_LOAD_PARAM_CHANNEL; i++) {
-		if (cedar_devp->load_infos[i].is_used == 1
-		    && cur_process_channel_id == cedar_devp->load_infos[i].process_channel_id) {
+	for (i = 0; i < cedar_devp->case_load_channels; ++i) {
+		load_info = &cedar_devp->load_infos[i];
+		if (load_info->is_used && load_info->process_channel_id == channel_id) {
 			VE_LOGD("remove case load when call cedardev_release, "
-				"i = %d, process_id = %d\n", i, cur_process_channel_id);
-			memset(&cedar_devp->load_infos[i], 0, sizeof(struct ve_case_load_info));
+				"i = %d, process_id = %d\n", i, channel_id);
+			memset(load_info, 0, sizeof(struct ve_case_load_info));
 			break;
 		}
 	}
@@ -634,63 +178,74 @@ static void remove_case_load_param_by_process_id_sun55iw3(u32 cur_process_channe
 	spin_unlock_irqrestore(&cedar_devp->lock, flags);
 }
 
-static int update_case_load_param_sun55iw3(struct ve_case_load_param *cur_load_param, u32 cur_process_channel_id)
+static int vdfs_update_case_load_param(struct cedar_dev *cedar_devp,
+				       struct ve_case_load_param *cur_load_param, u32 channel_id)
 {
 	int i = 0;
-	struct ve_case_load_info *match_load_info = NULL;
 	unsigned long flags;
+	struct ve_case_load_info *match_load_info = NULL;
+	struct ve_case_load_info *load_info = NULL;
+
+	if (cedar_devp->case_load_channels == 0)
+		return 0;
 
 	VE_LOGV("update load info: w = %d, h = %d, f = %d, codec_format = %d, remove = %d, "
 		"thread_id = %d, process_id = %d\n",
 		cur_load_param->width, cur_load_param->height, cur_load_param->frame_rate,
 		cur_load_param->codec_format, cur_load_param->is_remove_cur_param,
-		cur_load_param->thread_channel_id, cur_process_channel_id);
+		cur_load_param->thread_channel_id, channel_id);
 
 	spin_lock_irqsave(&cedar_devp->lock, flags);
 
 	/* match the exist load_info channel */
-	for (i = 0; i < MAX_VE_LOAD_PARAM_CHANNEL; i++) {
-		if (cedar_devp->load_infos[i].is_used == 1
-			&& cur_load_param->thread_channel_id == cedar_devp->load_infos[i].load_param.thread_channel_id
-			&& cur_process_channel_id == cedar_devp->load_infos[i].process_channel_id)
+	for (i = 0; i < cedar_devp->case_load_channels; ++i) {
+		load_info = &cedar_devp->load_infos[i];
+		if (load_info->is_used &&
+		    load_info->load_param.thread_channel_id == cur_load_param->thread_channel_id &&
+		    load_info->process_channel_id == channel_id)
 			break;
 	}
 
-	if (i < MAX_VE_LOAD_PARAM_CHANNEL)
+	if (i < cedar_devp->case_load_channels) {
 		match_load_info = &cedar_devp->load_infos[i];
-	else {
+	} else {
 		/* find the empty */
-		for (i = 0; i < MAX_VE_LOAD_PARAM_CHANNEL; i++) {
-			if (cedar_devp->load_infos[i].is_used == 0)
+		for (i = 0; i < cedar_devp->case_load_channels; ++i) {
+			load_info = &cedar_devp->load_infos[i];
+			if (load_info->is_used == 0) {
 				break;
+			}
 		}
-		if (i < MAX_VE_LOAD_PARAM_CHANNEL)
+		if (i < cedar_devp->case_load_channels) {
 			match_load_info = &cedar_devp->load_infos[i];
-		else {
+		} else {
 			VE_LOGW("cannot find empty load_info, may be channels overflow %d\n",
-				MAX_VE_LOAD_PARAM_CHANNEL);
+				cedar_devp->case_load_channels);
 			spin_unlock_irqrestore(&cedar_devp->lock, flags);
 			return -1;
 		}
 	}
 
-	if (cur_load_param->is_remove_cur_param == 1)
+	if (cur_load_param->is_remove_cur_param == 1) {
 		memset(match_load_info, 0, sizeof(struct ve_case_load_info));
-	else {
-		memcpy(&match_load_info->load_param, cur_load_param, sizeof(struct ve_case_load_param));
-		match_load_info->process_channel_id = cur_process_channel_id;
+	} else {
+		memcpy(&match_load_info->load_param, cur_load_param,
+		       sizeof(struct ve_case_load_param));
+		match_load_info->process_channel_id = channel_id;
 		match_load_info->is_used = 1;
 	}
 
 	spin_unlock_irqrestore(&cedar_devp->lock, flags);
+
 	return 0;
 }
 
-static int adjust_ve_freq_by_case_load_sun55iw3(void)
+static int vdfs_adjust_ve_freq_by_case_load(struct cedar_dev *cedar_devp)
 {
 	int i = 0;
 	u32 total_load_pixels = 0;
 	struct ve_case_load_info *cur_load_info = NULL;
+	struct ve_performat_info *performat_infos = cedar_devp->performat_infos;
 	int adjust_new_ve_freq = cedar_devp->user_setting_ve_freq;
 	int decoder_channel_num = 0;
 	int encoder_channel_num = 0;
@@ -699,58 +254,70 @@ static int adjust_ve_freq_by_case_load_sun55iw3(void)
 	int cur_codec_format = -1;
 	int array_size = 0;
 
-	for (i = 0; i < MAX_VE_LOAD_PARAM_CHANNEL; i++) {
+	if (cedar_devp->case_load_channels == 0 || cedar_devp->performat_num == 0)
+		return 0;
+
+	for (i = 0; i < cedar_devp->case_load_channels; ++i) {
 		cur_load_info = &cedar_devp->load_infos[i];
-		if (cur_load_info->is_used == 1) {
-			VE_LOGV("i[%d]: w = %d, h = %d, f = %d, codec_format = %d, remove = %d, "
-				"thread_id = %d, process_id = %d\n",
-				i, cur_load_info->load_param.width, cur_load_info->load_param.height, cur_load_info->load_param.frame_rate,
-				cur_load_info->load_param.codec_format, cur_load_info->load_param.is_remove_cur_param,
-				cur_load_info->load_param.thread_channel_id, cur_load_info->process_channel_id);
+		if (!cur_load_info->is_used)
+			continue;
 
-			if (cur_load_info->load_param.frame_rate <= 0)
-				cur_load_info->load_param.frame_rate = 60;
+		VE_LOGV("i[%d]: w = %d, h = %d, f = %d, codec_format = %d, remove = %d, "
+			"thread_id = %d, process_id = %d\n", i,
+			cur_load_info->load_param.width, cur_load_info->load_param.height,
+			cur_load_info->load_param.frame_rate,
+			cur_load_info->load_param.codec_format,
+			cur_load_info->load_param.is_remove_cur_param,
+			cur_load_info->load_param.thread_channel_id,
+			cur_load_info->process_channel_id);
 
-			if (previous_codec_format == -1)
-				previous_codec_format = cur_load_info->load_param.codec_format;
+		if (cur_load_info->load_param.frame_rate <= 0)
+			cur_load_info->load_param.frame_rate = 60;
 
-			if (previous_codec_format != cur_load_info->load_param.codec_format)
-				had_different_codec_channel = 1;
+		if (previous_codec_format == -1)
+			previous_codec_format = cur_load_info->load_param.codec_format;
 
-			if (cur_load_info->load_param.codec_format < VE_DECODER_FORMAT_MAX)
-				decoder_channel_num++;
-			else
-				encoder_channel_num++;
+		if (previous_codec_format != cur_load_info->load_param.codec_format)
+			had_different_codec_channel = 1;
 
-			cur_codec_format = cur_load_info->load_param.codec_format;
-			total_load_pixels += cur_load_info->load_param.width*cur_load_info->load_param.height*cur_load_info->load_param.frame_rate;
-		}
+		if (cur_load_info->load_param.codec_format < VE_DECODER_FORMAT_MAX)
+			decoder_channel_num++;
+		else
+			encoder_channel_num++;
+
+		cur_codec_format = cur_load_info->load_param.codec_format;
+		total_load_pixels += cur_load_info->load_param.width
+				   * cur_load_info->load_param.height
+				   * cur_load_info->load_param.frame_rate;
 	}
 
 	VE_LOGV("dec_ch_num = %d, enc_ch_num = %d, had_diff_codec_ch = %d, cur_format = %d, "
 		"total_p = %u\n",
-		decoder_channel_num, encoder_channel_num, had_different_codec_channel, cur_codec_format, total_load_pixels);
+		decoder_channel_num, encoder_channel_num, had_different_codec_channel,
+		cur_codec_format, total_load_pixels);
 
-	if ((decoder_channel_num + encoder_channel_num) == 0)
+	if ((decoder_channel_num + encoder_channel_num) == 0) {
 		return 0;
+	}
 
 	/* not adjust ve freq */
-	if (encoder_channel_num > 0 || decoder_channel_num > 2 || had_different_codec_channel == 1) {
-		setup_ve_freq(cedar_devp->user_setting_ve_freq);
+	if (encoder_channel_num > 0 || decoder_channel_num > 2
+	 || had_different_codec_channel == 1) {
+		setup_ve_freq(cedar_devp, cedar_devp->user_setting_ve_freq);
 		return 0;
 	}
 
 	/* match the performance */
-	array_size = sizeof(decoder_perform_sun55iw3)/sizeof(struct performat_info);
-	for (i = 0; i < array_size; i++) {
+	array_size = cedar_devp->performat_num;
+	for (i = 0; i < array_size; ++i) {
 		VE_LOGV("i = %d, format = %d, start_p = %d, end_p = %d, ve_freq = %d\n", i,
-			decoder_perform_sun55iw3[i].codec_formmat,
-			decoder_perform_sun55iw3[i].start_pixels,
-			decoder_perform_sun55iw3[i].end_pixels,
-			decoder_perform_sun55iw3[i].ve_freq);
-		if (cur_codec_format == decoder_perform_sun55iw3[i].codec_formmat
-			&& total_load_pixels >= decoder_perform_sun55iw3[i].start_pixels
-			&& total_load_pixels <= decoder_perform_sun55iw3[i].end_pixels)
+			performat_infos[i].codec_formmat,
+			performat_infos[i].start_pixels,
+			performat_infos[i].end_pixels,
+			performat_infos[i].ve_freq);
+		if (cur_codec_format == performat_infos[i].codec_formmat
+		 && total_load_pixels >= performat_infos[i].start_pixels
+		 && total_load_pixels <= performat_infos[i].end_pixels)
 			break;
 	}
 	/* can not match perform, not adjust ve freq */
@@ -761,504 +328,232 @@ static int adjust_ve_freq_by_case_load_sun55iw3(void)
 	}
 	VE_LOGV("i = %d, total_p = %u, format = %d, start_p = %d, end_p = %d, ve_freq = %d\n",
 		i, total_load_pixels, cur_codec_format,
-		decoder_perform_sun55iw3[i].start_pixels,
-		decoder_perform_sun55iw3[i].end_pixels, decoder_perform_sun55iw3[i].ve_freq);
+		performat_infos[i].start_pixels,
+		performat_infos[i].end_pixels, performat_infos[i].ve_freq);
 
-	if (decoder_perform_sun55iw3[i].ve_freq == VE_PERFORMANCE_MAX_FREQ)
-		adjust_new_ve_freq = cedar_devp->user_setting_ve_freq;
-	else
-		adjust_new_ve_freq = decoder_perform_sun55iw3[i].ve_freq;
-
-	setup_ve_freq(adjust_new_ve_freq);
-	VE_LOGV("VE adjust_ve_freq=%ld M\n", adjust_new_ve_freq);
+	adjust_new_ve_freq = performat_infos[i].ve_freq;
+	setup_ve_freq(cedar_devp, adjust_new_ve_freq);
+	VE_LOGV("VE adjust_ve_freq=%d M\n", adjust_new_ve_freq);
 
 	return 0;
 }
-#endif
 
-#if VE_SUPPORT_MAP_MAX_VE_FREQ_BY_VF
-
-#define SUN55IW3_CHIPID_EFUSE_OFF (0x0)
-#define SUN55IW3_DVFS_EFUSE_OFF   (0x48)
-
-static int map_max_ve_freq_by_vf_sun55iw3(void)
+/* note: setup_ve_freq() can only be called by ve is not working. */
+static long setup_ve_freq(struct cedar_dev *cedar_devp, int ve_freq)
 {
-	unsigned int ve_freq = 0;
-	unsigned int bak_dvfs, dvfs, combi_dvfs;
-	unsigned int dvfs_arry_size = 0;
-	unsigned int chip_id = 0;
-	int i = 0;
+	long ret = 0;
 
-	sunxi_get_module_param_from_sid(&dvfs, SUN55IW3_DVFS_EFUSE_OFF, 4);
-	bak_dvfs = (dvfs >> 12) & 0xff;
-	if (bak_dvfs)
-		combi_dvfs = bak_dvfs;
-	else
-		combi_dvfs = (dvfs >> 4) & 0xff;
-
-	sunxi_get_module_param_from_sid(&chip_id, SUN55IW3_CHIPID_EFUSE_OFF, 4);
-	chip_id &= 0xffff;
-
-	if (combi_dvfs == 0) {
-		if (chip_id == SUN55IW3_CHIP_ID_A523M)
-			combi_dvfs = SUN55IW3_DVFS_VE_VF0;
-		else
-			combi_dvfs = SUN55IW3_DVFS_VE_VF1;
-	}
-
-	dvfs_arry_size = sizeof(ve_dvfs_sun55iw3)/sizeof(struct ve_dvfs_info);
-	for (i = 0; i < dvfs_arry_size; i++) {
-		if (ve_dvfs_sun55iw3[i].dvfs_index == combi_dvfs
-			&& ve_dvfs_sun55iw3[i].voltage == cedar_devp->voltage)
-			break;
-	}
-
-	/* use VF1 when can not match VF */
-	if (i >= dvfs_arry_size) {
-		combi_dvfs = SUN55IW3_DVFS_VE_VF1;
-
-		/* match ve_freq again */
-		for (i = 0; i < dvfs_arry_size; i++) {
-			if (ve_dvfs_sun55iw3[i].dvfs_index == combi_dvfs
-				&& ve_dvfs_sun55iw3[i].voltage == cedar_devp->voltage)
-				break;
+	disable_cedar_hw_clk_module(cedar_devp);
+	if (ve_freq >= VE_CLK_LOW_WATER && ve_freq <= VE_CLK_HIGH_WATER) {
+		if (clk_set_rate(cedar_devp->ve_clk, ve_freq * 1000000)) {
+			VE_LOGW("set clock failed\n");
 		}
 	}
+	ret = clk_get_rate(cedar_devp->ve_clk);
+	VE_LOGD("VE set ve_freq %d real_freq = %ld MHz\n", ve_freq, ret / 1000000);
+	enable_cedar_hw_clk_module(cedar_devp);
 
-	/* use default when can not match the vf and vol at the some time */
-	if (i < dvfs_arry_size)
-		ve_freq = ve_dvfs_sun55iw3[i].ve_freq;
-	else {
-		VE_LOGE("can not match dvfs[0x%x] and vol[%d mv], use default ve_freq\n",
-			combi_dvfs, cedar_devp->voltage);
-		ve_freq = ve_dvfs_sun55iw3[0].ve_freq;
+	return ret;
+}
+
+static int enable_cedar_hw_clk_reset(struct cedar_dev *cedar_devp)
+{
+	int ret = 0;
+
+	#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
+	if (reset_control_deassert(cedar_devp->reset_ve)) {
+		VE_LOGW("reset_control_deassert reset_ve failed\n");
+		ret = -EINVAL;
+		goto out;
 	}
+	#endif
+	if (reset_control_deassert(cedar_devp->reset)) {
+		VE_LOGW("reset_control_deassert reset failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+out:
+	return ret;
+}
 
-	VE_LOGV("chip_id = 0x%x, dvfs_values = 0x%x, vol = %d mv, ve_freq = %d\n",
-		chip_id, combi_dvfs, cedar_devp->voltage, ve_freq);
-
-	return ve_freq;
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+static void set_vcu_en_regmode_to1_to0(struct cedar_dev *cedar_devp)
+{
+	#define SUN60IW2_SUN55IW6_TOP_RESET_REG	(0x800 + 0x04)
+	volatile char *ve_top_reset_reg = cedar_devp->iomap_addrs.regs_ve + SUN60IW2_SUN55IW6_TOP_RESET_REG;
+	uint32_t ve_top_reset_reg_value = 0;
+	//VE_LOGI("regs_ve 0x%x ve_top_reset_reg : 0x%x", cedar_devp->iomap_addrs.regs_ve, ve_top_reset_reg);
+	//write bit0/bit4 to 1
+	ve_top_reset_reg_value = readl((void *)ve_top_reset_reg);
+	ve_top_reset_reg_value |= 0x1;
+	ve_top_reset_reg_value |= (1 << 4);
+	writel(ve_top_reset_reg_value, (void *)ve_top_reset_reg);
+	//write bit0/bit4 to 0
+	ve_top_reset_reg_value = readl((void *)ve_top_reset_reg);
+	ve_top_reset_reg_value &= ~0x1;
+	ve_top_reset_reg_value &= ~(1 << 4);
+	writel(ve_top_reset_reg_value, (void *)ve_top_reset_reg);
 }
 #endif
 
-int enable_cedar_hw_clk(void)
+static void disable_cedar_hw_clk_reset(struct cedar_dev *cedar_devp)
 {
-	unsigned long flags;
-	int res = 0;
-	VE_LOGD("enable hw clock start\n");
+	reset_control_assert(cedar_devp->reset);
+	#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
+	reset_control_assert(cedar_devp->reset_ve);
+	#endif
+}
 
-	if (cedar_devp->bInitEndFlag != 1) {
-		VE_LOGW("VE Init not complete, forbid enable hw clk!\n");
-		res = -EINVAL;
+static int enable_cedar_hw_clk_module(struct cedar_dev *cedar_devp)
+{
+	int ret = 0;
+
+	#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
+	if (clk_prepare_enable(cedar_devp->bus_ve_clk)) {
+		VE_LOGW("enable bus clk gating failed\n");
+		ret = -EINVAL;
 		goto out;
 	}
-	VE_LOGD("enable hw clock succeed\n");
-	spin_lock_irqsave(&cedar_devp->lock, flags);
+	if (clk_prepare_enable(cedar_devp->bus_ve3_clk)) {
+		VE_LOGW("enable bus clk gating failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (clk_prepare_enable(cedar_devp->mbus_ve3_clk)) {
+		VE_LOGW("enable mbus clk gating failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	#else
+	#if IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+	if (clk_prepare_enable(cedar_devp->sbus_clk)) {
+		VE_LOGW("enable sbus clk gating failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (clk_prepare_enable(cedar_devp->hbus_clk)) {
+		VE_LOGW("enable hbus clk gating failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	#endif
+	#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	if (clk_prepare_enable(cedar_devp->ahb_gate)) {
+		VE_LOGW("enable ahb_gate failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (clk_prepare_enable(cedar_devp->mbus_gate)) {
+		VE_LOGW("enable mbus_gate failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	#endif
+	if (clk_prepare_enable(cedar_devp->mbus_clk)) {
+		VE_LOGW("enable mbus clk gating failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (clk_prepare_enable(cedar_devp->bus_clk)) {
+		VE_LOGW("enable bus clk gating failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	#endif
+	if (clk_prepare_enable(cedar_devp->ve_clk)) {
+		VE_LOGW("enable ve clk gating failed\n");
+		ret = -EINVAL;
+		goto out;
+	}
+out:
+	return ret;
+}
 
-	if (clk_status == 1) {
+static void disable_cedar_hw_clk_module(struct cedar_dev *cedar_devp)
+{
+	clk_disable_unprepare(cedar_devp->ve_clk);
+	#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
+	clk_disable_unprepare(cedar_devp->mbus_ve3_clk);
+	clk_disable_unprepare(cedar_devp->bus_ve3_clk);
+	clk_disable_unprepare(cedar_devp->bus_ve_clk);
+	#else
+	clk_disable_unprepare(cedar_devp->bus_clk);
+	clk_disable_unprepare(cedar_devp->mbus_clk);
+	#if IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+	clk_disable_unprepare(cedar_devp->sbus_clk);
+	clk_disable_unprepare(cedar_devp->hbus_clk);
+	#endif
+	#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	clk_disable_unprepare(cedar_devp->mbus_gate);
+	clk_disable_unprepare(cedar_devp->ahb_gate);
+	#endif
+	#endif
+}
+
+static int enable_cedar_hw_clk(struct cedar_dev *cedar_devp)
+{
+	unsigned long flags;
+	int ret = 0;
+
+	VE_LOGD("enable hw clock start\n");
+	if (cedar_devp->bInitEndFlag != 1) {
+		VE_LOGW("VE Init not complete, forbid enable hw clk!\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	spin_lock_irqsave(&cedar_devp->lock, flags);
+	if (cedar_devp->clk_status == 1) {
 		spin_unlock_irqrestore(&cedar_devp->lock, flags);
 		goto out;
 	}
-	clk_status = 1;
-
+	cedar_devp->clk_status = 1;
 	spin_unlock_irqrestore(&cedar_devp->lock, flags);
 
 	pm_runtime_get_sync(cedar_devp->plat_dev);
 
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
-	reset_control_deassert(cedar_devp->reset_ve);
-#endif
-	reset_control_deassert(cedar_devp->reset);
-
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
-	if (clk_prepare_enable(cedar_devp->bus_ve_clk)) {
-		VE_LOGW("enable bus clk gating failed;\n");
-		res = -EINVAL;
+	if (enable_cedar_hw_clk_reset(cedar_devp)) {
+		ret = -EINVAL;
 		goto out;
 	}
-
-	if (clk_prepare_enable(cedar_devp->bus_ve3_clk)) {
-		VE_LOGW("enable bus clk gating failed;\n");
-		res = -EINVAL;
+	if (enable_cedar_hw_clk_module(cedar_devp)) {
+		ret = -EINVAL;
 		goto out;
 	}
-
-	if (clk_prepare_enable(cedar_devp->mbus_ve3_clk)) {
-		VE_LOGW("enable mbus clk gating failed;\n");
-		res = -EINVAL;
-		goto out;
-	}
-#else
-	if (clk_prepare_enable(cedar_devp->bus_clk)) {
-		VE_LOGW("enable bus clk gating failed;\n");
-		res = -EINVAL;
-		goto out;
-	}
-
-	if (clk_prepare_enable(cedar_devp->mbus_clk)) {
-		VE_LOGW("enable mbus clk gating failed;\n");
-		res = -EINVAL;
-		goto out;
-	}
-#endif
-
-	if (clk_prepare_enable(cedar_devp->ve_clk)) {
-		VE_LOGW("enable ve clk gating failed;\n");
-		res = -EINVAL;
-		goto out;
-	}
-
-#ifdef CEDAR_DEBUG
-	VE_LOGI("\n");
-#endif
-
 out:
-	return res;
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+	if (ret == 0) {
+		VE_LOGI("execute set_vcu_en_regmode_to1_to0");
+		set_vcu_en_regmode_to1_to0(cedar_devp);
+	}
+#endif
+	return ret;
 }
 
-int disable_cedar_hw_clk(void)
+static int disable_cedar_hw_clk(struct cedar_dev *cedar_devp)
 {
 	unsigned long flags;
-	int res = 0;
+	int ret = 0;
 
 	VE_LOGD("disable hw clock\n");
 	spin_lock_irqsave(&cedar_devp->lock, flags);
-
-	if (clk_status == 0) {
+	if (cedar_devp->clk_status == 0) {
 		spin_unlock_irqrestore(&cedar_devp->lock, flags);
 		goto out;
 	}
-	clk_status = 0;
-
+	cedar_devp->clk_status = 0;
 	spin_unlock_irqrestore(&cedar_devp->lock, flags);
 
-	clk_disable_unprepare(cedar_devp->ve_clk);
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
-	clk_disable_unprepare(cedar_devp->mbus_ve3_clk);
-	clk_disable_unprepare(cedar_devp->bus_ve3_clk);
-	clk_disable_unprepare(cedar_devp->bus_ve_clk);
-#else
-	clk_disable_unprepare(cedar_devp->mbus_clk);
-	clk_disable_unprepare(cedar_devp->bus_clk);
-#endif
-	reset_control_assert(cedar_devp->reset);
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
-	reset_control_assert(cedar_devp->reset_ve);
-#endif
+	disable_cedar_hw_clk_module(cedar_devp);
+	disable_cedar_hw_clk_reset(cedar_devp);
 
 	pm_runtime_put_sync(cedar_devp->plat_dev);
-
 	/* unmap_dma_buf_addr(1, 0, filp); */
-
-#ifdef CEDAR_DEBUG
-	VE_LOGI("\n");
-#endif
-
 out:
-	return res;
-}
-
-void cedardev_insert_task(struct cedarv_engine_task *new_task)
-{
-	struct cedarv_engine_task *task_entry;
-	unsigned long flags;
-
-	spin_lock_irqsave(&cedar_devp->lock, flags);
-
-	if (list_empty(&run_task_list))
-		new_task->is_first_task = 1;
-
-
-	list_for_each_entry(task_entry, &run_task_list, list) {
-		if ((task_entry->is_first_task == 0) && (task_entry->running == 0) && (task_entry->t.task_prio < new_task->t.task_prio)) {
-			break;
-		}
-	}
-
-	list_add(&new_task->list, task_entry->list.prev);
-
-#ifdef CEDAR_DEBUG
-	VE_LOGK("sunxi:VE:[INFO]:%d %s():TASK_ID:", __LINE__, __func__);
-	list_for_each_entry(task_entry, &run_task_list, list) {
-		VE_LOGK("%d!", task_entry->t.ID);
-	}
-	VE_LOGK("\n");
-#endif
-
-	mod_timer(&cedar_devp->cedar_engine_timer, jiffies + 0);
-
-	spin_unlock_irqrestore(&cedar_devp->lock, flags);
-}
-
-int cedardev_del_task(int task_id)
-{
-	struct cedarv_engine_task *task_entry;
-	unsigned long flags;
-
-	spin_lock_irqsave(&cedar_devp->lock, flags);
-
-	list_for_each_entry(task_entry, &run_task_list, list) {
-		if (task_entry->t.ID == task_id && task_entry->status != TASK_RELEASE) {
-			task_entry->status = TASK_RELEASE;
-
-			spin_unlock_irqrestore(&cedar_devp->lock, flags);
-			mod_timer(&cedar_devp->cedar_engine_timer, jiffies + 0);
-			return 0;
-		}
-	}
-	spin_unlock_irqrestore(&cedar_devp->lock, flags);
-
-	return -1;
-}
-
-int cedardev_check_delay(int check_prio)
-{
-	struct cedarv_engine_task *task_entry;
-	int timeout_total = 0;
-	unsigned long flags;
-
-	spin_lock_irqsave(&cedar_devp->lock, flags);
-	list_for_each_entry(task_entry, &run_task_list, list) {
-		if ((task_entry->t.task_prio >= check_prio) || (task_entry->running == 1) || (task_entry->is_first_task == 1))
-			timeout_total = timeout_total + task_entry->t.frametime;
-	}
-
-	spin_unlock_irqrestore(&cedar_devp->lock, flags);
-#ifdef CEDAR_DEBUG
-	VE_LOGI("%d\n", timeout_total);
-#endif
-	return timeout_total;
-}
-
-static void cedar_engine_for_timer_rel(struct timer_list *list)
-{
-	unsigned long flags;
-	int ret = 0;
-
-	spin_lock_irqsave(&cedar_devp->lock, flags);
-
-	if (list_empty(&run_task_list)) {
-		ret = disable_cedar_hw_clk();
-		if (ret < 0) {
-			VE_LOGW("clk disable error!\n");
-		}
-	} else {
-		VE_LOGW("clk disable time out but task left\n");
-		mod_timer(&cedar_devp->cedar_engine_timer, jiffies + msecs_to_jiffies(TIMER_CIRCLE));
-	}
-
-	spin_unlock_irqrestore(&cedar_devp->lock, flags);
-}
-
-static void cedar_engine_for_events(struct timer_list *list)
-{
-	struct cedarv_engine_task *task_entry, *task_entry_tmp;
-	struct kernel_siginfo sig_info;
-	unsigned long flags;
-
-	spin_lock_irqsave(&cedar_devp->lock, flags);
-
-	list_for_each_entry_safe(task_entry, task_entry_tmp, &run_task_list, list) {
-		mod_timer(&cedar_devp->cedar_engine_timer_rel, jiffies + msecs_to_jiffies(CLK_REL_TIME));
-		if (task_entry->status == TASK_RELEASE ||
-				time_after(jiffies, task_entry->t.timeout)) {
-			if (task_entry->status == TASK_INIT)
-				task_entry->status = TASK_TIMEOUT;
-			list_move(&task_entry->list, &del_task_list);
-		}
-	}
-
-	list_for_each_entry_safe(task_entry, task_entry_tmp, &del_task_list, list) {
-		sig_info.si_signo = SIG_CEDAR;
-		sig_info.si_code = task_entry->t.ID;
-		if (task_entry->status == TASK_TIMEOUT) {
-			sig_info.si_errno = TASK_TIMEOUT;
-			send_sig_info(SIG_CEDAR, &sig_info, task_entry->task_handle);
-		} else if (task_entry->status == TASK_RELEASE) {
-			sig_info.si_errno = TASK_RELEASE;
-			send_sig_info(SIG_CEDAR, &sig_info, task_entry->task_handle);
-		}
-		list_del(&task_entry->list);
-		kfree(task_entry);
-	}
-
-	if (!list_empty(&run_task_list)) {
-		task_entry = list_entry(run_task_list.next, struct cedarv_engine_task, list);
-		if (task_entry->running == 0) {
-			task_entry->running = 1;
-			sig_info.si_signo = SIG_CEDAR;
-			sig_info.si_code = task_entry->t.ID;
-			sig_info.si_errno = TASK_INIT;
-			send_sig_info(SIG_CEDAR, &sig_info, task_entry->task_handle);
-		}
-
-		mod_timer(&cedar_devp->cedar_engine_timer, jiffies + msecs_to_jiffies(TIMER_CIRCLE));
-	}
-
-	spin_unlock_irqrestore(&cedar_devp->lock, flags);
-}
-
-#if SET_VE_FREQ_BY_REG /* (defined CONFIG_ARCH_SUN8IW16P1) */
-static int setVeFreqByReg(int fq)
-{
-	int max_count = 10000;
-	int count = 0;
-	unsigned int reg;
-	int dst_freq = fq;
-	unsigned int offset = (0x58/sizeof(unsigned int *));
-
-	reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-
-	/* set VE freq */
-	reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-	reg &= 0x7ffa0000;
-	fq = (fq/6) - 1;
-
-	/* step 0  lock enable write 0 */
-	reg = reg & (~(1 << 29));
-	writel(reg, cedar_devp->iomap_addrs.regs_ccmu + offset);
-
-	/* step 1 write clock parameter */
-	reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-	reg = reg | (fq<<8) | (1<<1) | (1<<0);
-
-	writel(reg, cedar_devp->iomap_addrs.regs_ccmu + offset);
-
-	/* step 2 write PLL enable */
-	reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-	reg = reg | (1<<31);
-	writel(reg, cedar_devp->iomap_addrs.regs_ccmu + offset);
-
-	/* step 3  lock enable write 1 */
-	reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-	reg = reg | (1<<29);
-	writel(reg, cedar_devp->iomap_addrs.regs_ccmu + offset);
-
-	reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-
-	/* step 4  check bit28(lock) is 1 or not  */
-	do {
-		count++;
-		if (count > max_count) {
-			VE_LOGE("set ve freq failed, bit28 = 0x%x\n", reg);
-			break;
-		}
-		udelay(5);
-		reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-		reg = reg & (1 << 28);
-	} while (reg == 0);
-
-	reg = readl(cedar_devp->iomap_addrs.regs_ccmu + offset);
-
-	VE_LOGW("ve freq reg = %x, dstFq = %d MHz, cout = %d, max = %d\n",
-			reg, dst_freq, count, max_count);
-	udelay(20);
-
-	return 0;
-}
-#endif
-
-#if VE_POWER_MANAGE_VALID
-static int ve_power_manage_setup(void)
-{
-	int ret = 0;
-	unsigned int reg;
-	unsigned int power_off_gating_reg_offset = 0;
-	unsigned int power_switch_reg_offset = 0;
-
-	power_off_gating_reg_offset = (0x258/sizeof(unsigned int *));
-	power_switch_reg_offset = (0x264/sizeof(unsigned int *));
-
-	/* set VE Power Switch Reg bit[15:0] to 0 */
-	reg = readl(cedar_devp->prcm_bass_vir + power_switch_reg_offset);
-	reg = reg >> 16;
-	reg = reg << 16;
-	writel(reg, cedar_devp->prcm_bass_vir + power_switch_reg_offset);
-
-	/* if VE Power Switch Reg bit[31:16] == 1, means setup sucees */
-	reg = readl(cedar_devp->prcm_bass_vir + power_switch_reg_offset);
-
-	if ((reg >> 16) == 0)
-		ret = 0;
-	else
-		ret = -1;
-
-	/* VE_LOGI("setup: power_switch_reg = 0x%x, ret = %d\n",reg, ret); */
-
-	/* set VE Power off Gating Reg bit[0] to 0 */
-	reg = readl(cedar_devp->prcm_bass_vir + power_off_gating_reg_offset);
-	reg = reg & ~1;
-	writel(reg, cedar_devp->prcm_bass_vir + power_off_gating_reg_offset);
-
-	reg = readl(cedar_devp->prcm_bass_vir + power_off_gating_reg_offset);
-	/* VE_LOGI("setup: power_off_reg = 0x%x\n",reg); */
-
-	/* reset ve gating */
-	reset_control_deassert(cedar_devp->reset);
-	reset_control_assert(cedar_devp->reset);
 	return ret;
 }
 
-static int ve_power_manage_shutdown(void)
-{
-	int max_count = 1000;
-	int count = 0;
-	int ret = 0;
-	unsigned int reg;
-	unsigned int power_off_gating_reg_offset = 0;
-	unsigned int power_switch_reg_offset = 0;
-
-	power_off_gating_reg_offset	= (0x258/sizeof(unsigned int *));
-	power_switch_reg_offset = (0x264/sizeof(unsigned int *));
-
-	/* reset ve gating */
-	reset_control_deassert(cedar_devp->reset);
-	reset_control_assert(cedar_devp->reset);
-
-	/* set VE Power off Gating Reg bit[0] to 1 */
-	reg = readl(cedar_devp->prcm_bass_vir + power_off_gating_reg_offset);
-	reg = reg | 1;
-	writel(reg, cedar_devp->prcm_bass_vir + power_off_gating_reg_offset);
-
-	reg = readl(cedar_devp->prcm_bass_vir + power_off_gating_reg_offset);
-	/* VE_LOGI("shutdown: power_off_reg = 0x%x\n",reg); */
-
-	/* set VE Power Switch Reg bit[15:0] to 0xffff */
-	reg = readl(cedar_devp->prcm_bass_vir + power_switch_reg_offset);
-	reg = reg >> 16;
-	reg = reg << 16;
-	reg = reg | 0xffff;
-	writel(reg, cedar_devp->prcm_bass_vir + power_switch_reg_offset);
-
-	/* if VE Power Switch Reg bit[31:16] == 0xffff, means shutdown sucees */
-	reg = 0;
-	do {
-		count++;
-		if (count > max_count) {
-			VE_LOGE("shutdown ve power failed, power_switch_reg = 0x%x\n", reg);
-			break;
-		}
-
-		udelay(5);
-		reg = readl(cedar_devp->prcm_bass_vir + power_switch_reg_offset);
-	} while ((reg >> 16) != 0xffff);
-
-	if ((reg >> 16) == 0xffff)
-		ret = 0;
-	else
-		ret = -1;
-
-
-	/* VE_LOGI("shutdown: power_switch_reg = 0x%x, ret = %d, count = %d, max = %d\n",
-	 *	reg, ret, count, max_count);
-	 */
-
-	return ret;
-}
-
-#endif
-
-static int map_dma_buf_addr(int fd, unsigned int *addr, struct file *filp)
+static int map_dma_buf_addr(struct cedar_dev *cedar_devp,
+			    int fd, unsigned int *addr)
 {
 	struct sg_table *sgt;
 	struct dma_buf_info *buf_info;
@@ -1281,9 +576,11 @@ static int map_dma_buf_addr(int fd, unsigned int *addr, struct file *filp)
 		VE_LOGE("ve get dma_buf_attachment error\n");
 		goto BUF_PUT;
 	}
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	sgt = dma_buf_map_attachment_unlocked(buf_info->attachment, DMA_BIDIRECTIONAL);
+#else
 	sgt = dma_buf_map_attachment(buf_info->attachment, DMA_BIDIRECTIONAL);
-
+#endif
 	buf_info->sgt = sgt;
 	if (IS_ERR_OR_NULL(buf_info->sgt)) {
 		VE_LOGE("ve get sg_table error\n");
@@ -1293,9 +590,9 @@ static int map_dma_buf_addr(int fd, unsigned int *addr, struct file *filp)
 	buf_info->addr = sg_dma_address(buf_info->sgt->sgl);
 	buf_info->fd = fd;
 	buf_info->p_id = current->tgid;
-	buf_info->filp = filp;
+	buf_info->cedar_devp = cedar_devp;
 	#if PRINTK_IOMMU_ADDR
-	VE_LOGI("fd:%d, buf_info:%p addr:%lx, dma_buf:%p," \
+	VE_LOGD("fd:%d, buf_info:%p addr:%lx, dma_buf:%p," \
 		"dma_buf_attach:%p, sg_table:%p, nents:%d, pid:%d\n",
 		buf_info->fd,
 		buf_info,
@@ -1313,9 +610,13 @@ static int map_dma_buf_addr(int fd, unsigned int *addr, struct file *filp)
 
 	*addr = buf_info->addr;
 	return 0;
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	dma_buf_unmap_attachment_unlocked(buf_info->attachment, buf_info->sgt,
+							DMA_BIDIRECTIONAL);
+#else
 	dma_buf_unmap_attachment(buf_info->attachment, buf_info->sgt,
 							DMA_BIDIRECTIONAL);
+#endif
 BUF_DETATCH:
 	dma_buf_detach(buf_info->dma_buf, buf_info->attachment);
 BUF_PUT:
@@ -1325,7 +626,8 @@ BUF_FREE:
 	return -1;
 }
 
-static void unmap_dma_buf_addr(int unmap_all, int fd, struct file *filp)
+static void unmap_dma_buf_addr(struct cedar_dev *cedar_devp,
+			       int unmap_all, int fd)
 {
 	struct dma_buf_info *buf_info;
 	struct aw_mem_list_head *pos;
@@ -1336,7 +638,7 @@ static void unmap_dma_buf_addr(int unmap_all, int fd, struct file *filp)
 	/*
 	 * aw_mem_list_for_each_entry(buf_info, &cedar_devp->list, i_list) {
 	 * #if PRINTK_IOMMU_ADDR
-	 *	VE_LOGI("list2 fd:%d, buf_info:%p addr:%lx, dma_buf:%p,"
+	 *	VE_LOGD("list2 fd:%d, buf_info:%p addr:%lx, dma_buf:%p,"
 	 *		"dma_buf_attach:%p, sg_table:%p, nents:%d, pid:%d\n",
 	 *		buf_info->fd,
 	 *		buf_info,
@@ -1358,11 +660,11 @@ static void unmap_dma_buf_addr(int unmap_all, int fd, struct file *filp)
 				tmp_fd = fd;
 			}
 
-			if (buf_info->fd == tmp_fd && buf_info->p_id == current->tgid && filp == buf_info->filp) {
+			if (buf_info->fd == tmp_fd && buf_info->p_id == current->tgid && cedar_devp == buf_info->cedar_devp) {
 				#if PRINTK_IOMMU_ADDR
-				VE_LOGI("free: fd:%d, buf_info:%p " \
+				VE_LOGD("free: fd:%d, buf_info:%p " \
 					"iommu_addr:%lx, dma_buf:%p, dma_buf_attach:%p, " \
-					"sg_table:%p nets:%d, pid:%d unmapall:%d filp:%p\n",
+					"sg_table:%p nets:%d, pid:%d unmapall:%d cedar_devp:%p\n",
 					buf_info->fd,
 					buf_info,
 					buf_info->addr,
@@ -1372,14 +674,20 @@ static void unmap_dma_buf_addr(int unmap_all, int fd, struct file *filp)
 					buf_info->sgt->nents,
 					buf_info->p_id,
 					unmap_all,
-					filp);
+					cedar_devp);
 				#endif
 				if (buf_info->dma_buf != NULL) {
 					if (buf_info->attachment != NULL) {
 						if (buf_info->sgt != NULL) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+							dma_buf_unmap_attachment_unlocked(buf_info->attachment,
+										 buf_info->sgt,
+										 DMA_BIDIRECTIONAL);
+#else
 							dma_buf_unmap_attachment(buf_info->attachment,
 										 buf_info->sgt,
 										 DMA_BIDIRECTIONAL);
+#endif
 						}
 						dma_buf_detach(buf_info->dma_buf, buf_info->attachment);
 					}
@@ -1395,70 +703,59 @@ static void unmap_dma_buf_addr(int unmap_all, int fd, struct file *filp)
 	mutex_unlock(&cedar_devp->lock_mem);
 }
 
-static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+static long _compat_cedardev_ioctl(struct ve_info *info, unsigned int cmd, unsigned long arg,
+				   unsigned long from_kernel)
 {
-	long  ret = 0;
+	long ret = 0;
 	int ve_timeout = 0;
 	/* struct cedar_dev *devp; */
-#ifdef USE_CEDAR_ENGINE
-	int rel_taskid = 0;
-	struct __cedarv_task task_ret;
-	struct cedarv_engine_task *task_ptr = NULL;
-#endif
 	unsigned long flags;
-	struct ve_info *info;
+	struct cedar_dev *cedar_devp;
 
-	info = filp->private_data;
+	cedar_devp = info->cedar_devp;
 
 	switch (cmd) {
-	case IOCTL_UPDATE_CASE_LOAD_PARAM:
-	{
-
-#if VE_SUPPORT_DVFS
+	case IOCTL_GET_VE_TOP_REG_OFFSET: {
+		return cedar_devp->ve_top_reg_offset;
+	}
+	case IOCTL_UPDATE_CASE_LOAD_PARAM: {
 		struct ve_case_load_param load_param;
-		if (copy_from_user(&load_param, (void __user *)arg, sizeof(struct ve_case_load_param))) {
+
+		if (cedar_devp->case_load_channels == 0) {
+			VE_LOGW("unsupport IOCTL_UPDATE_CASE_LOAD_PARAM\n");
+			return 0;
+		}
+		if (copy_from_user(&load_param, (void __user *)arg,
+				   sizeof(struct ve_case_load_param))) {
 			VE_LOGW("IOCTL_GET_VE_DEFAULT_FREQ copy_from_user fail\n");
 			return -EFAULT;
 		}
-		update_case_load_param_sun55iw3(&load_param, info->process_channel_id);
-		adjust_ve_freq_by_case_load_sun55iw3();
+		vdfs_update_case_load_param(cedar_devp, &load_param, info->process_channel_id);
+		vdfs_adjust_ve_freq_by_case_load(cedar_devp);
 		return 0;
-#else
-		VE_LOGW("not support IOCTL_UPDATE_CASE_LOAD_PARAM\n");
-		return 0;
-#endif
 	}
-	case IOCTL_GET_VE_DEFAULT_FREQ:
-	{
-
-#if VE_SUPPORT_MAP_MAX_VE_FREQ_BY_VF
-		return map_max_ve_freq_by_vf_sun55iw3();
-#else
-		VE_LOGW("not support IOCTL_GET_VE_DEFAULT_FREQ\n");
-		return 0;
-#endif
+	case IOCTL_GET_VE_DEFAULT_FREQ: {
+		if (cedar_devp->dvfs_attr.default_freq == 0) {
+			VE_LOGW("unsupport IOCTL_GET_VE_DEFAULT_FREQ\n");
+		}
+		return cedar_devp->dvfs_attr.default_freq;
 	}
-	case IOCTL_PROC_INFO_COPY:
-	{
+	case IOCTL_PROC_INFO_COPY: {
 		int i = 0;
 		struct ve_debug_info *debug_info = NULL;
 		struct debug_head_info head_info;
 
 		/* parser head info */
 		cedar_devp->debug_info_cur_index = -1;
-		if (copy_from_user(&head_info, (void __user *)arg,
-			sizeof(head_info))) {
+		if (copy_from_user(&head_info, (void __user *)arg, sizeof(head_info))) {
 			VE_LOGW("SET_DEBUG_INFO copy_from_user fail\n");
 			return -EFAULT;
 		}
-
 
 		/* VE_LOGD("size of debug_head_info: %d\n", (int)sizeof(&head_info));
 		 * VE_LOGD("head_info: %d, %d, %d\n",
 		 *	   head_info.pid, head_info.tid,head_info.length);
 		 */
-
-
 		mutex_lock(&cedar_devp->lock_debug_info);
 		/* match debug info by pid and tid */
 		for (i = 0; i < MAX_VE_DEBUG_INFO_NUM; i++) {
@@ -1488,7 +785,6 @@ static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned 
 			cedar_devp->debug_info[i].head_info.length = head_info.length;
 		}
 
-
 		if (cedar_devp->debug_info_cur_index < 0) {
 			VE_LOGE("COPY_DEBUG_INFO, cur_index[%d] is invalided\n",
 				cedar_devp->debug_info_cur_index);
@@ -1499,22 +795,16 @@ static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned 
 		/* copy data of debug info */
 		debug_info = &cedar_devp->debug_info[cedar_devp->debug_info_cur_index];
 
-
 		/* VE_LOGD("COPY_DEBUG_INFO, index = %d, pid = %d, tid = %d, len = %d, data = %p\n", */
 		/*    cedar_devp->debug_info_cur_index, debug_info->head_info.pid, */
 		/*    debug_info->head_info.tid, debug_info->head_info.length, debug_info->data); */
-
-
 		if (debug_info->data)
 			vfree(debug_info->data);
 
 		debug_info->data = vmalloc(debug_info->head_info.length);
 
-
 		/* VE_LOGD("vmalloc: data = %p, len = %d\n", */
 		/*    debug_info->data, debug_info->head_info.length); */
-
-
 		if (debug_info->data == NULL) {
 			mutex_unlock(&cedar_devp->lock_debug_info);
 			VE_LOGE("vmalloc for debug_info->data failed\n");
@@ -1522,18 +812,16 @@ static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned 
 		}
 
 		if (copy_from_user(debug_info->data, (void __user *)(arg + sizeof(head_info)),
-			debug_info->head_info.length)) {
+				   debug_info->head_info.length)) {
 			vfree(debug_info->data);
 			mutex_unlock(&cedar_devp->lock_debug_info);
 			VE_LOGE("COPY_DEBUG_INFO copy_from_user fail\n");
 			return -EFAULT;
 		}
 		mutex_unlock(&cedar_devp->lock_debug_info);
-
 		break;
 	}
-	case IOCTL_PROC_INFO_STOP:
-	{
+	case IOCTL_PROC_INFO_STOP: {
 		int i = 0;
 		struct debug_head_info head_info;
 
@@ -1544,7 +832,6 @@ static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned 
 
 		/* VE_LOGD("STOP_DEBUG_INFO, pid = %d, tid = %d\n", */
 		/*		head_info.pid, head_info.tid); */
-
 		mutex_lock(&cedar_devp->lock_debug_info);
 		for (i = 0; i < MAX_VE_DEBUG_INFO_NUM; i++) {
 			if (cedar_devp->debug_info[i].head_info.pid == head_info.pid
@@ -1552,7 +839,7 @@ static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned 
 				break;
 		}
 
-		VE_LOGI("STOP_DEBUG_INFO, i = %d\n", i);
+		VE_LOGD("STOP_DEBUG_INFO, i = %d\n", i);
 		if (i >= MAX_VE_DEBUG_INFO_NUM) {
 			VE_LOGE("STOP_DEBUG_INFO: can not find the match pid[%d] and tid[%d]\n",
 				head_info.pid, head_info.tid);
@@ -1567,622 +854,445 @@ static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned 
 		}
 
 		mutex_unlock(&cedar_devp->lock_debug_info);
-
 		break;
 	}
-	case IOCTL_ENGINE_REQ:
-#ifdef USE_CEDAR_ENGINE
-			if (copy_from_user(&task_ret, (void __user *)arg,
-				sizeof(task_ret))) {
-				VE_LOGW("USE_CEDAR_ENGINE copy_from_user fail\n");
-				return -EFAULT;
-			}
-			spin_lock_irqsave(&cedar_devp->lock, flags);
+	case IOCTL_ENGINE_REQ: {
+		if (down_interruptible(&cedar_devp->sem))
+			return -ERESTARTSYS;
 
-			if (!list_empty(&run_task_list) &&
-				(task_ret.block_mode == CEDAR_NONBLOCK_TASK)) {
-				spin_unlock_irqrestore(&cedar_devp->lock, flags);
-				return CEDAR_RUN_LIST_NONULL;
-			}
-			spin_unlock_irqrestore(&cedar_devp->lock, flags);
+		if (cedar_devp->ref_count < 0) {
+			VE_LOGW("request ve ref count error!\n");
+			up(&cedar_devp->sem);
+			return -EFAULT;
+		}
 
-			task_ptr = kmalloc(sizeof(*task_ptr), GFP_KERNEL);
-			if (!task_ptr) {
-				VE_LOGW("get task_ptr error\n");
-				return PTR_ERR(task_ptr);
-			}
-			task_ptr->task_handle = current;
-			task_ptr->t.ID = task_ret.ID;
-			/* ms to jiffies */
-			task_ptr->t.timeout = jiffies +
-				msecs_to_jiffies(1000*task_ret.timeout);
-			task_ptr->t.frametime = task_ret.frametime;
-			task_ptr->t.task_prio = task_ret.task_prio;
-			task_ptr->running = 0;
-			task_ptr->is_first_task = 0;
-			task_ptr->status = TASK_INIT;
-
-			cedardev_insert_task(task_ptr);
-
-			ret = enable_cedar_hw_clk();
+		cedar_devp->ref_count++;
+		if (cedar_devp->ref_count == 1) {
+			cedar_devp->last_min_freq = 0;
+			ret = enable_cedar_hw_clk(cedar_devp);
 			if (ret < 0) {
+				cedar_devp->ref_count--;
+				up(&cedar_devp->sem);
 				VE_LOGW("IOCTL_ENGINE_REQ clk enable error!\n");
 				return -EFAULT;
 			}
-			return 0;
-#else
-			if (down_interruptible(&cedar_devp->sem))
-				return -ERESTARTSYS;
+		}
+		up(&cedar_devp->sem);
+		break;
+	}
+	case IOCTL_ENGINE_REL: {
+		if (down_interruptible(&cedar_devp->sem))
+			return -ERESTARTSYS;
+		cedar_devp->ref_count--;
 
-			if (cedar_devp->ref_count < 0) {
-				VE_LOGW("request ve ref count error!\n");
+		if (cedar_devp->ref_count < 0) {
+			VE_LOGW("relsese ve ref count error!\n");
+			up(&cedar_devp->sem);
+			return -EFAULT;
+		}
+
+		if (cedar_devp->ref_count == 0) {
+			ret = disable_cedar_hw_clk(cedar_devp);
+			if (ret < 0) {
+				VE_LOGW("IOCTL_ENGINE_REL clk disable error!\n");
 				up(&cedar_devp->sem);
 				return -EFAULT;
 			}
+		}
+		up(&cedar_devp->sem);
+		return ret;
+	}
+	case IOCTL_WAIT_VE_DE: {
+		ve_timeout = (int)arg;
+		cedar_devp->de_irq_value = 0;
 
-			cedar_devp->ref_count++;
-			if (cedar_devp->ref_count == 1) {
-				cedar_devp->last_min_freq = 0;
-				ret = enable_cedar_hw_clk();
-				if (ret < 0) {
-					cedar_devp->ref_count--;
-					up(&cedar_devp->sem);
-					VE_LOGW("IOCTL_ENGINE_REQ clk enable error!\n");
-					return -EFAULT;
-				}
-			}
-			up(&cedar_devp->sem);
-			break;
-#endif
-		case IOCTL_ENGINE_REL:
-#ifdef USE_CEDAR_ENGINE
-			rel_taskid = (int)arg;
+		spin_lock_irqsave(&cedar_devp->lock, flags);
+		if (cedar_devp->de_irq_flag)
+			cedar_devp->de_irq_value = 1;
+		spin_unlock_irqrestore(&cedar_devp->lock, flags);
+		wait_event_timeout(cedar_devp->wait_ve, cedar_devp->de_irq_flag, ve_timeout*HZ);
+		cedar_devp->de_irq_flag = 0;
+		return cedar_devp->de_irq_value;
+	}
+	case IOCTL_WAIT_VE_EN: {
+		ve_timeout = (int)arg;
+		cedar_devp->en_irq_value = 0;
 
-			ret = cedardev_del_task(rel_taskid);
-#else
-			if (down_interruptible(&cedar_devp->sem))
-				return -ERESTARTSYS;
-			cedar_devp->ref_count--;
+		spin_lock_irqsave(&cedar_devp->lock, flags);
+		if (cedar_devp->en_irq_flag)
+			cedar_devp->en_irq_value = 1;
+		spin_unlock_irqrestore(&cedar_devp->lock, flags);
 
-			if (cedar_devp->ref_count < 0) {
-				VE_LOGW("relsese ve ref count error!\n");
-				up(&cedar_devp->sem);
-				return -EFAULT;
-			}
+		wait_event_timeout(cedar_devp->wait_ve, cedar_devp->en_irq_flag, ve_timeout*HZ);
+		cedar_devp->en_irq_flag = 0;
 
-			if (cedar_devp->ref_count == 0) {
-				ret = disable_cedar_hw_clk();
-				if (ret < 0) {
-					VE_LOGW("IOCTL_ENGINE_REL clk disable error!\n");
-					up(&cedar_devp->sem);
-					return -EFAULT;
-				}
-			}
-			up(&cedar_devp->sem);
-#endif
-			return ret;
-		case IOCTL_ENGINE_CHECK_DELAY:
-			{
-				struct cedarv_engine_task_info task_info;
-
-				if (copy_from_user(&task_info, (void __user *)arg,
-					sizeof(task_info))) {
-					VE_LOGW("%d copy_from_user fail\n",
-						IOCTL_ENGINE_CHECK_DELAY);
-					return -EFAULT;
-				}
-				task_info.total_time = cedardev_check_delay(task_info.task_prio);
-#ifdef CEDAR_DEBUG
-				VE_LOGI("%d\n", task_info.total_time);
-#endif
-				task_info.frametime = 0;
-				spin_lock_irqsave(&cedar_devp->lock, flags);
-				if (!list_empty(&run_task_list)) {
-
-					struct cedarv_engine_task *task_entry;
-#ifdef CEDAR_DEBUG
-					VE_LOGI("\n");
-#endif
-					task_entry = list_entry(run_task_list.next, struct cedarv_engine_task, list);
-					if (task_entry->running == 1)
-						task_info.frametime = task_entry->t.frametime;
-#ifdef CEDAR_DEBUG
-					VE_LOGI("%d\n", task_info.frametime);
-#endif
-				}
-				spin_unlock_irqrestore(&cedar_devp->lock, flags);
-
-				if (copy_to_user((void *)arg, &task_info, sizeof(task_info))) {
-					VE_LOGW("%d copy_to_user fail\n",
-						IOCTL_ENGINE_CHECK_DELAY);
-					return -EFAULT;
-				}
-			}
-			break;
-		case IOCTL_WAIT_VE_DE:
-			ve_timeout = (int)arg;
-			cedar_devp->de_irq_value = 0;
-
-			spin_lock_irqsave(&cedar_devp->lock, flags);
-			if (cedar_devp->de_irq_flag)
-				cedar_devp->de_irq_value = 1;
-			spin_unlock_irqrestore(&cedar_devp->lock, flags);
-			wait_event_timeout(wait_ve, cedar_devp->de_irq_flag, ve_timeout*HZ);
-			cedar_devp->de_irq_flag = 0;
-
-			return cedar_devp->de_irq_value;
-
-		case IOCTL_WAIT_VE_EN:
-
-			ve_timeout = (int)arg;
-			cedar_devp->en_irq_value = 0;
-
-			spin_lock_irqsave(&cedar_devp->lock, flags);
-			if (cedar_devp->en_irq_flag)
-				cedar_devp->en_irq_value = 1;
-			spin_unlock_irqrestore(&cedar_devp->lock, flags);
-
-			wait_event_timeout(wait_ve, cedar_devp->en_irq_flag, ve_timeout*HZ);
-			cedar_devp->en_irq_flag = 0;
-
-			return cedar_devp->en_irq_value;
-
+		return cedar_devp->en_irq_value;
+	}
 #if ((defined CONFIG_ARCH_SUN8IW8P1) || (defined CONFIG_ARCH_SUN50I) || \
-	(defined CONFIG_ARCH_SUN8IW12P1) || (defined CONFIG_ARCH_SUN8IW17P1) \
-	|| (defined CONFIG_ARCH_SUN8IW16P1) || (defined CONFIG_ARCH_SUN8IW19P1))
+	(defined CONFIG_ARCH_SUN8IW12P1) || (defined CONFIG_ARCH_SUN8IW17P1) || \
+	(defined CONFIG_ARCH_SUN8IW16P1) || (defined CONFIG_ARCH_SUN8IW19P1) || \
+	(defined CONFIG_ARCH_SUN300IW1) || (defined CONFIG_ARCH_SUN55IW6))
+	case IOCTL_WAIT_JPEG_DEC: {
+		ve_timeout = (int)arg;
+		cedar_devp->jpeg_irq_value = 0;
 
-		case IOCTL_WAIT_JPEG_DEC:
-			ve_timeout = (int)arg;
-			cedar_devp->jpeg_irq_value = 0;
+		spin_lock_irqsave(&cedar_devp->lock, flags);
+		if (cedar_devp->jpeg_irq_flag)
+			cedar_devp->jpeg_irq_value = 1;
+		spin_unlock_irqrestore(&cedar_devp->lock, flags);
 
-			spin_lock_irqsave(&cedar_devp->lock, flags);
-			if (cedar_devp->jpeg_irq_flag)
-				cedar_devp->jpeg_irq_value = 1;
-			spin_unlock_irqrestore(&cedar_devp->lock, flags);
-
-			wait_event_timeout(wait_ve, cedar_devp->jpeg_irq_flag, ve_timeout*HZ);
-			cedar_devp->jpeg_irq_flag = 0;
-			return cedar_devp->jpeg_irq_value;
+		wait_event_timeout(cedar_devp->wait_ve, cedar_devp->jpeg_irq_flag, ve_timeout*HZ);
+		cedar_devp->jpeg_irq_flag = 0;
+		return cedar_devp->jpeg_irq_value;
+	}
 #endif
-		case IOCTL_ENABLE_VE:
-			if (clk_prepare_enable(cedar_devp->ve_clk)) {
-				VE_LOGW("IOCTL_ENABLE_VE enable cedar_devp->ve_clk failed!\n");
+	case IOCTL_ENABLE_VE: {
+		VE_LOGW("IOCTL_ENABLE_VE nused, please check\n");
+		break;
+	}
+	case IOCTL_DISABLE_VE: {
+		VE_LOGW("IOCTL_DISABLE_VE nused, please check\n");
+		break;
+	}
+	case IOCTL_RESET_VE: {
+		reset_control_reset(cedar_devp->reset);
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN300IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		set_vcu_en_regmode_to1_to0(cedar_devp);
+	#endif
+		break;
+	}
+	case IOCTL_SET_DRAM_HIGH_CHANNAL: {
+		/*
+		int flag = (int)arg;
+
+		if (flag == 1)
+			mbus_port_setpri(26, 1);
+		else
+			mbus_port_setpri(26, 0);
+
+		VE_LOGW("this kernel version not supproti!\n");
+		*/
+		break;
+	}
+	case IOCTL_SET_VE_FREQ: {
+		int arg_rate = (int)arg;
+
+		VE_LOGD("VE setup_freq = %d MHz\n", arg_rate);
+		ret = setup_ve_freq(cedar_devp, arg_rate);
+		cedar_devp->user_setting_ve_freq = (int)ret / 1000000;
+		break;
+	}
+	case IOCTL_GETVALUE_AVS2:
+	case IOCTL_ADJUST_AVS2:
+	case IOCTL_ADJUST_AVS2_ABS:
+	case IOCTL_CONFIG_AVS2:
+	case IOCTL_RESET_AVS2:
+	case IOCTL_PAUSE_AVS2:
+	case IOCTL_START_AVS2: {
+		VE_LOGW("ioctrl(%u) nused, please check\n", cmd);
+		break;
+	}
+	case IOCTL_GET_ENV_INFO: {
+		struct cedarv_env_infomation_compat env_info;
+
+		env_info.phymem_start = 0;
+		env_info.phymem_total_size = 0;
+		env_info.address_macc = 0;
+		if (copy_to_user((char *)arg, &env_info, sizeof(env_info)))
+			return -EFAULT;
+		break;
+	}
+	case IOCTL_GET_IC_VER: {
+		VE_LOGW("IOCTL_GET_IC_VER nused, please check\n");
+		return 0;
+	}
+	case IOCTL_SET_REFCOUNT: {
+		cedar_devp->ref_count = (int)arg;
+		break;
+	}
+	case IOCTL_SET_VOL: {
+		VE_LOGW("IOCTL_SET_VOL nused, please check\n");
+		break;
+	}
+	case IOCTL_GET_LOCK: {
+		int lock_ctl_ret = 0;
+		u32 lock_type = arg;
+
+		if (lock_type == VE_LOCK_VDEC)
+			mutex_lock(&cedar_devp->lock_vdec);
+		else if (lock_type == VE_LOCK_VENC)
+			mutex_lock(&cedar_devp->lock_venc);
+		else if (lock_type == VE_LOCK_JDEC)
+			mutex_lock(&cedar_devp->lock_jdec);
+		else if (lock_type == VE_LOCK_00_REG)
+			mutex_lock(&cedar_devp->lock_00_reg);
+		else if (lock_type == VE_LOCK_04_REG)
+			mutex_lock(&cedar_devp->lock_04_reg);
+		else
+			VE_LOGE("invalid lock type '%d'\n", lock_type);
+
+		if ((info->lock_flags&lock_type) != 0)
+			VE_LOGE("when get lock, this should be 0!!!\n");
+
+		mutex_lock(&info->lock_flag_io);
+		info->lock_flags |= lock_type;
+		mutex_unlock(&info->lock_flag_io);
+
+		return lock_ctl_ret;
+	}
+	case IOCTL_SET_PROC_INFO: {
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+		int ret;
+		ret = ioctl_set_proc_info(cedar_devp->dbgfs,
+					  arg, info);
+		if (ret) {
+			VE_LOGE("ioctl_set_proc_info failed\n");
+			return ret;
+		}
+#else
+		ret = 0;
+#endif
+		break;
+	}
+	case IOCTL_COPY_PROC_INFO: {
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+		int ret;
+		ret = ioctl_copy_proc_info(cedar_devp->dbgfs,
+					   arg, info);
+		if (ret) {
+			VE_LOGE("ioctl_copy_proc_info failed\n");
+			return ret;
+		}
+#else
+		ret = 0;
+#endif
+		break;
+	}
+	case IOCTL_STOP_PROC_INFO: {
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+		int ret;
+		ret = ioctl_stop_proc_info(cedar_devp->dbgfs,
+					   arg, info);
+		if (ret) {
+			VE_LOGE("ioctl_stop_proc_info failed\n");
+			return ret;
+		}
+#else
+		ret = 0;
+#endif
+		break;
+	}
+	case IOCTL_RELEASE_LOCK: {
+		int lock_ctl_ret = 0;
+
+		do {
+			u32 lock_type = arg;
+
+			if (!(info->lock_flags & lock_type)) {
+				VE_LOGE("Not lock? flags: '%x/%x'.\n", info->lock_flags, lock_type);
+				lock_ctl_ret = -1;
+				break; /* break 'do...while' */
 			}
-			break;
 
-		case IOCTL_DISABLE_VE:
-			if ((cedar_devp->ve_clk == NULL) || IS_ERR(cedar_devp->ve_clk)) {
-				VE_LOGW("IOCTL_DISABLE_VE cedar_devp->ve_clk is invalid\n");
-				return -EFAULT;
-			} else {
-				clk_disable_unprepare(cedar_devp->ve_clk);
-			}
-			break;
+			mutex_lock(&info->lock_flag_io);
+			info->lock_flags &= (~lock_type);
+			mutex_unlock(&info->lock_flag_io);
 
-		case IOCTL_RESET_VE:
-			reset_control_reset(cedar_devp->reset);
-			break;
-
-		case IOCTL_SET_DRAM_HIGH_CHANNAL:
-		{
-			/*
-			int flag = (int)arg;
-
-			if (flag == 1)
-			    mbus_port_setpri(26, 1);
+			if (lock_type == VE_LOCK_VDEC)
+				mutex_unlock(&cedar_devp->lock_vdec);
+			else if (lock_type == VE_LOCK_VENC)
+				mutex_unlock(&cedar_devp->lock_venc);
+			else if (lock_type == VE_LOCK_JDEC)
+				mutex_unlock(&cedar_devp->lock_jdec);
+			else if (lock_type == VE_LOCK_00_REG)
+				mutex_unlock(&cedar_devp->lock_00_reg);
+			else if (lock_type == VE_LOCK_04_REG)
+				mutex_unlock(&cedar_devp->lock_04_reg);
 			else
-			    mbus_port_setpri(26, 0);
+				VE_LOGE("invalid lock type '%d'\n", lock_type);
+		} while (0);
+		return lock_ctl_ret;
+	}
+	case IOCTL_GET_IOMMU_ADDR: {
+		/* just for compatible, kernel 5.4 should not use it */
+		struct user_iommu_param parm;
+		cedar_devp->bMemDevAttachFlag = 1;
 
-			VE_LOGW("this kernel version not supproti!\n");
-			*/
-			break;
+		data_to_kernel((void *)&parm, (void *)arg, sizeof(parm), from_kernel);
+		if (map_dma_buf_addr(cedar_devp, parm.fd, &parm.iommu_addr) != 0) {
+			VE_LOGE("IOCTL_GET_IOMMU_ADDR map dma buf fail\n");
+			return -EFAULT;
 		}
 
-		case IOCTL_SET_VE_FREQ:
-		{
-			int arg_rate = (int)arg;
+		data_to_other((void *)arg, &parm, sizeof(parm), from_kernel);
+		break;
+	}
+	case IOCTL_FREE_IOMMU_ADDR: {
+		/* just for compatible, kernel 5.4 should not use it */
+		struct user_iommu_param parm;
 
-			VE_LOGD("VE setup_freq = %d MHz\n", arg_rate);
-			ret = setup_ve_freq(arg_rate);
-			cedar_devp->user_setting_ve_freq = (int)ret / 1000000;
-			break;
+		data_to_kernel((void *)&parm, (void *)arg, sizeof(parm), from_kernel);
+		unmap_dma_buf_addr(cedar_devp, 0, parm.fd);
+		break;
+	}
+	case IOCTL_MAP_DMA_BUF: {
+		struct dma_buf_param parm;
+		cedar_devp->bMemDevAttachFlag = 1;
+
+		data_to_kernel((void *)&parm, (void *)arg, sizeof(parm), from_kernel);
+		if (map_dma_buf_addr(cedar_devp, parm.fd, &parm.phy_addr) != 0) {
+			VE_LOGE("IOCTL_GET_IOMMU_ADDR map dma buf fail\n");
+			return -EFAULT;
 		}
-		case IOCTL_GETVALUE_AVS2:
-		case IOCTL_ADJUST_AVS2:
-		case IOCTL_ADJUST_AVS2_ABS:
-		case IOCTL_CONFIG_AVS2:
-		case IOCTL_RESET_AVS2:
-		case IOCTL_PAUSE_AVS2:
-		case IOCTL_START_AVS2:
-			VE_LOGW("do not supprot this ioctrl now\n");
-			break;
+		data_to_other((void *)arg, &parm, sizeof(parm), from_kernel);
+		break;
+	}
+	case IOCTL_UNMAP_DMA_BUF: {
+		struct dma_buf_param parm;
 
-		case IOCTL_GET_ENV_INFO:
-			{
-				struct cedarv_env_infomation_compat env_info;
-
-				env_info.phymem_start = 0;
-				env_info.phymem_total_size = 0;
-				env_info.address_macc = 0;
-				if (copy_to_user((char *)arg, &env_info,
-					sizeof(env_info)))
-					return -EFAULT;
-			}
-			break;
-		case IOCTL_GET_IC_VER:
-			{
-				return 0;
-			}
-		case IOCTL_SET_REFCOUNT:
-			cedar_devp->ref_count = (int)arg;
-			break;
-		case IOCTL_SET_VOL:
-			{
-
-#if IS_ENABLED(CONFIG_ARCH_SUN9IW1P1)
-				int ret;
-				int vol = (int)arg;
-
-				if (down_interruptible(&cedar_devp->sem)) {
-					return -ERESTARTSYS;
-				}
-				info->set_vol_flag = 1;
-
-				/* set output voltage to arg mV */
-				ret = regulator_set_voltage(regu, vol*1000, 3300000);
-				if (IS_ERR(regu)) {
-					VE_LOGW("fail to set axp15_dcdc4 regulator voltage!\n");
-				}
-				up(&cedar_devp->sem);
-#endif
-				break;
-			}
-			case IOCTL_GET_LOCK: {
-				int lock_ctl_ret = 0;
-				u32 lock_type = arg;
-				struct ve_info *vi = filp->private_data;
-
-				if (lock_type == VE_LOCK_VDEC)
-					mutex_lock(&cedar_devp->lock_vdec);
-				else if (lock_type == VE_LOCK_VENC)
-					mutex_lock(&cedar_devp->lock_venc);
-				else if (lock_type == VE_LOCK_JDEC)
-					mutex_lock(&cedar_devp->lock_jdec);
-				else if (lock_type == VE_LOCK_00_REG)
-					mutex_lock(&cedar_devp->lock_00_reg);
-				else if (lock_type == VE_LOCK_04_REG)
-					mutex_lock(&cedar_devp->lock_04_reg);
-				else
-					VE_LOGE("invalid lock type '%d'\n", lock_type);
-
-				if ((vi->lock_flags&lock_type) != 0)
-					VE_LOGE("when get lock, this should be 0!!!\n");
-
-				mutex_lock(&vi->lock_flag_io);
-				vi->lock_flags |= lock_type;
-				mutex_unlock(&vi->lock_flag_io);
-
-				return lock_ctl_ret;
-			}
-			case IOCTL_SET_PROC_INFO:
-			{
-				struct VE_PROC_INFO ve_info;
-				unsigned char channel_id = 0;
-				u32 lock_type = VE_LOCK_PROC_INFO;
-				struct ve_info *vi = filp->private_data;
-
-				if (cedar_devp->debug_root == NULL)
-					return 0;
-
-				mutex_lock(&ve_debug_proc_info.lock_proc);
-				if (copy_from_user(&ve_info, (void __user *)arg, sizeof(ve_info))) {
-					VE_LOGW("IOCTL_SET_PROC_INFO copy_from_user fail\n");
-					mutex_unlock(&ve_debug_proc_info.lock_proc);
-					return -EFAULT;
-				}
-
-				channel_id = ve_info.channel_id;
-				if (channel_id >= VE_DEBUGFS_MAX_CHANNEL) {
-					VE_LOGW("set channel[%c] is bigger than max channel[%d]\n",
-						channel_id, VE_DEBUGFS_MAX_CHANNEL);
-					mutex_unlock(&ve_debug_proc_info.lock_proc);
-					return -EFAULT;
-				}
-
-				mutex_lock(&vi->lock_flag_io);
-				vi->lock_flags |= lock_type;
-				mutex_unlock(&vi->lock_flag_io);
-
-				ve_debug_proc_info.cur_channel_id = ve_info.channel_id;
-				ve_debug_proc_info.proc_len[channel_id] = ve_info.proc_info_len;
-				ve_debug_proc_info.proc_buf[channel_id] = ve_debug_proc_info.data +
-									  channel_id *
-									  VE_DEBUGFS_BUF_SIZE;
-				break;
-			}
-			case IOCTL_COPY_PROC_INFO:
-			{
-				unsigned char channel_id;
-				u32 lock_type = VE_LOCK_PROC_INFO;
-				struct ve_info *vi = filp->private_data;
-
-				if (cedar_devp->debug_root == NULL)
-					return 0;
-
-				mutex_lock(&vi->lock_flag_io);
-				vi->lock_flags &= (~lock_type);
-				mutex_unlock(&vi->lock_flag_io);
-
-				channel_id = ve_debug_proc_info.cur_channel_id;
-				if (copy_from_user(ve_debug_proc_info.proc_buf[channel_id],
-						   (void __user *)arg,
-						   ve_debug_proc_info.proc_len[channel_id])) {
-					VE_LOGW("IOCTL_COPY_PROC_INFO copy_from_user fail\n");
-						mutex_unlock(&ve_debug_proc_info.lock_proc);
-					return -EFAULT;
-				}
-
-				mutex_unlock(&ve_debug_proc_info.lock_proc);
-				break;
-			}
-			case IOCTL_STOP_PROC_INFO:
-			{
-				unsigned char channel_id;
-
-				if (cedar_devp->debug_root == NULL)
-					return 0;
-
-				channel_id = arg;
-				ve_debug_proc_info.proc_buf[channel_id] = NULL;
-
-				break;
-			}
-			case IOCTL_RELEASE_LOCK: {
-				int lock_ctl_ret = 0;
-
-				do {
-					u32 lock_type = arg;
-					struct ve_info *vi = filp->private_data;
-
-					if (!(vi->lock_flags & lock_type)) {
-						VE_LOGE("Not lock? flags: '%x/%x'.\n",
-							vi->lock_flags, lock_type);
-						lock_ctl_ret = -1;
-						break; /* break 'do...while' */
-					}
-
-					mutex_lock(&vi->lock_flag_io);
-					vi->lock_flags &= (~lock_type);
-					mutex_unlock(&vi->lock_flag_io);
-
-					if (lock_type == VE_LOCK_VDEC)
-						mutex_unlock(&cedar_devp->lock_vdec);
-					else if (lock_type == VE_LOCK_VENC)
-						mutex_unlock(&cedar_devp->lock_venc);
-					else if (lock_type == VE_LOCK_JDEC)
-						mutex_unlock(&cedar_devp->lock_jdec);
-					else if (lock_type == VE_LOCK_00_REG)
-						mutex_unlock(&cedar_devp->lock_00_reg);
-					else if (lock_type == VE_LOCK_04_REG)
-						mutex_unlock(&cedar_devp->lock_04_reg);
-					else
-						VE_LOGE("invalid lock type '%d'\n", lock_type);
-				} while (0);
-				return lock_ctl_ret;
+		data_to_kernel((void *)&parm, (void *)arg, sizeof(parm), from_kernel);
+		unmap_dma_buf_addr(cedar_devp, 0, parm.fd);
+		break;
+	}
+	case IOCTL_FLUSH_CACHE_RANGE: {
+		if (ioctl_flush_cache_range(arg, 1, cedar_devp)) {
+			VE_LOGE("ioctl_flush_cache_range failed\n");
+			return -EFAULT;
 		}
-		case IOCTL_GET_IOMMU_ADDR:
-		{
-			/* just for compatible, kernel 5.4 should not use it */
-			struct user_iommu_param parm;
-			cedar_devp->bMemDevAttachFlag = 1;
-
-			if (copy_from_user(&parm, (void __user *)arg,
-				sizeof(parm))) {
-				VE_LOGE("IOCTL_GET_IOMMU_ADDR copy_from_user error\n");
-				return -EFAULT;
-			}
-			if (map_dma_buf_addr(parm.fd, &parm.iommu_addr, filp) != 0) {
-				VE_LOGE("IOCTL_GET_IOMMU_ADDR map dma buf fail\n");
-				return -EFAULT;
-			}
-
-			if (copy_to_user((void __user *)arg, &parm,
-				sizeof(parm))) {
-				VE_LOGE("ve get iommu copy_to_user error\n");
-				return -EFAULT;
-			}
-			break;
-		}
-		case IOCTL_FREE_IOMMU_ADDR:
-		{
-			/* just for compatible, kernel 5.4 should not use it */
-			struct user_iommu_param parm;
-
-			if (copy_from_user(&parm, (void __user *)arg,
-				sizeof(parm))) {
-				VE_LOGE("IOCTL_FREE_IOMMU_ADDR copy_from_user error\n");
-				return -EFAULT;
-			}
-
-			unmap_dma_buf_addr(0, parm.fd, filp);
-			break;
-		}
-		case IOCTL_MAP_DMA_BUF:
-		{
-			struct dma_buf_param parm;
-			cedar_devp->bMemDevAttachFlag = 1;
-
-			if (copy_from_user(&parm, (void __user *)arg, sizeof(parm))) {
-				VE_LOGE("IOCTL_GET_IOMMU_ADDR copy_from_user error\n");
-				return -EFAULT;
-			}
-			if (map_dma_buf_addr(parm.fd, &parm.phy_addr, filp) != 0) {
-				VE_LOGE("IOCTL_GET_IOMMU_ADDR map dma buf fail\n");
-				return -EFAULT;
-			}
-			if (copy_to_user((void __user *)arg, &parm, sizeof(parm))) {
-				VE_LOGE("ve get iommu copy_to_user error\n");
-				return -EFAULT;
-			}
-			break;
-		}
-		case IOCTL_UNMAP_DMA_BUF:
-		{
-			struct dma_buf_param parm;
-
-			if (copy_from_user(&parm, (void __user *)arg, sizeof(parm))) {
-				VE_LOGE("IOCTL_FREE_IOMMU_ADDR copy_from_user error\n");
-				return -EFAULT;
-			}
-
-			unmap_dma_buf_addr(0, parm.fd, filp);
-			break;
-		}
-		case IOCTL_FLUSH_CACHE_RANGE:
-		{
-#if IS_ENABLED(CONFIG_ARM64) || IS_ENABLED(CONFIG_64BIT)
-			struct cache_range data;
-#else
-			struct cache_range data;
-			u32 addr_start = 0;
-			u32 addr_end = 0;
-#endif
-
-			if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
-				return -EFAULT;
-
-#if IS_ENABLED(CONFIG_ARM64) || IS_ENABLED(CONFIG_64BIT)
-
-			if (IS_ERR_OR_NULL((void *)data.start) || IS_ERR_OR_NULL((void *)data.end)) {
-				VE_LOGE("flush 0x%x, end 0x%x fault user virt address!\n",
-					(u32)data.start, (u32)data.end);
-				return -EFAULT;
-			}
-#else
-			addr_start = (u32)(data.start & 0xffffffff);
-			addr_end = (u32)(data.end & 0xffffffff);
-
-			if (IS_ERR_OR_NULL((void *)addr_start) || IS_ERR_OR_NULL((void *)addr_end)) {
-				VE_LOGE("flush 0x%x, end 0x%x fault user virt address!\n",
-					(u32)data.start, (u32)data.end);
-				return -EFAULT;
-			}
-#endif
-
-				/*
-				 * VE_LOGI("ion flush_range start:%lx end:%lx size:%lx\n",
-				 * data.start, data.end, data.end - data.start);
-				 */
-#if IS_ENABLED(CONFIG_ARM64)
-				/*
-				 * VE_LOGE("flush 0x%x, end 0x%x fault user virt address!\n",
-				 * (u32)data.start, (u32)data.end);
-				 */
-#if (IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN50IW9)) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
-				cedar_dma_flush_range((void *)data.start, (void *)data.end);
-#else
-				cedar_dma_flush_range((void *)data.start, (unsigned long)(data.end - data.start));
-#endif
-				/* dma_sync_single_for_cpu(cedar_devp->plat_dev,(u32)data.start,data.end - data.start,DMA_BIDIRECTIONAL); */
-#else
-#if IS_ENABLED(CONFIG_64BIT) && IS_ENABLED(CONFIG_RISCV)
-			dma_usr_va_wb_range((void *)data.start, (unsigned long)(data.end - data.start));
-#else
-			/* dmac_flush_range((void *)addr_start, (void *)addr_end); */
-			cedar_dma_flush_range((void *)addr_start, (void *)addr_end);
-#endif
-#endif
-			if (copy_to_user((void __user *)arg, &data, sizeof(data)))
-				return -EFAULT;
-			break;
-		}
-		case IOCTL_POWER_SETUP:
-		{
-#if VE_POWER_MANAGE_VALID
-			if (cedar_devp->power_manage_request_ref == 0) {
-				/* ensure ve is not work, or will cause error */
-				mutex_lock(&cedar_devp->lock_vdec);
-				mutex_lock(&cedar_devp->lock_venc);
-				mutex_lock(&cedar_devp->lock_jdec);
-				mutex_lock(&cedar_devp->lock_00_reg);
-				mutex_lock(&cedar_devp->lock_04_reg);
-
-				ve_power_manage_setup();
-
-				mutex_unlock(&cedar_devp->lock_vdec);
-				mutex_unlock(&cedar_devp->lock_venc);
-				mutex_unlock(&cedar_devp->lock_jdec);
-				mutex_unlock(&cedar_devp->lock_00_reg);
-				mutex_unlock(&cedar_devp->lock_04_reg);
-			}
-
-			cedar_devp->power_manage_request_ref++;
-#endif
-			break;
-		}
-		case IOCTL_POWER_SHUTDOWN:
-		{
-#if VE_POWER_MANAGE_VALID
-			cedar_devp->power_manage_request_ref--;
-
-			if (cedar_devp->power_manage_request_ref == 0) {
-				/* ensure ve is not work, or will cause error */
-				mutex_lock(&cedar_devp->lock_vdec);
-				mutex_lock(&cedar_devp->lock_venc);
-				mutex_lock(&cedar_devp->lock_jdec);
-				mutex_lock(&cedar_devp->lock_00_reg);
-				mutex_lock(&cedar_devp->lock_04_reg);
-
-				ve_power_manage_shutdown();
-
-				mutex_unlock(&cedar_devp->lock_vdec);
-				mutex_unlock(&cedar_devp->lock_venc);
-				mutex_unlock(&cedar_devp->lock_jdec);
-				mutex_unlock(&cedar_devp->lock_00_reg);
-				mutex_unlock(&cedar_devp->lock_04_reg);
-			}
-#endif
-			break;
-		}
-		default:
-			VE_LOGW("not support the ioctl cmd = 0x%x\n", cmd);
+		break;
+	}
+	case IOCTL_POWER_SETUP: {
+		VE_LOGW("IOCTL_POWER_SETUP nused, please check\n");
+		break;
+	}
+	case IOCTL_POWER_SHUTDOWN: {
+		VE_LOGW("IOCTL_POWER_SHUTDOWN nused, please check\n");
+		break;
+	}
+	case IOCTL_VE_MODE: {
+		enum VE_MODE ve_mode;
+		ve_mode = (enum VE_MODE)arg;
+		if (ve_mode >= VE_MODE_CNT || ve_mode <= VE_MODE_NULL) {
+			ve_mode = VE_MODE_NULL;
+			VE_LOGE("unsupport ve_mode: %d\n", ve_mode);
 			return -1;
+		}
+		cedar_devp->ve_mode = ve_mode;
+		VE_LOGD("ve_mode: %d\n", cedar_devp->ve_mode);
+		return 0;
+	}
+	case IOCTL_WAIT_VCU_ENC: {
+		u32 cur_irq_flag = 0;
+		ve_timeout = (int)arg; /* unit: s */
+
+		wait_event_timeout(cedar_devp->wait_ve,
+				   cedar_devp->vcuenc_irq_flag, ve_timeout * HZ);
+		cur_irq_flag = cedar_devp->vcuenc_irq_flag;
+		cedar_devp->vcuenc_irq_flag = 0;
+
+		return cur_irq_flag;
+	}
+	case IOCTL_WAIT_VCU_DEC: {
+		u32 cur_irq_flag = 0;
+		ve_timeout = (int)arg; /* unit: s */
+		wait_event_timeout(cedar_devp->wait_ve,
+				   cedar_devp->vcudec_irq_flag, ve_timeout * HZ);
+		cur_irq_flag = cedar_devp->vcudec_irq_flag;
+		cedar_devp->vcudec_irq_flag = 0;
+
+		return cur_irq_flag;
+	}
+	case IOCTL_GET_CSI_ONLINE_INFO: {
+		if (ioctl_get_csi_online_related_info(arg, from_kernel, cedar_devp)) {
+			VE_LOGE("ioctl_get_csi_online_related_info failed\n");
+			return -EFAULT;
+		}
+		break;
+	}
+	case IOCTL_CLEAR_EN_INT_FLAG: {
+		spin_lock_irqsave(&cedar_devp->lock, flags);
+		cedar_devp->en_irq_flag  = 0;
+		cedar_devp->en_irq_value = 0;
+		spin_unlock_irqrestore(&cedar_devp->lock, flags);
+		break;
+	}
+	default:
+		VE_LOGW("not support the ioctl cmd = 0x%x\n", cmd);
+		return -1;
 	}
 	return ret;
 }
 
+static long compat_cedardev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	/* struct cedar_dev *devp; */
+	struct ve_info *info;
 
+	info = filp->private_data;
 
-static int cedardev_open(struct inode *inode, struct file *filp)
+	return _compat_cedardev_ioctl(info, cmd, arg, 0);
+}
+
+struct device *cedar_get_device(const char *dev_name)
+{
+	struct cedar_dev *cedar_devp = NULL;
+
+	if (!dev_name) {
+		VE_LOGE("dev name invalid\n");
+		return NULL;
+	}
+
+	if (!strcmp(dev_name, cedar_ve_quirk.dev_name)) {
+		cedar_devp = (struct cedar_dev *)cedar_ve_quirk.priv;
+	} else if (!strcmp(dev_name, cedar_ve2_quirk.dev_name)) {
+		cedar_devp = (struct cedar_dev *)cedar_ve2_quirk.priv;
+	} else {
+		VE_LOGE("dev name unmatch %s\n", dev_name);
+		return NULL;
+	}
+	if (!cedar_devp) {
+		VE_LOGE("dev %s maybe uinit\n", dev_name);
+		return NULL;
+	}
+	return cedar_devp->plat_dev;
+}
+EXPORT_SYMBOL(cedar_get_device);
+
+int rt_cedardev_ioctl(void *info_handle, unsigned int cmd, unsigned long arg)
+{//todo, use for kernel ve code.
+	struct ve_info *info = (struct ve_info *)info_handle;
+	return _compat_cedardev_ioctl(info, cmd, arg, 1);
+}
+
+static struct ve_info *_cedardev_open(struct cedar_dev *cedar_devp)
 {
 	struct ve_info *info;
 	unsigned long flags;
 
 	if (cedar_devp->bInitEndFlag != 1) {
 		VE_LOGW("VE Init not complete, forbid cedardev open!\n");
-		return -1;
+		return NULL;
 	}
 
 	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
-		return -ENOMEM;
+		return NULL;
 
 	info->set_vol_flag = 0;
 
 	spin_lock_irqsave(&cedar_devp->lock, flags);
 
-	process_channel_id_cnt++;
-	if (process_channel_id_cnt > 0xefffffff)
-		process_channel_id_cnt = 0;
+	cedar_devp->process_channel_id_cnt++;
+	if (cedar_devp->process_channel_id_cnt > 0xefffffff)
+		cedar_devp->process_channel_id_cnt = 0;
 
-	info->process_channel_id = process_channel_id_cnt;
+	info->process_channel_id = cedar_devp->process_channel_id_cnt;
 
 	spin_unlock_irqrestore(&cedar_devp->lock, flags);
 
-	filp->private_data = info;
 	if (down_interruptible(&cedar_devp->sem)) {
 		kfree(info);
-		return -ERESTARTSYS;
+		return NULL;
 	}
 
 	/* init other resource here */
@@ -2193,24 +1303,83 @@ static int cedardev_open(struct inode *inode, struct file *filp)
 	}
 
 	up(&cedar_devp->sem);
-	nonseekable_open(inode, filp);
 
 	mutex_init(&info->lock_flag_io);
 	info->lock_flags = 0;
 
+	return info;
+}
+
+static int cedardev_open(struct inode *inode, struct file *filp)
+{
+	struct ve_info *info = NULL;
+	struct cedar_dev *cedar_devp = container_of(inode->i_cdev, struct cedar_dev, cdev);
+
+	info = _cedardev_open(cedar_devp);
+	if (!info) {
+		VE_LOGE("_cedardev_open failed\n");
+		return -1;
+	}
+	info->cedar_devp = cedar_devp;
+
+	filp->private_data = info;
+	nonseekable_open(inode, filp);
+
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	ve_debug_open(cedar_devp->dbgfs, info);
+#endif
 	return 0;
 }
 
-static int cedardev_release(struct inode *inode, struct file *filp)
+void *rt_cedardev_open(const char *dev_name)
 {
-	struct ve_info *info;
+	struct ve_info *info = NULL;
+	struct cedar_dev *cedar_devp = NULL;
 
-	info = filp->private_data;
+	if (!dev_name) {
+		VE_LOGE("dev name invalid\n");
+		return NULL;
+	}
+
+	if (!strcmp(dev_name, cedar_ve_quirk.dev_name)) {
+		cedar_devp = (struct cedar_dev *)cedar_ve_quirk.priv;
+	} else if (!strcmp(dev_name, cedar_ve2_quirk.dev_name)) {
+		cedar_devp = (struct cedar_dev *)cedar_ve2_quirk.priv;
+	} else {
+		VE_LOGE("dev name unmatch %s\n", dev_name);
+		return NULL;
+	}
+	if (!cedar_devp) {
+		VE_LOGE("dev %s maybe uinit\n", dev_name);
+		return NULL;
+	}
+
+	info = _cedardev_open(cedar_devp);
+	if (!info) {
+		VE_LOGE("_cedardev_open failed\n");
+		return NULL;
+	}
+	info->cedar_devp = cedar_devp;
+
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	ve_debug_open(cedar_devp->dbgfs, info);
+#endif
+	return info;
+}
+
+static int _cedardev_release(struct ve_info *info)
+{
+	struct cedar_dev *cedar_devp = info->cedar_devp;
+
 	mutex_lock(&info->lock_flag_io);
 	/*
 	 * if the process abort, this will free iommu_buffer
 	 * unmap_dma_buf_addr(1, 0, filp);
 	 */
+
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	ve_debug_release(cedar_devp->dbgfs, info);
+#endif
 
 	/* lock status */
 	if (info->lock_flags) {
@@ -2229,10 +1398,6 @@ static int cedardev_release(struct inode *inode, struct file *filp)
 
 		if (info->lock_flags & VE_LOCK_04_REG)
 			mutex_unlock(&cedar_devp->lock_04_reg);
-
-		if (info->lock_flags & VE_LOCK_PROC_INFO)
-			mutex_unlock(&ve_debug_proc_info.lock_proc);
-
 		info->lock_flags = 0;
 	}
 
@@ -2243,17 +1408,6 @@ static int cedardev_release(struct inode *inode, struct file *filp)
 		return -ERESTARTSYS;
 	}
 
-#if IS_ENABLED(CONFIG_ARCH_SUN9IW1P1)
-
-	if (info->set_vol_flag == 1) {
-		regulator_set_voltage(regu, 900000, 3300000);
-		if (IS_ERR(regu)) {
-			VE_LOGW("some error happen, fail to set axp15_dcdc4 regulator voltage!\n");
-			return -EINVAL;
-		}
-	}
-#endif
-
 	/* release other resource here */
 	if (cedar_devp->ref_count == 0) {
 		cedar_devp->de_irq_flag = 1;
@@ -2262,13 +1416,20 @@ static int cedardev_release(struct inode *inode, struct file *filp)
 	}
 	up(&cedar_devp->sem);
 
-#if VE_SUPPORT_DVFS
 	/* if the process abort, this will remove case load by process id */
-	remove_case_load_param_by_process_id_sun55iw3(info->process_channel_id);
-#endif
-
+	vdfs_remove_case_load_param(cedar_devp, info->process_channel_id);
 	kfree(info);
 	return 0;
+}
+
+static int cedardev_release(struct inode *inode, struct file *filp)
+{
+	return _cedardev_release((struct ve_info *)(filp->private_data));
+}
+
+int rt_cedardev_release(void *info_handle)
+{
+	return _cedardev_release((struct ve_info *)info_handle);
 }
 
 static void cedardev_vma_open(struct vm_area_struct *vma)
@@ -2286,6 +1447,8 @@ static struct vm_operations_struct cedardev_remap_vm_ops = {
 
 static int cedardev_mmap(struct file *filp, struct vm_area_struct *vma)
 {
+	struct ve_info *info = filp->private_data;
+	struct cedar_dev *cedar_devp = info->cedar_devp;
 	unsigned long temp_pfn;
 
 	if (vma->vm_end - vma->vm_start == 0) {
@@ -2298,12 +1461,14 @@ static int cedardev_mmap(struct file *filp, struct vm_area_struct *vma)
 		return -EINVAL;
 	}
 
-
-	temp_pfn = MACC_REGS_BASE >> 12;
-
+	temp_pfn = cedar_devp->iomap_addrs.ve_reg_start >> 12;
 
 	/* Set reserved and I/O flag for the area. */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 25))
+	vm_flags_set(vma, VM_IO);
+#else
 	vma->vm_flags |= /* VM_RESERVED | */VM_IO;
+#endif
 	/* Select uncached access. */
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
@@ -2319,18 +1484,26 @@ static int cedardev_mmap(struct file *filp, struct vm_area_struct *vma)
 	return 0;
 }
 
+void *rt_cedardev_mmap(void *info_handle)
+{
+	struct ve_info *info = (struct ve_info *)info_handle;
+	struct cedar_dev *cedar_devp = info->cedar_devp;
+
+	return (void *)cedar_devp->iomap_addrs.regs_ve;
+}
+
 static int sunxi_cedar_suspend(struct platform_device *pdev, pm_message_t state)
 {
+	struct cedar_dev *cedar_devp = dev_get_drvdata(&pdev->dev);
 	int ret = 0;
 
 	VE_LOGD("standby suspend\n");
-
-	ret = disable_cedar_hw_clk();
-
-#if IS_ENABLED(CONFIG_ARCH_SUN9IW1P1)
-	clk_disable_unprepare(cedar_devp->power_clk);
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+#ifdef CONFIG_AW_VIDEO_KERNEL_ENC
+	SetVeSuspend();
 #endif
-
+#endif
+	ret = disable_cedar_hw_clk(cedar_devp);
 	if (ret < 0) {
 		VE_LOGW("cedar clk disable somewhere error!\n");
 		return -EFAULT;
@@ -2341,176 +1514,106 @@ static int sunxi_cedar_suspend(struct platform_device *pdev, pm_message_t state)
 
 static int sunxi_cedar_resume(struct platform_device *pdev)
 {
+	struct cedar_dev *cedar_devp = dev_get_drvdata(&pdev->dev);
 	int ret = 0;
 
 	VE_LOGD("standby resume\n");
-
-
-#if IS_ENABLED(CONFIG_ARCH_SUN9IW1P1)
-	clk_prepare_enable(cedar_devp->power_clk);
-#endif
 
 	if (cedar_devp->ref_count == 0) {
 		return 0;
 	}
 
-	ret = enable_cedar_hw_clk();
+	set_system_register(cedar_devp);
+	ret = enable_cedar_hw_clk(cedar_devp);
 	if (ret < 0) {
 		VE_LOGW("cedar clk enable somewhere error!\n");
 		return -EFAULT;
 	}
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+#ifdef CONFIG_AW_VIDEO_KERNEL_ENC
+	SetVeResume();
+#endif
+#endif
+
 	return 0;
 }
-
-
-
-
 #if IS_ENABLED(CONFIG_DEBUG_FS)
-static int ve_debugfs_open(struct inode *inode, struct file *file)
+static int vefs_open(struct inode *inode, struct file *file)
 {
-	int i = 0;
-	char *pData;
-	struct ve_debugfs_proc *pVeProc;
-
-	pVeProc = kmalloc(sizeof(*pVeProc), GFP_KERNEL);
-	if (pVeProc == NULL) {
-		VE_LOGE("kmalloc pVeProc fail\n");
-		return -ENOMEM;
-	}
-	pVeProc->len = 0;
-	memset(pVeProc->data, 0, VE_DEBUGFS_BUF_SIZE * VE_DEBUGFS_MAX_CHANNEL);
-
-	pData = pVeProc->data;
-	mutex_lock(&ve_debug_proc_info.lock_proc);
-	for (i = 0; i < VE_DEBUGFS_MAX_CHANNEL; i++) {
-		if (ve_debug_proc_info.proc_buf[i] != NULL) {
-			memcpy(pData, ve_debug_proc_info.proc_buf[i], ve_debug_proc_info.proc_len[i]);
-			pData += ve_debug_proc_info.proc_len[i];
-			pVeProc->len += ve_debug_proc_info.proc_len[i];
-		}
-	}
-	mutex_unlock(&ve_debug_proc_info.lock_proc);
-
-	file->private_data = pVeProc;
+	struct cedar_dev *cedar_devp = (struct cedar_dev *)(inode->i_private);
+	file->private_data = cedar_devp;
 	return 0;
 }
 
-static ssize_t ve_debugfs_read(struct file *file, char __user *user_buf,
-					  size_t nbytes, loff_t *ppos)
+static ssize_t vefs_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
 {
-	struct ve_debugfs_proc *pVeProc = file->private_data;
+	struct cedar_dev *cedar_devp = file->private_data;
+	struct ve_dvfs_attr *attr = &cedar_devp->dvfs_attr;
+	struct ve_dvfs_info *dvfs_array = attr->dvfs_array;
+	char buf[512] = {0};
+	char *buf_tmp;
+	int i = 0, len = 0, total = 0;
 
-	if (pVeProc->len == 0) {
-	    VE_LOGD("there is no any codec working currently\n");
-	return 0;
+	buf_tmp = buf;
+	while (i < attr->dvfs_array_num) {
+		total += scnprintf(buf_tmp + total, sizeof(buf) - total,
+				   "ve_dvfs idx %02u %03umv %03uMhz\n",
+				   dvfs_array[i].dvfs_index,
+				   dvfs_array[i].voltage,
+				   dvfs_array[i].ve_freq);
+		i += 1;
 	}
 
-	return simple_read_from_buffer(user_buf, nbytes, ppos, pVeProc->data,
-					   pVeProc->len);
+	len = strlen(buf);
+	if (*ppos != 0) {
+		return 0;
+	}
+	if (copy_to_user(user_buf, buf, len) != 0) {
+		return -EFAULT;
+	}
+	*ppos = len;
+
+	return len;
 }
 
-static int ve_debugfs_release(struct inode *inode, struct file *file)
-{
-	struct ve_debugfs_proc *pVeProc = file->private_data;
-
-	kfree(pVeProc);
-	pVeProc = NULL;
-	file->private_data = NULL;
-
-	return 0;
-}
-
-static const struct file_operations ve_debugfs_fops = {
-	.owner = THIS_MODULE,
-	.open = ve_debugfs_open,
-	.llseek = no_llseek,
-	.read = ve_debugfs_read,
-	.release = ve_debugfs_release,
+static const struct file_operations vedvfs_fops = {
+	.open = vefs_open,
+	.read = vefs_read,
 };
 
-int sunxi_ve_debug_register_driver(void)
+static int vedvfs_init(struct cedar_dev *cedar_devp)
 {
 	struct dentry *dent;
+	char *dfs_name = NULL;
+	char *dfs_name_nor = "ve_dvfs";
+	char *dfs_name_2 = "ve_dvfs2";
 
-	/* debugfs_mpp_root defined out of this module */
-#if IS_ENABLED(CONFIG_SUNXI_MPP)
-	cedar_devp->debug_root = debugfs_mpp_root;
-#else
-	cedar_devp->debug_root = debugfs_create_dir("enc_test", NULL);
-#endif
+	if (cedar_devp->quirks->ve_mod == VE_MODULE_2)
+		dfs_name = dfs_name_2;
+	else
+		dfs_name = dfs_name_nor;
 
-	if (IS_ERR_OR_NULL(cedar_devp->debug_root)) {
-		VE_LOGE("debugfs root is null please check!\n");
-		return -ENOENT;
+	cedar_devp->dvfs_root = debugfs_lookup("ve", NULL);
+	if (IS_ERR_OR_NULL(cedar_devp->dvfs_root)) {
+		cedar_devp->dvfs_root = debugfs_create_dir("ve", NULL);
+		if (IS_ERR_OR_NULL(cedar_devp->dvfs_root)) {
+			VE_LOGE("debugfs root is null please check!\n");
+			return -ENOENT;
+		}
 	}
-	dent = debugfs_create_file("ve", 0444, cedar_devp->debug_root,
-				   NULL, &ve_debugfs_fops);
+	dent = debugfs_create_file(dfs_name, 0444, cedar_devp->dvfs_root,
+				   cedar_devp, &vedvfs_fops);
 	if (IS_ERR_OR_NULL(dent)) {
 		VE_LOGE("Unable to create debugfs status file.\n");
-		debugfs_remove_recursive(cedar_devp->debug_root);
-		cedar_devp->debug_root = NULL;
+		debugfs_remove_recursive(cedar_devp->dvfs_root);
+		cedar_devp->dvfs_root = NULL;
 		return -ENODEV;
 	}
-
 	return 0;
 }
-
-void sunxi_ve_debug_unregister_driver(void)
-{
-	if (cedar_devp->debug_root == NULL) {
-		VE_LOGW("note: debug root already is null\n");
-		return;
-	}
-	debugfs_remove_recursive(cedar_devp->debug_root);
-	cedar_devp->debug_root = NULL;
-}
 #endif
 
-#if (defined CONFIG_ARCH_SUNIVW1P1 || defined CONFIG_ARCH_SUN3IW1P1)
-static void set_ccmu_by_self(void)
-{
-	unsigned int val;
-
-	if (cedar_devp->iomap_addrs.regs_ccmu == NULL) {
-		VE_LOGW("ccmu regs addr is null\n");
-		return;
-	}
-	val = readl(cedar_devp->iomap_addrs.regs_ccmu+6);
-	val &= 0x7fff80f0;
-#if (defined CONFIG_ARCH_SUNIVW1P1) /* for 1663 */
-	val = val | (1<<31) | (8<<8);
-#elif (defined CONFIG_ARCH_SUN3IW1P1)
-	val = val | (1<<31) | (49<<8) | (3<<0);
-#endif
-	writel(val, cedar_devp->iomap_addrs.regs_ccmu+6);
-
-	/* set VE clock dividor */
-	val = readl(cedar_devp->iomap_addrs.regs_ccmu+79);
-	val |= (1<<31);
-	writel(val, cedar_devp->iomap_addrs.regs_ccmu+79);
-
-	/* Active AHB bus to MACC */
-	val = readl(cedar_devp->iomap_addrs.regs_ccmu+25);
-	val |= (1<<0);
-	writel(val, cedar_devp->iomap_addrs.regs_ccmu+25);
-
-	/* Power on and release reset ve */
-	val = readl(cedar_devp->iomap_addrs.regs_ccmu+177);
-	val &= ~(1<<0); /* reset ve */
-	writel(val, cedar_devp->iomap_addrs.regs_ccmu+177);
-
-	val = readl(cedar_devp->iomap_addrs.regs_ccmu+177);
-	val |= (1<<0);
-	writel(val, cedar_devp->iomap_addrs.regs_ccmu+177);
-
-	/* gate on the bus to SDRAM */
-	val = readl(cedar_devp->iomap_addrs.regs_ccmu+64);
-	val |= (1<<0);
-	writel(val, cedar_devp->iomap_addrs.regs_ccmu+64);
-}
-#endif
-
-static void set_sys_cfg_by_self(void)
+static void set_sys_cfg_by_self(struct cedar_dev *cedar_devp)
 {
 	unsigned int val;
 	if (cedar_devp->iomap_addrs.regs_sys_cfg == NULL) {
@@ -2529,6 +1632,11 @@ static void set_sys_cfg_by_self(void)
 	val = readl((cedar_devp->iomap_addrs.regs_sys_cfg + 0x1));
 	val &= 0xfeffffff;
 	writel(val, (cedar_devp->iomap_addrs.regs_sys_cfg + 0x1));
+#elif IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+	/* clear bootmode bit for give sram to ve */
+	val = readl((cedar_devp->iomap_addrs.regs_sys_cfg + 0x4));
+	val &= 0xfeffffff;
+	writel(val, (cedar_devp->iomap_addrs.regs_sys_cfg + 0x4));
 #else
 	/* remapping SRAM to MACC for codec test */
 	val = readl(cedar_devp->iomap_addrs.regs_sys_cfg);
@@ -2541,55 +1649,35 @@ static void set_sys_cfg_by_self(void)
 #endif
 }
 
-static void set_system_register(void)
+static void set_system_register(struct cedar_dev *cedar_devp)
 {
-	/* modify ccmu and sys_config register config */
-#if (defined CONFIG_ARCH_SUNIVW1P1 || defined CONFIG_ARCH_SUN3IW1P1)
-	set_ccmu_by_self();
-#endif
-	set_sys_cfg_by_self();
+	/* modify sys_config register config */
+	set_sys_cfg_by_self(cedar_devp);
 }
 
 static int deal_with_resouce(struct platform_device *pdev)
 {
-	int ret = 0;
+	struct cedar_dev *cedar_devp = dev_get_drvdata(&pdev->dev);
+	const struct cedar_ve_quirks *quirks = cedar_devp->quirks;
 	struct device_node *node = pdev->dev.of_node;
+	unsigned int temp_val = 0;
+	int ret = 0;
 
 	/* 4.register irq function */
 	cedar_devp->irq = irq_of_parse_and_map(node, 0);
-	VE_LOGI("cedar-ve the get irq is %d\n", cedar_devp->irq);
-
-	ret = request_irq(cedar_devp->irq, VideoEngineInterupt, 0, "cedar_dev", NULL);
+	VE_LOGD("cedar-ve the get irq is %d\n", cedar_devp->irq);
+	ret = request_irq(cedar_devp->irq, VideoEngineInterupt, 0, quirks->dev_name, cedar_devp);
 	if (ret < 0) {
 		VE_LOGW("request irq err\n");
 		return -1;
 	}
 
+	/* get regs */
 	memset(&cedar_devp->iomap_addrs, 0, sizeof(cedar_devp->iomap_addrs));
-	/* map for macc io space */
-	cedar_devp->iomap_addrs.regs_ve = of_iomap(node, 0);
-	if (!cedar_devp->iomap_addrs.regs_ve) {
-		VE_LOGW("ve Can't map registers\n");
+	if (resource_iomap_init(node, &cedar_devp->iomap_addrs)) {
+		VE_LOGE("resource_iomap_init fail\n");
 		return -1;
 	}
-
-	/* map for sys_config io space */
-	cedar_devp->iomap_addrs.regs_sys_cfg = (char *)of_iomap(node, 1);
-	if (!cedar_devp->iomap_addrs.regs_sys_cfg) {
-		VE_LOGW("ve Can't map regs_sys_cfg registers, maybe no use\n");
-	}
-
-	/* map for ccmu io space */
-	cedar_devp->iomap_addrs.regs_ccmu = (unsigned int *)of_iomap(node, 2);
-	if (!cedar_devp->iomap_addrs.regs_ccmu) {
-		VE_LOGW("ve Can't map regs_ccmu registers, maybe no use\n");
-	}
-#if VE_POWER_MANAGE_VALID
-	cedar_devp->iomap_addrs.prcm_bass_vir = (unsigned int *)of_iomap(node, 3);
-	if (!cedar_devp->iomap_addrs.prcm_bass_vir) {
-		VE_LOGW("ve Can't map prcm_bass_vir registers\n");
-	}
-#endif
 
 	/* get clk */
 	cedar_devp->ve_clk = devm_clk_get(cedar_devp->plat_dev, "ve");
@@ -2617,6 +1705,7 @@ static int deal_with_resouce(struct platform_device *pdev)
 		return -1;
 	}
 #else
+
 	cedar_devp->bus_clk = devm_clk_get(cedar_devp->plat_dev, "bus_ve");
 	if (IS_ERR(cedar_devp->bus_clk)) {
 		VE_LOGW("try to get bus clk fail\n");
@@ -2628,20 +1717,50 @@ static int deal_with_resouce(struct platform_device *pdev)
 		VE_LOGW("try to get mbus clk fail\n");
 		return -1;
 	}
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+	cedar_devp->sbus_clk = devm_clk_get(cedar_devp->plat_dev, "sbus_ve");
+	if (IS_ERR(cedar_devp->sbus_clk)) {
+		VE_LOGW("try to get sbus_clk clk fail\n");
+		return -1;
+	}
+	cedar_devp->hbus_clk = devm_clk_get(cedar_devp->plat_dev, "hbus_ve");
+	if (IS_ERR(cedar_devp->hbus_clk)) {
+		VE_LOGW("try to get hbus_clk clk fail\n");
+		return -1;
+	}
+	cedar_devp->pll_clk = devm_clk_get(cedar_devp->plat_dev, "pll_ve");
+	if (IS_ERR(cedar_devp->pll_clk)) {
+		VE_LOGW("try to get hbus_clk clk fail\n");
+		return -1;
+	}
+	if (clk_set_parent(cedar_devp->ve_clk, cedar_devp->pll_clk)) {
+		VE_LOGW("set ve parent clk failed\n");
+		return -1;
+	}
 #endif
 
-	cedar_devp->parent_clk = clk_get_parent(cedar_devp->ve_clk);
-	if (IS_ERR(cedar_devp->parent_clk)) {
-		VE_LOGW("try to get parent clk fail\n");
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	cedar_devp->pll_ve = devm_clk_get(cedar_devp->plat_dev, "pll_ve");
+	if (IS_ERR(cedar_devp->pll_ve)) {
+		VE_LOGW("try to get pll_ve clk failed\n");
 		return -1;
 	}
-	/* todo: you maybe need to change parent */
-	#if defined(CONFIG_ARCH_SUN8IW19P1)
-	if (clk_set_parent(cedar_devp->ve_clk, cedar_devp->parent_clk)) {
-		VE_LOGW("set ve clk and parent clk failed;\n");
+	cedar_devp->ahb_gate = devm_clk_get(cedar_devp->plat_dev, "ahb_gate");
+	if (IS_ERR(cedar_devp->ahb_gate)) {
+		VE_LOGW("try to get ahb_gate clk failed\n");
 		return -1;
 	}
-	#endif
+	cedar_devp->mbus_gate = devm_clk_get(cedar_devp->plat_dev, "mbus_gate");
+	if (IS_ERR(cedar_devp->mbus_gate)) {
+		VE_LOGW("try to get mbus_gate clk failed\n");
+		return -1;
+	}
+	if (clk_set_parent(cedar_devp->ve_clk, cedar_devp->pll_ve)) {
+		VE_LOGW("set ve parent clk failed\n");
+		return -1;
+	}
+#endif
+#endif
 
 #if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
 	cedar_devp->reset = devm_reset_control_get(cedar_devp->plat_dev, "reset_ve3");
@@ -2656,16 +1775,43 @@ static int deal_with_resouce(struct platform_device *pdev)
 		return -1;
 	}
 #else
-		cedar_devp->reset = devm_reset_control_get(cedar_devp->plat_dev, NULL);
-		if (IS_ERR(cedar_devp->reset)) {
-			VE_LOGE("get reset fail\n");
-			return -1;
-		}
+	cedar_devp->reset = devm_reset_control_get(cedar_devp->plat_dev, NULL);
+	if (IS_ERR(cedar_devp->reset)) {
+		VE_LOGE("get reset fail\n");
+		return -1;
+	}
 #endif
 
+	temp_val = 0;
+	cedar_devp->ve_freq_setup_by_dts_config = 0;
 
-	set_system_register();
+	ret = of_property_read_u32(node, "enable_setup_ve_freq", &temp_val);
+	if (ret < 0) {
+		VE_LOGV("enable_setup_ve_freq_by_dts get failed\n");
+	} else {
+		VE_LOGD("enable_setup_ve_freq_by_dts = %d", temp_val);
+		if (temp_val == 1) {
+			temp_val = 0;
+			ret = of_property_read_u32(node, "ve_freq_value", &temp_val);
+			VE_LOGD("ve_freq_value = %d", temp_val);
+			if (ret < 0) {
+				VE_LOGV("ve_freq_value get failed\n");
+			} else {
+				cedar_devp->ve_freq_setup_by_dts_config = temp_val;
+			}
+		}
+	}
 
+	ret = of_property_read_u32(node, "ve_top_reg_offset", &temp_val);
+	if (ret < 0) {
+			VE_LOGV("ve_top_reg_offset get failed\n");
+	} else {
+		cedar_devp->ve_top_reg_offset = temp_val;
+	}
+	VE_LOGV("ret = %d, ve_top_reg_offset = 0x%x", ret, cedar_devp->ve_top_reg_offset);
+
+	set_system_register(cedar_devp);
+	ve_dvfs_get_attr(cedar_devp);
 	return 0;
 }
 
@@ -2679,45 +1825,40 @@ static const struct file_operations cedardev_fops = {
 	.compat_ioctl   = compat_cedardev_ioctl,
 };
 
-
-static int create_char_device(void)
+static int create_char_device(struct cedar_dev *cedar_devp)
 {
-	dev_t dev = 0;
+	const struct cedar_ve_quirks *quirks = cedar_devp->quirks;
 	int ret = 0;
-	int devno;
 
 	/* 1.register or alloc the device number. */
-	if (g_dev_major) {
-		dev = MKDEV(g_dev_major, g_dev_minor);
-		ret = register_chrdev_region(dev, 1, "cedar_dev");
-	} else {
-		ret = alloc_chrdev_region(&dev, g_dev_minor, 1, "cedar_dev");
-		g_dev_major = MAJOR(dev);
-		g_dev_minor = MINOR(dev);
-	}
-
-	if (ret < 0) {
-		VE_LOGE("cedar_dev: can't get major %d\n", g_dev_major);
+	ret = alloc_chrdev_region(&cedar_devp->ve_dev, 0, 1, quirks->dev_name);
+	if (ret) {
+		VE_LOGE("%s: can't get major %d\n", quirks->dev_name, MAJOR(cedar_devp->ve_dev));
 		return ret;
 	}
 
 	/* 2.create char device */
-	devno = MKDEV(g_dev_major, g_dev_minor);
 	cdev_init(&cedar_devp->cdev, &cedardev_fops);
 	cedar_devp->cdev.owner = THIS_MODULE;
-	ret = cdev_add(&cedar_devp->cdev, devno, 1);
+	ret = cdev_add(&cedar_devp->cdev, cedar_devp->ve_dev, 1);
 	if (ret) {
 		VE_LOGE("Err:%d add cedar-dev fail\n", ret);
 		goto region_del;
 	}
 	/* 3.create class and new device for auto device node */
-	cedar_devp->class = class_create(THIS_MODULE, "cedar_ve");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	cedar_devp->class = class_create(quirks->class_name);
+#else
+	cedar_devp->class = class_create(THIS_MODULE, quirks->class_name);
+#endif
 	if (IS_ERR_OR_NULL(cedar_devp->class)) {
 		VE_LOGE("class create fail\n");
 		ret = -EINVAL;
 		goto dev_del;
 	}
-	cedar_devp->dev	  = device_create(cedar_devp->class, NULL, devno, NULL, "cedar_dev");
+	cedar_devp->dev = device_create(cedar_devp->class, NULL,
+					cedar_devp->ve_dev, NULL,
+					quirks->dev_name);
 	if (IS_ERR_OR_NULL(cedar_devp->dev)) {
 		VE_LOGE("device create fail\n");
 		ret = -EINVAL;
@@ -2730,14 +1871,13 @@ class_del:
 dev_del:
 	cdev_del(&cedar_devp->cdev);
 region_del:
-	unregister_chrdev_region(dev, 1);
-
+	unregister_chrdev_region(cedar_devp->ve_dev, 1);
 	return ret;
 }
 
-static ssize_t ve_info_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
+static ssize_t ve_info_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	struct cedar_dev *cedar_devp = dev_get_drvdata(dev);
 	ssize_t count = 0;
 	int i = 0;
 	int nTotalSize = 0;
@@ -2749,7 +1889,7 @@ static ssize_t ve_info_show(struct device *dev,
 	mutex_lock(&cedar_devp->lock_debug_info);
 	for (i = 0; i < MAX_VE_DEBUG_INFO_NUM; i++) {
 		if (cedar_devp->debug_info[i].head_info.pid != 0
-		&& cedar_devp->debug_info[i].head_info.tid != 0) {
+		 && cedar_devp->debug_info[i].head_info.tid != 0) {
 			nTotalSize += cedar_devp->debug_info[i].head_info.length;
 
 			/*
@@ -2766,11 +1906,10 @@ static ssize_t ve_info_show(struct device *dev,
 				break;
 
 			memcpy(buf + count, cedar_devp->debug_info[i].data,
-					cedar_devp->debug_info[i].head_info.length);
+			       cedar_devp->debug_info[i].head_info.length);
 
 			count += cedar_devp->debug_info[i].head_info.length;
 		}
-
 	}
 
 	mutex_unlock(&cedar_devp->lock_debug_info);
@@ -2793,39 +1932,30 @@ static struct attribute_group ve_attribute_group = {
 
 static int cedardev_init(struct platform_device *pdev)
 {
+	struct cedar_dev *cedar_devp = dev_get_drvdata(&pdev->dev);
 	int ret = 0;
-	int i = 0;
+
+	if (!cedar_devp) {
+		VE_LOGE("cedar_devp invalid\n");
+		return -1;
+	}
 
 	VE_LOGD("install start!!!\n");
 	/* VE_LOGD("LINUX_VERSION_CODE:%d\n", LINUX_VERSION_CODE); */
 
-	process_channel_id_cnt = 0;
-
-	(void)i;
-	if (cedar_devp) {
-		kfree(cedar_devp);
-		cedar_devp = NULL;
-	}
-	cedar_devp = kmalloc(sizeof(*cedar_devp), GFP_KERNEL);
-	if (cedar_devp == NULL) {
-		VE_LOGW("malloc mem for cedar device err\n");
-		return -ENOMEM;
-	}
-	memset(cedar_devp, 0, sizeof(*cedar_devp));
+	cedar_devp->plat_dev = &pdev->dev;
+	cedar_devp->process_channel_id_cnt = 0;
 
 	/* 1.register cdev */
-	if (create_char_device() != 0) {
+	if (create_char_device(cedar_devp) != 0) {
 		ret = -EINVAL;
-		goto free_devp;
+		goto err;
 	}
 	/* 2.init some data */
 	spin_lock_init(&cedar_devp->lock);
-	cedar_devp->plat_dev = &pdev->dev;
 	sema_init(&cedar_devp->sem, 1);
 	init_waitqueue_head(&cedar_devp->wq);
-
-	timer_setup(&cedar_devp->cedar_engine_timer, cedar_engine_for_events, TIMER_DEFERRABLE);
-	timer_setup(&cedar_devp->cedar_engine_timer_rel, cedar_engine_for_timer_rel, TIMER_DEFERRABLE);
+	init_waitqueue_head(&cedar_devp->wait_ve);
 
 	mutex_init(&cedar_devp->lock_vdec);
 	mutex_init(&cedar_devp->lock_venc);
@@ -2836,48 +1966,6 @@ static int cedardev_init(struct platform_device *pdev)
 	mutex_init(&cedar_devp->lock_debug_info);
 
 	AW_MEM_INIT_LIST_HEAD(&cedar_devp->list);
-	/* 3.config some register */
-	if (deal_with_resouce(pdev)) {
-		ret = -EINVAL;
-		goto free_devp;
-	}
-
-	/* 4.create sysfs file on new device */
-	if (sysfs_create_group(&cedar_devp->dev->kobj, &ve_attribute_group)) {
-		VE_LOGW("sysfs create group failed, maybe ok!\n");
-		ret = -EINVAL;
-		goto free_devp;
-	}
-
-	/* 5.create debugfs file */
-#if IS_ENABLED(CONFIG_DEBUG_FS)
-	ret = sunxi_ve_debug_register_driver();
-	if (ret) {
-		VE_LOGW("sunxi ve debug register fail\n");
-		ret = -EINVAL;
-		goto free_devp;
-	}
-
-	memset(&ve_debug_proc_info, 0, sizeof(ve_debug_proc_info));
-	for (i = 0; i < VE_DEBUGFS_MAX_CHANNEL; i++)
-		ve_debug_proc_info.proc_buf[i] = NULL;
-
-	ve_debug_proc_info.data =
-		kmalloc(VE_DEBUGFS_BUF_SIZE*VE_DEBUGFS_MAX_CHANNEL, GFP_KERNEL);
-	if (!ve_debug_proc_info.data) {
-		VE_LOGE("kmalloc proc buffer failed!\n");
-		ret = -ENOMEM;
-		goto free_devp;
-	}
-	mutex_init(&ve_debug_proc_info.lock_proc);
-	VE_LOGI("ve_debug_proc_info:%p, data:%p, lock:%p\n",
-		&ve_debug_proc_info,
-		ve_debug_proc_info.data,
-		&ve_debug_proc_info.lock_proc);
-
-#endif
-	/* 6.runtime pm, maybe problem */
-	pm_runtime_enable(&pdev->dev);
 
 	cedar_devp->regulator = regulator_get(cedar_devp->plat_dev, "ve");
 	if (!IS_ERR(cedar_devp->regulator)) {
@@ -2887,46 +1975,63 @@ static int cedardev_init(struct platform_device *pdev)
 		VE_LOGW("get ve regulator error\n");
 		cedar_devp->regulator = NULL;
 	};
+
+	/* 3.config some register */
+	if (deal_with_resouce(pdev)) {
+		ret = -EINVAL;
+		goto err;
+	}
+
+	/* 4.create sysfs file on new device */
+	if (sysfs_create_group(&cedar_devp->dev->kobj, &ve_attribute_group)) {
+		VE_LOGW("sysfs create group failed, maybe ok!\n");
+	}
+
+	/* 5.create debugfs file */
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	cedar_devp->dbgfs = ve_debug_register_driver(cedar_devp);
+	if (!cedar_devp->dbgfs) {
+		VE_LOGW("ve_debug_register_driver failed\n");
+	}
+	if (cedar_devp->dvfs_attr.dvfs_array_num) {
+		ret = vedvfs_init(cedar_devp);
+		if (ret) {
+			VE_LOGW("sunxi ve dvfsinit debugfs fail\n");
+		}
+	}
+#endif
+	/* 6.runtime pm, maybe problem */
+	pm_runtime_enable(&pdev->dev);
+
 	cedar_devp->bInitEndFlag = 1;
 	VE_LOGD("install end!!!\n");
 	return 0;
 
-free_devp:
-	kfree(cedar_devp);
+err:
 	return ret;
 }
 
-static void cedardev_exit(void)
+static void cedardev_exit(struct platform_device *pdev)
 {
+	struct cedar_dev *cedar_devp = dev_get_drvdata(&pdev->dev);
 	int i = 0;
-	dev_t dev;
 
-	dev = MKDEV(g_dev_major, g_dev_minor);
+	if (!cedar_devp) {
+		VE_LOGE("cedar_devp invalid\n");
+		return;
+	}
 
-	free_irq(cedar_devp->irq, NULL);
+	free_irq(cedar_devp->irq, cedar_devp);
 	iounmap(cedar_devp->iomap_addrs.regs_ve);
-	/* Destroy char device */
 
+	/* Destroy char device */
 	cdev_del(&cedar_devp->cdev);
-	device_destroy(cedar_devp->class, dev);
+	device_destroy(cedar_devp->class, cedar_devp->ve_dev);
 	class_destroy(cedar_devp->class);
-	unregister_chrdev_region(dev, 1);
+	unregister_chrdev_region(cedar_devp->ve_dev, 1);
 
 	/* runtime pm */
 	pm_runtime_disable(cedar_devp->plat_dev);
-
-	/* todo: power clk not support */
-#if IS_ENABLED(CONFIG_ARCH_SUN9IW1P1)
-	regulator_put(regu);
-
-	if (NULL == cedar_devp->power_clk || IS_ERR(cedar_devp->power_clk)) {
-		VE_LOGW("cedar_devp->power_clk handle is invalid,just return!\n");
-	} else {
-		clk_disable_unprepare(cedar_devp->power_clk);
-		clk_put(cedar_devp->power_clk);
-		cedar_devp->power_clk = NULL;
-	}
-#endif
 
 	/* check whether free debug buffer */
 	for (i = 0; i < MAX_VE_DEBUG_INFO_NUM; i++) {
@@ -2938,48 +2043,109 @@ static void cedardev_exit(void)
 	}
 
 #if IS_ENABLED(CONFIG_DEBUG_FS)
-	sunxi_ve_debug_unregister_driver();
-	kfree(ve_debug_proc_info.data);
+	ve_debug_unregister_driver(cedar_devp->dbgfs);
+	if (cedar_devp->dvfs_root) {
+		debugfs_remove_recursive(cedar_devp->dvfs_root);
+		cedar_devp->dvfs_root = NULL;
+	}
 #endif
-
 	if (cedar_devp->regulator) {
 		regulator_put(cedar_devp->regulator);
 		cedar_devp->regulator = NULL;
 	}
+	if (cedar_devp->dvfs_attr.dvfs_array)
+		kfree(cedar_devp->dvfs_attr.dvfs_array);
 
-	kfree(cedar_devp);
 	cedar_devp->bInitEndFlag = 0;
 	VE_LOGD("cedar-ve exit\n");
 }
 
-static int	sunxi_cedar_remove(struct platform_device *pdev)
+static int sunxi_cedar_remove(struct platform_device *pdev)
 {
+	struct cedar_dev *cedar_devp = dev_get_drvdata(&pdev->dev);
+	const struct cedar_ve_quirks *quirks = NULL;
 	struct device_node *np = pdev->dev.of_node;
+
 	VE_LOGD("sunxi_cedar_remove\n");
-	pdev->id = of_alias_get_id(np, "ve");
-	if (pdev->id < 0) {
-		VE_LOGD("failed to get alias ve id\n");
-	} else if (pdev->id == 1) {
-		VE_LOGI("device ve1 just return\n");
+
+	if (!cedar_devp) {
+		VE_LOGE("cedar_devp invalid\n");
 		return 0;
 	}
+	quirks = cedar_devp->quirks;
+
+	if (quirks->ve_mod == VE_MODULE_NORMAL) {
+		/* note: this method only compatible with existed platforms, no longer use.
+		 * and will be switched to ve_mod to judge dual iommu.
+		 */
+		pdev->id = of_alias_get_id(np, "ve");
+		if (pdev->id == 1) {
+			VE_LOGI("remove ve just use to del iommu master\n");
+			kfree(cedar_devp);
+			return 0;
+		} else {
+			VE_LOGI("remove ve\n");
+		}
+	} else if (quirks->ve_mod == VE_MODULE_1) {
+		VE_LOGI("remove ve1\n");
+		kfree(cedar_devp);
+		return 0;
+	} else if (quirks->ve_mod == VE_MODULE_2) {
+		VE_LOGI("remove ve2\n");
+	} else {
+		VE_LOGE("unsupport ve module\n");
+	}
+
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW20)
 	pm_runtime_disable(&pdev->dev);
 #endif
-	cedardev_exit();
+	cedardev_exit(pdev);
+	kfree(cedar_devp);
 	return 0;
 }
 
 static int sunxi_cedar_probe(struct platform_device *pdev)
 {
+	struct device *dev = &pdev->dev;
+	struct cedar_dev *cedar_devp = NULL;
+	struct cedar_ve_quirks *quirks = NULL;
 	struct device_node *np = pdev->dev.of_node;
-	pdev->id = of_alias_get_id(np, "ve");
-	if (pdev->id < 0) {
-		VE_LOGD("failed to get alias ve id\n");
-	} else if (pdev->id == 1) {
-		VE_LOGI("device ve1 just use to add iommu master\n");
-		return 0;
+
+	quirks = (struct cedar_ve_quirks *)of_device_get_match_data(&pdev->dev);
+	if (quirks == NULL) {
+		VE_LOGE("quirks get failed\n");
+		return -1;
 	}
+	cedar_devp = kzalloc(sizeof(*cedar_devp), GFP_KERNEL);
+	if (cedar_devp == NULL) {
+		VE_LOGE("malloc mem for cedar device err\n");
+		return -ENOMEM;
+	}
+	dev_set_drvdata(dev, cedar_devp);
+	cedar_devp->quirks = quirks;
+	quirks->priv = cedar_devp;
+
+	if (quirks->ve_mod == VE_MODULE_NORMAL) {
+		/* note: this method only compatible with existed platforms, no longer use.
+		 * and will be switched to ve_mod to judge dual iommu.
+		 */
+		pdev->id = of_alias_get_id(np, "ve");
+		if (pdev->id == 1) {
+			VE_LOGI("probe ve just use to add iommu master\n");
+			return 0;
+		} else {
+			VE_LOGI("probe ve\n");
+		}
+	} else if (quirks->ve_mod == VE_MODULE_1) {
+		VE_LOGI("probe ve1\n");
+		return 0;
+	} else if (quirks->ve_mod == VE_MODULE_2) {
+		VE_LOGI("probe ve2\n");
+	} else {
+		VE_LOGE("unsupport ve module\n");
+		return -1;
+	}
+
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW20)
 	VE_LOGD("power-domain init!!!\n");
 	/* add for R528 sleep and awaken */
@@ -2987,13 +2153,45 @@ static int sunxi_cedar_probe(struct platform_device *pdev)
 	pm_runtime_enable(&pdev->dev);
 	pm_runtime_get_sync(&pdev->dev);
 #endif
-	cedardev_init(pdev);
-	VE_LOGD("\n");
+	if (cedardev_init(pdev)) {
+		VE_LOGE("cedardev_init failed\n");
+		return -1;
+	}
+
 	return 0;
 }
 
+static struct cedar_ve_quirks cedar_ve_quirk = {
+	.ve_mod = VE_MODULE_NORMAL,
+	.class_name = "cedar_ve",
+	.dev_name = "cedar_dev",
+};
+
+static struct cedar_ve_quirks cedar_ve1_quirk = {
+	.ve_mod = VE_MODULE_1,
+	.class_name = NULL,
+	.dev_name = NULL,
+};
+
+static struct cedar_ve_quirks cedar_ve2_quirk = {
+	.ve_mod = VE_MODULE_2,
+	.class_name = "cedar_ve2",
+	.dev_name = "cedar_dev_ve2",
+};
+
 static struct of_device_id sunxi_cedar_match[] = {
-	{ .compatible = "allwinner,sunxi-cedar-ve",},
+	{
+		.compatible = "allwinner,sunxi-cedar-ve",
+		.data = &cedar_ve_quirk,
+	},
+	{
+		.compatible = "allwinner,sunxi-cedar-ve1",
+		.data = &cedar_ve1_quirk,
+	},
+	{
+		.compatible = "allwinner,sunxi-cedar-ve2",
+		.data = &cedar_ve2_quirk,
+	},
 	{}
 };
 MODULE_DEVICE_TABLE(of, sunxi_cedar_match);
@@ -3022,13 +2220,19 @@ static void __exit sunxi_cedar_exit(void)
 {
 	platform_driver_unregister(&sunxi_cedar_driver);
 }
+#if IS_ENABLED(CONFIG_AW_RPROC_FAST_BOOT)
+postcore_initcall_sync(sunxi_cedar_init);
+#else
+late_initcall(sunxi_cedar_init);
+#endif
 
-module_init(sunxi_cedar_init);
 module_exit(sunxi_cedar_exit);
-
 
 MODULE_AUTHOR("Soft-Reuuimlla");
 MODULE_DESCRIPTION("User mode CEDAR device interface");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
-MODULE_ALIAS("platform:cedarx-sunxi");
+MODULE_ALIAS("platform:cedarc-sunxi");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 25))
+MODULE_IMPORT_NS(DMA_BUF);
+#endif

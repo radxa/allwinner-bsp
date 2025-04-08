@@ -58,6 +58,7 @@ obj-$(CONFIG_AW_SUN60IW1_DSP_CCU)	+= ccu-sun60iw1-dsp.o
 obj-$(CONFIG_AW_SUN60IW1_R_CCU)		+= ccu-sun60iw1-r.o
 
 obj-$(CONFIG_AW_SUN60IW2_CCU)		+= ccu-sun60iw2.o
+obj-$(CONFIG_AW_SUN60IW2_CCU)		+= ccu-sun60iw2-cpupll.o
 obj-$(CONFIG_AW_SUN60IW2_CCU)		+= ccu-sun60iw2-rtc.o
 obj-$(CONFIG_AW_SUN60IW2_R_CCU)		+= ccu-sun60iw2-r.o
 

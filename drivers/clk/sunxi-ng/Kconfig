@@ -6,6 +6,11 @@ config AW_CCU
 	select RESET_CONTROLLER
 	select AW_RTC_CCU
 
+config AW_STANDARD_CCU
+	tristate "Standard clock Support for Allwinner SoCs"
+	depends on AW_CCU
+	default n
+
 config AW_DDR_CCU
 	tristate "DDR_CCU"
 	default AW_CCU
@@ -110,6 +115,7 @@ config AW_SUN60IW2_CCU
 	tristate "SUN60IW2 CCU"
 	default ARCH_SUN60IW2
 	depends on AW_CCU
+	select AW_STANDARD_CCU
 
 config AW_SUN60IW2_R_CCU
 	tristate "SUN60IW2 PRCM CCU"

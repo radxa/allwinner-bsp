@@ -4,14 +4,12 @@
 #
 # Copyright(c) 2022-2027 Allwinnertech Co., Ltd.
 
+ccflags-y += -I $(srctree)/bsp/drivers/sound/pa/
 ccflags-y += -I $(srctree)/bsp/drivers/sound/adapter
 ADPT_DIR := ../adapter
 
 snd_soc_sunxi_component_sfx-objs		+= snd_sunxi_sfx.o
 obj-$(CONFIG_SND_SOC_SUNXI_SFX)			+= snd_soc_sunxi_component_sfx.o
-
-snd_soc_sunxi_component_test_clk-objs		+= snd_sunxi_test_clk.o
-obj-$(CONFIG_SND_SOC_SUNXI_TEST_CLK)		+= snd_soc_sunxi_component_test_clk.o
 
 # common -> platform of dma
 snd_soc_sunxi_pcm-objs				+= $(ADPT_DIR)/snd_sunxi_pcm_adapter.o
@@ -24,7 +22,9 @@ snd_soc_sunxi_common-objs			+= snd_sunxi_rxsync.o
 snd_soc_sunxi_common-objs			+= snd_sunxi_jack_codec.o
 snd_soc_sunxi_common-objs			+= snd_sunxi_jack_extcon.o
 snd_soc_sunxi_common-objs			+= snd_sunxi_jack_gpio.o
+snd_soc_sunxi_common-objs			+= snd_sunxi_jack_advance.o
 snd_soc_sunxi_common-objs			+= snd_sunxi_jack.o
+snd_soc_sunxi_common-objs			+= snd_sunxi_common_utils.o
 snd_soc_sunxi_common-objs			+= snd_sunxi_common.o
 obj-$(CONFIG_SND_SOC_SUNXI_COMMON)		+= snd_soc_sunxi_common.o
 
@@ -37,12 +37,22 @@ else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN8IW11_CODEC)))
 snd_soc_sunxi_internal_codec-objs		+= snd_sun8iw11_codec.o
 else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN8IW18_CODEC)))
 snd_soc_sunxi_internal_codec-objs		+= snd_sun8iw18_codec.o
+else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN8IW20_CODEC)))
+snd_soc_sunxi_internal_codec-objs		+= snd_sun8iw20_codec.o
 else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN8IW21_CODEC)))
 snd_soc_sunxi_internal_codec-objs		+= snd_sun8iw21_codec.o
+else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN20IW1_CODEC)))
+snd_soc_sunxi_internal_codec-objs		+= snd_sun20iw1_codec.o
 else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN55IW3_CODEC)))
 snd_soc_sunxi_internal_codec-objs		+= snd_sun55iw3_codec.o
 else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN55IW6_CODEC)))
 snd_soc_sunxi_internal_codec-objs		+= snd_sun55iw6_codec.o
+else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN251IW1_CODEC)))
+snd_soc_sunxi_internal_codec-objs		+= snd_sun251iw1_codec.o
+else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN300IW1_CODEC)))
+snd_soc_sunxi_internal_codec-objs		+= snd_sun300iw1_codec.o
+else ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_SUN65IW1_CODEC)))
+snd_soc_sunxi_internal_codec-objs		+= snd_sun65iw1_codec.o
 endif
 snd_soc_sunxi_internal_codec-objs		+= snd_sunxi_dap.o
 obj-$(CONFIG_SND_SOC_SUNXI_INTERNALCODEC)	+= snd_soc_sunxi_internal_codec.o
@@ -78,8 +88,18 @@ else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN55IW3)))
 snd_soc_sunxi_owa-objs              += platforms/snd_sun55iw3_owa.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW18)))
 snd_soc_sunxi_owa-objs              += platforms/snd_sun8iw18_owa.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW20)))
+snd_soc_sunxi_owa-objs              += platforms/snd_sun8iw20_owa.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN20IW1)))
+snd_soc_sunxi_owa-objs              += platforms/snd_sun20iw1_owa.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN55IW6)))
 snd_soc_sunxi_owa-objs              += platforms/snd_sun55iw6_owa.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN65IW1)))
+snd_soc_sunxi_owa-objs              += platforms/snd_sun65iw1_owa.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN251IW1)))
+snd_soc_sunxi_owa-objs              += platforms/snd_sun251iw1_owa.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN60IW2)))
+snd_soc_sunxi_owa-objs              += platforms/snd_sun60iw2_owa.o
 endif
 ifneq (, $(filter y m, $(CONFIG_SND_SOC_SUNXI_OWA_RXIEC61937)))
 snd_soc_sunxi_owa-objs				+= snd_sunxi_owa_rx61937.o
@@ -96,10 +116,20 @@ else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN55IW3)))
 snd_soc_sunxi_dmic-objs              += platforms/snd_sun55iw3_dmic.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW18)))
 snd_soc_sunxi_dmic-objs              += platforms/snd_sun8iw18_dmic.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW20)))
+snd_soc_sunxi_dmic-objs              += platforms/snd_sun8iw20_dmic.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW21)))
 snd_soc_sunxi_dmic-objs              += platforms/snd_sun8iw21_dmic.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN20IW1)))
+snd_soc_sunxi_dmic-objs              += platforms/snd_sun20iw1_dmic.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN55IW6)))
 snd_soc_sunxi_dmic-objs              += platforms/snd_sun55iw6_dmic.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN65IW1)))
+snd_soc_sunxi_dmic-objs              += platforms/snd_sun65iw1_dmic.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN60IW2)))
+snd_soc_sunxi_dmic-objs              += platforms/snd_sun60iw2_dmic.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN251IW1)))
+snd_soc_sunxi_dmic-objs              += platforms/snd_sun251iw1_dmic.o
 endif
 snd_soc_sunxi_dmic-objs				+= snd_sunxi_dmic.o
 obj-$(CONFIG_SND_SOC_SUNXI_DMIC)		+= snd_soc_sunxi_dmic.o
@@ -113,10 +143,24 @@ else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN55IW3)))
 snd_soc_sunxi_i2s-objs              += platforms/snd_sun55iw3_i2s.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW18)))
 snd_soc_sunxi_i2s-objs              += platforms/snd_sun8iw18_i2s.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW17)))
+snd_soc_sunxi_i2s-objs              += platforms/snd_sun8iw17_i2s.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW20)))
+snd_soc_sunxi_i2s-objs              += platforms/snd_sun8iw20_i2s.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN8IW21)))
 snd_soc_sunxi_i2s-objs              += platforms/snd_sun8iw21_i2s.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN20IW1)))
+snd_soc_sunxi_i2s-objs              += platforms/snd_sun20iw1_i2s.o
 else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN55IW6)))
 snd_soc_sunxi_i2s-objs              += platforms/snd_sun55iw6_i2s.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN251IW1)))
+snd_soc_sunxi_i2s-objs              += platforms/snd_sun251iw1_i2s.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN300IW1)))
+snd_soc_sunxi_i2s-objs              += platforms/snd_sun300iw1_i2s.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN65IW1)))
+snd_soc_sunxi_i2s-objs              += platforms/snd_sun65iw1_i2s.o
+else ifneq (, $(filter y m, $(CONFIG_ARCH_SUN60IW2)))
+snd_soc_sunxi_i2s-objs              += platforms/snd_sun60iw2_i2s.o
 endif
 snd_soc_sunxi_i2s-objs				+= snd_sunxi_i2s.o
 obj-$(CONFIG_SND_SOC_SUNXI_I2S)			+= snd_soc_sunxi_i2s.o

@@ -53,11 +53,11 @@ static int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 	struct asoc_simple_priv *priv = snd_soc_card_get_drvdata(rtd->card);
 	struct snd_soc_dai_link *dai_link = simple_priv_to_link(priv, rtd->num);
 	struct simple_dai_props *dai_props = simple_priv_to_props(priv, rtd->num);
-	struct snd_sunxi_ucfmt_cb *cpu_dai_cb = &dai_props->ucfmt->cpu_dai_cb;
-	struct snd_sunxi_ucfmt_cb *codec_dai_cbs = dai_props->ucfmt->codec_dai_cbs;
 	struct asoc_simple_dai *dais = priv->dais;
 	unsigned int mclk = 0;
-	unsigned int cpu_pll_clk, codec_pll_clk;
+	unsigned int cpu_pll_clk;
+	unsigned int codec_fp;
+	unsigned int codec_pllin_clk, codec_pllout_clk;
 	unsigned int cpu_bclk_ratio, codec_bclk_ratio;
 	unsigned int freq_point;
 	int cpu_clk_div, codec_clk_div;
@@ -74,6 +74,7 @@ static int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 	case 96000:
 	case 192000:
 		freq_point = 24576000;
+		codec_fp = dai_props->codec_pll_fp[1];
 		break;
 	case 11025:
 	case 22050:
@@ -81,6 +82,7 @@ static int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 	case 88200:
 	case 176400:
 		freq_point = 22579200;
+		codec_fp = dai_props->codec_pll_fp[0];
 		break;
 	default:
 		SND_LOG_ERR("Invalid rate %d\n", params_rate(params));
@@ -89,12 +91,33 @@ static int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 
 	/* for cpudai pll clk */
 	cpu_pll_clk	= freq_point * dai_props->cpu_pll_fs;
-	codec_pll_clk	= freq_point * dai_props->codec_pll_fs;
 	cpu_clk_div	= cpu_pll_clk / params_rate(params);
-	codec_clk_div	= codec_pll_clk / params_rate(params);
+	if (dai_props->codec_pllin_mode == 0) {			/* fp * fs mode */
+		codec_pllin_clk = freq_point * dai_props->codec_pllin_fs;
+	} else if (dai_props->codec_pllin_mode == 1) {		/* codec-fp * fs mode */
+		codec_pllin_clk = codec_fp * dai_props->codec_pllin_fs;
+	} else if (dai_props->codec_pllin_mode == 2) {		/* bclk mode */
+		codec_pllin_clk = params_rate(params) * dais->slot_width * dais->slots;
+	} else {
+		SND_LOG_ERR("Invalid codec pllin mode\n");
+		return -1;
+	}
+
+	if (dai_props->codec_pllout_mode == 0) {		/* fp * fs mode */
+		codec_pllout_clk = freq_point * dai_props->codec_pllout_fs;
+	} else if (dai_props->codec_pllout_mode == 1) {		/* codec-fp * fs mode */
+		codec_pllout_clk = codec_fp * dai_props->codec_pllout_fs;
+	} else if (dai_props->codec_pllout_mode == 2) {		/* bclk mode */
+		codec_pllout_clk = params_rate(params) * dais->slot_width * dais->slots;
+	} else {
+		SND_LOG_ERR("Invalid codec pllout mode\n");
+		return -1;
+	}
+	codec_clk_div	= codec_pllout_clk / params_rate(params);
 	SND_LOG_DEBUG("freq point   : %u\n", freq_point);
 	SND_LOG_DEBUG("cpu pllclk   : %u\n", cpu_pll_clk);
-	SND_LOG_DEBUG("codec pllclk : %u\n", codec_pll_clk);
+	SND_LOG_DEBUG("codec pllin_clk : %u\n", codec_pllin_clk);
+	SND_LOG_DEBUG("codec pllout_clk : %u\n", codec_pllout_clk);
 	SND_LOG_DEBUG("cpu clk_div  : %u\n", cpu_clk_div);
 	SND_LOG_DEBUG("codec clk_div: %u\n", codec_clk_div);
 
@@ -116,14 +139,14 @@ static int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 	sunxi_adpt_rtd_codec_dai(rtd, i, codec_dai) {
 		if (codec_dai->driver->ops && codec_dai->driver->ops->set_pll) {
 			ret = snd_soc_dai_set_pll(codec_dai, substream->stream, 0,
-						  codec_pll_clk, codec_pll_clk);
+						  codec_pllin_clk, codec_pllout_clk);
 			if (ret) {
 				SND_LOG_ERR("codec_dai set pllclk failed\n");
 				return ret;
 			}
 		} else if (codec_dai->component->driver->set_pll) {
 			ret = snd_soc_component_set_pll(codec_dai->component, substream->stream, 0,
-							codec_pll_clk, codec_pll_clk);
+							codec_pllin_clk, codec_pllout_clk);
 			if (ret) {
 				SND_LOG_ERR("codec_dai set pllclk failed\n");
 				return ret;
@@ -160,7 +183,8 @@ static int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 	else if (freq_point == 24576000)
 		mclk = dai_props->mclk_fp[1] * dai_props->mclk_fs;
 	cpu_bclk_ratio = cpu_pll_clk / (params_rate(params) * dais->slot_width * dais->slots);
-	codec_bclk_ratio = codec_pll_clk / (params_rate(params) * dais->slot_width * dais->slots);
+	codec_bclk_ratio = codec_pllout_clk / (params_rate(params)
+			   * dais->slot_width * dais->slots);
 	SND_LOG_DEBUG("mclk-fs         : %u\n", dai_props->mclk_fs);
 	SND_LOG_DEBUG("mclk-fp0        : %u\n", dai_props->mclk_fp[0]);
 	SND_LOG_DEBUG("mclk-fp1        : %u\n", dai_props->mclk_fp[1]);
@@ -168,25 +192,11 @@ static int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 	SND_LOG_DEBUG("cpu_bclk_ratio  : %u\n", cpu_bclk_ratio);
 	SND_LOG_DEBUG("codec_bclk_ratio: %u\n", codec_bclk_ratio);
 
-	if (cpu_dai_cb->callback) {
-		ret = cpu_dai_cb->callback(dai_props->ucfmt, cpu_dai);
-		if (ret) {
-			SND_LOG_ERR("ucfmt cpu_dai_cb err\n");
-			return ret;
-		}
-	}
-	sunxi_adpt_rtd_codec_dai(rtd, i, codec_dai) {
-		if (i > dai_props->ucfmt->num_codecs) {
-			SND_LOG_WARN("beyond codecs number!\n");
-			break;
-		}
-		if (codec_dai_cbs[i].callback) {
-			ret = codec_dai_cbs[i].callback(dai_props->ucfmt, codec_dai);
-			if (ret) {
-				SND_LOG_ERR("ucfmt codec_dai_cb err\n");
-				return ret;
-			}
-		}
+	ret = snd_sunxi_extparam_set_state_sync(rtd->card->name, EXTPARAM_ID_DAI_UCFMT,
+						(void *)&dai_props->dai_ucfmt);
+	if (ret) {
+		SND_LOG_ERR("extparam set state sync failed\n");
+		return ret;
 	}
 
 	if (cpu_dai->driver->ops && cpu_dai->driver->ops->set_sysclk) {
@@ -271,25 +281,60 @@ static int asoc_simple_dai_init(struct snd_soc_pcm_runtime *rtd)
 {
 	int i, j;
 	struct snd_soc_dai *codec_dai;
+	struct snd_soc_dai *cpu_dai;
 	struct snd_soc_component *component;
 	struct snd_soc_dapm_context *dapm;
 	struct snd_soc_card *card = rtd->card;
 	const struct snd_kcontrol_new *controls = card->controls;
+	struct snd_soc_dapm_widget *w;
+	char prefixed_pin[80];
+	const char *pin_name;
+	const char *prefix;
 
 	sunxi_adpt_rtd_codec_dai(rtd, i, codec_dai) {
 		component = codec_dai->component;
 		dapm = &component->dapm;
-		for (j = 0; j < card->num_controls; j++)
-			if (controls[j].info == snd_soc_dapm_info_pin_switch)
-				snd_soc_dapm_disable_pin(dapm,
-							 (const char *)controls[j].private_value);
-
-		if (card->num_controls)
-			snd_soc_dapm_sync(dapm);
-
-		/* snd_soc_dai_set_sysclk(); */
-		/* snd_soc_dai_set_tdm_slot(); */
+		prefix = component->name_prefix;
+		for (j = 0; j < card->num_controls; j++) {
+			if (controls[j].info == snd_soc_dapm_info_pin_switch) {
+				if (prefix) {
+					snprintf(prefixed_pin, sizeof(prefixed_pin), "%s %s",
+						prefix, (const char *)controls[j].private_value);
+					pin_name = prefixed_pin;
+				} else {
+					pin_name = (const char *)controls[j].private_value;
+				}
+				list_for_each_entry(w, &card->widgets, list)
+					if (!strcmp(w->name, pin_name) && w->dapm == dapm)
+						snd_soc_dapm_disable_pin(dapm, pin_name);
+			}
+		}
 	}
+
+	cpu_dai = sunxi_adpt_rtd_cpu_dai(rtd);
+	component = cpu_dai->component;
+	dapm = &component->dapm;
+	prefix = component->name_prefix;
+	for (j = 0; j < card->num_controls; j++) {
+		if (controls[j].info == snd_soc_dapm_info_pin_switch) {
+			if (prefix) {
+				snprintf(prefixed_pin, sizeof(prefixed_pin), "%s %s",
+					 prefix, (const char *)controls[j].private_value);
+				pin_name = prefixed_pin;
+			} else {
+				pin_name = (const char *)controls[j].private_value;
+			}
+			list_for_each_entry(w, &card->widgets, list)
+				if (!strcmp(w->name, pin_name) && w->dapm == dapm)
+					snd_soc_dapm_disable_pin(dapm, pin_name);
+		}
+	}
+
+	if (card->num_controls)
+		snd_soc_dapm_sync(dapm);
+
+	/* snd_soc_dai_set_sysclk(); */
+	/* snd_soc_dai_set_tdm_slot(); */
 
 	return 0;
 }
@@ -330,6 +375,10 @@ static int simple_dai_link_of(struct device_node *node, struct asoc_simple_priv 
 	}
 
 	ret = asoc_simple_parse_daifmt(top_np, codec, prefix, &dai_link->dai_fmt);
+	if (ret < 0)
+		goto dai_link_of_err;
+
+	ret = asoc_simple_parse_ucfmt(top_np, prefix, priv);
 	if (ret < 0)
 		goto dai_link_of_err;
 	/* sunxi: parse stream direction
@@ -475,6 +524,7 @@ static int simple_parse_of(struct asoc_simple_priv *priv)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 /* sysfs debug */
 struct snd_sunxi_dump_help {
 	const char opt[32];
@@ -510,17 +560,18 @@ static void snd_sunxi_dump_help(void *priv_orig, char *buf, size_t *count)
 	static struct snd_sunxi_dump_help helps[] = {
 		{"Opt num", "Val", "note"},
 		{"1 CPUPLL FS", "1~n", "22.5792 or 24.576 * fs MHz"},
-		{"2 CODECPLL FS", "1~n", "22.5792 or 24.576 * fs MHz"},
-		{"3 MCLK FS", "0~n", "mclk fs flag"},
-		{"4 MCLK FP(44.1k fp)", "0~n", "mclk_freq(44.1k fp) = mclk_fs * mclk_fp0"},
-		{"5 MCLK FP(48k fp)", "0~n", "mclk_freq(48k fp) = mclk_fs * mclk_fp1"},
-		{"6 FMT", "i2s right_j left_j dsp_a dsp_b", "i2s/pcm format config"},
-		{"7 MASTER", "CBM_CFM CBS_CFM CBM_CFS CBS_CFS", "bclk&lrck master"},
-		{"8 INVERT", "NB_NF NB_IF IB_NF IB_IF", "bclk&lrck invert"},
-		{"9 SLOTS", "2~32 (must be 2*n)", "slot number"},
-		{"10 SLOT WIDTH", "16 24 32", "slot width"},
-		{"11 ML SEL", "RM_TM RM_TL RL_TM RL_TL", "RX&TX MSB/LSB first select"},
-		{"12 DATA LATE", "0~3", "data is offset by n BCLKS to LRCK"},
+		{"2 CODECPLLIN FS", "1~n", "22.5792 or 24.576 * fs MHz"},
+		{"3 CODECPLLOUT FS", "1~n", "22.5792 or 24.576 * fs MHz"},
+		{"4 MCLK FS", "0~n", "mclk fs flag"},
+		{"5 MCLK FP(44.1k fp)", "0~n", "mclk_freq(44.1k fp) = mclk_fs * mclk_fp0"},
+		{"6 MCLK FP(48k fp)", "0~n", "mclk_freq(48k fp) = mclk_fs * mclk_fp1"},
+		{"7 FMT", "i2s right_j left_j dsp_a dsp_b", "i2s/pcm format config"},
+		{"8 MASTER", "CBM_CFM CBS_CFM CBM_CFS CBS_CFS", "bclk&lrck master"},
+		{"9 INVERT", "NB_NF NB_IF IB_NF IB_IF", "bclk&lrck invert"},
+		{"10 SLOTS", "2~32 (must be 2*n)", "slot number"},
+		{"11 SLOT WIDTH", "16 24 32", "slot width"},
+		{"12 ML SEL", "RM_TM RM_TL RL_TM RL_TL", "RX&TX MSB/LSB first select"},
+		{"13 DATA LATE", "0~3", "data is offset by n BCLKS to LRCK"},
 	};
 	static unsigned int help_cnt = ARRAY_SIZE(helps);
 	int i;
@@ -544,11 +595,12 @@ static int snd_sunxi_dump_show(void *priv_orig, char *buf, size_t *count)
 	struct asoc_simple_priv *priv = (struct asoc_simple_priv *)priv_orig;
 	struct snd_soc_card *card = simple_priv_to_card(priv);
 	unsigned int dai_fmt		= card->dai_link->dai_fmt;
-	struct snd_sunxi_ucfmt *ucfmt = priv->dai_props->ucfmt;
+	struct snd_sunxi_dai_ucfmt *dai_ucfmt = &priv->dai_props->dai_ucfmt;
 	unsigned int mclk_fs		= priv->dai_props->mclk_fs;
 	unsigned int *mclk_fp		= priv->dai_props->mclk_fp;
 	unsigned int cpu_pll_fs		= priv->dai_props->cpu_pll_fs;
-	unsigned int codec_pll_fs	= priv->dai_props->codec_pll_fs;
+	unsigned int codec_pllin_fs	= priv->dai_props->codec_pllin_fs;
+	unsigned int codec_pllout_fs = priv->dai_props->codec_pllout_fs;
 	int slots			= priv->dais->slots;
 	int slot_width			= priv->dais->slot_width;
 	char prop[8] = {0};
@@ -559,7 +611,8 @@ static int snd_sunxi_dump_show(void *priv_orig, char *buf, size_t *count)
 		priv->show_daifmt = false;
 
 	count_tmp += sprintf(buf + count_tmp, "CPUPLL FS   -> %u\n", cpu_pll_fs);
-	count_tmp += sprintf(buf + count_tmp, "CODECPLL FS -> %u\n", codec_pll_fs);
+	count_tmp += sprintf(buf + count_tmp, "CODECPLLIN FS -> %u\n", codec_pllin_fs);
+	count_tmp += sprintf(buf + count_tmp, "CODECPLLOUT FS -> %u\n", codec_pllout_fs);
 	count_tmp += sprintf(buf + count_tmp, "MCLK FS           -> %u\n", mclk_fs);
 	count_tmp += sprintf(buf + count_tmp, "MCLK FP(44.1k fp) -> %u\n", mclk_fp[0]);
 	count_tmp += sprintf(buf + count_tmp, "MCLK FP(48k fp)   -> %u\n", mclk_fp[1]);
@@ -623,16 +676,16 @@ static int snd_sunxi_dump_show(void *priv_orig, char *buf, size_t *count)
 	count_tmp += sprintf(buf + count_tmp, "INVERT      -> %s\n", prop);
 	count_tmp += sprintf(buf + count_tmp, "SLOTS       -> %d\n", slots);
 	count_tmp += sprintf(buf + count_tmp, "SLOT WIDTH  -> %d\n", slot_width);
-	if (!ucfmt->rx_lsb_first && !ucfmt->tx_lsb_first)
+	if (!dai_ucfmt->rx_lsb_first && !dai_ucfmt->tx_lsb_first)
 		snprintf(prop, sizeof(prop), "%s", "RM_TM");
-	else if (ucfmt->rx_lsb_first && !ucfmt->tx_lsb_first)
+	else if (dai_ucfmt->rx_lsb_first && !dai_ucfmt->tx_lsb_first)
 		snprintf(prop, sizeof(prop), "%s", "RL_TM");
-	else if (!ucfmt->rx_lsb_first && ucfmt->tx_lsb_first)
+	else if (!dai_ucfmt->rx_lsb_first && dai_ucfmt->tx_lsb_first)
 		snprintf(prop, sizeof(prop), "%s", "RM_TL");
 	else
 		snprintf(prop, sizeof(prop), "%s", "RL_TL");
 	count_tmp += sprintf(buf + count_tmp, "ML SEL	    -> %s\n", prop);
-	count_tmp += sprintf(buf + count_tmp, "DATA LATE   -> %d\n", ucfmt->data_late);
+	count_tmp += sprintf(buf + count_tmp, "DATA LATE   -> %d\n", dai_ucfmt->data_late);
 
 	*count = count_tmp;
 
@@ -642,17 +695,19 @@ static int snd_sunxi_dump_show(void *priv_orig, char *buf, size_t *count)
 static int snd_sunxi_dump_store(void *priv_orig, const char *buf, size_t count)
 {
 	struct asoc_simple_priv *priv = (struct asoc_simple_priv *)priv_orig;
-	struct snd_sunxi_ucfmt *ucfmt = priv->dai_props->ucfmt;
+	struct simple_dai_props *dai_props = simple_priv_to_props(priv, 0);
+	struct snd_sunxi_dai_ucfmt *dai_ucfmt = &dai_props->dai_ucfmt;
 	struct snd_soc_card *card = simple_priv_to_card(priv);
 	unsigned int dai_fmt		= card->dai_link->dai_fmt;
-	bool rx_lsb_first		= ucfmt->rx_lsb_first;
-	bool tx_lsb_first		= ucfmt->tx_lsb_first;
+	bool rx_lsb_first		= dai_ucfmt->rx_lsb_first;
+	bool tx_lsb_first		= dai_ucfmt->tx_lsb_first;
 	unsigned int mclk_fs		= priv->dai_props->mclk_fs;
 	unsigned int mclk_fp0		= priv->dai_props->mclk_fp[0];
 	unsigned int mclk_fp1		= priv->dai_props->mclk_fp[1];
 	unsigned int cpu_pll_fs		= priv->dai_props->cpu_pll_fs;
-	unsigned int codec_pll_fs	= priv->dai_props->codec_pll_fs;
-	unsigned int data_late		= ucfmt->data_late;
+	unsigned int codec_pllin_fs	= priv->dai_props->codec_pllin_fs;
+	unsigned int codec_pllout_fs	= priv->dai_props->codec_pllout_fs;
+	unsigned int data_late		= dai_ucfmt->data_late;
 	int slots			= priv->dais->slots;
 	int slot_width			= priv->dais->slot_width;
 
@@ -679,27 +734,32 @@ static int snd_sunxi_dump_store(void *priv_orig, const char *buf, size_t count)
 		if (cpu_pll_fs > 0)
 			set_sync = true;
 		break;
-	case 2: /* set codec_pll_fs */
-		codec_pll_fs = simple_strtoul(scanf_str, NULL, 10);
-		if (codec_pll_fs > 0)
+	case 2: /* set codec_pllin_fs */
+		codec_pllin_fs = simple_strtoul(scanf_str, NULL, 10);
+		if (codec_pllin_fs > 0)
 			set_sync = true;
 		break;
-	case 3: /* set mclk_fs */
+	case 3: /* set codec_pllout_fs */
+		codec_pllout_fs = simple_strtoul(scanf_str, NULL, 10);
+		if (codec_pllout_fs > 0)
+			set_sync = true;
+		break;
+	case 4: /* set mclk_fs */
 		mclk_fs = simple_strtoul(scanf_str, NULL, 10);
 		if (mclk_fs > 0)
 			set_sync = true;
 		break;
-	case 4: /* set mclk_fp(44.1k fp) */
+	case 5: /* set mclk_fp(44.1k fp) */
 		mclk_fp0 = simple_strtoul(scanf_str, NULL, 10);
 		if (mclk_fp0 > 0)
 			set_sync = true;
 		break;
-	case 5: /* set mclk_fp(48k fp) */
+	case 6: /* set mclk_fp(48k fp) */
 		mclk_fp1 = simple_strtoul(scanf_str, NULL, 10);
 		if (mclk_fp1 > 0)
 			set_sync = true;
 		break;
-	case 6: /* set dai_fmt -> FMT */
+	case 7: /* set dai_fmt -> FMT */
 		dai_fmt_tmp = dai_fmt;
 		dai_fmt &= ~SND_SOC_DAIFMT_FORMAT_MASK;
 		if (!strncmp(scanf_str, "i2s", 3)) {
@@ -721,7 +781,7 @@ static int snd_sunxi_dump_store(void *priv_orig, const char *buf, size_t count)
 			dai_fmt = dai_fmt_tmp;
 		}
 		break;
-	case 7: /* set dai_fmt -> MASTER */
+	case 8: /* set dai_fmt -> MASTER */
 		dai_fmt_tmp = dai_fmt;
 		dai_fmt &= ~SND_SOC_DAIFMT_MASTER_MASK;
 		if (!strncmp(scanf_str, "CBM_CFM", 7)) {
@@ -740,7 +800,7 @@ static int snd_sunxi_dump_store(void *priv_orig, const char *buf, size_t count)
 			dai_fmt = dai_fmt_tmp;
 		}
 		break;
-	case 8: /* set dai_fmt -> INVERT */
+	case 9: /* set dai_fmt -> INVERT */
 		dai_fmt_tmp = dai_fmt;
 		dai_fmt &= ~SND_SOC_DAIFMT_INV_MASK;
 		if (!strncmp(scanf_str, "NB_NF", 5)) {
@@ -759,17 +819,17 @@ static int snd_sunxi_dump_store(void *priv_orig, const char *buf, size_t count)
 			dai_fmt = dai_fmt_tmp;
 		}
 		break;
-	case 9: /* set slots */
+	case 10: /* set slots */
 		slots = simple_strtoul(scanf_str, NULL, 10);
 		if (slots > 0 && slots < 32 && (slots % 2 == 0))
 			set_sync = true;
 		break;
-	case 10: /* set slot_width */
+	case 11: /* set slot_width */
 		slot_width = simple_strtoul(scanf_str, NULL, 10);
 		if (slot_width == 16 || slot_width == 24 || slot_width == 32)
 			set_sync = true;
 		break;
-	case 11: /* set MSB/LSB first select */
+	case 12: /* set MSB/LSB first select */
 		if (!strncmp(scanf_str, "RM_TM", 5)) {
 			rx_lsb_first = false;
 			tx_lsb_first = false;
@@ -788,9 +848,9 @@ static int snd_sunxi_dump_store(void *priv_orig, const char *buf, size_t count)
 			set_sync = true;
 		}
 		break;
-	case 12: /* set data late */
+	case 13: /* set data late */
 		data_late = simple_strtol(scanf_str, NULL, 10);
-		if (ucfmt->fmt == SND_SOC_DAIFMT_DSP_A || ucfmt->fmt == SND_SOC_DAIFMT_DSP_B) {
+		if (dai_ucfmt->fmt == SND_SOC_DAIFMT_DSP_A || dai_ucfmt->fmt == SND_SOC_DAIFMT_DSP_B) {
 			if (data_late <= 3)
 				set_sync = true;
 		}
@@ -811,13 +871,14 @@ static int snd_sunxi_dump_store(void *priv_orig, const char *buf, size_t count)
 		priv->dai_props->mclk_fp[0]	= mclk_fp0;
 		priv->dai_props->mclk_fp[1]	= mclk_fp1;
 		priv->dai_props->cpu_pll_fs	= cpu_pll_fs;
-		priv->dai_props->codec_pll_fs	= codec_pll_fs;
+		priv->dai_props->codec_pllin_fs	= codec_pllin_fs;
+		priv->dai_props->codec_pllout_fs	= codec_pllout_fs;
 		priv->dais->slots		= slots;
 		priv->dais->slot_width		= slot_width;
-		ucfmt->rx_lsb_first		= rx_lsb_first;
-		ucfmt->tx_lsb_first		= tx_lsb_first;
-		ucfmt->data_late		= data_late;
-		ucfmt->fmt			= dai_fmt & SND_SOC_DAIFMT_FORMAT_MASK;
+		dai_ucfmt->rx_lsb_first 	= rx_lsb_first;
+		dai_ucfmt->tx_lsb_first 	= tx_lsb_first;
+		dai_ucfmt->data_late		= data_late;
+		dai_ucfmt->fmt			= dai_fmt & SND_SOC_DAIFMT_FORMAT_MASK;
 	}
 
 	return 0;
@@ -826,12 +887,14 @@ err:
 	pr_err("wrong format: %s\n", buf);
 	return -1;
 }
+#endif
 
 static int simple_soc_probe(struct snd_soc_card *card)
 {
 	struct asoc_simple_priv *priv = snd_soc_card_get_drvdata(card);
-	struct simple_dai_props *dai_props = simple_priv_to_props(priv, 0);
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump;
+#endif
 	int ret;
 
 	SND_LOG_DEBUG("\n");
@@ -841,6 +904,7 @@ static int simple_soc_probe(struct snd_soc_card *card)
 		return -1;
 	}
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	if (asoc_simple_is_i2sdai(priv->dais)) {
 		dump = &priv->dump;
 		snprintf(priv->module_name, 32, "%s-%s", "machine", card->name);
@@ -854,6 +918,18 @@ static int simple_soc_probe(struct snd_soc_card *card)
 		if (ret)
 			SND_LOG_WARN("snd_sunxi_dump_register failed\n");
 	}
+#endif
+
+	ret = snd_sunxi_extparam_probe(card->name, EXTPARAM_ID_DAI_UCFMT);
+	if (ret) {
+		SND_LOG_ERR("extparam(EXTPARAM_ID_DAI_UCFMT) probe failed\n");
+		return ret;
+	}
+	ret = snd_sunxi_extparam_probe(card->name, EXTPARAM_ID_HDMI_FMT);
+	if (ret) {
+		SND_LOG_ERR("extparam(EXTPARAM_ID_HDMI_FMT) probe failed\n");
+		return ret;
+	}
 
 	if (priv->jack_support) {
 		ret = snd_sunxi_jack_register(card, priv->jack_support);
@@ -863,19 +939,12 @@ static int simple_soc_probe(struct snd_soc_card *card)
 		}
 	}
 
-	ret = snd_sunxi_ucfmt_probe(card, &dai_props->ucfmt);
-	if (ret) {
-		SND_LOG_ERR("ucfmt probe failed\n");
-		return ret;
-	}
-
 	return 0;
 }
 
 static int simple_soc_remove(struct snd_soc_card *card)
 {
 	struct asoc_simple_priv *priv = snd_soc_card_get_drvdata(card);
-	struct simple_dai_props *dai_props = simple_priv_to_props(priv, 0);
 
 	SND_LOG_DEBUG("\n");
 
@@ -884,10 +953,13 @@ static int simple_soc_remove(struct snd_soc_card *card)
 		return -1;
 	}
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	if (asoc_simple_is_i2sdai(priv->dais))
 		snd_sunxi_dump_unregister(&priv->dump);
+#endif
 
-	snd_sunxi_ucfmt_remove(dai_props->ucfmt);
+	snd_sunxi_extparam_remove(card->name, EXTPARAM_ID_DAI_UCFMT);
+	snd_sunxi_extparam_remove(card->name, EXTPARAM_ID_HDMI_FMT);
 
 	if (priv->jack_support)
 		snd_sunxi_jack_unregister(card, priv->jack_support);
@@ -993,5 +1065,5 @@ module_exit(sunxi_soundcard_machine_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.5");
+MODULE_VERSION("1.0.6");
 MODULE_DESCRIPTION("sunxi soundcard machine");

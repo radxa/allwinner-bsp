@@ -90,8 +90,33 @@ static struct de_version_dither de352 = {
 	.dithers = de352_dithers,
 };
 
+static struct de_dither_dsc de355_dithers[] = {
+	{
+		.id = 0,
+		.support_fmts = de35x_fmt,
+		.fmt_cnt = ARRAY_SIZE(de35x_fmt),
+		.support_modes = de35x_mode,
+		.mode_cnt = ARRAY_SIZE(de35x_mode),
+		.support_3d_fifo = true,
+	},
+	{
+		.id = 1,
+		.support_fmts = de35x_fmt,
+		.fmt_cnt = ARRAY_SIZE(de35x_fmt),
+		.support_modes = de35x_mode,
+		.mode_cnt = ARRAY_SIZE(de35x_mode),
+		.support_3d_fifo = true,
+	},
+};
+
+static struct de_version_dither de355 = {
+	.version = 0x355,
+	.dither_cnt = ARRAY_SIZE(de355_dithers),
+	.dithers = de355_dithers,
+};
+
 static struct de_version_dither *de_version[] = {
-	&de210, &de352,
+	&de210, &de352, &de355
 };
 
 const struct de_dither_dsc *get_dither_dsc(struct module_create_info *info)

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
+
 /*
  * vin_video.h for video api
  *
@@ -46,7 +47,7 @@
 #if IS_ENABLED(CONFIG_VIN_INIT_MELIS)
 /* save isp parameter to flash */
 /* kener user write it to sector, boot0 read it and write to ddr */
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 #define VIN_SENSOR0_RESERVE_ADDR 0x613FE000 /*104~110 sector, size is 4k - 512b, boot0 read it and write to 0x613FE000*/
 #define VIN_SENSOR1_RESERVE_ADDR 0x613FF000 /*112~118 sector, size is 4k - 512b, boot0 read it and write to 0x613FF000*/
 #define GET_RV_YUV 0

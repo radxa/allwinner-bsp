@@ -38,59 +38,68 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### ###########################################################################
 
-$(if $(KERNELDIR),,$(error KERNELDIR must be set to obtain a version))
+ifneq ($(wildcard $(KERNELDIR)),)
+ override KERNEL_MAKEFILE := \
+  $(shell realpath $(KERNELDIR)/source/Makefile 2> /dev/null || echo $(KERNELDIR)/Makefile)
 
-override KERNEL_MAKEFILE := \
- $(shell realpath $(KERNELDIR)/source/Makefile 2> /dev/null || echo $(KERNELDIR)/Makefile)
+ # If Makefile only contains include path, get the real path from content
+ override KERNEL_MAKEFILE := \
+  $(shell grep -q "^VERSION = " $(KERNEL_MAKEFILE) \
+   && echo $(KERNEL_MAKEFILE) \
+   || grep "include " $(KERNEL_MAKEFILE) | cut -f2 -d' ')
 
-override KERNEL_VERSION := \
- $(shell grep "^VERSION = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
-override KERNEL_PATCHLEVEL := \
- $(shell grep "^PATCHLEVEL = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
-override KERNEL_SUBLEVEL := \
- $(shell grep "^SUBLEVEL = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
-override KERNEL_EXTRAVERSION := \
- $(shell grep "^EXTRAVERSION = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
+ override KERNEL_VERSION := \
+  $(shell grep "^VERSION = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
+ override KERNEL_PATCHLEVEL := \
+  $(shell grep "^PATCHLEVEL = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
+ override KERNEL_SUBLEVEL := \
+  $(shell grep "^SUBLEVEL = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
+ override KERNEL_EXTRAVERSION := \
+  $(shell grep "^EXTRAVERSION = " $(KERNEL_MAKEFILE) | cut -f3 -d' ')
 
-# Break the kernel version up into a space separated list
-kernel_version_as_list := $(KERNEL_VERSION) \
-				$(KERNEL_PATCHLEVEL) \
-				$(KERNEL_SUBLEVEL) \
-				$(patsubst .%,%,$(KERNEL_EXTRAVERSION))
+ # Break the kernel version up into a space separated list
+ kernel_version_as_list := \
+  $(KERNEL_VERSION) \
+  $(KERNEL_PATCHLEVEL) \
+  $(KERNEL_SUBLEVEL) \
+  $(patsubst .%,%,$(KERNEL_EXTRAVERSION))
 
-# The base ID doesn't have to be accurate; we only use it for
-# feature checks which will not care about extraversion bits
-#
-override KERNEL_BASE_ID := \
- $(KERNEL_VERSION).$(KERNEL_PATCHLEVEL).$(KERNEL_SUBLEVEL)
+ # The base ID doesn't have to be accurate; we only use it for
+ # feature checks which will not care about extraversion bits
+ #
+ override KERNEL_BASE_ID := \
+  $(KERNEL_VERSION).$(KERNEL_PATCHLEVEL).$(KERNEL_SUBLEVEL)
 
-# Try to get the kernel ID from the kernel.release file.
-#
-KERNEL_ID ?= \
- $(shell cat $(KERNELDIR)/include/config/kernel.release 2>/dev/null)
+ # Try to get the kernel ID from the kernel.release file.
+ #
+ KERNEL_ID ?= \
+  $(shell cat $(KERNELDIR)/include/config/kernel.release 2>/dev/null)
 
-# If the kernel ID isn't set yet, try to set it from the UTS_RELEASE
-# macro.
-#
-ifeq ($(strip $(KERNEL_ID)),)
-KERNEL_ID := \
- $(shell grep -h '\#define UTS_RELEASE' \
-	$(KERNELDIR)/include/linux/* | cut -f3 -d' ' | sed s/\"//g)
-endif
+ # If the kernel ID isn't set yet, try to set it from the UTS_RELEASE
+ # macro.
+ #
+ ifeq ($(strip $(KERNEL_ID)),)
+ KERNEL_ID := \
+  $(shell grep -h '\#define UTS_RELEASE' \
+   $(KERNELDIR)/include/linux/* | cut -f3 -d' ' | sed s/\"//g)
+ endif
 
-ifeq ($(strip $(KERNEL_ID)),)
-KERNEL_ID := \
- $(KERNEL_VERSION).$(KERNEL_PATCHLEVEL).$(KERNEL_SUBLEVEL)$(KERNEL_EXTRAVERSION)
+ ifeq ($(strip $(KERNEL_ID)),)
+ KERNEL_ID := \
+  $(KERNEL_VERSION).$(KERNEL_PATCHLEVEL).$(KERNEL_SUBLEVEL)$(KERNEL_EXTRAVERSION)
+ endif
+
+ _kerneldir_valid := 1
 endif
 
 # Return 1 if the kernel version is at least the value passed to the
 # function, else return nothing.
 # Examples
-# 	$(call kernel-version-at-least,2,6,35)
-# 	$(call kernel-version-at-least,2,6,35,7)
+#  $(call kernel-version-at-least,2,6,35)
+#  $(call kernel-version-at-least,2,6,35,7)
 #
 define kernel-version-at-least
-$(shell set -- $(kernel_version_as_list) 0 0 0 0; \
+$(if $(_kerneldir_valid),$(shell set -- $(kernel_version_as_list) 0 0 0 0; \
 	Y=true; \
 	for D in $1 $2 $3 $4; \
 	do \
@@ -99,5 +108,5 @@ $(shell set -- $(kernel_version_as_list) 0 0 0 0; \
 		[ $$1 -lt $$D ] && Y=; \
 		break; \
 	done; \
-	echo $$Y)
+	echo $$Y),$(error kernel-version-at-least used without valid KERNELDIR))
 endef

@@ -77,7 +77,12 @@ s32 de_dither_enable(struct de_dither_handle *hdl, u32 en)
 
 void de_dither_dump_state(struct drm_printer *p, struct de_dither_handle *hdl)
 {
+	unsigned long base = (unsigned long)hdl->private->reg_blks[0].reg_addr;
+	unsigned long de_base = (unsigned long)hdl->cinfo.de_reg_base;
+	struct dither_reg *reg = get_dither_reg(hdl->private);
 
+	drm_printf(p, "\tdither@%8x: %sable\n", (unsigned int)(base - de_base),
+		   reg->ctl.dwval & 0x1 ? "en" : "dis");
 }
 
 struct de_dither_handle *de_dither_create(struct module_create_info *info)

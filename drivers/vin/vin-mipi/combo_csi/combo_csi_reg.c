@@ -22,12 +22,12 @@ static unsigned char cmb_phy_lane[3][4] = {
 	/* phyA */      /* phyB */      /* phyC */
 	{0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9, 10, 11} /* ch */
 };
-#elif defined (CONFIG_ARCH_SUN55IW3) || defined (CONFIG_ARCH_SUN55IW6)
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN55IW6)
 static unsigned char cmb_phy_lane[4][4] = {
 	/* phyA */   /* phyB */   /* phyC */  /* phyD */
 	{0, 1, 4, 5}, {4, 5}, {8, 9, 12, 13}, {12, 13} /* ch */
 };
-#elif defined (CONFIG_ARCH_SUN60IW1) || defined (CONFIG_ARCH_SUN60IW2)
+#elif IS_ENABLED(CONFIG_ARCH_SUN60IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 static unsigned char cmb_phy_lane[3][4] = {
 	/* phyA */     /* phyB */    /* phyC */
 	{0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9} /* ch */
@@ -273,15 +273,17 @@ unsigned int cmb_phy_deskew1_cfg_get(unsigned int sel)
 	return (reg_val & CMB_PHY_DESKEW_LANECK1_SET_MASK) >> CMB_PHY_DESKEW_LANECK1_SET;
 }
 
-void cmb_phy_deskew1_cfg(unsigned int sel)
+void cmb_phy_deskew1_cfg(unsigned int sel, unsigned int deskew, bool deskew_lane_cfg)
 {
-#if !defined CONFIG_ARCH_SUN50IW10
+#if !IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 	if (sel) {
-		cmb_phy_set_deskew_laneck0(sel, 0x7);
-		//cmb_phy_set_deskew_laned0(sel, 0x5);
-		//cmb_phy_set_deskew_laned1(sel, 0x5);
+		cmb_phy_set_deskew_laneck0(sel, deskew ? deskew : 0x7);
+		if (deskew_lane_cfg) {
+			cmb_phy_set_deskew_laned0(sel, 0x5);
+			cmb_phy_set_deskew_laned1(sel, 0x5);
+		}
 	} else {
-		cmb_phy_set_deskew_laneck0(sel, 0x2);
+		cmb_phy_set_deskew_laneck0(sel, deskew ? deskew : 0x2);
 		//cmb_phy_set_deskew_laned0(sel, 0x0);
 		//cmb_phy_set_deskew_laned1(sel, 0x0);
 	}

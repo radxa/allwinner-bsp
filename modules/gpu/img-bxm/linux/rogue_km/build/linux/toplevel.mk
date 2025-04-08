@@ -44,6 +44,11 @@
 .PHONY: build
 build: components firmware
 
+# This would leave the build after configuration files are created.
+.PHONY: config
+config:
+	$(info Configuration files are generated in $(RELATIVE_OUT))
+
 MAKE_TOP      := build/linux
 THIS_MAKEFILE := (top-level makefiles)
 
@@ -112,7 +117,7 @@ ifneq ($(INTERNAL_CLOBBER_ONLY),true)
 # This is so you can say "find $(TOP) -name Linux.mk > /tmp/something; export
 # ALL_MAKEFILES=/tmp/something; make" and avoid having to run find. This is
 # handy if your source tree is mounted over NFS or something
-override ALL_MAKEFILES := $(call relative-to-top,$(if $(strip $(ALL_MAKEFILES)),$(shell cat $(ALL_MAKEFILES)),$(shell find $(TOP) -type f -name Linux.mk -print -o -type d -name '.*' -prune)))
+override ALL_MAKEFILES := $(call relative-to-top,$(if $(strip $(ALL_MAKEFILES)),$(shell cat $(ALL_MAKEFILES)),$(shell find -L $(TOP) -type f -name Linux.mk -print -o -type d -name '.*' -prune | sort)))
 ifeq ($(strip $(ALL_MAKEFILES)),)
 $(info ** Unable to find any Linux.mk files under $$(TOP). This could mean that)
 $(info ** there are no makefiles, or that ALL_MAKEFILES is set in the environment)
@@ -215,14 +220,19 @@ OUT_SUBDIRS := $(addprefix $(RELATIVE_OUT)/,$(TARGET_ALL_ARCH)) \
 $(OUT_SUBDIRS):
 	$(make-directory)
 
+ifeq ($(PVR_CREATE_TARGET_PRIMARY_OUT_LINK),1)
+TARGET_PRIMARY_OUT_LINK := $(RELATIVE_OUT)/target_primary
+.SECONDARY: $(TARGET_PRIMARY_OUT_LINK)
+$(TARGET_PRIMARY_OUT_LINK):
+	$(LN) $(TARGET_PRIMARY_ARCH) $@
+
+$(TARGET_PRIMARY_OUT): | $(TARGET_PRIMARY_OUT_LINK)
+endif
+
 ifneq ($(INTERNAL_CLOBBER_ONLY),true)
 -include $(MAKE_TOP)/pvrversion.mk
 -include $(MAKE_TOP)/llvm.mk
-ifeq ($(SERVICES_SC),1)
- -include $(MAKE_TOP)/common/bridges_sc.mk
-else
- -include $(MAKE_TOP)/common/bridges.mk
-endif
+-include $(MAKE_TOP)/common/bridges.mk
 endif
 
 ifeq ($(INTERNAL_CLOBBER_ONLY)$(SUPPORT_ANDROID_PLATFORM)$(SUPPORT_NEUTRINO_PLATFORM)$(SUPPORT_INTEGRITY_PLATFORM),)
@@ -234,7 +244,7 @@ ifeq ($(INTERNAL_CLOBBER_ONLY)$(SUPPORT_ANDROID_PLATFORM)$(SUPPORT_NEUTRINO_PLAT
  LWS_PATCH_DIR     := $(LWS_DIR)/dist/patches
  LWS_GIT_PATCH_DIR := $(LWS_DIR)/patches
 
- ifneq ($(SUPPORT_BUILD_LWS),)
+ ifeq ($(SUPPORT_BUILD_LWS),1)
   -include $(MAKE_TOP)/lwsconf.mk
 
  else ifneq ($(SYSROOT),)
@@ -295,9 +305,42 @@ else
 bridges: $(BRIDGES)
 endif
 
-# Include each Linux.mk, then include modules.mk to save some information
-# about each module
-include $(foreach _Linux.mk,$(ALL_MAKEFILES),$(MAKE_TOP)/this_makefile.mk $(_Linux.mk) $(MAKE_TOP)/modules.mk)
+ifneq ($(INTERNAL_CLOBBER_ONLY),true)
+ # The LWS error is only relevant when we're building targets affected by
+ # SYSROOT. Targets not affected by SYSROOT are special-cased here. We're
+ # dealing with the special case _before_ Linux.mk parsing because some
+ # Linux.mks already use SUPPORT_BUILD_LWS, so it has to be set correctly
+ # before that.
+ NON_SYSROOT_TARGETS := kbuild kbuild_all bridges glslcompiler_host oclcompiler spvcompiler_host log_socket_server log_console_grep
+ ifeq ($(filter-out $(NON_SYSROOT_TARGETS),$(MAKECMDGOALS)),)
+  # SUPPORT_BUILD_LWS is not propagated via config.mk for non-Linux, don't mess with that
+  ifeq ($(origin SUPPORT_BUILD_LWS),override)
+   # Makes no difference for the actual build - all of the targets are SYSROOT
+   # (therefore LWS) independent, but allows us not to hit the error
+   override SUPPORT_BUILD_LWS := 0
+  endif
+ endif
+
+ # Include each Linux.mk, then include modules.mk to save some information
+ # about each module
+ include $(foreach _Linux.mk,$(ALL_MAKEFILES),$(MAKE_TOP)/this_makefile.mk $(_Linux.mk) $(MAKE_TOP)/modules.mk)
+
+ ifeq ($(SUPPORT_BUILD_LWS),1)
+  ifeq ($(INTERNAL_MAKEFILE_FOR_MODULE_lws),)
+   # At this point we know that we're building from Consumer DDK package (no
+   # LWS recipe), and consumer package only supports null(drm)ws builds,
+   # meaning that the only way to reach point is by not specifying a SYSROOT.
+   $(warning ******************************************************)
+   $(warning ERROR: SYSROOT is not defined.)
+   $(warning If you're building in the same environment as you)
+   $(warning intend to run the DDK, you can set SYSROOT=/,)
+   $(warning otherwise set SYSROOT to appropriate sysroot,)
+   $(warning as described in the Rogue DDK Linux Platform Guide.)
+   $(warning ******************************************************)
+   $(error Please define SYSROOT.)
+  endif
+ endif
+endif
 
 ifeq ($(strip $(REMAINING_MAKEFILES)),)
 INTERNAL_INCLUDED_ALL_MAKEFILES := true
@@ -333,9 +376,6 @@ ALL_MODULES := $(filter-out $(ALL_BAD_MODULES),$(ALL_MODULES))
 kbuild install:
 
 ifneq ($(INTERNAL_CLOBBER_ONLY),true)
- ifeq ($(SUPPORT_ANDROID_PLATFORM)$(SUPPORT_NEUTRINO_PLATFORM)$(SUPPORT_INTEGRITY_PLATFORM),)
-  -include $(MAKE_TOP)/packaging.mk
- endif
  -include $(MAKE_TOP)/scripts.mk
  -include $(MAKE_TOP)/kbuild/kbuild.mk
 endif
@@ -343,14 +383,6 @@ endif
 # components and still have the install script attempt to install the
 # subset.
 install:
-	@if [ ! -d "$(DISCIMAGE)" -a -z "$(INSTALL_TARGET)" ]; then \
-		echo; \
-		echo "** DISCIMAGE was not set or does not point to a valid directory."; \
-		echo "** Either use INSTALL_TARGET or set DISCIMAGE."; \
-		echo "** Cannot continue with install."; \
-		echo; \
-		exit 1; \
-	fi
 	@if [ ! -f $(RELATIVE_OUT)/install.sh ]; then \
 		echo; \
 		echo "** install.sh not found in $(RELATIVE_OUT)."; \
@@ -361,60 +393,16 @@ install:
 	@cd $(RELATIVE_OUT) && ./install.sh
 
 installfw: install_script_fw
-	@if [ ! -f $(RELATIVE_OUT)/install.sh ]; then \
-		echo; \
-		echo "** install.sh not found in $(RELATIVE_OUT)."; \
-		echo "** Cannot continue with install."; \
-		echo; \
-		exit 1; \
-	fi
 	@cd $(RELATIVE_OUT) && ./install.sh --fw
 
 installcomponents: install_script
-	@if [ ! -f $(RELATIVE_OUT)/install.sh ]; then \
-		echo; \
-		echo "** install.sh not found in $(RELATIVE_OUT)."; \
-		echo "** Cannot continue with install."; \
-		echo; \
-		exit 1; \
-	fi
 	@cd $(RELATIVE_OUT) && ./install.sh --um
 
 installkm: install_script_km
-	@if [ ! -d "$(DISCIMAGE)" -a -z "$(INSTALL_TARGET)" ]; then \
-		echo; \
-		echo "** DISCIMAGE was not set or does not point to a valid directory."; \
-		echo "** Either use INSTALL_TARGET or set DISCIMAGE."; \
-		echo "** Cannot continue with install."; \
-		echo; \
-		exit 1; \
-	fi
-	@if [ ! -f $(RELATIVE_OUT)/install.sh ]; then \
-		echo; \
-		echo "** install.sh not found in $(RELATIVE_OUT)."; \
-		echo "** Cannot continue with install."; \
-		echo; \
-		exit 1; \
-	fi
 	@cd $(RELATIVE_OUT) && ./install.sh --km
 
 .PHONY: uninstall
 uninstall: install_script install_script_fw install_script_km
-	@if [ ! -d "$(DISCIMAGE)" -a -z "$(INSTALL_TARGET)" ]; then \
-		echo; \
-		echo "** DISCIMAGE was not set or does not point to a valid directory."; \
-		echo "** Either use INSTALL_TARGET or set DISCIMAGE."; \
-		echo "** Cannot continue with uninstall."; \
-		echo; \
-		exit 1; \
-	fi
-	@if [ ! -f $(RELATIVE_OUT)/install.sh ]; then \
-		echo; \
-		echo "** install.sh not found in $(RELATIVE_OUT)."; \
-		echo "** Cannot continue with uninstall."; \
-		echo; \
-		exit 1; \
-	fi
 	@cd $(RELATIVE_OUT) && ./install.sh -u
 
 # You can say 'make all_modules' to attempt to make everything, or 'make
@@ -430,6 +418,7 @@ firmware: $(FW_COMPONENTS)
 .PHONY: clean clobber
 clean: MODULE_DIRS_TO_REMOVE := $(OUT_SUBDIRS)
 clean:
+	$(if $(TARGET_PRIMARY_OUT_LINK),$(RM) $(TARGET_PRIMARY_OUT_LINK))
 	$(clean-dirs)
 clobber: MODULE_DIRS_TO_REMOVE := $(OUT)
 clobber:
@@ -445,7 +434,3 @@ clobber-%:
 	$(RM) -rf $(INTERNAL_CLOBBER_TARGETS_FOR_$*)
 
 include $(MAKE_TOP)/bits.mk
-
-# D=nobuild stops the build before any recipes are run. This line should
-# come at the end of this makefile.
-$(if $(filter nobuild,$(D)),$(error D=nobuild given),)

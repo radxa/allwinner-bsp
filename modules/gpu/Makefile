@@ -56,14 +56,25 @@ ifdef CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND
   export CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND = 1
 endif
 
+
 ifeq ($(CONFIG_ARM), y)
   CPU_ARCH := arm
-else ifeq ($(CONFIG_ARM64), y)
+else
+ifeq ($(CONFIG_ARM64), y)
+  CPU_ARCH := arm64
+else
+ifeq ($(LICHEE_ARCH), arm)
+  CPU_ARCH := arm
+else
+ifeq ($(LICHEE_ARCH), arm64)
   CPU_ARCH := arm64
 else
   $(warning neither CONFIG_ARM nor CONFIG_ARM64 is found in .config, unsupport)
   GPU_TYPE := "unsupport"
-endif
+endif # LICHEE_ARCH=arm64
+endif # LICHEE_ARCH=arm
+endif # CONFIG_ARM64
+endif # CONFIG_ARM
 
 GPU_TYPE       := $(word 1, $(GPU_TYPE) $(CONFIG_AW_GPU_TYPE))
 GPU_BUILD_TYPE ?= release
@@ -120,6 +131,18 @@ else ifneq ($(findstring $(GPU_TYPE), "rgx6230" "ge8300"),)
   ifeq ($(CONFIG_OS_TYPE), linux)
     GPU_KO_NAME += $(KO_DIR)/dc_sunxi.ko
   endif
+else ifneq ($(findstring $(GPU_TYPE), "bxm"),)
+  GPU_BUILD_DIR = img-bxm/$(CONFIG_OS_TYPE)/rogue_km/build/linux/sunxi_$(CONFIG_OS_TYPE)
+
+  ifeq ($(CONFIG_OS_TYPE), linux)
+    ifeq ($(CPU_ARCH), arm)
+      KO_DIR := img-bxm/$(CONFIG_OS_TYPE)/rogue_km/binary_sunxi_$(CONFIG_OS_TYPE)_nulldrmws_$(GPU_BUILD_TYPE)/target_armv7-a/kbuild
+    else
+      KO_DIR := img-bxm/$(CONFIG_OS_TYPE)/rogue_km/binary_sunxi_$(CONFIG_OS_TYPE)_nulldrmws_$(GPU_BUILD_TYPE)/target_aarch64/kbuild
+    endif
+  endif
+
+  GPU_KO_NAME = $(KO_DIR)/pvrsrvkm.ko
 endif
 
 ##############################################################

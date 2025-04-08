@@ -506,7 +506,7 @@ static int sensor_reset(struct v4l2_subdev *sd, u32 val)
 
 static int sensor_detect(struct v4l2_subdev *sd)
 {
-#ifndef CONFIG_VIN_INIT_MELIS
+#if !IS_ENABLED(CONFIG_VIN_INIT_MELIS)
 	unsigned int SENSOR_ID = 0;
 	data_type rdval;
 	int cnt = 0;

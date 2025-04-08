@@ -38,13 +38,14 @@
 #include "pci.h"
 #include "pcie-sunxi.h"
 #include "pcie-sunxi-dma.h"
+#include "../drivers/bus/sunxi-nsi.h"
 
-static int sunxi_pcie_host_link_up(struct sunxi_pcie_port *pp)
+static bool sunxi_pcie_host_is_link_up(struct sunxi_pcie_port *pp)
 {
-	if (pp->ops->link_up)
-		return pp->ops->link_up(pp);
+	if (pp->ops->is_link_up)
+		return pp->ops->is_link_up(pp);
 	else
-		return 0;
+		return false;
 }
 
 static int sunxi_pcie_host_rd_own_conf(struct sunxi_pcie_port *pp, int where, int size, u32 *val)
@@ -91,11 +92,14 @@ static int sunxi_msi_set_affinity(struct irq_data *d, const struct cpumask *mask
 static void sunxi_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 {
 	struct sunxi_pcie_port *pcie = irq_data_get_irq_chip_data(data);
-	phys_addr_t pa = ALIGN_DOWN(virt_to_phys(pcie), SZ_4K);
+	u64 msi_target = (u64)pcie->msi_data;
 
-	msg->address_lo = lower_32_bits(pa);
-	msg->address_hi = upper_32_bits(pa);
+	msg->address_lo = lower_32_bits(msi_target);
+	msg->address_hi = upper_32_bits(msi_target);
 	msg->data = data->hwirq;
+
+	sunxi_debug(pcie->dev, "msi#%d address_hi %#x address_lo %#x\n",
+		(int)data->hwirq, msg->address_hi, msg->address_lo);
 }
 
 /*
@@ -186,6 +190,38 @@ static void sunxi_free_msi_domains(struct sunxi_pcie_port *pp)
 	irq_domain_remove(pp->irq_domain);
 }
 
+static int sunxi_pcie_msi_init(struct sunxi_pcie_port *pp)
+{
+	u64 msi_target;
+	int ret;
+
+	ret = dma_set_mask(pp->dev, DMA_BIT_MASK(32));
+	if (ret)
+		sunxi_warn(pp->dev, "Failed to set DMA mask to 32-bit. Devices with only 32-bit MSI support may not work properly\n");
+
+	pp->msi_data = dma_map_single_attrs(pp->dev, &pp->msi_msg, sizeof(pp->msi_msg),
+										DMA_FROM_DEVICE, DMA_ATTR_SKIP_CPU_SYNC);
+	ret = dma_mapping_error(pp->dev, pp->msi_data);
+	if (ret) {
+		sunxi_err(pp->dev, "Failed to map MSI data\n");
+		pp->msi_data = 0;
+		return ret;
+	}
+
+	msi_target = (u64)pp->msi_data;
+	sunxi_pcie_host_wr_own_conf(pp, PCIE_MSI_ADDR_LO, 4, lower_32_bits(msi_target));
+	sunxi_pcie_host_wr_own_conf(pp, PCIE_MSI_ADDR_HI, 4, upper_32_bits(msi_target));
+
+	return 0;
+}
+
+static void sunxi_pcie_free_msi(struct sunxi_pcie_port *pp)
+{
+	if (pp->msi_data)
+		dma_unmap_single_attrs(pp->dev, pp->msi_data, sizeof(pp->msi_msg),
+							DMA_FROM_DEVICE, DMA_ATTR_SKIP_CPU_SYNC);
+}
+
 static void sunxi_pcie_prog_outbound_atu(struct sunxi_pcie_port *pp, int index, int type,
 					u64 cpu_addr, u64 pci_addr, u32 size)
 {
@@ -247,7 +283,7 @@ static int sunxi_pcie_valid_config(struct sunxi_pcie_port *pp,
 {
 	/* If there is no link, then there is no device */
 	if (!pci_is_root_bus(bus)) {
-		if (!sunxi_pcie_host_link_up(pp))
+		if (!sunxi_pcie_host_is_link_up(pp))
 			return 0;
 	} else if (dev > 0)
 		/* Access only one slot on each root port */
@@ -313,8 +349,10 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 	int ret;
 
 	bridge = devm_pci_alloc_host_bridge(dev, 0);
-	if (!bridge)
+	if (!bridge) {
+		sunxi_err(dev, "Failed to alloc host bridge\n");
 		return -ENOMEM;
+	}
 
 	pp->bridge = bridge;
 
@@ -349,14 +387,13 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 
 	if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
 
-		phys_addr_t pa = ALIGN_DOWN(virt_to_phys(pp), SZ_4K);
-
 		ret = sunxi_allocate_msi_domains(pp);
 		if (ret)
 			return ret;
 
-		sunxi_pcie_host_wr_own_conf(pp, PCIE_MSI_ADDR_LO, 4, lower_32_bits(pa));
-		sunxi_pcie_host_wr_own_conf(pp, PCIE_MSI_ADDR_HI, 4, upper_32_bits(pa));
+		ret = sunxi_pcie_msi_init(pp);
+		if (ret)
+			return ret;
 	}
 
 	if (pp->ops->host_init)
@@ -368,8 +405,10 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 	ret = pci_host_probe(bridge);
 
 	if (ret) {
-		if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its)
+		if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
+			sunxi_pcie_free_msi(pp);
 			sunxi_free_msi_domains(pp);
+		}
 
 		sunxi_err(pp->dev, "Failed to probe host bridge\n");
 
@@ -476,6 +515,33 @@ static int sunxi_pcie_host_wait_for_speed_change(struct sunxi_pcie *pci)
 	return -ETIMEDOUT;
 }
 
+void sunxi_pcie_host_change_nsi_port_bwl(struct sunxi_pcie *pci, int gen)
+{
+#if IS_ENABLED(CONFIG_AW_NSI)
+	int i, bwl;
+	for (i = 0; i < MBUS_PMU_MAX; i++) {
+		if (strstr(get_name(i), "pcie")) {
+			switch (gen) {
+			case 1:
+				bwl = 200;
+				break;
+			case 2:
+				bwl = 400;
+				break;
+			case 3:
+				bwl = 700;
+				break;
+			}
+			nsi_port_set_abs_bwlen(i, false);
+			nsi_port_set_abs_bwl(i, bwl);
+			nsi_port_set_abs_bwlen(i, true);
+			sunxi_info(pci->dev, "change nsi abs bwl %d\n", bwl);
+			break;
+		}
+	}
+#endif
+}
+
 int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
 {
 	int val;
@@ -496,8 +562,10 @@ int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
 	sunxi_pcie_writel_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL, val);
 
 	ret = sunxi_pcie_host_wait_for_speed_change(pci);
-	if (!ret)
+	if (!ret) {
 		sunxi_info(pci->dev, "PCIe speed of Gen%d\n", gen);
+		sunxi_pcie_host_change_nsi_port_bwl(pci, gen);
+	}
 	else
 		sunxi_info(pci->dev, "PCIe speed of Gen1\n");
 
@@ -509,7 +577,8 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 {
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
 
-	sunxi_pcie_plat_ltssm_disable(pci);
+	if (!sunxi_pcie_host_is_link_up(pp))
+		sunxi_pcie_plat_ltssm_disable(pci);
 
 	if (!IS_ERR(pci->rst_gpio))
 		gpiod_set_value(pci->rst_gpio, 0);
@@ -524,7 +593,7 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 	sunxi_pcie_host_speed_change(pci, pci->link_gen);
 }
 
-static int sunxi_pcie_host_link_up_status(struct sunxi_pcie_port *pp)
+static bool sunxi_pcie_host_link_up_status(struct sunxi_pcie_port *pp)
 {
 	u32 val;
 	int ret;
@@ -533,15 +602,15 @@ static int sunxi_pcie_host_link_up_status(struct sunxi_pcie_port *pp)
 	val = sunxi_pcie_readl(pcie, PCIE_LINK_STAT);
 
 	if ((val & RDLH_LINK_UP) && (val & SMLH_LINK_UP))
-		ret = 1;
+		ret = true;
 	else
-		ret = 0;
+		ret = false;
 
 	return ret;
 }
 
 static struct sunxi_pcie_host_ops sunxi_pcie_host_ops = {
-	.link_up = sunxi_pcie_host_link_up_status,
+	.is_link_up = sunxi_pcie_host_link_up_status,
 	.host_init = __sunxi_pcie_host_init,
 };
 
@@ -550,7 +619,7 @@ static int sunxi_pcie_host_wait_for_link(struct sunxi_pcie_port *pp)
 	int retries;
 
 	for (retries = 0; retries < LINK_WAIT_MAX_RETRIE; retries++) {
-		if (sunxi_pcie_host_link_up(pp)) {
+		if (sunxi_pcie_host_is_link_up(pp)) {
 			sunxi_info(pp->dev, "pcie link up success\n");
 			return 0;
 		}
@@ -564,7 +633,7 @@ int sunxi_pcie_host_establish_link(struct sunxi_pcie *pci)
 {
 	struct sunxi_pcie_port *pp = &pci->pp;
 
-	if (sunxi_pcie_host_link_up(pp)) {
+	if (sunxi_pcie_host_is_link_up(pp)) {
 		sunxi_info(pci->dev, "pcie is already link up\n");
 		return 0;
 	}
@@ -666,8 +735,8 @@ void sunxi_pcie_host_remove_port(struct sunxi_pcie *pci)
 	}
 
 	if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
-		irq_domain_remove(pp->msi_domain);
-		irq_domain_remove(pp->irq_domain);
+		sunxi_pcie_free_msi(pp);
+		sunxi_free_msi_domains(pp);
 	}
 }
 EXPORT_SYMBOL_GPL(sunxi_pcie_host_remove_port);

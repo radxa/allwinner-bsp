@@ -188,7 +188,7 @@ void PhyConfigureMode(HDMI_DEVICE * pvDevice)
 
     //PhyI2CWrite(pvDevice->pvHDMIRegCpuVAddr, 0x0000, 0x13); /* PLLPHBYCTRL */
     //PhyI2CWrite(pvDevice->pvHDMIRegCpuVAddr, PHY_PLLCLKBISTPHASE_OFFSET, 0x0006);
-    /* RESISTANCE TERM 133Ohm Cfg  */
+    /* RESISTANCE TERM 133Ohm Cfg */
     PhyI2CWrite(pvDevice->pvHDMIRegCpuVAddr, PHY_TXTERM_OFFSET, 0x0004); /* TXTERM */
     /* REMOVE CLK TERM */
     //PhyI2CWrite(pvDevice->pvHDMIRegCpuVAddr, PHY_CKCALCTRL_OFFSET, 0x8000); /* CKCALCTRL */
@@ -691,7 +691,7 @@ void PhyConfigureMode(HDMI_DEVICE * pvDevice)
             }
             break;
         default:
-            HDMI_ERROR_PRINT("- %s: \n\n\n*****Unsupported pixel clock ******\n\n\n!", __func__);
+            HDMI_ERROR_PRINT("- %s:\n\n\n*****Unsupported pixel clock ******\n\n\n!", __func__);
             break;
     }
 

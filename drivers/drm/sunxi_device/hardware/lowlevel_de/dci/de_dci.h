@@ -32,13 +32,17 @@ struct de_dci_handle {
 };
 
 struct de_dci_handle *de_dci_create(struct module_create_info *info);
+bool de_dci_is_enabled(struct de_dci_handle *hdl);
 s32 de_dci_set_color_range(struct de_dci_handle *hdl, enum de_color_range cr);
 void de_dci_update_regs(struct de_dci_handle *hdl);
 s32 de_dci_enable(struct de_dci_handle *hdl, u32 en);
+
+s32 de_dci_set_demo_mode(struct de_dci_handle *hdl, bool enable);
 s32 de_dci_set_window(struct de_dci_handle *hdl,
-		      u32 demo_enable, u32 x, u32 y, u32 w, u32 h);
+		      u32 x, u32 y, u32 w, u32 h);
 s32 de_dci_set_size(struct de_dci_handle *hdl, u32 width, u32 height);
 s32 de_dci_dump_state(struct drm_printer *p, struct de_dci_handle *hdl);
 s32 de_dci_update_local_param(struct de_dci_handle *hdl);
+int de_dci_pq_proc(struct de_dci_handle *hdl, dci_module_param_t *para);
 
 #endif /*End of file*/

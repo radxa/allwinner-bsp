@@ -3,7 +3,8 @@
 #ifndef _AXP2601_CHARGER_H_
 #define _AXP2601_CHARGER_H_
 
-#include "linux/types.h"
+#include "sunxi-power-supply.h"
+#include "bmu-ext.h"
 
 #define AXP2601_VBAT_MAX		(8000)
 #define AXP2601_VBAT_MIN		(2000)
@@ -11,7 +12,9 @@
 #define AXP2601_SOC_MIN			(0)
 #define AXP2601_MAX_PARAM		320
 
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10)
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+#define AXP2601_FLAGE_REG		0x4A000204
+#elif IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 #define AXP2601_FLAGE_REG		0x07000104
 #else
 #define AXP2601_FLAGE_REG		0x07090104
@@ -89,6 +92,14 @@ struct bmu_ext_config_info {
 	u32 pmu_battery_cap;
 
 	u32 pmu_bat_charge_control_lim;
+	/* battery cycle */
+	u32 pmu_bat_cycle_life;
+	u32 pmu_bat_cycle_cap_reduce;
+
+	/* battery manufacture date */
+	u32 pmu_bat_manufacture_year;
+	u32 pmu_bat_manufacture_month;
+	u32 pmu_bat_manufacture_day;
 };
 
 

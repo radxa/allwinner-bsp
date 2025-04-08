@@ -15,16 +15,12 @@
 
 #include "de_base.h"
 
-struct de_version_cdc {
-	unsigned int version;
-	unsigned int cdc_cnt;
-	struct de_cdc_desc **cdc;
-};
-
 struct de_cdc_desc {
 	char name[32];
 	unsigned int id;
 	unsigned int reg_offset;
+	bool support_gtm;
+	bool support_csc;
 };
 
 /* input info from channel */

@@ -12,7 +12,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-#include <sunxi-log.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -29,7 +28,10 @@
 #if IS_ENABLED(CONFIG_AW_CCU)
 #include "./sunxi-ng/ccu_common.h"
 #include "./sunxi-ng/ccu_nkmp.h"
-#endif
+#else /* !IS_ENABLED(CONFIG_AW_CCU) */
+#define SUNXI_MODNAME "ccu-legacy"
+#include <sunxi-log.h>
+#endif /* IS_ENABLED(CONFIG_AW_CCU) */
 
 static struct dentry *my_ccudbg_root;
 static struct testclk_data testclk_priv;

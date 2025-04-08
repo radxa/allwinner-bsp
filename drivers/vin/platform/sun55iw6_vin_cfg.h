@@ -5,15 +5,15 @@
   *
   * Copyright (c) 2022 by Allwinnertech Co., Ltd.  http://www.allwinnertech.com
   *
-  * Authors:  Cao Fuming <caofuming@allwinnertech.com>
+  * Authors:  Liu Chensheng <liuchensheng@allwinnertech.com>
   *
   * This program is free software; you can redistribute it and/or modify
   * it under the terms of the GNU General Public License version 2 as
   * published by the Free Software Foundation.
   */
 
-#ifndef _SUN55IW3_VIN_CFG_H_
-#define _SUN55IW3_VIN_CFG_H_
+#ifndef _SUN55IW6_VIN_CFG_H_
+#define _SUN55IW6_VIN_CFG_H_
 
 #define CSI_CCU_REGS_BASE			0x05800000
 #define CSI_TOP_REGS_BASE			0x05800800
@@ -44,6 +44,7 @@
 #define VIN_MAX_MIPI		4
 #define VIN_MAX_ISP			7
 #define VIN_MAX_SCALER		16
+#define VIN_MAX_PINCTRL		3
 
 #define MAX_CH_NUM			4
 

@@ -1661,6 +1661,8 @@
 
 		lvds0: lvds0@0001000 {
 			compatible = "allwinner,lvds0";
+			clocks = <&dsi0combophy CLK_LVDS_OR_RGB>;
+			clock-names = "lvds_pclk";
 			resets = <&ccu RST_BUS_LVDS0>;
 			reset-names = "rst_bus_lvds";
 			phys = <&dsi0combophy>, <&dsi1combophy>;

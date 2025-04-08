@@ -13,11 +13,11 @@
  * GNU General Public License for more details.
  */
 
-#include "di_debug.h"
+#include "../common/di_debug.h"
 #include "di_driver.h"
 #include "di_dev.h"
 #include "di_fops.h"
-#include "di_utils.h"
+#include "../common/di_utils.h"
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -32,6 +32,8 @@
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include <linux/pm_runtime.h>
+#include <linux/version.h>
+#include <linux/delay.h>
 
 #define DI_MODULE_NAME "deinterlace"
 #define TAG "[DI]"
@@ -42,6 +44,7 @@
 
 static struct di_driver_data *di_drvdata;
 static unsigned int di_debug_mode;
+static struct tnr_module_param_t gtnr_pqpara;
 
 #if IS_ENABLED(CONFIG_SUNXI_DI_AMP_SERVER)
 
@@ -498,83 +501,83 @@ static int di_init_hw(struct di_driver_data *drvdata)
 
 static int di_clk_enable(struct di_driver_data *drvdata)
 {
-	if (!IS_ERR_OR_NULL(drvdata->iclk) && !IS_ERR_OR_NULL(drvdata->clk_source)) {
-		int ret = clk_prepare_enable(drvdata->clk_source);
+	long rate = 0;
+	int ret = 0;
+
+	if (!IS_ERR_OR_NULL(drvdata->iclk) && !IS_ERR_OR_NULL(drvdata->clk_bus)
+	    && !IS_ERR_OR_NULL(drvdata->rst_bus_di)) {
+
+		if (!IS_ERR_OR_NULL(drvdata->rst_bus_desys)) {
+			ret = reset_control_deassert(drvdata->rst_bus_desys);
+			if (ret) {
+				DI_ERR(TAG"reset_control_deassert desys failed");
+				return -1;
+			}
+		}
+
+		ret = reset_control_deassert(drvdata->rst_bus_di);
 		if (ret) {
-			DI_ERR(TAG"try to enable di source clk failed!\n");
-			return ret;
+			DI_ERR(TAG"reset_control_deassert bus_di failed");
+			return -1;
+		}
+
+		rate = clk_round_rate(drvdata->iclk, drvdata->iclk_freq);
+		if (clk_set_rate(drvdata->iclk, rate)) {
+			DI_ERR(TAG"clk_set_rate failed");
+			return -1;
+		}
+
+		DI_DEBUG("DI clk_freq=%u iclk(%s) clk_bus(%s)\n",
+					(unsigned)clk_get_rate(drvdata->iclk),
+					__clk_get_name(drvdata->iclk),
+					__clk_get_name(drvdata->clk_bus));
+
+		ret = clk_prepare_enable(drvdata->clk_bus);
+		if (ret) {
+			DI_ERR(TAG"clk_prepare_enable clk_bus failed");
+			return -1;
 		}
 
 		ret = clk_prepare_enable(drvdata->iclk);
 		if (ret) {
-			DI_ERR(TAG"try to enable di clk failed!\n");
+			DI_ERR(TAG"clk_prepare_enable iclk failed!\n");
 			return ret;
 		}
-
-		if (!IS_ERR_OR_NULL(drvdata->clk_bus))
-			clk_prepare_enable(drvdata->clk_bus);
-
-		if (!IS_ERR_OR_NULL(drvdata->rst_bus_di))
-			reset_control_deassert(drvdata->rst_bus_di);
 	} else {
 		DI_ERR(TAG"di clk handle is invalid for enable\n");
+		return -1;
 	}
 	return 0;
 }
 
 static int di_clk_disable(struct di_driver_data *drvdata)
 {
-	if (!IS_ERR_OR_NULL(drvdata->iclk) && !IS_ERR_OR_NULL(drvdata->clk_source)) {
-		clk_disable_unprepare(drvdata->iclk);
-		clk_disable_unprepare(drvdata->clk_source);
-		if (!IS_ERR_OR_NULL(drvdata->rst_bus_di))
-			reset_control_assert(drvdata->rst_bus_di);
+	int ret;
 
+	if (!IS_ERR_OR_NULL(drvdata->iclk) && !IS_ERR_OR_NULL(drvdata->clk_bus)
+	    && !IS_ERR_OR_NULL(drvdata->rst_bus_di)) {
+		clk_disable_unprepare(drvdata->iclk);
+		clk_disable_unprepare(drvdata->clk_bus);
+
+		ret = reset_control_assert(drvdata->rst_bus_di);
+		if (ret) {
+			DI_ERR(TAG"reset_control_assert rst_bus_di failed");
+			return -1;
+		}
+
+		if (!IS_ERR_OR_NULL(drvdata->rst_bus_desys)) {
+			ret = reset_control_assert(drvdata->rst_bus_desys);
+			if (ret) {
+				DI_ERR(TAG"reset_control_assert desys failed");
+				return -1;
+			}
+		}
 	} else {
-		DI_ERR(TAG"di clk handle is invalid!\n");
+		DI_ERR(TAG"di clk handle is invalid!");
+		return -1;
 	}
 
 	return 0;
-}
-
-static int di_clk_init(struct di_driver_data *drvdata)
-{
-	int ret = 0;
-	long rate = 0;
-
-	if (clk_prepare_enable(drvdata->clk_source)) {
-		DI_ERR(TAG"Couldn't enable di source clock\n");
-		goto err1;
-	}
-
-	ret = clk_set_parent(drvdata->iclk, drvdata->clk_source);
-	if (ret != 0) {
-		DI_ERR(TAG"clk_set_parent() failed! return %d\n", ret);
-		goto err2;
-	}
-
-	rate = clk_round_rate(drvdata->iclk, drvdata->iclk_freq);
-	if (clk_set_rate(drvdata->iclk, rate)) {
-		DI_ERR(TAG"clk_set_rate failed\n");
-		goto err2;
-	}
-
-	clk_disable_unprepare(drvdata->clk_source);
-
-	DI_INFO("DI clk_freq=%u iclk(%s) clk_bus(%s) clock_source(%s)\n",
-				(unsigned)clk_get_rate(drvdata->iclk),
-				__clk_get_name(drvdata->iclk),
-				__clk_get_name(drvdata->clk_bus),
-				__clk_get_name(drvdata->clk_source));
-
-	return clk_get_rate(drvdata->iclk);
-
-err2:
-	clk_disable_unprepare(drvdata->iclk);
-err1:
-	clk_disable_unprepare(drvdata->clk_source);
-
-	return -1;
 }
 
 static int di_check_enable_device_locked(
@@ -683,6 +686,42 @@ int di_drv_client_dec(struct di_client *c)
 	mutex_unlock(&drvdata->mlock);
 
 	return 0;
+}
+
+int di_drv_clients_set_tnrpara(struct di_client *client, struct tnr_module_param_pqd *data, int update)
+{
+	struct di_driver_data *drvdata = di_drvdata;
+	struct di_client *client_i;
+	int ret = -1;
+
+	ret = di_dev_set_tnrpara((void *)client, data);
+	if (ret != 0) {
+		DI_ERR("%s, di_dev_set_tnrpara process fail\n", __func__);
+		return ret;
+	}
+
+	/* save PQTool TNR parament and update to all clients */
+	if (update == 1) {
+		mutex_lock(&drvdata->mlock);
+		memcpy(&client->tnr_pqpara.qptool_para, data, sizeof(struct tnr_module_param_pqd));
+		memcpy(&gtnr_pqpara, &client->tnr_pqpara, sizeof(client->tnr_pqpara));
+		list_for_each_entry(client_i, &drvdata->clients, node) {
+			memcpy(&client_i->tnr_pqpara, &gtnr_pqpara, sizeof(gtnr_pqpara));
+		}
+		mutex_unlock(&drvdata->mlock);
+	}
+
+	return 0;
+}
+
+int di_drv_get_global_tnr_pqpara(struct tnr_module_param_t *data)
+{
+	if (gtnr_pqpara.qptool_para.id == TNR_PQTOOL_ID) {
+		memcpy(data, &gtnr_pqpara, sizeof(gtnr_pqpara));
+		return 0;
+	} else {
+		return -1;
+	}
 }
 
 static int di_drv_wait2start(
@@ -906,11 +945,11 @@ static void di_unload_resource(struct di_driver_data *drvdata)
 	if (drvdata->reg_base)
 		iounmap(drvdata->reg_base);
 
-	if (drvdata->irq_no != 0)
-		DI_INFO(TAG"maybe should ummap irq[%d]...\n", drvdata->irq_no);
+	if (drvdata->irq_no != 0) {
+		DI_DEBUG(TAG"should ummap irq[%d]...\n", drvdata->irq_no);
+		devm_free_irq(drvdata->dev, drvdata->irq_no, drvdata);
+	}
 
-	if (!IS_ERR_OR_NULL(drvdata->clk_source))
-		clk_put(drvdata->clk_source);
 	if (!IS_ERR_OR_NULL(drvdata->iclk))
 		clk_put(drvdata->iclk);
 }
@@ -944,15 +983,6 @@ static int di_parse_dt(struct platform_device *pdev,
 		goto err_out;
 	}
 
-	drvdata->clk_source = of_clk_get(node, 2);
-	if (IS_ERR_OR_NULL(drvdata->clk_source)) {
-		DI_ERR(TAG"get clk_source clock failed!\n");
-		ret = -1;
-		if (IS_ERR(drvdata->clk_source))
-			ret = PTR_ERR(drvdata->clk_source);
-		goto err_out;
-	}
-
 	ret = of_property_read_u32(node, "clock-frequency", &drvdata->iclk_freq);
 	if (ret) {
 		DI_ERR("Failed to get di clock frequency\n");
@@ -969,6 +999,13 @@ static int di_parse_dt(struct platform_device *pdev,
 		goto err_out;
 	}
 
+	drvdata->rst_bus_desys = devm_reset_control_get_optional_shared(&pdev->dev,
+							       "rst_bus_desys");
+	if (IS_ERR(drvdata->rst_bus_desys)) {
+		DI_INFO("desys_reset get failed, Maybe not need\n");
+		drvdata->rst_bus_desys = NULL;
+	}
+
 	/* irq */
 	drvdata->irq_no = irq_of_parse_and_map(node, 0);
 	if (drvdata->irq_no == 0) {
@@ -977,7 +1014,7 @@ static int di_parse_dt(struct platform_device *pdev,
 		goto err_out;
 	}
 
-#ifndef CONFIG_SUNXI_DI_AMP_SERVER
+#if !IS_ENABLED(CONFIG_SUNXI_DI_AMP_SERVER)
 	ret = devm_request_irq(&pdev->dev, drvdata->irq_no,
 		di_irq_handler, 0, dev_name(&pdev->dev), drvdata);
 	if (ret) {
@@ -1043,10 +1080,6 @@ static int di_probe(struct platform_device *pdev)
 	if (ret)
 		goto probe_done;
 
-	ret = di_clk_init(drvdata);
-	if (ret < 0)
-		goto probe_done;
-
 	di_utils_set_dma_dev(&pdev->dev);
 
 	ret = di_init_hw(drvdata);
@@ -1066,7 +1099,12 @@ static int di_probe(struct platform_device *pdev)
 		DI_ERR(TAG"cdev add major(%d).\n", MAJOR(drvdata->devt));
 		goto probe_done;
 	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	drvdata->pclass = class_create(DI_MODULE_NAME);
+#else
 	drvdata->pclass = class_create(THIS_MODULE, DI_MODULE_NAME);
+#endif
 	if (IS_ERR(drvdata->pclass)) {
 		DI_ERR(TAG"create class error\n");
 		ret = PTR_ERR(drvdata->pclass);
@@ -1087,17 +1125,6 @@ static int di_probe(struct platform_device *pdev)
 	di_drvdata = drvdata;
 	platform_set_drvdata(pdev, (void *)drvdata);
 	pm_runtime_enable(&pdev->dev);
-	pm_runtime_get_sync(&pdev->dev);
-	do {
-		struct di_version version;
-
-		di_drv_get_version(&version);
-		dev_info(&pdev->dev, "version[%d.%d.%d], ip=0x%x\n",
-			version.version_major,
-			version.version_minor,
-			version.version_patchlevel,
-			version.ip_version);
-	} while (0);
 
 #if IS_ENABLED(CONFIG_SUNXI_DI_AMP_SERVER)
 	DI_DEBUG("register rpmsg \n");
@@ -1106,8 +1133,6 @@ static int di_probe(struct platform_device *pdev)
 		amp_deinterlace_init(&amp_ops);
 	}
 	amp_ops.pm_state = true;
-#else
-	ret = pm_runtime_put_sync(&pdev->dev);
 #endif
 	return 0;
 
@@ -1279,3 +1304,6 @@ MODULE_AUTHOR("hezuyao@allwinnertech.com");
 MODULE_AUTHOR("zhengwanyu@allwinnertech.com");
 MODULE_DESCRIPTION("Sunxi De-Interlace");
 MODULE_VERSION("1.0.0");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+MODULE_IMPORT_NS(DMA_BUF);
+#endif

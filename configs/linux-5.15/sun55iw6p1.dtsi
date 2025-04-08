@@ -565,6 +565,30 @@
 			interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>;  /* In GIC Spec */
 		};
 
+		nsi0: nsi-controller@2020000 {
+			compatible = "allwinner,sunxi-nsi-v2";
+			interrupts = <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH>;
+			reg = <0x0 0x02020000 0x0 0x10000>;
+			clocks = <&ccu CLK_PLL_DDR>, <&ccu CLK_MBUS>, <&ccu CLK_LBC>,
+				<&ccu CLK_NSI>, <&ccu CLK_PLL_DDR>,
+				<&ccu CLK_GIC>, <&ccu CLK_AHB>,
+				<&ccu CLK_SERDES_AXI>, <&ccu CLK_GMAC_NSI>, <&ccu CLK_DRAM>;
+			clock-names = "pll", "bus", "lbc",
+					"nsi", "nsi-p",
+					"gic", "ahb", "serdes", "gmac", "dram";
+			resets = <&ccu RST_BUS_NSI>, <&ccu RST_BUS_NSI_CFG>;
+			reset-names = "bus_nsi", "bus_nsi_cfg";
+			clock-frequency = <600000000>, <600000000>;
+			#nsi-cells = <1>;
+			ra_pmu_data_unit = <64>;
+			clk_path_type = <1>;
+			topology_type = <2>;
+			channel_type = <1>;
+			master_clks = <0 9>, <1 5>, <2 1>, <3 1>, <4 1>, <5 1>, <6 1>, <7 3>, <8 1>, <9 7>,
+					<10 1>, <11 3>, <12 2>, <13 8>, <14 3>, <15 3>, <16 1>, <17 3>, <18 3>, <19 6>,
+					<20 6>, <21 6>, <22 6>, <23 6>, <24 6>, <25 6>;
+		};
+
 		sdc0: sdmmc@4020000 {
 			compatible = "allwinner,sunxi-mmc-v5p3x";
 			device_type = "sdc0";

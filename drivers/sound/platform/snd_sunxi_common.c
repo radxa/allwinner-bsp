@@ -28,6 +28,8 @@
 #include <sound/soc.h>
 
 #include "snd_sunxi_common.h"
+#include "snd_sunxi_common_utils.h"
+#include "snd_sunxi_adapter.h"
 
 /******* jack_state *******/
 static int sunxi_jack_state;
@@ -40,41 +42,36 @@ void snd_sunxi_jack_state_upto_modparam(enum snd_jack_types type)
 module_param_named(jack_state, sunxi_jack_state, int, S_IRUGO | S_IWUSR);
 
 /******* reg label *******/
-int snd_sunxi_save_reg(struct regmap *regmap, struct audio_reg_label *reg_labels)
+int snd_sunxi_save_reg(struct regmap *regmap, struct audio_reg_group *reg_group)
 {
-	int i = 0;
+	unsigned int i;
 
 	SND_LOG_DEBUG("\n");
 
-	while (reg_labels[i].name != NULL) {
-		regmap_read(regmap, reg_labels[i].address, &(reg_labels[i].value));
-		i++;
-	}
+	for (i = 0 ; i < reg_group->size; ++i)
+		regmap_read(regmap, reg_group->label[i].address, &(reg_group->label[i].value));
 
 	return i;
 }
 EXPORT_SYMBOL_GPL(snd_sunxi_save_reg);
 
-int snd_sunxi_echo_reg(struct regmap *regmap, struct audio_reg_label *reg_labels)
+int snd_sunxi_echo_reg(struct regmap *regmap, struct audio_reg_group *reg_group)
 {
-	int i = 0;
+	unsigned int i;
 
 	SND_LOG_DEBUG("\n");
 
-	while (reg_labels[i].name != NULL) {
-		regmap_write(regmap, reg_labels[i].address, reg_labels[i].value);
-		i++;
-	}
+	for (i = 0 ; i < reg_group->size; ++i)
+		regmap_write(regmap, reg_group->label[i].address, reg_group->label[i].value);
 
 	return i;
 }
 EXPORT_SYMBOL_GPL(snd_sunxi_echo_reg);
 
 /******* regulator config *******/
-struct snd_sunxi_rglt *snd_sunxi_regulator_init(struct platform_device *pdev)
+struct snd_sunxi_rglt *snd_sunxi_regulator_init(struct device *dev)
 {
 	int ret, i, j;
-	struct device *dev = NULL;
 	struct device_node *np = NULL;
 	struct snd_sunxi_rglt *rglt = NULL;
 	struct snd_sunxi_rglt_unit *unit = NULL;
@@ -92,12 +89,11 @@ struct snd_sunxi_rglt *snd_sunxi_regulator_init(struct platform_device *pdev)
 
 	SND_LOG_DEBUG("\n");
 
-	if (!pdev) {
-		SND_LOG_ERR("platform_device invailed\n");
+	if (!dev) {
+		SND_LOG_ERR("device invailed\n");
 		return NULL;
 	}
-	dev = &pdev->dev;
-	np = pdev->dev.of_node;
+	np = dev->of_node;
 
 	rglt = kzalloc(sizeof(*rglt), GFP_KERNEL);
 	if (!rglt) {
@@ -129,9 +125,9 @@ struct snd_sunxi_rglt *snd_sunxi_regulator_init(struct platform_device *pdev)
 			SND_LOGDEV_ERR(dev, "get %s failed\n", str);
 			goto err;
 		} else {
-			for (j = 0; i < ARRAY_SIZE(of_mode_table); ++j) {
-				if (strcmp(out_string, of_mode_table[i].name) == 0) {
-					unit->mode = of_mode_table[i].mode;
+			for (j = 0; j < ARRAY_SIZE(of_mode_table); ++j) {
+				if (strcmp(out_string, of_mode_table[j].name) == 0) {
+					unit->mode = of_mode_table[j].mode;
 					break;
 				}
 			}
@@ -170,7 +166,7 @@ struct snd_sunxi_rglt *snd_sunxi_regulator_init(struct platform_device *pdev)
 	}
 
 	rglt->unit = rglt_unit;
-	rglt->priv = pdev;
+	rglt->priv = dev;
 	return rglt;
 err:
 	kfree(rglt_unit);
@@ -183,8 +179,6 @@ EXPORT_SYMBOL_GPL(snd_sunxi_regulator_init);
 void snd_sunxi_regulator_exit(struct snd_sunxi_rglt *rglt)
 {
 	int i;
-	struct platform_device *pdev = NULL;
-	struct device *dev = NULL;
 	struct snd_sunxi_rglt_unit *unit = NULL;
 
 	SND_LOG_DEBUG("\n");
@@ -193,8 +187,6 @@ void snd_sunxi_regulator_exit(struct snd_sunxi_rglt *rglt)
 		SND_LOG_ERR("snd_sunxi_rglt invailed\n");
 		return;
 	}
-	pdev = (struct platform_device *)rglt->priv;
-	dev = &pdev->dev;
 
 	for (i = 0; i < rglt->unit_cnt; ++i) {
 		unit = &rglt->unit[i];
@@ -219,7 +211,6 @@ EXPORT_SYMBOL_GPL(snd_sunxi_regulator_exit);
 int snd_sunxi_regulator_enable(struct snd_sunxi_rglt *rglt)
 {
 	int ret, i;
-	struct platform_device *pdev = NULL;
 	struct device *dev = NULL;
 	struct snd_sunxi_rglt_unit *unit = NULL;
 
@@ -229,8 +220,7 @@ int snd_sunxi_regulator_enable(struct snd_sunxi_rglt *rglt)
 		SND_LOG_ERR("snd_sunxi_rglt invailed\n");
 		return -1;
 	}
-	pdev = (struct platform_device *)rglt->priv;
-	dev = &pdev->dev;
+	dev = (struct device *)rglt->priv;
 
 	for (i = 0; i < rglt->unit_cnt; ++i) {
 		unit = &rglt->unit[i];
@@ -256,8 +246,6 @@ EXPORT_SYMBOL_GPL(snd_sunxi_regulator_enable);
 void snd_sunxi_regulator_disable(struct snd_sunxi_rglt *rglt)
 {
 	int i;
-	struct platform_device *pdev = NULL;
-	struct device *dev = NULL;
 	struct snd_sunxi_rglt_unit *unit = NULL;
 
 	SND_LOG_DEBUG("\n");
@@ -266,8 +254,6 @@ void snd_sunxi_regulator_disable(struct snd_sunxi_rglt *rglt)
 		SND_LOG_ERR("snd_sunxi_rglt invailed\n");
 		return;
 	}
-	pdev = (struct platform_device *)rglt->priv;
-	dev = &pdev->dev;
 
 	for (i = 0; i < rglt->unit_cnt; ++i) {
 		unit = &rglt->unit[i];
@@ -330,9 +316,17 @@ static int pacfg_level_trig_init(struct snd_sunxi_pacfg *pa_cfg)
 	ret = of_property_read_u32(np, str, &temp_val);
 	if (ret < 0) {
 		SND_LOG_WARN("%s get failed, default 0\n", str);
-		level_trig->msleep = 0;
+		level_trig->msleep_0 = 0;
 	} else {
-		level_trig->msleep = temp_val;
+		level_trig->msleep_0 = temp_val;
+	}
+	snprintf(str, sizeof(str), "pa-pin-msleep1-%d", index);
+	ret = of_property_read_u32(np, str, &temp_val);
+	if (ret < 0) {
+		SND_LOG_WARN("%s get failed, default 0\n", str);
+		level_trig->msleep_1 = 0;
+	} else {
+		level_trig->msleep_1 = temp_val;
 	}
 	gpio_direction_output(level_trig->pin, !level_trig->level);
 
@@ -346,13 +340,13 @@ static void pacfg_level_trig_exit(struct snd_sunxi_pacfg *pa_cfg)
 
 static void pacfg_level_trig_enable(struct work_struct *work)
 {
-	struct snd_sunxi_pacfg *pa_cfg = container_of(work,
-						      struct snd_sunxi_pacfg, pa_en_work);
+	struct snd_sunxi_pacfg *pa_cfg = container_of(work, struct snd_sunxi_pacfg, pa_en_work);
 	struct pacfg_level_trig *level_trig = pa_cfg->level_trig;
 
 	SND_LOG_DEBUG("\n");
 
-	msleep(level_trig->msleep);
+	if (level_trig->msleep_0)
+		msleep(level_trig->msleep_0);
 	gpio_set_value(level_trig->pin, level_trig->level);
 }
 
@@ -411,9 +405,17 @@ static int pacfg_pulse_trig_init(struct snd_sunxi_pacfg *pa_cfg)
 	ret = of_property_read_u32(np, str, &temp_val);
 	if (ret < 0) {
 		SND_LOG_WARN("%s get failed, default 0\n", str);
-		pulse_trig->msleep = 0;
+		pulse_trig->msleep_0 = 0;
 	} else {
-		pulse_trig->msleep = temp_val;
+		pulse_trig->msleep_0 = temp_val;
+	}
+	snprintf(str, sizeof(str), "pa-pin-msleep1-%d", index);
+	ret = of_property_read_u32(np, str, &temp_val);
+	if (ret < 0) {
+		SND_LOG_WARN("%s get failed, default 0\n", str);
+		pulse_trig->msleep_1 = 0;
+	} else {
+		pulse_trig->msleep_1 = temp_val;
 	}
 
 	/* get polarity */
@@ -473,15 +475,15 @@ static void pacfg_pulse_trig_exit(struct snd_sunxi_pacfg *pa_cfg)
 
 static void pacfg_pulse_trig_enable(struct work_struct *work)
 {
-	struct snd_sunxi_pacfg *pa_cfg = container_of(work,
-						      struct snd_sunxi_pacfg, pa_en_work);
+	struct snd_sunxi_pacfg *pa_cfg = container_of(work, struct snd_sunxi_pacfg, pa_en_work);
 	struct pacfg_pulse_trig *pulse_trig = pa_cfg->pulse_trig;
 	unsigned long flags;
 	u32 i;
 
 	SND_LOG_DEBUG("\n");
 
-	msleep(pulse_trig->msleep);
+	if (pulse_trig->msleep_0)
+		msleep(pulse_trig->msleep_0);
 
 	spin_lock_irqsave(&pa_enable_lock, flags);
 
@@ -513,24 +515,44 @@ static void pacfg_pulse_trig_disable(struct snd_sunxi_pacfg *pa_cfg)
 
 static int pacfg_user_trig_init(struct snd_sunxi_pacfg *pa_cfg)
 {
-	(void)pa_cfg;
-	return 0;	/* if success */
+	return snd_sunxi_pa_user_trig_init(pa_cfg);
 }
 
 static void pacfg_user_trig_exit(struct snd_sunxi_pacfg *pa_cfg)
 {
-	(void)pa_cfg;
+	snd_sunxi_pa_user_trig_exit(pa_cfg);
 }
 
 static int pacfg_user_trig_enable(struct snd_sunxi_pacfg *pa_cfg)
 {
-	(void)pa_cfg;
-	return 0;	/* if success */
+	return snd_sunxi_pa_user_trig_enable(pa_cfg);
 }
 
 static void pacfg_user_trig_disable(struct snd_sunxi_pacfg *pa_cfg)
 {
-	(void)pa_cfg;
+	snd_sunxi_pa_user_trig_disable(pa_cfg);
+}
+
+static void pacfg_level_trig_disa_work(struct work_struct *work)
+{
+	struct snd_sunxi_pacfg *pa_cfg = container_of(work, struct snd_sunxi_pacfg, pa_disa_work);
+	struct pacfg_level_trig *level_trig = pa_cfg->level_trig;
+
+	if (level_trig->msleep_1)
+		msleep(level_trig->msleep_1);
+
+	pa_cfg->pa_disa_cb(pa_cfg->param);
+}
+
+static void pacfg_pulse_trig_disa_work(struct work_struct *work)
+{
+	struct snd_sunxi_pacfg *pa_cfg = container_of(work, struct snd_sunxi_pacfg, pa_disa_work);
+	struct pacfg_pulse_trig *pulse_trig = pa_cfg->pulse_trig;
+
+	if (pulse_trig->msleep_1)
+		msleep(pulse_trig->msleep_1);
+
+	pa_cfg->pa_disa_cb(pa_cfg->param);
 }
 
 struct snd_sunxi_pacfg *snd_sunxi_pa_pin_init(struct platform_device *pdev, u32 *pa_pin_max)
@@ -592,6 +614,7 @@ struct snd_sunxi_pacfg *snd_sunxi_pa_pin_init(struct platform_device *pdev, u32 
 				continue;
 			}
 			INIT_WORK(&pa_cfg[i].pa_en_work, pacfg_level_trig_enable);
+			INIT_WORK(&pa_cfg[i].pa_disa_work, pacfg_level_trig_disa_work);
 			pa_cfg[i].used = true;
 			break;
 		case SND_SUNXI_PA_CFG_PULSE:
@@ -607,6 +630,7 @@ struct snd_sunxi_pacfg *snd_sunxi_pa_pin_init(struct platform_device *pdev, u32 
 				continue;
 			}
 			INIT_WORK(&pa_cfg[i].pa_en_work, pacfg_pulse_trig_enable);
+			INIT_WORK(&pa_cfg[i].pa_disa_work, pacfg_pulse_trig_disa_work);
 			pa_cfg[i].used = true;
 			break;
 		case SND_SUNXI_PA_CFG_USER:
@@ -660,10 +684,12 @@ void snd_sunxi_pa_pin_exit(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max)
 		case SND_SUNXI_PA_CFG_LEVEL:
 			pacfg_level_trig_exit(&pa_cfg[i]);
 			cancel_work_sync(&pa_cfg[i].pa_en_work);
+			cancel_work_sync(&pa_cfg[i].pa_disa_work);
 			break;
 		case SND_SUNXI_PA_CFG_PULSE:
 			pacfg_pulse_trig_exit(&pa_cfg[i]);
 			cancel_work_sync(&pa_cfg[i].pa_en_work);
+			cancel_work_sync(&pa_cfg[i].pa_disa_work);
 			break;
 		case SND_SUNXI_PA_CFG_USER:
 			pacfg_user_trig_exit(&pa_cfg[i]);
@@ -722,6 +748,8 @@ static int sunxi_pa_param1_set_val(struct snd_kcontrol *kcontrol,
 int snd_sunxi_pa_pin_probe(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max,
 			   struct snd_soc_component *component)
 {
+	int ret = 0;
+
 	/* the example of adding component of pa:
 	 * 1.Define optional text.
 	 * 2.Define enum by SOC_ENUM_SINGLE_EXT_DECL().
@@ -747,11 +775,14 @@ int snd_sunxi_pa_pin_probe(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max,
 	if (ret)
 		SND_LOG_ERR("register pa kcontrols failed\n");
 #endif
+	if (pa_cfg == NULL)
+		return ret;
 
-	(void)pa_cfg;
-	(void)pa_pin_max;
-	(void)component;
-	return 0;
+	if (pa_cfg->mode == SND_SUNXI_PA_CFG_USER) {
+		ret = snd_sunxi_pa_user_trig_probe(pa_cfg, pa_pin_max, component);
+	}
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_sunxi_pa_pin_probe);
 
@@ -819,9 +850,13 @@ void snd_sunxi_pa_pin_disable(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max)
 		switch (pa_cfg[i].mode) {
 		case SND_SUNXI_PA_CFG_LEVEL:
 			pacfg_level_trig_disable(&pa_cfg[i]);
+			if (pa_cfg[i].level_trig->msleep_1)
+				msleep(pa_cfg[i].level_trig->msleep_1);
 			break;
 		case SND_SUNXI_PA_CFG_PULSE:
 			pacfg_pulse_trig_disable(&pa_cfg[i]);
+			if (pa_cfg[i].pulse_trig->msleep_1)
+				msleep(pa_cfg[i].pulse_trig->msleep_1);
 			break;
 		case SND_SUNXI_PA_CFG_USER:
 			pacfg_user_trig_disable(&pa_cfg[i]);
@@ -834,36 +869,49 @@ void snd_sunxi_pa_pin_disable(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max)
 }
 EXPORT_SYMBOL_GPL(snd_sunxi_pa_pin_disable);
 
-/******* hdmi format config *******/
-DEFINE_SPINLOCK(hdmi_fmt_lock);
-
-static enum HDMI_FORMAT g_hdmi_fmt;
-
-enum HDMI_FORMAT snd_sunxi_hdmi_get_fmt(void)
+void snd_sunxi_pa_pin_disable_irp(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max, void *param,
+				  void (*pa_disa_cb)(void *data))
 {
-	enum HDMI_FORMAT tmp_hdmi_fmt;
-	unsigned long flags;
+	int i;
 
-	spin_lock_irqsave(&hdmi_fmt_lock, flags);
-	tmp_hdmi_fmt = g_hdmi_fmt;
-	spin_unlock_irqrestore(&hdmi_fmt_lock, flags);
+	SND_LOG_DEBUG("\n");
 
-	return tmp_hdmi_fmt;
+	if (pa_pin_max < 1) {
+		SND_LOG_DEBUG("no pa pin config\n");
+		return;
+	}
+
+	for (i = 0; i < pa_pin_max; i++) {
+		if (!pa_cfg[i].used)
+			continue;
+
+		switch (pa_cfg[i].mode) {
+		case SND_SUNXI_PA_CFG_LEVEL:
+			pacfg_level_trig_disable(&pa_cfg[i]);
+			pa_cfg[i].param = param;
+			pa_cfg[i].pa_disa_cb = pa_disa_cb;
+			if (pa_disa_cb)
+				schedule_work(&pa_cfg[i].pa_disa_work);
+			break;
+		case SND_SUNXI_PA_CFG_PULSE:
+			pacfg_pulse_trig_disable(&pa_cfg[i]);
+			pa_cfg[i].param = param;
+			pa_cfg[i].pa_disa_cb = pa_disa_cb;
+			if (pa_disa_cb)
+				schedule_work(&pa_cfg[i].pa_disa_work);
+			break;
+		case SND_SUNXI_PA_CFG_USER:
+			pacfg_user_trig_disable(&pa_cfg[i]);
+			break;
+		default:
+			SND_LOG_WARN("unsupport pa config mode %d\n", pa_cfg[i].mode);
+			break;
+		}
+	}
 }
-EXPORT_SYMBOL_GPL(snd_sunxi_hdmi_get_fmt);
+EXPORT_SYMBOL_GPL(snd_sunxi_pa_pin_disable_irp);
 
-int snd_sunxi_hdmi_set_fmt(int hdmi_fmt)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&hdmi_fmt_lock, flags);
-	g_hdmi_fmt = hdmi_fmt;
-	spin_unlock_irqrestore(&hdmi_fmt_lock, flags);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(snd_sunxi_hdmi_set_fmt);
-
+/******* extparam config *******/
 int snd_sunxi_hdmi_get_dai_type(struct device_node *np, unsigned int *dai_type)
 {
 	int ret;
@@ -891,176 +939,267 @@ int snd_sunxi_hdmi_get_dai_type(struct device_node *np, unsigned int *dai_type)
 }
 EXPORT_SYMBOL_GPL(snd_sunxi_hdmi_get_dai_type);
 
-/******* PCM uncommon format config *******/
-static LIST_HEAD(ucfmt_list);
-static DEFINE_MUTEX(ucfmt_mutex);
+static LIST_HEAD(extparam_list);
+static DEFINE_MUTEX(extparam_mutex);
 
-int snd_sunxi_ucfmt_register_cb(ucfmt_callback_f callback, const char *dai_name)
+int snd_sunxi_extparam_probe(const char *card_name, enum EXTPARAM_ID id)
 {
-	struct snd_sunxi_ucfmt *ucfmt, *c;
-	unsigned int i;
+	struct snd_sunxi_extparam *extparam, *n;
+	struct snd_notifier_block *extparam_nb_vir;
 
 	SND_LOG_DEBUG("\n");
 
-	if (!callback) {
-		SND_LOG_ERR("callback invalid\n");
+	if (!card_name) {
+		SND_LOG_ERR("card name invalid\n");
 		return -1;
 	}
 
-	if (!dai_name) {
-		SND_LOG_ERR("dai name invalid\n");
-		return -1;
-	}
-
-	mutex_lock(&ucfmt_mutex);
-
-	list_for_each_entry_safe(ucfmt, c, &ucfmt_list, list) {
-		if (!strcmp(ucfmt->cpu_dai_cb.dai_name, dai_name)) {
-			ucfmt->cpu_dai_cb.callback = callback;
-			mutex_unlock(&ucfmt_mutex);
+	mutex_lock(&extparam_mutex);
+	list_for_each_entry_safe(extparam, n, &extparam_list, list) {
+		if (!strcmp(extparam->name, card_name) && extparam->id == id) {
+			mutex_unlock(&extparam_mutex);
 			return 0;
 		}
-		for (i = 0; i < ucfmt->num_codecs; i++) {
-			if (!strcmp(ucfmt->codec_dai_cbs[i].dai_name, dai_name)) {
-				ucfmt->codec_dai_cbs[i].callback = callback;
-				mutex_unlock(&ucfmt_mutex);
-				return 0;
-			}
-		}
 	}
 
-	mutex_unlock(&ucfmt_mutex);
-
-	SND_LOG_ERR("can't find any ucfmt\n");
-	return -1;
-}
-EXPORT_SYMBOL(snd_sunxi_ucfmt_register_cb);
-
-void snd_sunxi_ucfmt_unregister_cb(const char *dai_name)
-{
-	struct snd_sunxi_ucfmt *ucfmt, *c;
-	unsigned int i;
-
-	SND_LOG_DEBUG("\n");
-
-	if (!dai_name) {
-		SND_LOG_ERR("dai name invalid\n");
-		return;
-	}
-
-	mutex_lock(&ucfmt_mutex);
-
-	list_for_each_entry_safe(ucfmt, c, &ucfmt_list, list) {
-		if (!strcmp(ucfmt->cpu_dai_cb.dai_name, dai_name)) {
-			ucfmt->cpu_dai_cb.callback = NULL;
-			mutex_unlock(&ucfmt_mutex);
-			return;
-		}
-		for (i = 0; i < ucfmt->num_codecs; i++) {
-			if (!strcmp(ucfmt->codec_dai_cbs[i].dai_name, dai_name)) {
-				ucfmt->codec_dai_cbs[i].callback = NULL;
-				mutex_unlock(&ucfmt_mutex);
-				return;
-			}
-		}
-	}
-
-	mutex_unlock(&ucfmt_mutex);
-}
-EXPORT_SYMBOL(snd_sunxi_ucfmt_unregister_cb);
-
-int snd_sunxi_ucfmt_probe(struct snd_soc_card *card, struct snd_sunxi_ucfmt **ucfmt)
-{
-	struct snd_soc_dai_link *dai_link = card->dai_link;
-	struct snd_soc_dai *cpu_dai = snd_soc_find_dai(dai_link->cpus);
-	struct snd_soc_dai *codec_dai;
-	struct device *dev = card->dev;
-	struct device_node *top_np = dev->of_node;
-	struct snd_sunxi_ucfmt *ucfmt_ref;
-	int ret;
-	unsigned int i, temp_val;
-
-	SND_LOG_DEBUG("\n");
-
-	if (!card) {
-		SND_LOG_ERR("soundcard invalid\n");
-		return -1;
-	}
-
-	ucfmt_ref = kzalloc(sizeof(struct snd_sunxi_ucfmt), GFP_KERNEL);
-	if (!ucfmt_ref)
+	extparam = kzalloc(sizeof(*extparam), GFP_KERNEL);
+	if (!extparam) {
+		mutex_unlock(&extparam_mutex);
 		return -ENOMEM;
+	}
+	extparam->name = card_name;
+	extparam->id = id;
+	INIT_LIST_HEAD(&extparam->extparam_nbs);
+	list_add_tail(&extparam->list, &extparam_list);
 
-	ucfmt_ref->cpu_dai_cb.dai_name = cpu_dai->name;
-
-	ucfmt_ref->num_codecs = dai_link->num_codecs;
-	ucfmt_ref->codec_dai_cbs = kcalloc(ucfmt_ref->num_codecs,
-					   sizeof(struct snd_sunxi_ucfmt_cb), GFP_KERNEL);
-	if (!ucfmt_ref->codec_dai_cbs)
+	/* add vir nb save param. */
+	extparam_nb_vir = kzalloc(sizeof(*extparam_nb_vir), GFP_KERNEL);
+	if (!extparam_nb_vir) {
+		mutex_unlock(&extparam_mutex);
+		SND_LOG_ERR("extparam_nb_vir alloc failed\n");
 		return -ENOMEM;
-	for (i = 0; i < ucfmt_ref->num_codecs; i++) {
-		codec_dai = snd_soc_find_dai(&dai_link->codecs[i]);
-		ucfmt_ref->codec_dai_cbs[i].dai_name = codec_dai->name;
 	}
+	extparam_nb_vir->notifier_call = NULL;
+	extparam_nb_vir->cb_data = NULL;
+	list_add_tail(&extparam_nb_vir->list, &extparam->extparam_nbs);
 
-	ucfmt_ref->tx_lsb_first = of_property_read_bool(top_np, "tx-lsb-first");
-	ucfmt_ref->rx_lsb_first = of_property_read_bool(top_np, "rx-lsb-first");
-
-	ucfmt_ref->fmt = dai_link->dai_fmt & SND_SOC_DAIFMT_FORMAT_MASK;
-	ret = of_property_read_u32(top_np, "data-late", &temp_val);
-	if (ret < 0 || temp_val > 3) {
-		SND_LOG_WARN("set data late to default\n");
-		if (ucfmt_ref->fmt == SND_SOC_DAIFMT_I2S)
-			ucfmt_ref->data_late = 1;
-		else if (ucfmt_ref->fmt == SND_SOC_DAIFMT_RIGHT_J
-			 || ucfmt_ref->fmt == SND_SOC_DAIFMT_LEFT_J)
-			ucfmt_ref->data_late = 0;
-		else if (ucfmt_ref->fmt == SND_SOC_DAIFMT_DSP_A)
-			ucfmt_ref->data_late = 1;
-		else if (ucfmt_ref->fmt == SND_SOC_DAIFMT_DSP_B)
-			ucfmt_ref->data_late = 0;
-	} else if (ucfmt_ref->fmt == SND_SOC_DAIFMT_DSP_A
-		   || ucfmt_ref->fmt == SND_SOC_DAIFMT_DSP_B) {
-		ucfmt_ref->data_late = temp_val;
-	}
-
-	mutex_lock(&ucfmt_mutex);
-	list_add_tail(&ucfmt_ref->list, &ucfmt_list);
-	mutex_unlock(&ucfmt_mutex);
-
-	*ucfmt = ucfmt_ref;
+	mutex_unlock(&extparam_mutex);
 
 	return 0;
 }
-EXPORT_SYMBOL(snd_sunxi_ucfmt_probe);
+EXPORT_SYMBOL(snd_sunxi_extparam_probe);
 
-void snd_sunxi_ucfmt_remove(struct snd_sunxi_ucfmt *ucfmt)
+void snd_sunxi_extparam_remove(const char *card_name, enum EXTPARAM_ID id)
 {
-	struct snd_sunxi_ucfmt *ucfmt_del, *c;
+	struct snd_sunxi_extparam *extparam_del, *n;
+	struct snd_notifier_block *extparam_nb_del, *m;
 
 	SND_LOG_DEBUG("\n");
 
-	if (!ucfmt) {
-		SND_LOG_ERR("ucfmt invailed\n");
+	if (!card_name) {
+		SND_LOG_ERR("card name invalid\n");
 		return;
 	}
 
-	mutex_lock(&ucfmt_mutex);
-	list_for_each_entry_safe(ucfmt_del, c, &ucfmt_list, list) {
-		if (!strcmp(ucfmt_del->cpu_dai_cb.dai_name, ucfmt->cpu_dai_cb.dai_name)) {
-			SND_LOG_DEBUG("ucfmt(cpu dai:%s) del\n",
-				      ucfmt_del->cpu_dai_cb.dai_name);
-			list_del(&ucfmt_del->list);
-
-			mutex_unlock(&ucfmt_mutex);
-
-			kfree(ucfmt_del->codec_dai_cbs);
-			kfree(ucfmt_del);
+	mutex_lock(&extparam_mutex);
+	list_for_each_entry_safe(extparam_del, n, &extparam_list, list) {
+		if (!strcmp(extparam_del->name, card_name) && extparam_del->id == id) {
+			list_del(&extparam_del->list);
+			list_for_each_entry_safe(extparam_nb_del, m,
+						 &extparam_del->extparam_nbs, list) {
+				list_del(&extparam_nb_del->list);
+				kfree(extparam_nb_del);
+			}
+			kfree(extparam_del);
+			break;
 		}
 	}
-	mutex_unlock(&ucfmt_mutex);
+	mutex_unlock(&extparam_mutex);
 }
-EXPORT_SYMBOL(snd_sunxi_ucfmt_remove);
+EXPORT_SYMBOL(snd_sunxi_extparam_remove);
+
+int snd_sunxi_extparam_register_cb(const char *card_name, enum EXTPARAM_ID id,
+				   snd_notifier_fn_t notifier_call, void *cb_data)
+{
+	struct snd_sunxi_extparam *extparam, *n;
+	struct snd_notifier_block *extparam_nb_vir, *extparam_nb, *m;
+	bool extparam_exist = false;
+
+	SND_LOG_DEBUG("\n");
+
+	if (!notifier_call) {
+		SND_LOG_ERR("callback invalid\n");
+		return -1;
+	}
+	if (!card_name) {
+		SND_LOG_ERR("card name invalid\n");
+		return -1;
+	}
+	if (id >= EXTPARAM_ID_CNT) {
+		SND_LOG_ERR("id invalid\n");
+		return -1;
+	}
+
+	mutex_lock(&extparam_mutex);
+	list_for_each_entry_safe(extparam, n, &extparam_list, list) {
+		if (!strcmp(extparam->name, card_name) && extparam->id == id) {
+			list_for_each_entry_safe(extparam_nb, m, &extparam->extparam_nbs, list)
+				if (extparam_nb->notifier_call == notifier_call) {
+					SND_LOG_DEBUG("extparam_nb already exist\n");
+					mutex_unlock(&extparam_mutex);
+					return 0;
+				}
+			extparam_exist = true;
+			break;
+		}
+	}
+
+	if (!extparam_exist) {
+		extparam = kzalloc(sizeof(*extparam), GFP_KERNEL);
+		if (!extparam) {
+			mutex_unlock(&extparam_mutex);
+			return -ENOMEM;
+		}
+		extparam->name = card_name;
+		extparam->id = id;
+		INIT_LIST_HEAD(&extparam->extparam_nbs);
+		list_add_tail(&extparam->list, &extparam_list);
+
+		/* add vir nb save param. */
+		extparam_nb_vir = kzalloc(sizeof(*extparam_nb_vir), GFP_KERNEL);
+		if (!extparam_nb_vir) {
+			mutex_unlock(&extparam_mutex);
+			SND_LOG_ERR("extparam_nb_vir alloc failed\n");
+			return -ENOMEM;
+		}
+		extparam_nb_vir->notifier_call = NULL;
+		extparam_nb_vir->cb_data = NULL;
+		list_add_tail(&extparam_nb_vir->list, &extparam->extparam_nbs);
+	}
+
+	extparam_nb = kzalloc(sizeof(*extparam_nb), GFP_KERNEL);
+	if (!extparam_nb) {
+		mutex_unlock(&extparam_mutex);
+		SND_LOG_ERR("extparam_nb alloc failed\n");
+		return -ENOMEM;
+	}
+	extparam_nb->notifier_call = notifier_call;
+	if (cb_data)
+		extparam_nb->cb_data = cb_data;
+	list_add_tail(&extparam_nb->list, &extparam->extparam_nbs);
+	mutex_unlock(&extparam_mutex);
+
+	return 0;
+}
+EXPORT_SYMBOL(snd_sunxi_extparam_register_cb);
+
+void snd_sunxi_extparam_unregister_cb(const char *card_name, enum EXTPARAM_ID id,
+				      snd_notifier_fn_t notifier_call)
+{
+	struct snd_sunxi_extparam *extparam, *n;
+	struct snd_notifier_block *extparam_nb_del, *m;
+
+	SND_LOG_DEBUG("\n");
+
+	if (!notifier_call) {
+		SND_LOG_ERR("callback invalid\n");
+		return;
+	}
+	if (!card_name) {
+		SND_LOG_ERR("card name invalid\n");
+		return;
+	}
+	if (id >= EXTPARAM_ID_CNT) {
+		SND_LOG_ERR("id invalid\n");
+		return;
+	}
+
+	mutex_lock(&extparam_mutex);
+	list_for_each_entry_safe(extparam, n, &extparam_list, list) {
+		if (!strcmp(extparam->name, card_name) && extparam->id == id) {
+			list_for_each_entry_safe(extparam_nb_del, m,
+						 &extparam->extparam_nbs, list) {
+				if (extparam_nb_del->notifier_call == notifier_call) {
+					list_del(&extparam_nb_del->list);
+					kfree(extparam_nb_del);
+					break;
+				}
+			}
+			break;
+		}
+	}
+	mutex_unlock(&extparam_mutex);
+}
+EXPORT_SYMBOL(snd_sunxi_extparam_unregister_cb);
+
+void *snd_sunxi_extparam_get_state(const char *card_name, enum EXTPARAM_ID id)
+{
+	struct snd_sunxi_extparam *extparam, *n;
+	struct snd_notifier_block *extparam_nb, *m;
+	void *tx_data = NULL;
+
+	SND_LOG_DEBUG("\n");
+
+	mutex_lock(&extparam_mutex);
+	list_for_each_entry_safe(extparam, n, &extparam_list, list) {
+		if (!strcmp(extparam->name, card_name) && extparam->id == id) {
+			list_for_each_entry_safe(extparam_nb, m, &extparam->extparam_nbs, list) {
+				tx_data = extparam_nb->tx_data;
+				break;
+			}
+			break;
+		}
+	}
+	mutex_unlock(&extparam_mutex);
+
+	if (!tx_data)
+		SND_LOG_ERR("can't find any extparam attach(%s-%d)\n", card_name, id);
+	return tx_data;
+}
+EXPORT_SYMBOL(snd_sunxi_extparam_get_state);
+
+int snd_sunxi_extparam_set_state_sync(const char *card_name, enum EXTPARAM_ID id, void *tx_data)
+{
+	struct snd_sunxi_extparam *extparam, *n;
+	struct snd_notifier_block *extparam_nb, *m;
+	bool nb_exist = false;
+
+	SND_LOG_DEBUG("\n");
+
+	if (!card_name) {
+		SND_LOG_ERR("card name invalid\n");
+		return -1;
+	}
+	if (id >= EXTPARAM_ID_CNT) {
+		SND_LOG_ERR("id invalid\n");
+		return -1;
+	}
+	if (!tx_data) {
+		SND_LOG_ERR("tx private data invalid\n");
+		return -1;
+	}
+
+	mutex_lock(&extparam_mutex);
+	list_for_each_entry_safe(extparam, n, &extparam_list, list) {
+		if (!strcmp(extparam->name, card_name) && extparam->id == id) {
+			list_for_each_entry_safe(extparam_nb, m, &extparam->extparam_nbs, list) {
+				nb_exist = true;
+				extparam_nb->tx_data = tx_data;
+				if (extparam_nb->notifier_call)
+					extparam_nb->notifier_call(extparam_nb);
+			}
+			break;
+		}
+	}
+	mutex_unlock(&extparam_mutex);
+
+	if (!nb_exist) {
+		SND_LOG_ERR("can't find any extparam attach(%s-%d)\n", card_name, id);
+		return -1;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(snd_sunxi_extparam_set_state_sync);
 
 /******* sysfs dump *******/
 struct snd_sunxi_dev {
@@ -1070,6 +1209,7 @@ struct snd_sunxi_dev {
 	char *snd_class_name;
 };
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 static LIST_HEAD(dump_list);
 static struct mutex dump_mutex;
 
@@ -1132,9 +1272,15 @@ void snd_sunxi_dump_unregister(struct snd_sunxi_dump *dump)
 }
 EXPORT_SYMBOL_GPL(snd_sunxi_dump_unregister);
 
-static ssize_t snd_sunxi_version_show(struct class *class, struct class_attribute *attr, char *buf)
+static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+snd_sunxi_version_show(const struct class *class, const struct class_attribute *attr,
+		       char *buf)
+#else
+snd_sunxi_version_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
-	size_t count = 0, cound_tmp = 0;
+	size_t count = 0, count_tmp = 0;
 	struct snd_sunxi_dump *dump_tmp, *c;
 	struct snd_sunxi_dump *dump = NULL;
 
@@ -1144,8 +1290,8 @@ static ssize_t snd_sunxi_version_show(struct class *class, struct class_attribut
 		dump = dump_tmp;
 		if (dump && dump->dump_version) {
 			count += sprintf(buf + count, "module(%s) version: ", dump->name);
-			dump->dump_version(dump->priv, buf + count, &cound_tmp);
-			count += cound_tmp;
+			dump->dump_version(dump->priv, buf + count, &count_tmp);
+			count += count_tmp;
 		}
 	}
 
@@ -1154,9 +1300,15 @@ static ssize_t snd_sunxi_version_show(struct class *class, struct class_attribut
 	return count;
 }
 
-static ssize_t snd_sunxi_help_show(struct class *class, struct class_attribute *attr, char *buf)
+static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+snd_sunxi_help_show(const struct class *class, const struct class_attribute *attr,
+		    char *buf)
+#else
+snd_sunxi_help_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
-	size_t count = 0, cound_tmp = 0;
+	size_t count = 0, count_tmp = 0;
 	struct snd_sunxi_dump *dump_tmp, *c;
 	struct snd_sunxi_dump *dump = NULL;
 
@@ -1174,10 +1326,11 @@ static ssize_t snd_sunxi_help_show(struct class *class, struct class_attribute *
 
 	if (dump && dump->dump_help) {
 		count += sprintf(buf + count, "== current module(%s) help ==\n", dump->name);
-		dump->dump_help(dump->priv, buf + count, &cound_tmp);
-		count += cound_tmp;
+		dump->dump_help(dump->priv, buf + count, &count_tmp);
+		count += count_tmp;
 	} else if (dump && !dump->dump_help) {
-		count += sprintf(buf + count, "== current module(%s), but not help ==\n", dump->name);
+		count += sprintf(buf + count, "== current module(%s), but not help ==\n",
+				 dump->name);
 	} else {
 		count += sprintf(buf + count, "== current module(NULL) ==\n");
 	}
@@ -1185,7 +1338,13 @@ static ssize_t snd_sunxi_help_show(struct class *class, struct class_attribute *
 	return count;
 }
 
-static ssize_t snd_sunxi_module_show(struct class *class, struct class_attribute *attr, char *buf)
+static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+snd_sunxi_module_show(const struct class *class, const struct class_attribute *attr,
+		      char *buf)
+#else
+snd_sunxi_module_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
 	size_t count = 0;
 	struct snd_sunxi_dump *dump_tmp, *c;
@@ -1211,8 +1370,14 @@ static ssize_t snd_sunxi_module_show(struct class *class, struct class_attribute
 	return count;
 }
 
-static ssize_t snd_sunxi_module_store(struct class *class, struct class_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+snd_sunxi_module_store(const struct class *class, const struct class_attribute *attr,
+		       const char *buf, size_t count)
+#else
+snd_sunxi_module_store(struct class *class, struct class_attribute *attr,
+		       const char *buf, size_t count)
+#endif
 {
 	struct snd_sunxi_dump *dump, *c;
 	int scanf_cnt = 0;
@@ -1236,10 +1401,16 @@ static ssize_t snd_sunxi_module_store(struct class *class, struct class_attribut
 	return count;
 }
 
-static ssize_t snd_sunxi_dump_show(struct class *class, struct class_attribute *attr, char *buf)
+static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+snd_sunxi_dump_show(const struct class *class, const struct class_attribute *attr,
+		    char *buf)
+#else
+snd_sunxi_dump_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
 {
 	int ret;
-	size_t count = 0, cound_tmp = 0;
+	size_t count = 0, count_tmp = 0;
 	struct snd_sunxi_dump *dump_tmp, *c;
 	struct snd_sunxi_dump *dump = NULL;
 
@@ -1253,10 +1424,10 @@ static ssize_t snd_sunxi_dump_show(struct class *class, struct class_attribute *
 
 	if (dump && dump->dump_show) {
 		count += sprintf(buf + count, "module(%s)\n", dump->name);
-		ret = dump->dump_show(dump->priv, buf + count, &cound_tmp);
+		ret = dump->dump_show(dump->priv, buf + count, &count_tmp);
 		if (ret)
 			pr_err("module(%s) show failed\n", dump->name);
-		count += cound_tmp;
+		count += count_tmp;
 	} else if (dump && !dump->dump_show) {
 		count += sprintf(buf + count, "current module(%s), but not show\n", dump->name);
 	} else {
@@ -1266,8 +1437,14 @@ static ssize_t snd_sunxi_dump_show(struct class *class, struct class_attribute *
 	return count;
 }
 
-static ssize_t snd_sunxi_dump_store(struct class *class, struct class_attribute *attr,
-				    const char *buf, size_t count)
+static ssize_t
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+snd_sunxi_dump_store(const struct class *class, const struct class_attribute *attr,
+		     const char *buf, size_t count)
+#else
+snd_sunxi_dump_store(struct class *class, struct class_attribute *attr,
+		     const char *buf, size_t count)
+#endif
 {
 	int ret;
 	struct snd_sunxi_dump *dump_tmp, *c;
@@ -1291,13 +1468,14 @@ static ssize_t snd_sunxi_dump_store(struct class *class, struct class_attribute 
 }
 
 static struct class_attribute snd_class_attrs[] = {
-	__ATTR(version, 0644, snd_sunxi_version_show, NULL),
-	__ATTR(help, 0644, snd_sunxi_help_show, NULL),
-	__ATTR(module, 0644, snd_sunxi_module_show, snd_sunxi_module_store),
-	__ATTR(dump, 0644, snd_sunxi_dump_show, snd_sunxi_dump_store),
+	__ATTR(version, 0644, SUNXI_ATTR_SHOW_CONVERT(snd_sunxi_version_show), NULL),
+	__ATTR(help, 0644, SUNXI_ATTR_SHOW_CONVERT(snd_sunxi_help_show), NULL),
+	__ATTR(module, 0644, SUNXI_ATTR_SHOW_CONVERT(snd_sunxi_module_show),
+			     SUNXI_ATTR_STORE_CONVERT(snd_sunxi_module_store)),
+	__ATTR(dump, 0644, SUNXI_ATTR_SHOW_CONVERT(snd_sunxi_dump_show),
+			   SUNXI_ATTR_STORE_CONVERT(snd_sunxi_dump_store)),
 };
 
-#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 static int snd_sunxi_debug_create(struct snd_sunxi_dev *sunxi_dev)
 {
 	int ret, i;
@@ -1332,8 +1510,6 @@ static void snd_sunxi_debug_remove(struct snd_sunxi_dev *sunxi_dev)
 #else
 static int snd_sunxi_debug_create(struct snd_sunxi_dev *sunxi_dev)
 {
-	(void)snd_class_attrs;
-
 	SND_LOG_DEBUG("unsupport debug\n");
 	(void)sunxi_dev;
 	return 0;
@@ -1370,7 +1546,7 @@ static int _snd_sunxi_dev_init(struct snd_sunxi_dev *sunxi_dev)
 	SND_LOG_DEBUG("sunxi_dev major = %u, sunxi_dev minor = %u\n",
 		      MAJOR(sunxi_dev->snd_dev), MINOR(sunxi_dev->snd_dev));
 
-	sunxi_dev->snd_class = class_create(THIS_MODULE, sunxi_dev->snd_class_name);
+	sunxi_dev->snd_class = sunxi_adpt_class_create(THIS_MODULE, sunxi_dev->snd_class_name);
 	if (IS_ERR_OR_NULL(sunxi_dev->snd_class)) {
 		SND_LOG_ERR("class_create failed\n");
 		goto err_class_create;
@@ -1382,7 +1558,9 @@ static int _snd_sunxi_dev_init(struct snd_sunxi_dev *sunxi_dev)
 		goto err_class_create_file;
 	}
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	mutex_init(&dump_mutex);
+#endif
 
 	return 0;
 
@@ -1412,7 +1590,9 @@ static void _snd_sunxi_dev_exit(struct snd_sunxi_dev *sunxi_dev)
 	class_destroy(sunxi_dev->snd_class);
 	unregister_chrdev_region(sunxi_dev->snd_dev, 1);
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	mutex_destroy(&dump_mutex);
+#endif
 }
 
 static struct snd_sunxi_dev sunxi_dev = {
@@ -1437,5 +1617,5 @@ module_exit(snd_sunxi_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.1.0");
+MODULE_VERSION("1.1.7");
 MODULE_DESCRIPTION("sunxi common interface");

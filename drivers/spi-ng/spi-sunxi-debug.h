@@ -15,6 +15,7 @@
 #define _SUNXI_SPI_DEBUG_H_
 
 #include <linux/kernel.h>
+#include <linux/device.h>
 
 /* Debug Dump */
 #define SUNXI_SPI_DUMP_ROWSIZE	(16)
@@ -39,12 +40,12 @@ __maybe_unused static void sunxi_spi_dump_reg(struct device *dev, void __iomem *
 	}
 }
 
-__maybe_unused static void sunxi_spi_dump_data(struct device *dev, const u8 *buf, u32 len)
+__maybe_unused static void sunxi_spi_dump_data(struct device *dev, const u8 *buf, u32 len, const char *prefix_str)
 {
 	if (buf && len > 0) {
 		if (len > 256)
 			len = 256;
-		print_hex_dump(KERN_INFO, NULL, DUMP_PREFIX_OFFSET, SUNXI_SPI_DUMP_ROWSIZE, 1, buf, len, true);
+		print_hex_dump(KERN_INFO, prefix_str, DUMP_PREFIX_OFFSET, SUNXI_SPI_DUMP_ROWSIZE, 1, buf, len, true);
 	}
 }
 

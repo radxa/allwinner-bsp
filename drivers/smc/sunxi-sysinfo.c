@@ -26,6 +26,7 @@
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/compat.h>
+#include <linux/version.h>
 
 #include "sunxi-sysinfo-user.h"
 
@@ -45,7 +46,7 @@ static long soc_info_ioctl(struct file *file, unsigned int ioctl_num,
 		unsigned long ioctl_param)
 {
 	long ret = 0;
-	char id[17] = "";
+	char id[33] = ""; /* 33 = 32 + 1, 32 is the chipid origin number of characters, 1 is string tail "\0" */
 
 	memset(id, 0, sizeof(id));
 
@@ -71,6 +72,11 @@ static long soc_info_ioctl(struct file *file, unsigned int ioctl_num,
 		sunxi_get_soc_chipid_str(id);
 		ret = copy_to_user((void __user *)ioctl_param, id, 16);
 		pr_debug("soc chipid:%s\n", id);
+		break;
+	case CHECK_SOC_CHIPID_ORIGIN:
+		sunxi_get_soc_chipid_origin(id);
+		ret = copy_to_user((void __user *)ioctl_param, id, strlen(id) + 1);
+		pr_debug("origin soc chipid:%s\n", id);
 		break;
 	case CHECK_SOC_FT_ZONE:
 		sunxi_get_soc_ft_zone_str(id);
@@ -120,8 +126,29 @@ struct miscdevice soc_info_device = {
 	.fops  = &soc_info_ops,
 };
 
-static ssize_t sys_info_show(struct class *class,
-			     struct class_attribute *attr, char *buf)
+static ssize_t ver_info_show(
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+		const struct class *class,
+		const struct class_attribute *attr,
+#else
+		struct class *class,
+		struct class_attribute *attr,
+#endif
+		char *buf)
+{
+	return sprintf(buf, "sunxi sid version is:0x%x",
+			sunxi_get_sid_ver());
+}
+
+static ssize_t sys_info_show(
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+		const struct class *class,
+		const struct class_attribute *attr,
+#else
+		struct class *class,
+		struct class_attribute *attr,
+#endif
+		char *buf)
 {
 	int i;
 	int databuf[4] = {0};
@@ -174,8 +201,15 @@ static ssize_t sys_info_show(struct class *class,
 	return size;
 }
 
-static ssize_t key_info_show(struct class *class,
-			     struct class_attribute *attr, char *buf)
+static ssize_t key_info_show(
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+		const struct class *class,
+		const struct class_attribute *attr,
+#else
+		struct class *class,
+		struct class_attribute *attr,
+#endif
+		char *buf)
 {
 	s32 i;
 	u32 *key_data = NULL;
@@ -200,25 +234,35 @@ static ssize_t key_info_show(struct class *class,
 	return size;
 }
 
-static ssize_t key_info_store(struct class *class, struct class_attribute *attr,
+static ssize_t key_info_store(
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+		const struct class *class,
+		const struct class_attribute *attr,
+#else
+		struct class *class,
+		struct class_attribute *attr,
+#endif
 		const char *buf, size_t count)
 {
 	if (count >= SUNXI_KEY_NAME_LEN)
 		return -EINVAL;
 
 	memset(key_name, 0, SUNXI_KEY_NAME_LEN);
-	strncpy(key_name, buf, count);
+	strncpy(key_name, buf, count - 1);
 	return count;
 }
 
 static struct class_attribute info_class_attrs[] = {
 	__ATTR(sys_info, 0644, sys_info_show, NULL),
+	__ATTR(ver_info, 0644, ver_info_show, NULL),
 	__ATTR(key_info, 0644, key_info_show, key_info_store),
 };
 
 static struct class info_class = {
 	.name           = "sunxi_info",
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
 	.owner          = THIS_MODULE,
+#endif
 };
 
 static int __init sunxi_sys_info_init(void)
@@ -258,4 +302,4 @@ module_exit(sunxi_sys_info_exit);
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("xiafeng<xiafeng@allwinnertech.com>");
 MODULE_DESCRIPTION("sunxi sys info.");
-MODULE_VERSION("1.0.1");
+MODULE_VERSION("1.1.0");

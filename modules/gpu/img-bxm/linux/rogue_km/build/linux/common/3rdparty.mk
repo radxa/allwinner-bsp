@@ -97,35 +97,14 @@ $(eval $(call TunableKernelConfigC,DCPDP_WIDTH,))
 $(eval $(call TunableKernelConfigC,DCPDP_HEIGHT,))
 endif
 
-ifeq ($(DISPLAY_CONTROLLER),adf_pdp)
-$(eval $(call TunableKernelConfigC,ADF_PDP_WIDTH,))
-$(eval $(call TunableKernelConfigC,ADF_PDP_HEIGHT,))
-endif
-
-ifeq ($(DISPLAY_CONTROLLER),drm_pdp)
- ifeq ($(SUPPORT_KMS),1)
-  ifneq ($(call kernel-version-at-least,4,3),true)
-   $(eval $(call TunableKernelConfigC,SUPPORT_DRM_FBDEV_EMULATION,,\
-Enables legacy framebuffer device support in those DRM/KMS drivers \
-that support it when using kernel 4.2 and below. When using later \
-kernels this support must be enabled in the kernel via the \
-CONFIG_DRM_FBDEV_EMULATION option.))
-  else ifeq ($(call kernel-version-at-least,4,3),true)
-   ifneq ($(filter command line environment,$(origin SUPPORT_DRM_FBDEV_EMULATION)),)
-    $(warning CONFIG_DRM_FBDEV_EMULATION must be set as part of the Linux kernel build)
-    $(warning SUPPORT_DRM_FBDEV_EMULATION will be ignored)
-   endif
-   override undefine SUPPORT_DRM_FBDEV_EMULATION
-  endif
- endif
-endif
-
 # MODPOST fails for out-of-tree modules with kernels >=5.13 and <5.17.
 # This is because there is an implicit dependency to asm/cpufeatures.h
 # added upstream at 025768a966a3dde8455de46d1f121a51bacb6a77 and fixed
 # at e1cd82a339024beda8439fb2e20718363ee989a8.
-ifeq ($(call kernel-version-at-least,5,13),true)
- ifneq ($(call kernel-version-at-least,5,17),true)
-  $(eval $(call KernelConfigMake,DEFINE_X86_FEATURE_LA57,1))
+ifneq ($(wildcard $(KERNELDIR)),)
+ ifeq ($(call kernel-version-at-least,5,13),true)
+  ifneq ($(call kernel-version-at-least,5,17),true)
+   $(eval $(call KernelConfigMake,DEFINE_X86_FEATURE_LA57,1))
+  endif
  endif
 endif

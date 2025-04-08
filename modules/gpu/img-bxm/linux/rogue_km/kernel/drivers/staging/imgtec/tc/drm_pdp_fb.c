@@ -74,37 +74,7 @@ static struct fb_ops pdp_fbdev_ops = {
 static struct fb_info *
 pdp_fbdev_helper_alloc(struct drm_fb_helper *helper)
 {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0))
-	struct device *dev = helper->dev->dev;
-	struct fb_info *info;
-	int ret;
-
-	info = framebuffer_alloc(0, dev);
-	if (!info)
-		return ERR_PTR(-ENOMEM);
-
-	ret = fb_alloc_cmap(&info->cmap, 256, 0);
-	if (ret)
-		goto err_release;
-
-	info->apertures = alloc_apertures(1);
-	if (!info->apertures) {
-		ret = -ENOMEM;
-		goto err_free_cmap;
-	}
-
-	helper->fbdev = info;
-
-	return info;
-
-err_free_cmap:
-	fb_dealloc_cmap(&info->cmap);
-err_release:
-	framebuffer_release(info);
-	return ERR_PTR(ret);
-#else
-	return drm_fb_helper_alloc_fbi(helper);
-#endif
+	return drm_fb_helper_alloc_info(helper);
 }
 
 static inline void
@@ -188,13 +158,17 @@ static int pdp_fbdev_probe(struct drm_fb_helper *helper,
 		goto err_gem_unmap;
 
 	helper->fb = fb;
-	helper->fbdev = info;
+	helper->COMPAT_FB_INFO = info;
 
 	/* Fill out the Linux framebuffer info */
-	strlcpy(info->fix.id, FBDEV_NAME, sizeof(info->fix.id));
+	strscpy(info->fix.id, FBDEV_NAME, sizeof(info->fix.id));
 	pdp_fbdev_helper_fill_info(helper, sizes, info, &mode_cmd);
 	info->par = helper;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0))
 	info->flags = FBINFO_DEFAULT | FBINFO_HWACCEL_DISABLED;
+#else
+	info->flags = FBINFO_HWACCEL_DISABLED;
+#endif
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0))
 	info->flags |= FBINFO_CAN_FORCE_OUTPUT;
 #endif
@@ -203,8 +177,10 @@ static int pdp_fbdev_probe(struct drm_fb_helper *helper,
 	info->fix.smem_len = obj_size;
 	info->screen_base = vaddr;
 	info->screen_size = obj_size;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
 	info->apertures->ranges[0].base = pdp_obj->cpu_addr;
 	info->apertures->ranges[0].size = obj_size;
+#endif
 
 	mutex_unlock(&dev->struct_mutex);
 	return 0;
@@ -230,12 +206,16 @@ struct pdp_fbdev *pdp_fbdev_create(struct pdp_drm_private *dev_priv)
 {
 	struct pdp_fbdev *pdp_fbdev;
 	int err;
+	const u8 preferred_bpp = 32;
 
 	pdp_fbdev = kzalloc(sizeof(*pdp_fbdev), GFP_KERNEL);
 	if (!pdp_fbdev)
 		return ERR_PTR(-ENOMEM);
 
 	drm_fb_helper_prepare(dev_priv->dev, &pdp_fbdev->helper,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+			      preferred_bpp,
+#endif
 			      &pdp_fbdev_helper_funcs);
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0))
@@ -249,14 +229,16 @@ struct pdp_fbdev *pdp_fbdev_create(struct pdp_drm_private *dev_priv)
 		goto err_free_fbdev;
 
 	pdp_fbdev->priv = dev_priv;
-	pdp_fbdev->preferred_bpp = 32;
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 3, 0))
 	drm_fb_helper_single_add_all_connectors(&pdp_fbdev->helper);
 #endif
 
-	/* Call ->fb_probe() */
-	err = drm_fb_helper_initial_config(&pdp_fbdev->helper, pdp_fbdev->preferred_bpp);
+	err = drm_fb_helper_initial_config(&pdp_fbdev->helper
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))
+					   , preferred_bpp
+#endif
+					  );
 	if (err)
 		goto err_fb_helper_fini;
 
@@ -283,12 +265,12 @@ void pdp_fbdev_destroy(struct pdp_fbdev *pdp_fbdev)
 	if (!pdp_fbdev)
 		return;
 
-	drm_fb_helper_unregister_fbi(&pdp_fbdev->helper);
+	drm_fb_helper_unregister_info(&pdp_fbdev->helper);
 	pdp_fb = &pdp_fbdev->fb;
 
 	pdp_obj = to_pdp_obj(pdp_fb->obj[0]);
 	if (pdp_obj) {
-		info = pdp_fbdev->helper.fbdev;
+		info = pdp_fbdev->helper.COMPAT_FB_INFO;
 		iounmap((void __iomem *)info->screen_base);
 	}
 

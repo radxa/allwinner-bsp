@@ -20,7 +20,7 @@
 #ifndef __SUNXI_LOG_H__
 #define __SUNXI_LOG_H__
 
-#define SUNXI_LOG_VERSION	"V0.7"
+#define SUNXI_LOG_VERSION	"V0.8"
 /* Allow user to define their own MODNAME with `SUNXI_MODNAME` */
 #ifndef SUNXI_MODNAME
 #define SUNXI_MODNAME		KBUILD_MODNAME
@@ -39,6 +39,9 @@
 
 #include <linux/kernel.h>
 #include <linux/device.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/debug.h>
+#include <linux/version.h>
 
 /*
  * Copy from dev_name(). Someone like to use "dev_name" as local variable,
@@ -60,6 +63,17 @@ static inline const char *sunxi_log_dev_name(const struct device *dev)
  * 3. err_code: Error code. Only used in sunxi_err_std()
  * 4. ...: Variable arguments
  */
+
+/* void sunxi_info_once(struct device *dev, char *fmt, ...); */
+#define sunxi_info_once(dev, fmt, ...)											\
+do {															\
+	static bool __print_once __read_mostly;										\
+															\
+	if (!__print_once) {												\
+		__print_once = true;											\
+		sunxi_info(dev, fmt, ##__VA_ARGS__);									\
+	}														\
+} while (0)
 
 #if IS_ENABLED(CONFIG_AW_LOG_VERBOSE)
 
@@ -172,5 +186,23 @@ static inline const char *sunxi_log_dev_name(const struct device *dev)
 */
 
 #include "errcode/sunxi-err.h"
+
+static inline void sunxi_dump_backtrace_and_locks(struct task_struct *task)
+{
+	debug_show_held_locks(task);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
+	show_stack(task, NULL, KERN_ERR);
+#else
+	show_stack(task, NULL);
+#endif
+}
+
+static inline void sunxi_dump_backtrace_and_locks_for_all_tasks(void)
+{
+	struct task_struct *task;
+
+	for_each_process(task)
+		sunxi_dump_backtrace_and_locks(task);
+}
 
 #endif

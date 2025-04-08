@@ -4,9 +4,12 @@
 #ifndef _SUNXI_CRASHDUMP_H
 #define _SUNXI_CRASHDUMP_H
 
+#include <linux/cpufreq.h>
+
 extern int sunxi_crash_dump2pc_init(void);
 extern void sunxi_crash_dump2pc_exit(void);
 extern void sunxi_kernel_panic_printf(const char *str, ...);
+extern void console_unlock(void);
 
 #if IS_ENABLED(CONFIG_AW_CRASHDUMP_KEY)
 
@@ -27,7 +30,6 @@ static inline void sunxi_crashdump_key_unregister(void)
 #endif
 
 #if IS_ENABLED(CONFIG_AW_CRASHDUMP)
-
 extern int sunxi_get_freq_info(struct device *dev, struct cpufreq_policy *policy, u64 start_time,
 				u64 end_time, unsigned long target_freq, unsigned long last_freq);
 

@@ -55,6 +55,7 @@ static const struct di_ioctl_desc di_ioctls[] = {
 
 	DI_IOCTL_DEF(DI_IOC_GET_TNRPARA, di_client_get_tnrpara),
 	DI_IOCTL_DEF(DI_IOC_SET_TNRPARA, di_client_set_tnrpara),
+	DI_IOCTL_DEF(DI_IOC_SET_MEDIAID, di_client_set_mediaservice_id),
 };
 
 #define DI_IOCTL_COUNT	ARRAY_SIZE(di_ioctls)

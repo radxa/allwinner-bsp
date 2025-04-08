@@ -250,11 +250,13 @@ struct sunxi_owa {
 	struct platform_device *pdev;
 
 	struct sunxi_owa_mem mem;
-	struct sunxi_owa_clk_t *clk;
+	sunxi_owa_clk_t *clk;
 	struct snd_sunxi_rglt *rglt;
 	struct sunxi_owa_pinctl pin;
 	struct sunxi_owa_dts dts;
 	struct sunxi_owa_irq owa_irq;
+
+	enum SND_SUNXI_CLK_STATUS clk_sta;
 
 	struct sunxi_dma_params playback_dma_param;
 	struct sunxi_dma_params capture_dma_param;

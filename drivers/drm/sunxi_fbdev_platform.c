@@ -69,13 +69,17 @@ int platform_get_private_size(void)
 	return sizeof(struct fb_hw_info);
 }
 
-int platform_update_fb_output(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var)
+int platform_update_fb_output(struct fb_hw_info *hw_info, void *info)
 {
 	struct drm_device *drm = hw_info->create_info.drm;
 	unsigned int de = hw_info->create_info.map.hw_display;
 	unsigned int channel = hw_info->create_info.map.hw_channel;
 	struct fbdev_config cfg;
-
+#if IS_ENABLED (CONFIG_FB)
+	struct fb_var_screeninfo *var = (struct fb_var_screeninfo *)info;
+#else
+	struct drm_fb_info *var = (struct drm_fb_info *)info;
+#endif
 	cfg.dev = drm;
 	cfg.de_id = de;
 	cfg.channel_id = channel;
@@ -106,9 +110,35 @@ int platform_fb_mmap(struct fb_hw_info *hw_info, struct vm_area_struct *vma)
 #endif
 }
 
-struct dma_buf *platform_fb_get_dmabuf(struct fb_hw_info *hw_info)
+int platform_fb_get_dmabuf(struct fb_hw_info *hw_info, int *fd)
 {
-	return NULL;
+	struct fb_hw_info *info = hw_info;
+	uint32_t handle;
+	int ret = 0;
+
+	if (!info->buffer && !info->buffer->gem) {
+		DRM_ERROR("Failed get gem obj form fb\n");
+		return -1;
+	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	ret = drm_gem_handle_create(info->client.file, info->buffer->gem, &handle);
+	if (ret < 0) {
+		DRM_ERROR("Failed to create handle form gem obj\n");
+		goto err_exit;
+	}
+#else
+	if (!info->buffer->handle) {
+		DRM_ERROR("Failed to get handle form buffer handle\n");
+		goto err_exit;
+	}
+	handle = info->buffer->handle;
+#endif
+	ret = drm_gem_prime_handle_to_fd(info->client.dev, info->client.file,
+					 handle, DRM_CLOEXEC, fd);
+
+err_exit:
+	return ret;
 }
 
 void *fb_map_kernel(unsigned long phys_addr, unsigned long size)
@@ -137,22 +167,25 @@ void *fb_map_kernel(unsigned long phys_addr, unsigned long size)
 void *fb_map_kernel_cache(unsigned long phys_addr, unsigned long size)
 {
 	int npages = PAGE_ALIGN(size) / PAGE_SIZE;
-	struct page **pages = vmalloc(sizeof(struct page *) * npages);
+	struct page **pages /*= vmalloc(sizeof(struct page *) * npages)*/;
 	struct page **tmp;
 	struct page *cur_page = phys_to_page(phys_addr);
 	pgprot_t pgprot;
 	void *vaddr = NULL;
 	int i;
 
-	if (!pages)
+	pages = kvmalloc_array(npages, sizeof(struct page *), GFP_KERNEL);
+	if (!pages) {
+		DRM_ERROR("kvmalloc_array return failed ! out of memory ?\n");
 		return NULL;
+	}
 
 	for (i = 0, tmp = pages; i < npages; i++)
 		*(tmp++) = cur_page++;
 
 	pgprot = PAGE_KERNEL;
 	vaddr = vmap(pages, npages, VM_MAP, pgprot);
-	vfree(pages);
+	kvfree(pages);
 	return vaddr;
 }
 
@@ -173,10 +206,10 @@ int platform_fb_set_blank(struct fb_hw_info *hw_info, bool is_blank)
 	return 0;
 }
 
-int platform_fb_init_finish(struct fb_hw_info *hw_info, const struct fb_var_screeninfo *var,
+int platform_fb_init_finish(struct fb_hw_info *hw_info, void *info,
 				struct display_channel_state *out_state)
 {
-	platform_update_fb_output(hw_info, var);
+	platform_update_fb_output(hw_info, info);
 	schedule_work(&hw_info->free_wq);
 	memcpy(out_state, &hw_info->state, sizeof(*out_state));
 	return 0;
@@ -199,7 +232,7 @@ int platform_fb_memory_alloc(struct fb_hw_info *hw_info, void **vir_addr, unsign
 	void *tmp;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 	int ret;
-#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0)
 	struct iosys_map map;
 #else
 	struct dma_buf_map map;
@@ -210,9 +243,8 @@ int platform_fb_memory_alloc(struct fb_hw_info *hw_info, void **vir_addr, unsign
 #else
 	struct drm_gem_dma_object *gem;
 #endif
-
 	hw_info->buffer = drm_client_framebuffer_create(&hw_info->client, w, h, fb_fmt2_drm_fmt(fmt));
-	if (IS_ERR(hw_info->buffer))
+	if (IS_ERR_OR_NULL(hw_info->buffer))
 		return PTR_ERR(hw_info->buffer);
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
@@ -248,15 +280,28 @@ int platform_fb_memory_alloc(struct fb_hw_info *hw_info, void **vir_addr, unsign
 		size = drm_format_info(fb_fmt2_drm_fmt(fmt))->depth / 8;/* be careful legacy deprecated api */
 		size *= hw_info->create_info.width * hw_info->create_info.height;
 		tmp = fb_map_kernel_cache(hw_info->create_info.logo_offset, size);
-		memcpy(*vir_addr, tmp, size);
-		Fb_unmap_kernel(tmp);
+		if (tmp) {
+			memcpy(*vir_addr, tmp, size);
+			Fb_unmap_kernel(tmp);
+		} else {
+			DRM_ERROR("fb_map_kernel/vmap failed, skip logo copy!\n");
+		}
 	}
 	return 0;
 }
 
 int platform_fb_memory_free(struct fb_hw_info *info)
 {
-//TODO
+	if (!info || !info->buffer)
+		return 0;
+
+	drm_client_buffer_vunmap(info->buffer);
+
+	drm_client_framebuffer_delete(info->buffer);
+	info->buffer = NULL;
+
+	info->state.base.fb = NULL;
+
 	return 0;
 }
 
@@ -269,6 +314,28 @@ int platform_fb_pan_display_post_proc(struct fb_hw_info *info)
 	drm_wait_one_vblank(drm, hw_id);
 */
 	return 0;
+}
+
+static void drm_client_unregister(struct drm_device *dev, struct drm_client_dev *client_del)
+{
+	struct drm_client_dev *client, *tmp;
+
+	if (!drm_core_check_feature(dev, DRIVER_MODESET))
+		return;
+
+	mutex_lock(&dev->clientlist_mutex);
+	list_for_each_entry_safe(client, tmp, &dev->clientlist, list) {
+		if (client != client_del)
+			continue;
+
+		list_del(&client->list);
+		if (client->funcs && client->funcs->unregister) {
+			client->funcs->unregister(client);
+		} else {
+			drm_client_release(client);
+		}
+	}
+	mutex_unlock(&dev->clientlist_mutex);
 }
 
 int platform_fb_init(struct fb_create_info *create, struct fb_hw_info *info, void **pseudo_palette)
@@ -287,7 +354,8 @@ int platform_fb_init(struct fb_create_info *create, struct fb_hw_info *info, voi
 	return 0;
 }
 
-int platform_fb_exit(void)
+int platform_fb_exit(struct fb_create_info *create, struct fb_hw_info *info)
 {
+	drm_client_unregister(create->drm, &info->client);
 	return 0;
 }

@@ -2,41 +2,13 @@
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 #define pr_fmt(x) KBUILD_MODNAME ": " x "\n"
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include "linux/irq.h"
-#include <linux/slab.h>
-#include <linux/interrupt.h>
-#include <linux/device.h>
-#include <linux/mutex.h>
-#include <linux/param.h>
-#include <linux/jiffies.h>
-#include <linux/platform_device.h>
-#include <linux/power_supply.h>
-#include <linux/fs.h>
-#include <linux/kernel.h>
-#include <linux/ktime.h>
-#include <linux/of.h>
-#include <linux/timekeeping.h>
-#include <linux/types.h>
-#include <linux/string.h>
-#include <asm/irq.h>
-#include <linux/cdev.h>
-#include <linux/delay.h>
-#include <linux/pm_runtime.h>
-#include <linux/kthread.h>
-#include <linux/freezer.h>
-#include <linux/err.h>
-#include <linux/of_gpio.h>
-#include <linux/gpio.h>
-#include <linux/extcon.h>
-#include <linux/extcon-provider.h>
-#include <linux/err.h>
-#include <linux/notifier.h>
-#include <power/bmu-ext.h>
 #include "axp519_charger_power.h"
-#include <linux/pm_wakeirq.h>
+
+enum usb_state {
+	USB_STATE_DISCONNECTED = 0,
+	USB_STATE_CONNECTED,
+	USB_STATE_CONFIGURED,
+};
 
 struct axp519_power {
 	char                      	*name;
@@ -45,6 +17,7 @@ struct axp519_power {
 	struct power_supply       	*charger_supply;
 	struct bmu_ext_config_info  dts_info;
 	struct delayed_work         charger_supply_mon;
+	struct delayed_work         usb_chg_state;
 	int 						vbus_set_limit;
 	int 						charge_set_limit;
 	int 						battery_exist;
@@ -55,6 +28,11 @@ struct axp519_power {
 
 	struct power_supply         *bat_supply;
 	struct device_node          *bat_supply_np;
+
+	int set_offline;
+	struct delayed_work         vbus_exist_mon;
+	enum usb_state              usb_state;
+	enum usb_state              prev_state;
 };
 
 static enum power_supply_property axp519_charger_props[] = {
@@ -73,6 +51,12 @@ static enum power_supply_property axp519_charger_props[] = {
 	POWER_SUPPLY_PROP_TEMP_ALERT_MAX,
 	POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MIN,
 	POWER_SUPPLY_PROP_TEMP_AMBIENT_ALERT_MAX,
+};
+
+static const char * const usb_state_name[] = {
+	[USB_STATE_DISCONNECTED]	= "USB_STATE=DISCONNECTED",
+	[USB_STATE_CONNECTED]		= "USB_STATE=CONNECTED",
+	[USB_STATE_CONFIGURED]		= "USB_STATE=CONFIGURED",
 };
 
 static int axp519_charger_input_limit(struct axp519_power *charger_power, int mA)
@@ -587,10 +571,16 @@ static int axp519_charger_get_property(struct power_supply *psy,
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
-		ret = axp519_get_vbus_online(psy, val);
+		if (charger_power->set_offline == 1)
+			val->intval = 0;
+		else
+			ret = axp519_get_vbus_online(psy, val);
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
-		ret = axp519_get_vbus_online(psy, val);
+		if (charger_power->set_offline == 1)
+			val->intval = 0;
+		else
+			ret = axp519_get_vbus_online(psy, val);
 		break;
 	case POWER_SUPPLY_PROP_MANUFACTURER:
 		val->strval = AXP519_MANUFACTURER;
@@ -657,14 +647,43 @@ static int axp519_charger_set_property(struct power_supply *psy,
 	int ret = 0, lim_cur;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		if (val->intval == 0) {
+			charger_power->set_offline = 1;
+			schedule_delayed_work(&charger_power->vbus_exist_mon, msecs_to_jiffies(300));
+		}
+		break;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+		pr_debug("%s L%d set input current limit %dmV %d mA [%d]", __func__, __LINE__,
+			 charger_power->vbus_set_limit, val->intval, irqs_disabled());
 		lim_cur = val->intval;
-		if ((!charger_power->battery_exist) || (lim_cur == 0))
+		if (!charger_power->battery_exist)
+			break;
+		charger_power->prev_state = charger_power->usb_state;
+		schedule_delayed_work(&charger_power->usb_chg_state, msecs_to_jiffies(5 * 1000));
+		if ((val->intval == 2000 && charger_power->vbus_set_limit == 5000) ||
+		    (val->intval == 2000 && charger_power->vbus_set_limit == 0) /* USB Suspend */
+		    || (lim_cur == 0)) {
+			charger_power->usb_state = USB_STATE_DISCONNECTED;
+		} else if (charger_power->usb_state != USB_STATE_CONFIGURED) {
+			charger_power->usb_state = USB_STATE_CONNECTED;
+		}
+		/*
+		 * Section 1.4.13 Standard Downstream Port of the USB battery charging
+		 * specification v1.2 states that a device connected on a SDP shall only
+		 * draw at max 100mA while in a connected, but unconfigured state.
+		 */
+		if (val->intval == 100000 || val->intval == 500000) { /* USB Reset */
+			charger_power->usb_state = USB_STATE_CONFIGURED;
+		}
+		if (irqs_disabled() || (lim_cur == 0))
 			break;
 		charger_power->vbus_set_vol_limit = val->intval;
 		ret = axp519_set_iin_limit(charger_power, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+		pr_debug("%s L%d set input voltage limit %d mV", __func__, __LINE__, val->intval);
+		charger_power->vbus_set_limit = val->intval;
 		if (val->intval == 0)
 			break;
 		ret = axp519_set_ovp_vol(regmap, val->intval);
@@ -707,6 +726,39 @@ static int axp519_power_property_is_writeable(struct power_supply *psy,
 	}
 	return ret;
 
+}
+
+static void axp519_usb_set_current_fsm(struct work_struct *work)
+{
+	struct axp519_power *charger_power =
+	    container_of(work, struct axp519_power, usb_chg_state.work);
+
+	pr_debug("%s L%d usb_state %d %s\n", __func__, __LINE__,
+		 charger_power->usb_state, usb_state_name[charger_power->usb_state]);
+
+	switch (charger_power->usb_state) {
+	case USB_STATE_CONFIGURED:
+		charger_power->vbus_set_vol_limit = charger_power->dts_info.pmu_usbpc_input_cur;
+		axp519_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbpc_input_cur);
+		pr_info("current limit setted: usb pc type\n");
+		break;
+	case USB_STATE_CONNECTED:
+		if (charger_power->vbus_set_limit <= 5000) { /* Non quick charger */
+			charger_power->vbus_set_vol_limit = charger_power->dts_info.pmu_usbad_input_cur;
+			axp519_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbad_input_cur);
+		}
+		pr_info("current limit not set: usb adapter type\n");
+		break;
+	case USB_STATE_DISCONNECTED:
+		if (!charger_power->battery_exist)
+			break;
+		fallthrough;
+	default:
+		charger_power->vbus_set_vol_limit = charger_power->dts_info.pmu_usbpc_input_cur;
+		axp519_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbpc_input_cur);
+		pr_info("current limit not set: usb default type\n");
+		break;
+	}
 }
 
 static const struct power_supply_desc axp519_charger_desc = {
@@ -810,6 +862,14 @@ static void axp519_power_monitor(struct work_struct *work)
 	schedule_delayed_work(&charger_power->charger_supply_mon, msecs_to_jiffies(1 * 1000));
 }
 
+static void axp519_vbus_exist_monitor(struct work_struct *work)
+{
+	struct axp519_power *charger_power =
+		container_of(work, typeof(*charger_power), vbus_exist_mon.work);
+
+	charger_power->set_offline = 0;
+}
+
 static int axp519_battery_exist_get(struct axp519_power *charger_power)
 {
 	struct regmap *regmap = charger_power->regmap;
@@ -878,6 +938,7 @@ static void axp519_power_init(struct axp519_power *charger_power)
 
 	/* get variable information from battery_power*/
 	axp519_battery_temp_para_get(charger_power);
+	charger_power->set_offline = 0;
 }
 
 int axp519_charger_dt_parse(struct device_node *node,
@@ -987,13 +1048,13 @@ static int axp519_charger_probe(struct platform_device *pdev)
 	}
 
 	INIT_DELAYED_WORK(&charger_power->charger_supply_mon, axp519_power_monitor);
+	INIT_DELAYED_WORK(&charger_power->vbus_exist_mon, axp519_vbus_exist_monitor);
+	INIT_DELAYED_WORK(&charger_power->usb_chg_state, axp519_usb_set_current_fsm);
 	schedule_delayed_work(&charger_power->charger_supply_mon, msecs_to_jiffies(500));
 
 	platform_set_drvdata(pdev, charger_power);
 
 	return ret;
-
-	cancel_delayed_work_sync(&charger_power->charger_supply_mon);
 
 err:
 	PMIC_ERR("%s,probe fail, ret = %d\n", __func__, ret);
@@ -1006,6 +1067,7 @@ static int axp519_charger_remove(struct platform_device *pdev)
 	struct axp519_power *charger_power = platform_get_drvdata(pdev);
 
 	cancel_delayed_work_sync(&charger_power->charger_supply_mon);
+	cancel_delayed_work_sync(&charger_power->usb_chg_state);
 
 	PMIC_DEV_DEBUG(&pdev->dev, "==============axp519 charger unegister==============\n");
 	if (charger_power->charger_supply)
@@ -1024,6 +1086,8 @@ static void axp519_charger_shutdown(struct platform_device *pdev)
 		axp519_set_ichg_limit(charger_power->regmap, bmp_dts_info->pmu_shutdown_chgcur);
 
 	cancel_delayed_work_sync(&charger_power->charger_supply_mon);
+	cancel_delayed_work_sync(&charger_power->vbus_exist_mon);
+	cancel_delayed_work_sync(&charger_power->usb_chg_state);
 }
 
 static int axp519_charger_suspend(struct platform_device *p, pm_message_t state)
@@ -1034,7 +1098,11 @@ static int axp519_charger_suspend(struct platform_device *p, pm_message_t state)
 	if (charger_power->charge_set_limit >= bmp_dts_info->pmu_runtime_chgcur)
 		axp519_set_ichg_limit(charger_power->regmap, bmp_dts_info->pmu_suspend_chgcur);
 
+	if (charger_power->prev_state != charger_power->usb_state)
+		charger_power->usb_state = charger_power->prev_state;
 	cancel_delayed_work_sync(&charger_power->charger_supply_mon);
+	cancel_delayed_work_sync(&charger_power->vbus_exist_mon);
+	cancel_delayed_work_sync(&charger_power->usb_chg_state);
 
 	return 0;
 }
@@ -1045,6 +1113,8 @@ static int axp519_charger_resume(struct platform_device *p)
 
 	axp519_set_ichg_limit(charger_power->regmap, charger_power->charge_set_limit);
 	schedule_delayed_work(&charger_power->charger_supply_mon, 0);
+	schedule_delayed_work(&charger_power->vbus_exist_mon, 0);
+	schedule_delayed_work(&charger_power->usb_chg_state, 0);
 
 	return 0;
 }

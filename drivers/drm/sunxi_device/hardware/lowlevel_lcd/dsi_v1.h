@@ -13,10 +13,17 @@
 #ifndef __DSI_V1_H_
 #define __DSI_V1_H_
 
+#include <linux/version.h>
 #include <drm/drm_mipi_dsi.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+#include <drm/display/drm_dsc_helper.h>
+#else
+#include <drm/drm_dsc.h>
+#endif
 
 #include "dsi_v1_type.h"
 #include "include.h"
+#include "dsc_type.h"
 
 #define MIPI_DSI_MODE_COMMAND		BIT(20)
 #define DEVICE_DSI_NUM			2
@@ -26,6 +33,7 @@ extern u32 dsi_bits_per_pixel[4];
 struct sunxi_dsi_lcd {
 	int dsi_index;
 	volatile struct dsi_lcd_reg *reg;
+	volatile struct dsc_dsi_reg *dsc_reg;
 };
 
 enum disp_lcd_frm {
@@ -50,6 +58,7 @@ struct disp_dsi_para {
 	unsigned int lanes;
 	unsigned int dual_dsi;
 	unsigned int dsi_div;
+	unsigned int vrr_setp;
 	enum mipi_dsi_pixel_format format;
 	unsigned long mode_flags;
 	unsigned long hs_rate;
@@ -57,7 +66,6 @@ struct disp_dsi_para {
 	enum disp_lcd_tcon_mode  lcd_tcon_mode;
 	enum disp_lcd_frm lcd_frm;
 	enum disp_lcd_te lcd_dsi_te;
-
 	struct disp_video_timings timings;
 };
 enum __dsi_irq_id_t {
@@ -261,6 +269,7 @@ enum __dsi_inst_packet_t {
 
 #define MIPI_DSI_EN_3DFIFO		BIT(21)
 #define MIPI_DSI_SLAVE_MODE		BIT(22)
+
 s32 dsi_open_hs_mode(struct sunxi_dsi_lcd *dsi, struct disp_dsi_para *dsi_para);
 s32 dsi_dcs_wr(struct sunxi_dsi_lcd *dsi, u8 *para_p, u32 para_num);
 s32 dsi_dcs_rd(struct sunxi_dsi_lcd *dsi, u8 *para_p, u32 num_p);
@@ -274,6 +283,7 @@ s32 dsi_inst_busy(struct sunxi_dsi_lcd *dsi);
 s32 dsi_tri_start(struct sunxi_dsi_lcd *dsi);
 u32 dsi_get_start_delay(struct sunxi_dsi_lcd *dsi);
 u32 dsi_get_cur_line(struct sunxi_dsi_lcd *dsi);
+u32 dsi_get_real_cur_line(struct sunxi_dsi_lcd *dsi);
 s32 dsi_irq_enable(struct sunxi_dsi_lcd *dsi, enum __dsi_irq_id_t id);
 s32 dsi_irq_disable(struct sunxi_dsi_lcd *dsi, enum __dsi_irq_id_t id);
 s32 dsi_dcs_rd_memory(struct sunxi_dsi_lcd *dsi, u32 *p_data, u32 length);
@@ -283,5 +293,14 @@ u16 dsi_crc_pro_pd_repeat(u8 pd, u32 pd_bytes);
 u16 dsi_crc_pro(u8 *pd_p, u32 pd_bytes);
 s32 dsi_mode_switch(struct sunxi_dsi_lcd *dsi, __u32 cmd_en, __u32 lp_en);
 s32 dsi_get_status(struct sunxi_dsi_lcd *dsi);
+s32 dsi_get_fifo_under_flow(struct sunxi_dsi_lcd *dsi);
+void sunxi_dsi_vrr_irq(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings, bool enable);
+int sunxi_dsi_updata_vt(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings,
+				u32 vrr_setp);
+s32 dsc_set_reg_base(struct sunxi_dsi_lcd *dsi, uintptr_t base);
+void dsc_config_pps(struct sunxi_dsi_lcd *dsi, const struct drm_dsc_config *dsc_cfg);
+void dec_dsc_config(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings);
+void dsi_read_mode_en(struct sunxi_dsi_lcd *dsi, u32 en);
+s32 dsi_get_timing(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *tt);
 
 #endif

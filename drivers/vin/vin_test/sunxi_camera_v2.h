@@ -432,6 +432,15 @@ struct vin_vsync_event_data {
 #define VIDIOC_VIN_ISP_STAT_EN \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 33, unsigned int)
 
+/*
+* large image dma merge mode
+*
+* VIDIOC_SET_DMA_MERGE :set large image mode
+*
+*/
+#define VIDIOC_SET_DMA_MERGE \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 50, unsigned char)
+
 struct sensor_config {
 	int width;
 	int height;

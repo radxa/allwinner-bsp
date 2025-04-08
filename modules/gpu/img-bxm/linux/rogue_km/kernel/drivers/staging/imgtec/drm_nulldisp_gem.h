@@ -58,29 +58,16 @@ struct vm_fault;
 #include <drm/drmP.h>
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
-extern const struct drm_gem_object_funcs nulldisp_gem_funcs;
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) */
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 #include <drm/drm_gem.h>
-#endif
+
+#include "kernel_compatibility.h"
 
 int nulldisp_gem_object_get_pages(struct drm_gem_object *obj);
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0))
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0))
-typedef int vm_fault_t;
-#endif
-vm_fault_t nulldisp_gem_object_vm_fault(struct vm_fault *vmf);
-#else
-int nulldisp_gem_object_vm_fault(struct vm_area_struct *vma,
-				 struct vm_fault *vmf);
-#endif
-
-void nulldisp_gem_vm_open(struct vm_area_struct *vma);
-
-void nulldisp_gem_vm_close(struct vm_area_struct *vma);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0))
+extern const struct vm_operations_struct nulldisp_gem_vm_ops;
+int nulldisp_gem_prime_mmap(struct drm_gem_object *obj,
+			    struct vm_area_struct *vma);
 
 void nulldisp_gem_object_free(struct drm_gem_object *obj);
 
@@ -90,13 +77,14 @@ void nulldisp_gem_prime_unpin(struct drm_gem_object *obj);
 
 struct sg_table *nulldisp_gem_prime_get_sg_table(struct drm_gem_object *obj);
 
+void *nulldisp_gem_prime_vmap(struct drm_gem_object *obj);
+
+void nulldisp_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr);
+#endif
+
 struct drm_gem_object *
 nulldisp_gem_prime_import_sg_table(struct drm_device *dev,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 				   struct dma_buf_attachment *attach,
-#else
-				   size_t size,
-#endif
 				   struct sg_table *sgt);
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
@@ -104,21 +92,6 @@ struct dma_buf *nulldisp_gem_prime_export(struct drm_device *dev,
 					  struct drm_gem_object *obj,
 					  int flags);
 #endif
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
-void *nulldisp_gem_prime_vmap(struct drm_gem_object *obj);
-#else
-int nulldisp_gem_prime_vmap(struct drm_gem_object *obj, struct dma_buf_map *map);
-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0) */
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
-void nulldisp_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr);
-#else
-void nulldisp_gem_prime_vunmap(struct drm_gem_object *obj, struct dma_buf_map *map);
-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0) */
-
-int nulldisp_gem_prime_mmap(struct drm_gem_object *obj,
-			    struct vm_area_struct *vma);
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 struct dma_resv *

@@ -65,7 +65,7 @@ MODULE_ARCH_BITNESS :=
 # types should not be affected by complex code generation flags w/ LTO.
 # Set MODULE_CHECK_CFLAGS in the module makefile to enable this check.
 MODULE_CHECK_CFLAGS :=
-MODULE_ALLOWED_CFLAGS := -W% -D% -std=% -frtti -fPIC -fPIE -pie -m32 -fvisibility=hidden -fexceptions
+MODULE_ALLOWED_CFLAGS := -W% -D% -std=% -frtti -fPIC -fPIE -pie -m32 -fvisibility=hidden -fexceptions -fgnu89-inline -fpermissive -x c++ -std=c++11 -Wno-write-strings -Wno-missing-prototypes -Wno-unused-but-set-variable -Wno-missing-field-initializers
 
 # -L flags for library search dirs: these are relative to $(TOP), unless
 # they're absolute paths

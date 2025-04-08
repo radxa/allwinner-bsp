@@ -53,6 +53,12 @@
 #define SUN8IW11_THS_0_DATA			(0x80)
 #define SUN8IW11_THS_1_DATA			(0x84)
 
+enum virtual_sensor {
+	cpul_idle_sensor = 5,
+	cpub_idle_sensor = 6,
+	skin_virtual_sensor = 7,
+};
+
 /* Temp Unit: millidegree Celsius */
 static int sunxi_ths_reg2temp(struct ths_device *tmdev, int reg)
 {
@@ -215,6 +221,148 @@ static int sun8iw21_ths_get_temp(void *data, int *temp)
 #if IS_ENABLED(CONFIG_AW_THERMAL_CRITICAL_HANDLER)
 	s->last_temp = *temp;
 #endif
+
+	return 0;
+}
+
+#define SUN55IW6_SENSOR_DATA_CODE (1894)
+#define SUN55IW6_OFFSET_BELOW (-2775)
+#define SUN55IW6_SCALE_BELOW (-74)
+#define SUN55IW6_OFFSET_ABOVE (-2855)
+#define SUN55IW6_SCALE_ABOVE (-66)
+static int sun55iw6_calc_temp(struct ths_device *tmdev,
+			       int id, int reg)
+{
+	if (reg > SUN55IW6_SENSOR_DATA_CODE)
+		return ((reg + SUN55IW6_OFFSET_BELOW) * SUN55IW6_SCALE_BELOW);
+	else
+		return ((reg + SUN55IW6_OFFSET_ABOVE) * SUN55IW6_SCALE_ABOVE);
+}
+
+static int sun55iw6_ths_get_temp(void *data, int *temp)
+{
+	struct tsensor *s = data;
+	struct ths_device *tmdev = s->tmdev;
+	int val = 0;
+	unsigned int data_ints;
+
+	regmap_read(tmdev->regmap, tmdev->chip->temp_data_base +
+		    0x4 * s->id, &val);
+	regmap_read(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, &data_ints);
+	data_ints &= BIT(s->id);
+
+	/* ths have no data yet */
+	if (unlikely((!val) || (!data_ints)))
+		return -EAGAIN;
+
+	*temp = sun55iw6_calc_temp(tmdev, s->id, val);
+
+	/*
+	 * There are problems with the calibration values of some platforms,
+	 * which makes the temperature calculated by the original temperature
+	 * calculation formula inaccurate. If the chip is calibrated, this
+	 * value is added by default. */
+	if (tmdev->has_calibration)
+		*temp += tmdev->chip->ft_deviation;
+
+	return 0;
+}
+
+#define SUN60IW2_SENSOR_DATA_CODE (1769)
+#define SUN60IW2_OFFSET_BELOW (-2822)
+#define SUN60IW2_SCALE_BELOW (-62)
+#define SUN60IW2_OFFSET_ABOVE (-2835)
+#define SUN60IW2_SCALE_ABOVE (-59)
+static int sun60iw2_calc_temp(struct ths_device *tmdev,
+			       int id, int reg)
+{
+	if (reg > SUN60IW2_SENSOR_DATA_CODE)
+		return ((reg + SUN60IW2_OFFSET_BELOW) * SUN60IW2_SCALE_BELOW);
+	else
+		return ((reg + SUN60IW2_OFFSET_ABOVE) * SUN60IW2_SCALE_ABOVE);
+}
+
+#define CPUL_SENSOR_NUM (0)
+#define CPUB_SENSOR_NUM (3)
+static int sun60iw2_ths_get_temp(void *data, int *temp)
+{
+	struct tsensor *s = data;
+	struct ths_device *tmdev = s->tmdev;
+	int val = 0;
+	unsigned int data_ints;
+
+	switch (s->id) {
+	case cpul_idle_sensor:
+		{
+			regmap_read(tmdev->regmap, tmdev->chip->temp_data_base +
+					0x4 * CPUL_SENSOR_NUM, &val);
+
+			regmap_read(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, &data_ints);
+			data_ints &= BIT(CPUL_SENSOR_NUM);
+
+			/* ths have no data yet */
+			if (unlikely((!val) || (!data_ints)))
+				return -EAGAIN;
+
+			*temp = sun60iw2_calc_temp(tmdev, CPUL_SENSOR_NUM, val);
+			break;
+		}
+	case cpub_idle_sensor:
+		{
+			regmap_read(tmdev->regmap, tmdev->chip->temp_data_base +
+					0x4 * CPUB_SENSOR_NUM, &val);
+
+			regmap_read(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, &data_ints);
+			data_ints &= BIT(CPUB_SENSOR_NUM);
+
+			/* ths have no data yet */
+			if (unlikely((!val) || (!data_ints)))
+				return -EAGAIN;
+
+			*temp = sun60iw2_calc_temp(tmdev, CPUB_SENSOR_NUM, val);
+			break;
+		}
+	case skin_virtual_sensor:
+		{
+			regmap_read(tmdev->regmap, tmdev->chip->temp_data_base +
+				0x4 * CPUB_SENSOR_NUM, &val);
+			regmap_read(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, &data_ints);
+			data_ints &= BIT(CPUB_SENSOR_NUM);
+			/* ths have no data yet */
+			if (unlikely((!val) || (!data_ints)))
+				return -EAGAIN;
+			*temp = sun60iw2_calc_temp(tmdev, CPUB_SENSOR_NUM, val);
+			if (*temp <= 30000)
+				*temp = 30000;
+			else if (*temp <= 100000)
+				*temp = (30000 + (*temp - 30000) / 5);
+			else
+				*temp = (44000 + (*temp -100000) / 10);
+			break;
+		}
+	default:
+		{
+			regmap_read(tmdev->regmap, tmdev->chip->temp_data_base +
+					0x4 * s->id, &val);
+
+			regmap_read(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, &data_ints);
+			data_ints &= BIT(s->id);
+
+			/* ths have no data yet */
+			if (unlikely((!val) || (!data_ints)))
+				return -EAGAIN;
+
+			*temp = sun60iw2_calc_temp(tmdev, s->id, val);
+			break;
+		}
+	}
+	/*
+	 * There are problems with the calibration values of some platforms,
+	 * which makes the temperature calculated by the original temperature
+	 * calculation formula inaccurate. If the chip is calibrated, this
+	 * value is added by default. */
+	if (tmdev->has_calibration)
+		*temp += tmdev->chip->ft_deviation;
 
 	return 0;
 }
@@ -409,6 +557,111 @@ static int sun8iw21_ths_calibrate(struct ths_device *tmdev)
 	return 0;
 }
 
+#define SUN55IW6_THS_EFUSE_OFF0 (0x2C)
+#define SUN55IW6_THS_EFUSE_OFF1 (0x30)
+#define SUN55IW6_CAL_COM (5000)
+static int sun55iw6_ths_calibrate(struct ths_device *tmdev)
+{
+	struct device *dev = tmdev->dev;
+	u32 ths_cal[2];
+	int i, ft_temp;
+	sunxi_get_module_param_from_sid(&ths_cal[0], SUN55IW6_THS_EFUSE_OFF0, 4);
+	sunxi_get_module_param_from_sid(&ths_cal[1], SUN55IW6_THS_EFUSE_OFF1, 4);
+
+	ft_temp = ((ths_cal[1] << 8) | (ths_cal[0] >> 24)) & FT_TEMP_MASK;
+	if (!ft_temp)
+		return 0;
+
+	for (i = 0; i < tmdev->chip->sensor_num; i++) {
+		int delta, cdata, offset, reg;
+
+		switch (i) {
+		case 0:
+			reg = (ths_cal[1] >> 4) & TEMP_CALIB_MASK;
+			break;
+		case 1:
+			reg = ths_cal[0] & TEMP_CALIB_MASK;;
+			break;
+		case 2:
+			reg = (ths_cal[0] >> 12) & TEMP_CALIB_MASK;
+			break;
+		default:
+			reg = 0;
+			break;
+		}
+
+		delta = (ft_temp * 100 + SUN55IW6_CAL_COM - sun55iw6_calc_temp(tmdev, i, reg))
+			/ SUN55IW6_SCALE_BELOW;
+		cdata = CALIBRATE_DEFAULT - delta;
+		if (cdata & ~TEMP_CALIB_MASK) {
+			sunxi_warn(dev, "sensor%d is not calibrated.\n", i);
+
+			continue;
+		}
+
+		offset = (i % 2) * 16;
+		regmap_update_bits(tmdev->regmap, SUN50I_H616_THS_TEMP_CALIB + (i / 2 * 4), 0xfff << offset, cdata << offset);
+	}
+	tmdev->has_calibration = true;
+	return 0;
+}
+
+#define SUN60IW2_THS_EFUSE_OFF0 (0x44)
+#define SUN60IW2_THS_EFUSE_OFF1 (0x48)
+#define SUN60IW2_THS_EFUSE_OFF2 (0x4c)
+#define SUN60IW2_CAL_COM (0)
+static int sun60iw2_ths_calibrate(struct ths_device *tmdev)
+{
+	struct device *dev = tmdev->dev;
+	u32 ths_cal[3];
+	int i, ft_temp;
+	sunxi_get_module_param_from_sid(&ths_cal[0], SUN60IW2_THS_EFUSE_OFF0, 4);
+	sunxi_get_module_param_from_sid(&ths_cal[1], SUN60IW2_THS_EFUSE_OFF1, 4);
+	sunxi_get_module_param_from_sid(&ths_cal[2], SUN60IW2_THS_EFUSE_OFF2, 4);
+
+	ft_temp = (ths_cal[0] & FT_TEMP_MASK);
+	if (!ft_temp)
+		return 0;
+
+	for (i = 0; i < tmdev->chip->sensor_num; i++) {
+		int delta, cdata, offset, reg;
+
+		switch (i) {
+		case 0:
+			reg = (ths_cal[0] >> 12) & TEMP_CALIB_MASK;
+			break;
+		case 1:
+			reg = ((ths_cal[0] >> 24) | (ths_cal[1] << 8)) & TEMP_CALIB_MASK;
+			break;
+		case 2:
+			reg = (ths_cal[1] >> 4) & TEMP_CALIB_MASK;
+			break;
+		case 3:
+			reg = (ths_cal[1] >> 16) & TEMP_CALIB_MASK;
+			break;
+		case 4:
+			reg = ((ths_cal[1] >> 28) | (ths_cal[2] << 4)) & TEMP_CALIB_MASK;
+			break;
+		default:
+			return 0;
+		}
+
+		delta = (ft_temp * 100 + SUN60IW2_CAL_COM - sun60iw2_calc_temp(tmdev, i, reg))
+			/ SUN60IW2_SCALE_BELOW;
+		cdata = CALIBRATE_DEFAULT - delta;
+		if (cdata & ~TEMP_CALIB_MASK) {
+			sunxi_warn(dev, "sensor%d is not calibrated.\n", i);
+
+			continue;
+		}
+
+		offset = (i % 2) * 16;
+		regmap_update_bits(tmdev->regmap, SUN50I_H616_THS_TEMP_CALIB + (i / 2 * 4), 0xfff << offset, cdata << offset);
+	}
+	tmdev->has_calibration = true;
+	return 0;
+}
+
 #define SUN55IW3_THS_EFUSE_OFF0 (0x38)
 #define SUN55IW3_THS_EFUSE_OFF1 (0x3c)
 #define SUN55IW3_THS_EFUSE_OFF2 (0x44)
@@ -517,6 +770,11 @@ static int sun55iw3_ths0_calibrate(struct ths_device *tmdev)
 	return 0;
 }
 
+static int sun8iw17_ths_calibrate(struct ths_device *tmdev)
+{
+	return 0;
+}
+
 static int sunxi_ths_calibrate(struct ths_device *tmdev)
 {
 	return tmdev->chip->calibrate(tmdev);
@@ -550,7 +808,7 @@ static int sunxi_ths_resource_init(struct ths_device *tmdev)
 	}
 
 	if (tmdev->chip->has_bus_clk) {
-		tmdev->reset = devm_reset_control_get_shared(dev, NULL);
+		tmdev->reset = devm_reset_control_get_optional_shared(dev, NULL);
 		if (IS_ERR(tmdev->reset))
 			return PTR_ERR(tmdev->reset);
 
@@ -628,6 +886,25 @@ static int sun55iw3_thermal_init(struct ths_device *tmdev)
 	val = GENMASK(tmdev->chip->sensor_num - 1, 0);
 	regmap_write(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, val);
 	val = GENMASK(tmdev->chip->sensor_num - 1, 0);
+	regmap_write(tmdev->regmap, SUN50I_H616_THS_ENABLE, val);
+
+	return 0;
+}
+
+static int sun60iw2_thermal_init(struct ths_device *tmdev)
+{
+	int val;
+
+	regmap_write(tmdev->regmap, SUN50I_H616_THS_CTRL0,
+		     SUN50I_THS_CTRL0_T_ACQ(47) | SUN50I_THS_CTRL0_FS_DIV(479));
+	regmap_write(tmdev->regmap, SUN50I_H616_THS_MFC,
+		     SUN50I_THS_FILTER_EN |
+		     SUN50I_THS_FILTER_TYPE(1));
+	regmap_write(tmdev->regmap, SUN50I_H616_THS_PC,
+		     SUN50I_H616_THS_PC_TEMP_PERIOD(28));
+	val = GENMASK(4, 0);
+	regmap_write(tmdev->regmap, SUN50I_H616_THS_DATA_INTS, val);
+	val = GENMASK(4, 0);
 	regmap_write(tmdev->regmap, SUN50I_H616_THS_ENABLE, val);
 
 	return 0;
@@ -868,6 +1145,37 @@ static const struct ths_thermal_chip sun8iw21p1_ths = {
 	.get_temp = sun8iw21_ths_get_temp,
 };
 
+static const struct ths_thermal_chip sun55iw6p1_ths = {
+	.sensor_num = 3,
+	.has_bus_clk = true,
+	.has_gpadc_clk = true,
+	.temp_data_base = SUN50I_H616_THS_TEMP_DATA,
+	.calibrate = sun55iw6_ths_calibrate,
+	.init = sun50i_h616_thermal_init,
+	.get_temp = sun55iw6_ths_get_temp,
+};
+
+static const struct ths_thermal_chip sun60iw2p1_ths = {
+	.sensor_num = 8,
+	.has_bus_clk = true,
+	.has_gpadc_clk = true,
+	.temp_data_base = SUN50I_H616_THS_TEMP_DATA,
+	.calibrate = sun60iw2_ths_calibrate,
+	.init = sun60iw2_thermal_init,
+	.get_temp = sun60iw2_ths_get_temp,
+};
+
+static const struct ths_thermal_chip sun8iw17p1_ths = {
+	.sensor_num = 4,
+	.has_bus_clk = true,
+	.offset = -2266,
+	.scale = -117,
+	.temp_data_base = SUN50I_H616_THS_TEMP_DATA,
+	.calibrate = sun8iw17_ths_calibrate,
+	.init = sun50i_h616_thermal_init,
+	.get_temp = sun8i_ths_get_temp,
+};
+
 static const struct of_device_id of_ths_match[] = {
 	{ .compatible = "allwinner,sun50iw9p1-ths", .data = &sun50iw9p1_ths },
 	{ .compatible = "allwinner,sun50iw10p1-ths", .data = &sun50iw10p1_ths },
@@ -878,6 +1186,9 @@ static const struct of_device_id of_ths_match[] = {
 	{ .compatible = "allwinner,sun55iw3p1-ths0", .data = &sun55iw3p1_ths0 },
 	{ .compatible = "allwinner,sun55iw3p1-ths1", .data = &sun55iw3p1_ths1 },
 	{ .compatible = "allwinner,sun8iw21p1-ths", .data = &sun8iw21p1_ths },
+	{ .compatible = "allwinner,sun55iw6p1-ths", .data = &sun55iw6p1_ths },
+	{ .compatible = "allwinner,sun60iw2p1-ths", .data = &sun60iw2p1_ths },
+	{ .compatible = "allwinner,sun8iw17p1-ths", .data = &sun8iw17p1_ths },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, of_ths_match);

@@ -23,6 +23,10 @@
 #include "snd_sunxi_dmic.h"
 
 struct sunxi_dmic_clk {
+	/* parent clk */
+	struct clk *clk_pll_audio0_4x;
+	struct clk *clk_pll_audio1_4x;
+
 	/* module clk */
 	struct clk *clk_dmic;
 
@@ -60,6 +64,20 @@ sunxi_dmic_clk_t *snd_dmic_clk_init(struct platform_device *pdev)
 		goto err_get_clk_bus;
 	}
 
+	/* get parent clk */
+	clk->clk_pll_audio0_4x = of_clk_get_by_name(np, "clk_pll_audio0_4x");
+	if (IS_ERR_OR_NULL(clk->clk_pll_audio0_4x)) {
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_CLK_INIT, "clk_pll_audio0_4x get failed\n");
+		ret = PTR_ERR(clk->clk_pll_audio0_4x);
+		goto err_get_clk_pll_audio0_4x;
+	}
+	clk->clk_pll_audio1_4x = of_clk_get_by_name(np, "clk_pll_audio1_4x");
+	if (IS_ERR_OR_NULL(clk->clk_pll_audio1_4x)) {
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_CLK_INIT, "clk_pll_audio1_4x get failed\n");
+		ret = PTR_ERR(clk->clk_pll_audio1_4x);
+		goto err_get_clk_pll_audio1_4x;
+	}
+
 	/* get dmic clk */
 	clk->clk_dmic = of_clk_get_by_name(np, "clk_dmic");
 	if (IS_ERR_OR_NULL(clk->clk_dmic)) {
@@ -71,6 +89,10 @@ sunxi_dmic_clk_t *snd_dmic_clk_init(struct platform_device *pdev)
 	return clk;
 
 err_get_clk_dmic:
+	clk_put(clk->clk_pll_audio1_4x);
+err_get_clk_pll_audio1_4x:
+	clk_put(clk->clk_pll_audio0_4x);
+err_get_clk_pll_audio0_4x:
 	clk_put(clk->clk_bus);
 err_get_clk_bus:
 err_get_clk_rst:
@@ -85,6 +107,8 @@ void snd_dmic_clk_exit(void *clk_orig)
 	SND_LOG_DEBUG("\n");
 
 	clk_put(clk->clk_dmic);
+	clk_put(clk->clk_pll_audio0_4x);
+	clk_put(clk->clk_pll_audio1_4x);
 	clk_put(clk->clk_bus);
 
 	kfree(clk);
@@ -124,13 +148,30 @@ int snd_dmic_clk_enable(void *clk_orig)
 
 	SND_LOG_DEBUG("\n");
 
+	if (clk_prepare_enable(clk->clk_pll_audio0_4x)) {
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_CLK_EN, "clk_pll_audio0_4x enable failed\n");
+		ret = -EINVAL;
+		goto err_enable_clk_pll_audio0_4x;
+	}
+	if (clk_prepare_enable(clk->clk_pll_audio1_4x)) {
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_CLK_EN, "clk_pll_audio1_4x enable failed\n");
+		ret = -EINVAL;
+		goto err_enable_clk_pll_audio1_4x;
+	}
 	if (clk_prepare_enable(clk->clk_dmic)) {
 		SND_LOG_ERR("clk_dmic enable failed\n");
 		ret = -EINVAL;
-		return ret;
+		goto err_enable_clk_dmic;
 	}
 
 	return 0;
+
+err_enable_clk_dmic:
+	clk_disable_unprepare(clk->clk_pll_audio1_4x);
+err_enable_clk_pll_audio1_4x:
+	clk_disable_unprepare(clk->clk_pll_audio0_4x);
+err_enable_clk_pll_audio0_4x:
+	return ret;
 }
 
 void snd_dmic_clk_bus_disable(void *clk_orig)
@@ -150,11 +191,35 @@ void snd_dmic_clk_disable(void *clk_orig)
 	SND_LOG_DEBUG("\n");
 
 	clk_disable_unprepare(clk->clk_dmic);
+	clk_disable_unprepare(clk->clk_pll_audio0_4x);
+	clk_disable_unprepare(clk->clk_pll_audio1_4x);
 }
 
 int snd_dmic_clk_rate(void *clk_orig, unsigned int freq_in, unsigned int freq_out)
 {
+	struct sunxi_dmic_clk *clk = (struct sunxi_dmic_clk *)clk_orig;
+
 	SND_LOG_DEBUG("\n");
+
+	if (freq_in % 24576000 == 0) {
+		if (clk_set_parent(clk->clk_dmic, clk->clk_pll_audio0_4x)) {
+				SND_LOG_ERR_STD(E_DMIC_SWDEP_CLK_SET,
+						"set dmic parent clk failed\n");
+				return -EINVAL;
+		}
+	} else {
+		if (clk_set_parent(clk->clk_dmic, clk->clk_pll_audio1_4x)) {
+				SND_LOG_ERR_STD(E_DMIC_SWDEP_CLK_SET,
+						"set dmic parent clk failed\n");
+				return -EINVAL;
+		}
+	}
+
+	if (clk_set_rate(clk->clk_dmic, freq_out)) {
+			SND_LOG_ERR_STD(E_DMIC_SWDEP_CLK_SET,
+					"set dmic rate failed, rate: %u\n", freq_out);
+			return -EINVAL;
+	}
 
 	return 0;
 }

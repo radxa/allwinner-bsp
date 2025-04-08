@@ -18,6 +18,8 @@
 struct de_smbl_dsc {
 	unsigned int id;
 	bool support_csc;
+	unsigned int width_max;
+	unsigned int height_max;
 	unsigned int reg_offset;
 };
 

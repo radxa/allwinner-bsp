@@ -32,6 +32,8 @@
 
 #include "timer-of.h"
 
+#define SUN50I_TIMER_MODULE_VERSION	"1.1.3"
+
 #define TIMER_IRQ_REG		0x00
 #define TIMER_IRQ_EN(val)		BIT(val)
 #define TIMER_STA_REG		0x04
@@ -51,8 +53,6 @@
 #define TIMER_SYNC_TICKS	3
 
 struct sun50i_timer {
-	struct platform_device *pdev;
-	struct device *dev;
 	struct timer_of		*to;
 	struct clk		*parent_clk;
 	struct clk		*bus_clk;
@@ -302,77 +302,70 @@ static u64 sun50i_timer_readl_down(struct clocksource *c)
 	return sun50i_timer_sched_read();
 }
 
-static int sun50i_timer_resource_get(struct sun50i_timer *chip)
+static int sun50i_timer_resource_get(struct sun50i_timer *chip, struct device_node *np)
 {
-	struct device *dev = chip->dev;
-
-	chip->parent_clk = devm_clk_get(dev, "parent");
+	chip->parent_clk = of_clk_get_by_name(np, "parent");
 	if (IS_ERR(chip->parent_clk)) {
-		sunxi_err(dev, "request parent clock failed\n");
-		return -EINVAL;
+		sunxi_err(NULL, "request parent clock failed\n");
+		return PTR_ERR(chip->parent_clk);
 	}
 
-	chip->bus_clk = devm_clk_get(dev, "bus");
+	chip->bus_clk = of_clk_get_by_name(np, "bus");
 	if (IS_ERR(chip->bus_clk)) {
-		sunxi_err(dev, "request bus clock failed\n");
-		return -EINVAL;
+		sunxi_err(NULL, "request bus clock failed\n");
+		return PTR_ERR(chip->bus_clk);
 	}
 
-	chip->timer0_clk = devm_clk_get(dev, "timer0-mod");
+	chip->timer0_clk = of_clk_get_by_name(np, "timer0-mod");
 	if (IS_ERR(chip->timer0_clk)) {
-		sunxi_err(dev, "request timer0 clock failed\n");
-		return -EINVAL;
+		sunxi_err(NULL, "request timer0 clock failed\n");
+		return PTR_ERR(chip->timer0_clk);
 	}
 
-	chip->timer1_clk = devm_clk_get(dev, "timer1-mod");
+	chip->timer1_clk = of_clk_get_by_name(np, "timer1-mod");
 	if (IS_ERR(chip->timer1_clk)) {
-		sunxi_err(dev, "request timer1 clock failed\n");
-		return -EINVAL;
+		sunxi_err(NULL, "request timer1 clock failed\n");
+		return PTR_ERR(chip->timer1_clk);
 	}
 
-	chip->reset = devm_reset_control_get(dev, NULL);
+	chip->reset = of_reset_control_get(np, NULL);
 	if (IS_ERR_OR_NULL(chip->reset)) {
-		sunxi_err(dev, "request reset failed\n");
-		return -EINVAL;
+		sunxi_err(NULL, "request reset failed\n");
+		return PTR_ERR(chip->reset);
 	}
 
 	return 0;
 }
 
-static int sun50i_timer_probe(struct platform_device *pdev)
+static int sunxi_timer_init(struct device_node *node)
 {
 	int ret;
 	u32 val;
 	struct sun50i_timer *chip;
 	struct of_timer_clk *of_clk;
-	struct device_node *node = pdev->dev.of_node;
 
-	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
+	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
 	if (IS_ERR_OR_NULL(chip))
 		return -ENOMEM;
 
 	chip->to = &to;
-	chip->dev = &pdev->dev;
-	chip->pdev = pdev;
 	to.private_data = chip;
-
-	platform_set_drvdata(pdev, chip);
 
 	ret = timer_of_init(node, &to);
 	if (ret) {
-		sunxi_err(&pdev->dev, "sun50i timer of init failed\n");
+		sunxi_err(NULL, "sun50i timer of init failed\n");
 		return ret;
 	}
 
-	ret = sun50i_timer_resource_get(chip);
+	ret = sun50i_timer_resource_get(chip, node);
 	if (ret) {
-		sunxi_err(&pdev->dev, "sun50i timer of resource get failed\n");
+		sunxi_err(NULL, "sun50i timer of resource get failed\n");
 		return ret;
 	}
 
 	ret = timer_sun50i_clk_init(chip);
 	if (ret) {
-		sunxi_err(&pdev->dev, "sun50i timer of clk init failed\n");
+		sunxi_err(NULL, "sun50i timer of clk init failed\n");
 		return ret;
 	}
 
@@ -380,7 +373,7 @@ static int sun50i_timer_probe(struct platform_device *pdev)
 	of_clk->clk = chip->timer0_clk;
 	of_clk->rate = clk_get_rate(of_clk->clk);
 	if (!of_clk->rate) {
-		sunxi_err(&pdev->dev, "Failed to get clock rate\n");
+		sunxi_err(NULL, "Failed to get clock rate\n");
 		return ret;
 	}
 	of_clk->period = DIV_ROUND_UP(of_clk->rate, HZ);
@@ -388,7 +381,7 @@ static int sun50i_timer_probe(struct platform_device *pdev)
 	sun50i_clkevt_time_setup(timer_of_base(&to), 1, ~0);
 	sun50i_clkevt_time_start(timer_of_base(&to), 1, true);
 
-	sunxi_info(&pdev->dev, "sun50i timer init:0x%llx\n", sun50i_timer_sched_read());
+	sunxi_info(NULL, "sun50i timer init:0x%llx, driver version: %s\n", sun50i_timer_sched_read(), SUN50I_TIMER_MODULE_VERSION);
 
 	sched_clock_register(sun50i_timer_sched_read, 56, timer_of_rate(&to));
 
@@ -396,7 +389,7 @@ static int sun50i_timer_probe(struct platform_device *pdev)
 				    node->name, timer_of_rate(&to), 350, 56,
 				    sun50i_timer_readl_down);
 	if (ret) {
-		sunxi_err(&pdev->dev, "Failed to register clocksource\n");
+		sunxi_err(NULL, "Failed to register clocksource\n");
 		return ret;
 	}
 
@@ -414,6 +407,34 @@ static int sun50i_timer_probe(struct platform_device *pdev)
 	writel(val | TIMER_IRQ_EN(0), timer_of_base(&to) + TIMER_IRQ_REG);
 
 	return ret;
+}
+
+#if IS_ENABLED(CONFIG_AW_KERNEL_ORIGIN)
+static int __init sun50i_timer_init(struct device_node *node)
+{
+	int ret;
+
+	ret = sunxi_timer_init(node);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+TIMER_OF_DECLARE(sunxi_hstimer, "allwinner,hstimer-v100",
+		       sun50i_timer_init);
+TIMER_OF_DECLARE(sun50i, "allwinner,sun50i-timer",
+		       sun50i_timer_init);
+#else
+static int sun50i_timer_probe(struct platform_device *pdev)
+{
+	struct device_node *node = pdev->dev.of_node;
+	int ret;
+
+	ret = sunxi_timer_init(node);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static const struct of_device_id sun55iw3_sunxi_timer_ids[] = {
@@ -447,7 +468,8 @@ static void __exit sunxi_timer_sun55iw3_exit(void)
 	return platform_driver_unregister(&sun55iw3_timer_driver);
 }
 module_exit(sunxi_timer_sun55iw3_exit);
+#endif
 
 MODULE_AUTHOR("danghao <danghao@allwinnertech.com>");
-MODULE_VERSION("1.1.2");
+MODULE_VERSION(SUN50I_TIMER_MODULE_VERSION);
 MODULE_LICENSE("GPL");

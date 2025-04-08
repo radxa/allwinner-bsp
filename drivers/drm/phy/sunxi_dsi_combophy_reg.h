@@ -15,10 +15,16 @@
  * Detail information of registers
  */
 #include <linux/phy/phy.h>
+#include <drm/drm_print.h>
 
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN65IW1) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#define DISPLL_LINEAR_FREQ
+#endif
 struct sunxi_dphy_lcd {
 	int dphy_index;
 	volatile struct dphy_lcd_reg *reg;
+	struct combophy_config *phy_config;
 };
 
 union dphy_ctl_reg_t {
@@ -586,10 +592,10 @@ union dphy_pll_reg0_t {
 		__u32 en_lvs                  :  1 ;    /* default: 0x1; */
 		__u32 ldo_en                  :  1 ;    /* default: 0x1; */
 		__u32 cp36_en                 :  1 ;    /* default: 0x1; */
-		__u32 post_div1_clk_ls	      :  4 ;
-		__u32 post_div0_clk_ls	      :  2 ;
+		__u32 m3                      :  4 ;
+		__u32 m2                      :  2 ;
 		__u32 res0                    :  1 ;    /* default: 0; */
-		__u32 reg_update	      :  1 ;
+		__u32 reg_update	          :  1 ;
 	} bits;
 };
 
@@ -605,7 +611,10 @@ union dphy_pll_reg1_t {
 		__u32 lockdet_en               :  1 ;    /* default: 0; */
 		__u32 lockmdsel                :  1 ;    /* default: 0; */
 		__u32 unlock_mdsel             :  2 ;    /* default: 0; */
-		__u32 res0                     : 16 ;    /* default: 0; */
+		__u32 pll_cp                   :  5 ;
+		__u32 ls_gating                :  1 ;
+		__u32 hs_gating                :  1 ;
+		__u32 res0                     :  9 ;    /* default: 0; */
 	} bits;
 };
 
@@ -747,6 +756,7 @@ struct __disp_dsi_dphy_timing_t {
 	unsigned int hstx_ana0;
 	unsigned int hstx_ana1;
 };
+
 struct displl_div {
 	unsigned int            n;
 	unsigned int            p;
@@ -755,10 +765,26 @@ struct displl_div {
 	unsigned int            m2;
 	unsigned int            m3;
 };
-unsigned long get_displl_vco(struct sunxi_dphy_lcd *dphy);
+
+struct freq_range {
+	unsigned long lvl_min;
+	unsigned long lvl_max;
+};
+
+struct combophy_config {
+	struct freq_range               freq_lvl;
+	union dphy_tx_time0_reg_t       dphy_tx_time0;
+	union dphy_ana0_reg_t           dphy_ana0;
+	union dphy_ana4_reg_t           dphy_ana4;
+	union combo_phy_reg0_t          combo_phy_reg0;
+	union combo_phy_reg1_t          combo_phy_reg1;
+};
+
+unsigned long get_displl_vco(struct sunxi_dphy_lcd *dphy, unsigned long prate);
 void displl_clk_set(struct sunxi_dphy_lcd *dphy, struct displl_div *div);
 void displl_clk_get(struct sunxi_dphy_lcd *dphy, struct displl_div *div);
 void displl_clk_enable(struct sunxi_dphy_lcd *dphy);
+void displl_clk_disable(struct sunxi_dphy_lcd *dphy);
 int sunxi_dsi_combo_phy_set_reg_base(struct sunxi_dphy_lcd *dphy, uintptr_t base);
 int sunxi_dsi_combophy_configure_dsi(struct sunxi_dphy_lcd *dphy, enum phy_mode mode, struct phy_configure_opts_mipi_dphy *config);
 int sunxi_dsi_combophy_set_dsi_mode(struct sunxi_dphy_lcd *dphy, int mode);

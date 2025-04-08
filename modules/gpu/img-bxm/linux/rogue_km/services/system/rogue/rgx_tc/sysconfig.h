@@ -59,25 +59,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #define SYS_RGX_ACTIVE_POWER_LATENCY_MS (10)
 
-static PVRSRV_DEVICE_CONFIG gsDevices[];
-
-static RGX_TIMING_INFORMATION gsRGXTimingInfo =
-{
-	/* ui32CoreClockSpeed */
-	0,	/* Initialize to 0, real value will be set in PCIInitDev() */
-	/* bEnableActivePM */
-	IMG_TRUE,
-	/* bEnableRDPowIsland */
-	IMG_FALSE,
-	/* ui32ActivePMLatencyms */
-	SYS_RGX_ACTIVE_POWER_LATENCY_MS
-};
-
-static RGX_DATA gsRGXData =
-{
-	/* psRGXTimingInfo */
-	&gsRGXTimingInfo
-};
+#define TC_SYSTEM_NAME			"apollo"
 
 #if (TC_MEMORY_CONFIG == TC_MEMORY_LOCAL)
 static void TCLocalCpuPAddrToDevPAddr(IMG_HANDLE hPrivData,
@@ -122,48 +104,6 @@ static PHYS_HEAP_FUNCTIONS gsLocalPhysHeapFuncs =
 	/* pfnDevPAddrToCpuPAddr */
 	TCLocalDevPAddrToCpuPAddr,
 };
-
-static PHYS_HEAP_CONFIG	gsPhysHeapConfig[] =
-{
-	{
-		/* eType */
-		PHYS_HEAP_TYPE_LMA,
-		/* pszPDumpMemspaceName */
-		"LMA",
-		/* psMemFuncs */
-		&gsLocalPhysHeapFuncs,
-		/* sStartAddr */
-		{0},
-		/* sCardBase */
-		{0},
-		/* uiSize */
-		0,
-		/* hPrivData */
-		(IMG_HANDLE)&gsDevices[0],
-		/* ui32UsageFlags */
-		PHYS_HEAP_USAGE_GPU_LOCAL,
-	},
-#if defined(SUPPORT_DISPLAY_CLASS)
-	{
-		/* eType */
-		PHYS_HEAP_TYPE_LMA,
-		/* pszPDumpMemspaceName */
-		"LMA",
-		/* psMemFuncs */
-		&gsLocalPhysHeapFuncs,
-		/* sStartAddr */
-		{0},
-		/* sCardBase */
-		{0},
-		/* uiSize */
-		0,
-		/* hPrivData */
-		(IMG_HANDLE)&gsDevices[0],
-		/* ui32UsageFlags */
-		PHYS_HEAP_USAGE_DISPLAY,
-	},
-#endif
-};
 #elif (TC_MEMORY_CONFIG == TC_MEMORY_HOST)
 static PHYS_HEAP_FUNCTIONS gsSystemPhysHeapFuncs =
 {
@@ -171,28 +111,6 @@ static PHYS_HEAP_FUNCTIONS gsSystemPhysHeapFuncs =
 	TCSystemCpuPAddrToDevPAddr,
 	/* pfnDevPAddrToCpuPAddr */
 	TCSystemDevPAddrToCpuPAddr,
-};
-
-static PHYS_HEAP_CONFIG	gsPhysHeapConfig[] =
-{
-	{
-		/* eType */
-		PHYS_HEAP_TYPE_UMA,
-		/* pszPDumpMemspaceName */
-		"SYSMEM",
-		/* psMemFuncs */
-		&gsSystemPhysHeapFuncs,
-		/* sStartAddr */
-		{0},
-		/* sCardBase */
-		{0},
-		/* uiSize */
-		0,
-		/* hPrivData */
-		(IMG_HANDLE)&gsDevices[0],
-		/* ui32UsageFlags */
-		PHYS_HEAP_USAGE_GPU_LOCAL,
-	}
 };
 #elif (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID)
 static PHYS_HEAP_FUNCTIONS gsHybridPhysHeapFuncs =
@@ -202,114 +120,9 @@ static PHYS_HEAP_FUNCTIONS gsHybridPhysHeapFuncs =
 	/* pfnDevPAddrToCpuPAddr */
 	TCHybridDevPAddrToCpuPAddr,
 };
-
-static PHYS_HEAP_CONFIG	gsPhysHeapConfig[] =
-{
-	{
-		/* eType */
-		PHYS_HEAP_TYPE_LMA,
-		/* pszPDumpMemspaceName */
-		"LMA",
-		/* psMemFuncs */
-		&gsHybridPhysHeapFuncs,
-		/* sStartAddr */
-		{0},
-		/* sCardBase */
-		{0},
-		/* uiSize */
-		0,
-		/* hPrivData */
-		(IMG_HANDLE)&gsDevices[0],
-		/* ui32UsageFlags */
-		PHYS_HEAP_USAGE_GPU_LOCAL,
-	},
-#if defined(SUPPORT_DISPLAY_CLASS)
-	{
-		/* eType */
-		PHYS_HEAP_TYPE_LMA,
-		/* pszPDumpMemspaceName */
-		"LMA",
-		/* psMemFuncs */
-		&gsHybridPhysHeapFuncs,
-		/* sStartAddr */
-		{0},
-		/* sCardBase */
-		{0},
-		/* uiSize */
-		0,
-		/* hPrivData */
-		(IMG_HANDLE)&gsDevices[0],
-		/* ui32UsageFlags */
-		PHYS_HEAP_USAGE_DISPLAY,
-	},
-#endif
-	{
-		/* eType */
-		PHYS_HEAP_TYPE_UMA,
-		/* pszPDumpMemspaceName */
-		"SYSMEM",
-		/* psMemFuncs */
-		&gsHybridPhysHeapFuncs,
-		/* sStartAddr */
-		{0},
-		/* sCardBase */
-		{0},
-		/* uiSize */
-		0,
-		/* hPrivData */
-		(IMG_HANDLE)&gsDevices[0],
-		/* ui32UsageFlags */
-		PHYS_HEAP_USAGE_CPU_LOCAL,
-	}
-};
 #else
 #error "TC_MEMORY_CONFIG not valid"
 #endif
-
-static PVRSRV_DEVICE_CONFIG gsDevices[] =
-{
-	{
-		.pvOSDevice		= NULL,
-		.psDevNode		= NULL,
-		.pszName		= "apollo",
-		.pszVersion		= NULL,
-
-		/* Device setup information */
-		.sRegsCpuPBase		= { 0 },
-		.ui32RegsSize		= 0,
-		.ui32IRQ			= 0,
-
-		.eCacheSnoopingMode	= PVRSRV_DEVICE_SNOOP_NONE,
-
-		.hDevData			= &gsRGXData,
-		.hSysData			= NULL,
-
-		.bHasNonMappableLocalMemory	= IMG_FALSE,
-
-		/* Physical memory heaps */
-		.pasPhysHeaps		= &gsPhysHeapConfig[0],
-		.ui32PhysHeapCount	= ARRAY_SIZE(gsPhysHeapConfig),
-
-		.pfnPrePowerState	= NULL,
-		.pfnPostPowerState	= NULL,
-		.bHasFBCDCVersion31	= IMG_FALSE,
-
-		/* Only required for LMA but having this always set shouldn't be a problem */
-		.bDevicePA0IsValid	= IMG_TRUE,
-
-		.pfnClockFreqGet	= NULL,
-
-		.pfnCheckMemAllocSize = NULL,
-
-#if defined(SUPPORT_TRUSTED_DEVICE)
-		.pfnTDSendFWImage		= NULL,
-		.pfnTDSetPowerParams	= NULL,
-		.pfnTDRGXStart			= NULL,
-		.pfnTDRGXStop			= NULL,
-#endif
-		.pfnSysDevFeatureDepInit	= NULL
-	}
-};
 
 /*****************************************************************************
  * system specific data structures

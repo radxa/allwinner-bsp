@@ -149,7 +149,7 @@ static int sunxi_pdtest_runtime_resume(struct device *dev)
 	return 0;
 }
 
-static int sunxi_pdtest_suspend(struct device *dev)
+static int __maybe_unused sunxi_pdtest_suspend(struct device *dev)
 {
 	int ret;
 
@@ -160,7 +160,7 @@ static int sunxi_pdtest_suspend(struct device *dev)
 	return ret;
 }
 
-static int sunxi_pdtest_resume(struct device *dev)
+static int __maybe_unused sunxi_pdtest_resume(struct device *dev)
 {
 	int ret;
 

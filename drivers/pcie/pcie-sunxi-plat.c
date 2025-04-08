@@ -38,7 +38,7 @@
 #include "pcie-sunxi-dma.h"
 #include "pcie-sunxi.h"
 
-#define SUNXI_PCIE_MODULE_VERSION	"1.1.2"
+#define SUNXI_PCIE_MODULE_VERSION	"1.1.4"
 
 void sunxi_pcie_writel(u32 val, struct sunxi_pcie *pcie, u32 offset)
 {
@@ -317,6 +317,12 @@ static const struct sunxi_pcie_of_data sunxi_pcie_rc_v210_v2_of_data = {
 	.need_pcie_rst = true,
 };
 
+static const struct sunxi_pcie_of_data sunxi_pcie_rc_v210_v3_of_data = {
+	.mode = SUNXI_PCIE_RC_TYPE,
+	.has_pcie_slv_clk = true,
+	.need_pcie_rst = true,
+};
+
 static const struct sunxi_pcie_of_data sunxi_pcie_rc_v300_of_data = {
 	.mode = SUNXI_PCIE_RC_TYPE,
 	.has_pcie_slv_clk = true,
@@ -347,6 +353,10 @@ static const struct of_device_id sunxi_pcie_plat_of_match[] = {
 	{
 		.compatible = "allwinner,sunxi-pcie-v210-v2-rc",
 		.data = &sunxi_pcie_rc_v210_v2_of_data,
+	},
+	{
+		.compatible = "allwinner,sunxi-pcie-v210-v3-rc",
+		.data = &sunxi_pcie_rc_v210_v3_of_data,
 	},
 	{
 		.compatible = "allwinner,sunxi-pcie-v210-ep",
@@ -787,7 +797,7 @@ static int sunxi_pcie_plat_request_irq(struct sunxi_pcie *sunxi_pcie, struct pla
 {
 	int irq, ret;
 
-	irq  = platform_get_irq_byname(pdev, "sii");
+	irq = platform_get_irq_byname(pdev, "sii");
 	if (irq < 0)
 		return -EINVAL;
 
@@ -802,92 +812,107 @@ static int sunxi_pcie_plat_request_irq(struct sunxi_pcie *sunxi_pcie, struct pla
 	if (ret)
 		return -EINVAL;
 
-	irq = platform_get_irq_byname(pdev, "edma-w0");
-	if (irq < 0)
+	switch (sunxi_pcie->num_edma) {
+	case 4:
+		irq = platform_get_irq_byname(pdev, "edma-w3");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w3_irq_handler,
+				       IRQF_SHARED, "pcie-dma-w3", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		irq = platform_get_irq_byname(pdev, "edma-r3");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r3_irq_handler,
+				       IRQF_SHARED, "pcie-dma-r3", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		fallthrough;
+	case 3:
+		irq = platform_get_irq_byname(pdev, "edma-w2");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w2_irq_handler,
+				       IRQF_SHARED, "pcie-dma-w2", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		irq = platform_get_irq_byname(pdev, "edma-r2");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r2_irq_handler,
+				       IRQF_SHARED, "pcie-dma-r2", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		fallthrough;
+	case 2:
+		irq = platform_get_irq_byname(pdev, "edma-w1");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w1_irq_handler,
+				       IRQF_SHARED, "pcie-dma-w1", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		irq = platform_get_irq_byname(pdev, "edma-r1");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r1_irq_handler,
+				       IRQF_SHARED, "pcie-dma-r1", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		fallthrough;
+	case 1:
+		irq = platform_get_irq_byname(pdev, "edma-w0");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w0_irq_handler,
+				       IRQF_SHARED, "pcie-dma-w0", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		irq = platform_get_irq_byname(pdev, "edma-r0");
+		if (irq < 0)
+			return -EINVAL;
+
+		ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r0_irq_handler,
+				       IRQF_SHARED, "pcie-dma-r0", sunxi_pcie);
+		if (ret) {
+			sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
+			return ret;
+		}
+
+		break;
+	default:
+		sunxi_err(sunxi_pcie->dev, "Not support DMA chan_num[%d], which exceed chan_range [%d-%d]\n",
+			  sunxi_pcie->num_edma, 1, 4);
 		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w0_irq_handler,
-			       IRQF_SHARED, "pcie-dma-w0", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
-	}
-
-	irq = platform_get_irq_byname(pdev, "edma-w1");
-	if (irq < 0)
-		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w1_irq_handler,
-			       IRQF_SHARED, "pcie-dma-w1", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
-	}
-
-	irq = platform_get_irq_byname(pdev, "edma-w2");
-	if (irq < 0)
-		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w2_irq_handler,
-			       IRQF_SHARED, "pcie-dma-w2", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
-	}
-
-	irq = platform_get_irq_byname(pdev, "edma-w3");
-	if (irq < 0)
-		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_w3_irq_handler,
-			       IRQF_SHARED, "pcie-dma-w3", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
-	}
-
-	irq = platform_get_irq_byname(pdev, "edma-r0");
-	if (irq < 0)
-		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r0_irq_handler,
-			       IRQF_SHARED, "pcie-dma-r0", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
-	}
-
-	irq = platform_get_irq_byname(pdev, "edma-r1");
-	if (irq < 0)
-		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r1_irq_handler,
-			       IRQF_SHARED, "pcie-dma-r1", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
-	}
-
-	irq = platform_get_irq_byname(pdev, "edma-r2");
-	if (irq < 0)
-		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r2_irq_handler,
-			       IRQF_SHARED, "pcie-dma-r2", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
-	}
-
-	irq = platform_get_irq_byname(pdev, "edma-r3");
-	if (irq < 0)
-		return -EINVAL;
-
-	ret = devm_request_irq(&pdev->dev, irq, sunxi_pcie_dma_r3_irq_handler,
-			       IRQF_SHARED, "pcie-dma-r3", sunxi_pcie);
-	if (ret) {
-		sunxi_err(&pdev->dev, "failed to request PCIe DMA IRQ\n");
-		return ret;
 	}
 
 	return 0;

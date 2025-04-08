@@ -19,7 +19,6 @@
 #include <linux/types.h>
 #include <linux/dma-buf.h>
 
-#define TAG "[DI_UTILS]"
 #define DI_ALIGN(value, align) ((align == 0) ? \
 				value : \
 				(((value) + ((align) - 1)) & ~((align) - 1)))

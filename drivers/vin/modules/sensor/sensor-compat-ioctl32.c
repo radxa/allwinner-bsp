@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
+
 /*
  * ioctl32.c: Conversion between 32bit and 64bit native ioctls.
  *
@@ -100,7 +101,7 @@ struct flash_para32 {
 static int get_sensor_config32(struct sensor_config *kp,
 			      struct sensor_config32 __user *up)
 {
-#if !defined CONFIG_ARCH_SUN50IW10
+#if !IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 	if (!access_ok(up, sizeof(*up)) ||
 	    get_user(kp->width, &up->width) || get_user(kp->height, &up->height) ||
 	    get_user(kp->hoffset, &up->hoffset) || get_user(kp->voffset, &up->voffset) ||

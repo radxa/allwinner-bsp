@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -55,10 +55,10 @@
 #define ALIGN_4K(x) (((x) + (4095)) & ~(4095))
 #define ALIGN_16B(x) (((x) + (15)) & ~(15))
 
-//#define DEBUG
 #define display_frame 0
 #define video_s_ctrl 0
 #define SET_PHY2VIR 0
+#define USE_LARGE_MODE 0
 #define	BK_INT_POOL 0
 
 #ifdef DEBUG
@@ -633,6 +633,7 @@ static int req_frame_buffers(void)
 		free(buffers);
 		buffers = NULL;
 	}
+
 	buffers = calloc(req.count, sizeof(*buffers));
 
 	for (n_buffers = 0; n_buffers < req.count; ++n_buffers) {
@@ -957,6 +958,15 @@ static int camera_init(int sel, int mode)
 	}
 #endif
 
+#if USE_LARGE_MODE
+	char dma_merge_mode;
+	dma_merge_mode = 1;
+	if (-1 == ioctl(fd, VIDIOC_SET_DMA_MERGE, &dma_merge_mode)) {
+		printf("VIDIOC_SET_DMA_MERGE!\n");
+		return -1;
+	}
+#endif
+
 	inp.index = sel;
 	if (-1 == ioctl(fd, VIDIOC_S_INPUT, &inp)) {
 		printf("VIDIOC_S_INPUT %d error!\n", sel);
@@ -1235,6 +1245,7 @@ static int main_test(int sel, int mode)
 	printf("video_wait_thread wait to exit\n");
 #endif
 
+
 	pixformat = TVD_PL_YUV420;
 	ret = disp_init(input_size.width, input_size.height, pixformat);
 
@@ -1460,8 +1471,6 @@ int main(int argc, char *argv[])
 		mode = atoi(argv[6]);
 		test_cnt = atoi(argv[7]);
 		fps = atoi(argv[8]);
-		/* osd test use */
-		/* osd_mode = atoi(argv[8]); */
 	} else if (argc == 10) {
 		dev_id = atoi(argv[1]);
 		sprintf(dev_name, "/dev/video%d", dev_id);

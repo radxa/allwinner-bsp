@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -40,6 +40,12 @@ struct csi_tvin {
 	struct prs_output_size out_size[MAX_CH_NUM];
 };
 
+struct prs_ch_mode {
+	unsigned int mode_en;
+	unsigned int mode_sel;
+	unsigned int channel_num;
+};
+
 enum tag_csi_io_cmd {
 	PARSER_TVIN_INIT
 };
@@ -66,9 +72,11 @@ struct csi_dev {
 	struct prs_fps_ds prs_fps_ds;
 	unsigned int reset_time;
 	unsigned int stream_count;
+	struct prs_ch_mode prs_ch_mode;
 	struct csi_tvin tvin;
 };
 
+int sunxi_csi_set_ch_mode(struct v4l2_subdev *sd);
 int sunxi_csi_subdev_s_parm(struct v4l2_subdev *sd,
 				   struct v4l2_streamparm *param);
 struct v4l2_subdev *sunxi_csi_get_subdev(int id);

@@ -15,8 +15,8 @@
 #include <linux/delay.h>
 #include <linux/phy/phy-mipi-dphy.h>
 #include "sunxi_dsi_combophy_reg.h"
-#define DEVICE_DSI_NUM 3
 #define DUAL_DSI_PHY 2
+
 static int dsi_phy_mode;
 
 static s32 sunxi_dsi_lane_set(struct sunxi_dphy_lcd *dphy, u32 lanes)
@@ -67,12 +67,14 @@ static s32 sunxi_dsi_dphy_cfg(struct sunxi_dphy_lcd *dphy)
 
 	dphy_timing_p = &dphy_timing_cfg1;
 
+/*
 	dphy->reg->dphy_tx_time0.bits.lpx_tm_set =
 	    dphy_timing_p->lp_clk_div;
 	dphy->reg->dphy_tx_time0.bits.hs_pre_set =
 	    dphy_timing_p->hs_prepare;
 	dphy->reg->dphy_tx_time0.bits.hs_trail_set =
 	    dphy_timing_p->hs_trail;
+*/
 	dphy->reg->dphy_tx_time1.bits.ck_prep_set =
 	    dphy_timing_p->clk_prepare;
 	dphy->reg->dphy_tx_time1.bits.ck_zero_set = dphy_timing_p->clk_zero;
@@ -90,20 +92,23 @@ static s32 sunxi_dsi_dphy_cfg(struct sunxi_dphy_lcd *dphy)
 	return 0;
 }
 
-unsigned long get_displl_vco(struct sunxi_dphy_lcd *dphy)
+unsigned long get_displl_vco(struct sunxi_dphy_lcd *dphy, unsigned long prate)
 {
 	u32 n = 0;
 
 	n = dphy->reg->dphy_pll_reg0.bits.n;
 
-	return n * 24000000;
+	return n * prate;
 }
 
 void displl_clk_set(struct sunxi_dphy_lcd *dphy, struct displl_div *div)
 {
-	dphy->reg->dphy_pll_reg0.bits.ldo_en = 1;
+#ifdef DISPLL_LINEAR_FREQ
+	displl_clk_enable(dphy);
+#endif
 	if (div->n)
 		dphy->reg->dphy_pll_reg0.bits.n = div->n;
+	udelay(20);
 	if (div->m0)
 		dphy->reg->dphy_pll_reg0.bits.m0 = div->m0 - 1;
 	else
@@ -111,38 +116,62 @@ void displl_clk_set(struct sunxi_dphy_lcd *dphy, struct displl_div *div)
 	if (div->m1)
 		dphy->reg->dphy_pll_reg0.bits.m1 = div->m1 - 1;
 	if (div->m2)
-		dphy->reg->dphy_pll_reg0.bits.post_div0_clk_ls = div->m2 - 1;
+		dphy->reg->dphy_pll_reg0.bits.m2 = div->m2 - 1;
 	if (div->m3)
-		dphy->reg->dphy_pll_reg0.bits.post_div1_clk_ls = div->m3 - 1;
+		dphy->reg->dphy_pll_reg0.bits.m3 = div->m3 - 1;
 
 	dphy->reg->dphy_pll_reg0.bits.p = 0;
+
+	dphy->reg->dphy_pll_reg0.bits.reg_update = 1;
 }
 
+void displl_clk_enable(struct sunxi_dphy_lcd *dphy)
+{
+	u32 count = 0, i = 0;
+
+	dphy->reg->dphy_pll_reg0.bits.ldo_en = 1;
+	dphy->reg->dphy_pll_reg1.bits.hs_gating = 1;
+	dphy->reg->dphy_pll_reg1.bits.ls_gating = 1;
+	dphy->reg->dphy_pll_reg0.bits.pll_en = 1;
+	dphy->reg->dphy_pll_reg0.bits.en_lvs = 1;
+	dphy->reg->dphy_pll_reg1.bits.lockdet_en = 1;
+
+	dphy->reg->dphy_pll_reg0.bits.reg_update = 1;
+
+	while (count < 3) {
+		if (dphy->reg->dphy_dbg0.bits.lock == 1)
+			count++;
+		if (i > 400000) {
+			DRM_ERROR("displl clk unable to lock\n");
+			break;
+		}
+		udelay(5);
+		i++;
+	}
+	udelay(20);
+}
+
+void displl_clk_disable(struct sunxi_dphy_lcd *dphy)
+{
+
+	dphy->reg->dphy_pll_reg0.bits.ldo_en = 0;
+	dphy->reg->dphy_pll_reg1.bits.hs_gating = 0;
+	dphy->reg->dphy_pll_reg1.bits.ls_gating = 0;
+	dphy->reg->dphy_pll_reg0.bits.pll_en = 0;
+	dphy->reg->dphy_pll_reg0.bits.en_lvs = 0;
+	dphy->reg->dphy_pll_reg1.bits.lockdet_en = 0;
+	dphy->reg->dphy_pll_reg0.bits.reg_update = 0;
+
+	udelay(20);
+}
 void displl_clk_get(struct sunxi_dphy_lcd *dphy, struct displl_div *div)
 {
 	div->n = dphy->reg->dphy_pll_reg0.bits.n;
 	div->m0 = dphy->reg->dphy_pll_reg0.bits.m0;
 	div->m1 = dphy->reg->dphy_pll_reg0.bits.m1;
-	div->m2 = dphy->reg->dphy_pll_reg0.bits.post_div0_clk_ls;
-	div->m3 = dphy->reg->dphy_pll_reg0.bits.post_div1_clk_ls;
+	div->m2 = dphy->reg->dphy_pll_reg0.bits.m2;
+	div->m3 = dphy->reg->dphy_pll_reg0.bits.m3;
 	div->p = dphy->reg->dphy_pll_reg0.bits.p;
-}
-
-void displl_clk_enable(struct sunxi_dphy_lcd *dphy)
-{
-//	u32 count = 0;
-
-	dphy->reg->dphy_pll_reg0.bits.pll_en = 1;
-	dphy->reg->dphy_pll_reg1.bits.lockdet_en = 1;
-	dphy->reg->dphy_pll_reg0.bits.reg_update = 1;
-/*
-	while (count < 3) {
-		if (dphy->reg->dphy_dbg0.bits.lock == 1)
-			count++;
-		udelay(5);
-	}
-*/
-	udelay(20);
 }
 
 u32 sunxi_dsi_comb_dphy_pll_set(struct sunxi_dphy_lcd *dphy, u32 hs_clk_rate, enum phy_mode mode)
@@ -236,8 +265,8 @@ u32 sunxi_dsi_comb_dphy_pll_set(struct sunxi_dphy_lcd *dphy, u32 hs_clk_rate, en
 	dphy->reg->dphy_pll_reg0.bits.p = div_p;
 	dphy->reg->dphy_pll_reg0.bits.m0 = div_m0;
 	dphy->reg->dphy_pll_reg0.bits.m1 = div_m1;
-	dphy->reg->dphy_pll_reg0.bits.post_div0_clk_ls = div_m2;
-	dphy->reg->dphy_pll_reg0.bits.post_div1_clk_ls = div_m3;
+	dphy->reg->dphy_pll_reg0.bits.m2 = div_m2;
+	dphy->reg->dphy_pll_reg0.bits.m3 = div_m3;
 	dphy->reg->dphy_pll_reg2.dwval = 0; /* Disable sdm */
 
 	dphy->reg->dphy_pll_reg0.bits.pll_en = 1;
@@ -251,14 +280,36 @@ u32 sunxi_dsi_comb_dphy_pll_set(struct sunxi_dphy_lcd *dphy, u32 hs_clk_rate, en
 
 static u32 sunxi_dsi_io_open(struct sunxi_dphy_lcd *dphy)
 {
-	dphy->reg->dphy_ana4.bits.reg_soft_rcal = 0x18;
-	dphy->reg->dphy_ana4.bits.en_soft_rcal = 1;
-	dphy->reg->dphy_ana4.bits.reg_vlv_set = 5;
-	dphy->reg->dphy_ana4.bits.reg_vlptx_set = 3;
-	dphy->reg->dphy_ana4.bits.reg_vtt_set = 6;
-	dphy->reg->dphy_ana4.bits.reg_vres_set = 3;
-	dphy->reg->dphy_ana4.bits.reg_ib = 4;
-	dphy->reg->dphy_ana4.bits.reg_vref_source = 0;
+	dphy->reg->dphy_tx_time0.bits.lpx_tm_set =
+				dphy->phy_config->dphy_tx_time0.bits.lpx_tm_set;
+	dphy->reg->dphy_tx_time0.bits.hs_pre_set =
+				dphy->phy_config->dphy_tx_time0.bits.hs_pre_set;
+	dphy->reg->dphy_tx_time0.bits.hs_trail_set =
+				dphy->phy_config->dphy_tx_time0.bits.hs_trail_set;
+	dphy->reg->dphy_ana4.bits.reg_soft_rcal =
+				dphy->phy_config->dphy_ana4.bits.reg_soft_rcal;
+	dphy->reg->dphy_ana4.bits.en_soft_rcal =
+				dphy->phy_config->dphy_ana4.bits.en_soft_rcal;
+	dphy->reg->dphy_ana4.bits.on_rescal =
+				dphy->phy_config->dphy_ana4.bits.on_rescal;
+	dphy->reg->dphy_ana4.bits.en_rescal =
+				dphy->phy_config->dphy_ana4.bits.en_rescal;
+	dphy->reg->dphy_ana4.bits.reg_vlv_set =
+				dphy->phy_config->dphy_ana4.bits.reg_vlv_set;
+	dphy->reg->dphy_ana4.bits.reg_vlptx_set =
+				dphy->phy_config->dphy_ana4.bits.reg_vlptx_set;
+	dphy->reg->dphy_ana4.bits.reg_vtt_set =
+				dphy->phy_config->dphy_ana4.bits.reg_vtt_set;
+	dphy->reg->dphy_ana4.bits.reg_vres_set =
+				dphy->phy_config->dphy_ana4.bits.reg_vres_set;
+	dphy->reg->dphy_ana4.bits.reg_vref_source =
+				dphy->phy_config->dphy_ana4.bits.reg_vref_source;
+	dphy->reg->dphy_ana4.bits.reg_ib =
+				dphy->phy_config->dphy_ana4.bits.reg_ib;
+	dphy->reg->dphy_ana4.bits.reg_comtest =
+				dphy->phy_config->dphy_ana4.bits.reg_comtest;
+	dphy->reg->dphy_ana4.bits.en_comtest =
+				dphy->phy_config->dphy_ana4.bits.en_comtest;
 
 	dphy->reg->dphy_ana2.bits.enck_cpu = 1;
 
@@ -266,13 +317,30 @@ static u32 sunxi_dsi_io_open(struct sunxi_dphy_lcd *dphy)
 	dphy->reg->dphy_ana3.bits.enldor = 1;
 	dphy->reg->dphy_ana3.bits.enldoc = 1;
 	dphy->reg->dphy_ana3.bits.enldod = 1;
-	dphy->reg->dphy_ana0.bits.reg_lptx_setr = 7;
-	dphy->reg->dphy_ana0.bits.reg_lptx_setc = 7;
-	dphy->reg->combo_phy_reg0.bits.en_cp = 1;
-
-	dphy->reg->dphy_ana4.bits.en_mipi = 1;
-	dphy->reg->combo_phy_reg0.bits.en_mipi = 1;
-	dphy->reg->combo_phy_reg0.bits.en_comboldo = 1;
+	dphy->reg->dphy_ana0.bits.reg_lptx_setr =
+				dphy->phy_config->dphy_ana0.bits.reg_lptx_setr;
+	dphy->reg->dphy_ana0.bits.reg_lptx_setc =
+				dphy->phy_config->dphy_ana0.bits.reg_lptx_setc;
+	dphy->reg->dphy_ana0.bits.reg_preemph3 =
+				dphy->phy_config->dphy_ana0.bits.reg_preemph3;
+	dphy->reg->dphy_ana0.bits.reg_preemph2 =
+				dphy->phy_config->dphy_ana0.bits.reg_preemph2;
+	dphy->reg->dphy_ana0.bits.reg_preemph1 =
+				dphy->phy_config->dphy_ana0.bits.reg_preemph1;
+	dphy->reg->dphy_ana0.bits.reg_preemph0 =
+				dphy->phy_config->dphy_ana0.bits.reg_preemph0;
+	dphy->reg->combo_phy_reg0.bits.en_cp =
+				dphy->phy_config->combo_phy_reg0.bits.en_cp;
+	dphy->reg->combo_phy_reg0.bits.en_comboldo =
+				dphy->phy_config->combo_phy_reg0.bits.en_comboldo;
+	dphy->reg->combo_phy_reg0.bits.en_mipi =
+				dphy->phy_config->combo_phy_reg0.bits.en_mipi;
+	dphy->reg->combo_phy_reg0.bits.en_test_0p8 =
+				dphy->phy_config->combo_phy_reg0.bits.en_test_0p8;
+	dphy->reg->combo_phy_reg0.bits.en_test_comboldo =
+				dphy->phy_config->combo_phy_reg0.bits.en_test_comboldo;
+	dphy->reg->dphy_ana4.bits.en_mipi =
+				dphy->phy_config->dphy_ana4.bits.en_mipi;
 	dphy->reg->combo_phy_reg2.bits.hs_stop_dly = 20;
 	udelay(1);
 
@@ -315,14 +383,13 @@ static s32 lvds_combphy_close(struct sunxi_dphy_lcd *dphy)
 static s32 lvds_combphy_open(struct sunxi_dphy_lcd *dphy)
 {
 
-	dphy->reg->combo_phy_reg1.dwval = 0x43;
+	dphy->reg->combo_phy_reg1.dwval =
+				dphy->phy_config->combo_phy_reg1.dwval;
 	dphy->reg->combo_phy_reg0.dwval = 0x1;
 	udelay(5);
 	dphy->reg->combo_phy_reg0.dwval = 0x5;
 	udelay(5);
 	dphy->reg->combo_phy_reg0.dwval = 0x7;
-	udelay(5);
-	dphy->reg->combo_phy_reg0.dwval = 0xf;
 
 	dphy->reg->dphy_ana4.dwval = 0x84000000;
 	dphy->reg->dphy_ana3.dwval = 0x01040000;
@@ -335,6 +402,10 @@ static s32 lvds_combphy_open(struct sunxi_dphy_lcd *dphy)
 
 static u32 sunxi_dsi_io_close(struct sunxi_dphy_lcd *dphy)
 {
+	dphy->reg->dphy_tx_time0.bits.lpx_tm_set = 0;
+	dphy->reg->dphy_tx_time0.bits.hs_pre_set = 0;
+	dphy->reg->dphy_tx_time0.bits.hs_trail_set = 0;
+	udelay(1);
 	dphy->reg->dphy_ana2.bits.enp2s_cpu = 0;
 	dphy->reg->dphy_ana1.bits.reg_vttmode = 0;
 	udelay(1);

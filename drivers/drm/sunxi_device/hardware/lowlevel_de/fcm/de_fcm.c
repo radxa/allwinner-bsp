@@ -53,6 +53,11 @@ struct de_fcm_private {
 	struct de_reg_mem_info reg_mem_info;
 	struct de_reg_mem_info reg_shadow;
 	u32 reg_blk_num;
+	u8 demo_hor_start;
+	u8 demo_hor_end;
+	u8 demo_ver_start;
+	u8 demo_ver_end;
+
 	struct de_reg_block reg_blks[FCM_REG_BLK_NUM];
 	struct de_reg_block shadow_blks[FCM_REG_BLK_NUM];
 	struct fcm_hardware_data lut[FCM_MODE_CNT];
@@ -65,7 +70,7 @@ struct de_fcm_private {
 	int (*de_fcm_set_csc)(struct de_fcm_handle *hdl,
 					   struct de_csc_info *in_info, struct de_csc_info *out_info);
 	s32 (*de_fcm_enable)(struct de_fcm_handle *hdl, u32 en);
-	s32 (*de_fcm_set_window)(struct de_fcm_handle *hdl, u32 demo_enable,
+	s32 (*de_fcm_set_window)(struct de_fcm_handle *hdl,
 				u32 x, u32 y, u32 w, u32 h);
 	s32 (*de_fcm_set_size)(struct de_fcm_handle *hdl, u32 width, u32 height);
 };
@@ -86,11 +91,11 @@ s32 de_fcm_set_size(struct de_fcm_handle *hdl, u32 width, u32 height)
 		return 0;
 }
 
-s32 de_fcm_set_window(struct de_fcm_handle *hdl, u32 demo_enable,
+s32 de_fcm_set_window(struct de_fcm_handle *hdl,
 			u32 x, u32 y, u32 w, u32 h)
 {
 	if (hdl->private->de_fcm_set_window)
-		return hdl->private->de_fcm_set_window(hdl, demo_enable, x, y, w, h);
+		return hdl->private->de_fcm_set_window(hdl, x, y, w, h);
 	else
 		return 0;
 }
@@ -183,31 +188,45 @@ s32 de35x_fcm_set_size(struct de_fcm_handle *hdl, u32 width, u32 height)
 	mutex_lock(&priv->lock);
 	reg->size.bits.width = width - 1;
 	reg->size.bits.height = height - 1;
+
+	reg->win0.bits.win_left =
+	    width * priv->demo_hor_start / 100;
+	reg->win1.bits.win_right =
+	    width * priv->demo_hor_end / 100;
+	reg->win0.bits.win_top =
+	    height * priv->demo_ver_start / 100;
+	reg->win1.bits.win_bot =
+	    height * priv->demo_ver_end / 100;
+
 	de_fcm_request_update(priv, FCM_PARA_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
-s32 de35x_fcm_set_window(struct de_fcm_handle *hdl, u32 demo_enable,
-			u32 x, u32 y, u32 w, u32 h)
+s32 de_fcm_set_demo_mode(struct de_fcm_handle *hdl, bool enable)
 {
 	struct de_fcm_private *priv = hdl->private;
 	struct fcm_reg *reg = de35x_get_fcm_shadow_reg(priv);
-	u32 fcm_en;
 
 	mutex_lock(&priv->lock);
-	fcm_en = reg->ctl.bits.fcm_en;
-	reg->ctl.bits.window_en = fcm_en ? demo_enable : 0;
-	if (demo_enable) {
-		reg->win0.bits.win_left = x;
-		reg->win1.bits.win_right = x + w - 1;
-		reg->win0.bits.win_top = y;
-		reg->win1.bits.win_bot = y + h - 1;
-	}
+	reg->ctl.bits.window_en = enable ? 1 : 0;
 	de_fcm_request_update(priv, FCM_PARA_REG_BLK, 1);
 	mutex_unlock(&priv->lock);
+	return 0;
+}
 
+s32 de35x_fcm_set_window(struct de_fcm_handle *hdl,
+			u32 x, u32 y, u32 w, u32 h)
+{
+	struct de_fcm_private *priv = hdl->private;
+
+	mutex_lock(&priv->lock);
+	priv->demo_hor_start = x;
+	priv->demo_hor_end = x + w;
+	priv->demo_ver_start = y;
+	priv->demo_ver_end = y + h - 1;
+	mutex_unlock(&priv->lock);
 	return 0;
 }
 
@@ -221,8 +240,8 @@ s32 de35x_fcm_enable(struct de_fcm_handle *hdl, u32 en)
 	/* disable or enable only after lut is init */
 	if (!en || (priv->lut_init[priv->cur_lut] && en)) {
 		mutex_lock(&priv->lock);
-		debug->enable = en;
-		reg->ctl.bits.fcm_en = en;
+		debug->enable = en ? 1 : 0;
+		reg->ctl.bits.fcm_en = en ? 1 : 0;
 		de_fcm_request_update(priv, FCM_PARA_REG_BLK, 1);
 		/* reconfig the last lut */
 		mutex_unlock(&priv->lock);

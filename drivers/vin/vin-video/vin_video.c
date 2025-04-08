@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
+
 /*
  * vin_video.c for video api
  *
@@ -31,7 +32,9 @@
 #include <media/v4l2-subdev.h>
 #include <media/videobuf2-dma-contig.h>
 #include <linux/dma-buf.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #include <linux/dma-heap.h>
+#endif
 #include <linux/dma-mapping.h>
 
 #include <linux/regulator/consumer.h>
@@ -60,6 +63,7 @@
 		KERNEL_VERSION(VIN_MAJOR_VERSION, VIN_MINOR_VERSION, VIN_RELEASE)
 
 extern struct vin_core *vin_core_gbl[VIN_MAX_DEV];
+extern struct scaler_dev *glb_vipp[VIN_MAX_SCALER];
 #define GET_BIT(x, bit) ((x & (1 << bit)) >> bit)
 
 #if IS_ENABLED(CONFIG_VIN_INIT_MELIS)
@@ -735,7 +739,6 @@ static int vidioc_enum_framesizes(struct file *file, void *fh,
 				enum_frame_size, NULL, &fse);
 	if (ret < 0)
 		return -1;
-
 	fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
 	fsize->discrete.width = fse.max_width;
 	fsize->discrete.height = fse.max_height;
@@ -886,7 +889,7 @@ static int vin_pipeline_try_format(struct vin_core *vinc,
 
 			/* find ch id to set for tvin*/
 			if (vinc->tvin.flag) {
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 				if (vinc->id > TVIN_VIDEO_MAX)
 					ch_id = vinc->id / TVIN_VIDEO_STRIP + vinc->id % TVIN_VIDEO_STRIP;
 				else
@@ -1052,6 +1055,11 @@ static int __vin_set_fmt(struct vin_core *vinc, struct v4l2_format *f)
 	struct mbus_framefmt_res *res = (void *)mf.reserved;
 	__maybe_unused struct vin_md *vind = dev_get_drvdata(vinc->v4l2_dev->dev);
 	int ret = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	struct v4l2_subdev_state state;
+#endif
+	struct v4l2_subdev_pad_config cfg;
+	struct v4l2_subdev_selection sel;
 
 	if (vin_streaming(cap)) {
 		vin_err("%s device busy\n", __func__);
@@ -1100,23 +1108,19 @@ static int __vin_set_fmt(struct vin_core *vinc, struct v4l2_format *f)
 	}
 #endif
 	if (ret == 0) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
-		struct v4l2_subdev_state state;
-#endif
-		struct v4l2_subdev_pad_config cfg;
-		struct v4l2_subdev_selection sel;
-
 		sunxi_isp_sensor_fps(cap->pipe.sd[VIN_IND_ISP], win_cfg.fps_fixed);
 #ifdef SUPPORT_ISP_TDM
 		if (cap->pipe.sd[VIN_IND_TDM_RX])
 			sunxi_tdm_fps_clk(cap->pipe.sd[VIN_IND_TDM_RX], win_cfg.fps_fixed,
-								clk_get_rate(vind->clk[VIN_TOP_CLK].clock), win_cfg.vts);
+						clk_get_rate(vind->clk[VIN_TOP_CLK].clock), win_cfg.vts);
 #endif
 		vinc->vin_status.width = win_cfg.width;
 		vinc->vin_status.height = win_cfg.height;
 		vinc->vin_status.h_off = win_cfg.hoffset;
 		vinc->vin_status.v_off = win_cfg.voffset;
 		/* parser crop */
+		memset(&cfg, 0, sizeof(cfg));
+		memset(&sel, 0, sizeof(sel));
 		cfg.try_crop.width = win_cfg.width;
 		cfg.try_crop.height = win_cfg.height;
 		cfg.try_crop.left = win_cfg.hoffset;
@@ -1126,6 +1130,7 @@ static int __vin_set_fmt(struct vin_core *vinc, struct v4l2_format *f)
 
 		if (cap->pipe.sd[VIN_IND_CSI]) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+			memset(&state, 0, sizeof(state));
 			state.pads = &cfg;
 			ret = v4l2_subdev_call(cap->pipe.sd[VIN_IND_CSI], pad,
 						set_selection, &state, &sel);
@@ -1375,10 +1380,15 @@ static void __osd_win_check(struct v4l2_window *win)
 			win->clipcount = MAX_OVERLAY_NUM;
 	} else {
 		if (MAX_ORL_NUM) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 			if (win->clipcount / 2 > MAX_ORL_NUM)
 				win->clipcount = MAX_ORL_NUM;
 			else
 				win->clipcount /= 2;
+#else
+			if (win->clipcount > MAX_ORL_NUM)
+				win->clipcount = MAX_ORL_NUM;
+#endif
 		} else {
 			if (win->clipcount > MAX_COVER_NUM)
 				win->clipcount = MAX_COVER_NUM;
@@ -1615,6 +1625,7 @@ static int vidioc_s_fmt_vid_overlay(struct file *file, void *__fh,
 			return -EFAULT;
 		}
 #endif
+
 		/* save global alpha in the win top for diff overlay */
 		for (i = 0; i < osd->overlay_cnt; i++) {
 			osd->ov_win[i] = clip[i].c;
@@ -1827,7 +1838,6 @@ static int __osd_reg_setup(struct vin_core *vinc, struct vin_osd *osd)
 			para->overlay_cfg[i].inv_w_rgn = osd->inv_w_rgn[i];
 			para->overlay_cfg[i].inv_h_rgn = osd->inv_h_rgn[i];
 		}
-
 		vipp_set_osd_bm_load_addr(id, (unsigned long)osd->ov_mask[osd->ov_set_cnt % 2].dma_addr);
 	} else {
 		osd_cfg->osd_ov_num = -1;
@@ -1854,7 +1864,6 @@ static int __osd_reg_setup(struct vin_core *vinc, struct vin_osd *osd)
 			para->cover_data[i].u = osd->yuv_cover[1][i];
 			para->cover_data[i].v = osd->yuv_cover[2][i];
 		}
-
 	} else {
 		osd_cfg->osd_cv_num = -1;
 	}
@@ -2080,6 +2089,7 @@ static int __csi_isp_setup_link(struct vin_core *vinc, int en)
 		vin_err("%s:media_entity_find_link null\n", __func__);
 		return -1;
 	}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 	tdm_dev = v4l2_get_subdevdata(tdm_rx);
 	if (tdm_dev->stream_count >= 1)
@@ -2088,6 +2098,7 @@ static int __csi_isp_setup_link(struct vin_core *vinc, int en)
 	if (tdm_rx->entity.stream_count >= 1)
 		return 0;
 #endif
+
 	vin_log(VIN_LOG_MD, "setup link: [%s] %c> [%s]\n",
 			link->source->entity->name, en ? '=' : '-',
 			link->sink->entity->name);
@@ -2361,11 +2372,13 @@ static int __vin_s_input(struct vin_core *vinc, unsigned int i)
 	sunxi_isp_sensor_type(cap->pipe.sd[VIN_IND_ISP], inst->is_isp_used);
 	vinc->support_raw = inst->is_isp_used;
 
+	mutex_lock(&cap->vdev.entity.graph_obj.mdev->graph_mutex);
 	ret = vin_pipeline_call(vinc, open, &cap->pipe, &cap->vdev.entity, true);
 	if (ret < 0) {
 		vin_err("vin pipeline open failed (%d)!\n", ret);
 		return ret;
 	}
+	mutex_unlock(&cap->vdev.entity.graph_obj.mdev->graph_mutex);
 
 	if (module->modules.act[valid_idx].sd != NULL) {
 		cap->pipe.sd[VIN_IND_ACTUATOR] = module->modules.act[valid_idx].sd;
@@ -2500,6 +2513,9 @@ static int __vin_s_parm(struct vin_core *vinc, struct v4l2_streamparm *parms)
 	if (vinc->dma_merge_mode == 1)
 		parms->parm.capture.reserved[2] = 3;
 
+	if ((vinc->csi_ch != 0xff) && (vinc->csi_ch & 0x20))
+		sunxi_csi_set_ch_mode(cap->pipe.sd[VIN_IND_CSI]);
+
 	cap->capture_mode = parms->parm.capture.capturemode;
 	vinc->large_image = parms->parm.capture.reserved[2];
 
@@ -2515,9 +2531,11 @@ static int __vin_s_parm(struct vin_core *vinc, struct v4l2_streamparm *parms)
 		vin_warn("v4l2 subdev csi s_parm error!\n");
 
 #ifdef SUPPORT_ISP_TDM
-	ret = sunxi_tdm_subdev_s_parm(cap->pipe.sd[VIN_IND_TDM_RX], parms);
-	if (ret < 0)
-		vin_warn("v4l2 subdev tdm s_parm error!\n");
+	if (vinc->tdm_rx_sel != 0xff) {
+		ret = sunxi_tdm_subdev_s_parm(cap->pipe.sd[VIN_IND_TDM_RX], parms);
+		if (ret < 0)
+			vin_warn("v4l2 subdev tdm s_parm error!\n");
+	}
 #endif
 
 	if (inst->is_isp_used && cap->pipe.sd[VIN_IND_ISP]) {
@@ -2568,7 +2586,6 @@ static int vidioc_s_dv_timings(struct file *file, void *fh,
 
 	return ret;
 }
-
 static int vidioc_g_dv_timings(struct file *file, void *fh,
 				   struct v4l2_dv_timings *timings)
 {
@@ -3578,7 +3595,7 @@ static int vin_open(struct file *file)
 		return -EBUSY;
 	}
 
-#if IS_ENABLED(CONFIG_RV_RUN_CAR_REVERSE)
+#if IS_ENABLED(CONFIG_RV_RUN_CAR_REVERSE) && !defined (CONFIG_ARCH_SUN60IW2)
 	if (CONTROL_BY_RTOS == vinc->rpmsg.control) {
 		vin_err("video%d is controlling by rtos\n", vinc->id);
 		return -EBUSY;
@@ -3619,7 +3636,7 @@ static int vin_close(struct file *file)
 		return 0;
 	}
 
-#if IS_ENABLED(CONFIG_RV_RUN_CAR_REVERSE)
+#if IS_ENABLED(CONFIG_RV_RUN_CAR_REVERSE) && !defined (CONFIG_ARCH_SUN60IW2)
 	vinc_status_rpmsg_send(ARM_VIN_STOP, &vinc->rpmsg);
 #endif
 
@@ -3746,6 +3763,8 @@ static int vin_try_ctrl(struct v4l2_ctrl *ctrl)
 	 * V4L2_CTRL_FLAG_VOLATILE, s_ctrl would not be called
 	  */
 	switch (ctrl->id) {
+	case V4L2_CID_VFLIP:
+	case V4L2_CID_HFLIP:
 	case V4L2_CID_EXPOSURE:
 	case V4L2_CID_EXPOSURE_ABSOLUTE:
 	case V4L2_CID_GAIN:
@@ -4019,10 +4038,26 @@ static int vin_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct v4l2_subdev *isp = cap->pipe.sd[VIN_IND_ISP];
 	struct actuator_ctrl_word_t vcm_ctrl;
 	struct v4l2_control c;
-#ifndef CONFIG_ENABLE_SENSOR_FLIP_OPTION
+#if !IS_ENABLED(CONFIG_ENABLE_SENSOR_FLIP_OPTION)
 	struct csic_dma_flip flip;
 #endif
 	int ret = 0;
+
+	/*
+	 * make sure g_ctrl will get the value that hardware is using
+	 * so that ctrl->flags should be V4L2_CTRL_FLAG_VOLATILE, after s_ctrl
+	  */
+	switch (ctrl->id) {
+	case V4L2_CID_VFLIP:
+	case V4L2_CID_HFLIP:
+	case V4L2_CID_EXPOSURE:
+	case V4L2_CID_EXPOSURE_ABSOLUTE:
+	case V4L2_CID_GAIN:
+		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
+		break;
+	default:
+		break;
+	}
 
 	c.id = ctrl->id;
 	c.value = ctrl->val;
@@ -4986,7 +5021,7 @@ int vin_set_tdm_speeddn_cfg_special(int id, struct tdm_speeddn_cfg *cfg)
 		}
 
 		mipi = container_of(cap->pipe.sd[VIN_IND_MIPI], struct mipi_dev, subdev);
-		mipi->cmb_csi_cfg.pix_num = cfg->pix_num;
+		mipi->cmb_csi_cfg.pix_num = (enum cmb_csi_pix_num)cfg->pix_num;
 	}
 
 	if (vinc->tdm_rx_sel != 0xff) {
@@ -5481,7 +5516,11 @@ int vin_init_controls(struct v4l2_ctrl_handler *hdl, struct vin_vid_cap *cap)
 	if (ctrl != NULL)
 		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
 	ctrl = v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
+	if (ctrl != NULL)
+		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
 	ctrl = v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
+	if (ctrl != NULL)
+		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
 	v4l2_ctrl_new_std_menu(hdl, &vin_ctrl_ops,
 			       V4L2_CID_POWER_LINE_FREQUENCY,
 			       V4L2_CID_POWER_LINE_FREQUENCY_AUTO, 0,
@@ -5489,7 +5528,7 @@ int vin_init_controls(struct v4l2_ctrl_handler *hdl, struct vin_vid_cap *cap)
 	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_HUE_AUTO, 0, 1, 1, 1);
 	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops,
 			  V4L2_CID_WHITE_BALANCE_TEMPERATURE, 2800, 10000, 1, 6500);
-	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_SHARPNESS, 0, 4095, 1, 0);
+	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_SHARPNESS, 0, 1000, 1, 0);
 	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_CHROMA_AGC, 0, 1, 1, 1);
 	v4l2_ctrl_new_std_menu(hdl, &vin_ctrl_ops, V4L2_CID_COLORFX,
 			       V4L2_COLORFX_SET_CBCR, 0, V4L2_COLORFX_NONE);
@@ -5751,7 +5790,7 @@ static int vin_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 		}
 
 		if (vinc->tvin.flag) {
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 			if (vinc->id > TVIN_VIDEO_MAX)
 				ch_id = vinc->id / TVIN_VIDEO_STRIP + vinc->id % TVIN_VIDEO_STRIP;
 			else
@@ -5970,9 +6009,6 @@ static int vin_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 #else /* else CSIC_DMA_VER_140_000 */
 		csic_dma_buffer_length(vinc->vipp_sel, &buf_len);
 		csic_dma_flip_size(vinc->vipp_sel, &flip_size);
-		/* bk hardware frame counter enable */
-		/*csic_total_frm_cnt_mode(vinc->vipp_sel, FRMAE_DONE);
-		csic_total_frm_cnt_enable(vinc->vipp_sel); */
 
 #ifndef BUF_AUTO_UPDATE
 		if (vinc->large_image != 3)
@@ -5993,8 +6029,10 @@ static int vin_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 		if ((vinc->dma_merge_mode == 1) && (vinc->vipp_sel % 4 == 0))
 			csic_dma_int_disable(vinc->vipp_sel, DMA_INT_ALL);
 
-		csic_dma_int_enable(vinc->vipp_sel, DMA_INT_ADDR_NO_READY | DMA_INT_ADDR_OVERFLOW |
-		DMA_INT_PIXEL_MISS | DMA_INT_LINE_MISS);
+		csic_dma_int_enable(vinc->vipp_sel, DMA_INT_ADDR_NO_READY | DMA_INT_ADDR_OVERFLOW);
+
+		if (vinc->large_image != 3)
+			csic_dma_int_enable(vinc->vipp_sel, DMA_INT_PIXEL_MISS | DMA_INT_LINE_MISS);
 
 		switch (cap->frame.fmt.fourcc) {
 		case V4L2_PIX_FMT_LBC_2_0X:

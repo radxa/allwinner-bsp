@@ -58,10 +58,16 @@ int snd_sunxi_jack_init(struct sunxi_jack_port *sunxi_jack_port)
 			SND_LOG_ERR("snd_sunxi_jack_extcon_init failed\n");
 			return ret;
 		}
-	} else {
+	} else if (g_jack_support == JACK_DET_GPIO) {
 		ret = snd_sunxi_jack_gpio_init((void *)sunxi_jack_port->jack_gpio);
 		if (ret) {
 			SND_LOG_ERR("snd_sunxi_jack_gpio_init failed\n");
+			return ret;
+		}
+	} else if (g_jack_support == JACK_DET_ADV) {
+		ret = snd_sunxi_jack_adv_init((void *)sunxi_jack_port->jack_adv);
+		if (ret) {
+			SND_LOG_ERR("snd_sunxi_jack_adv_init failed\n");
 			return ret;
 		}
 	}
@@ -93,8 +99,10 @@ int snd_sunxi_jack_exit(struct sunxi_jack_port *sunxi_jack_port)
 		snd_sunxi_jack_codec_exit((void *)sunxi_jack_port->jack_codec);
 	} else if (g_jack_support == JACK_DET_EXTCON) {
 		snd_sunxi_jack_extcon_exit((void *)sunxi_jack_port->jack_extcon);
-	} else {
+	} else if (g_jack_support == JACK_DET_GPIO) {
 		snd_sunxi_jack_gpio_exit((void *)sunxi_jack_port->jack_gpio);
+	} else if (g_jack_support == JACK_DET_ADV) {
+		snd_sunxi_jack_adv_exit((void *)sunxi_jack_port->jack_adv);
 	}
 
 	return 0;
@@ -126,19 +134,25 @@ int snd_sunxi_jack_register(struct snd_soc_card *card, enum JACK_DET_METHOD jack
 	if (g_jack_support == JACK_DET_CODEC) {
 		ret = snd_sunxi_jack_codec_register(card);
 		if (ret < 0) {
-			SND_LOG_ERR("jack init failed\n");
+			SND_LOG_ERR("snd_sunxi_jack_codec_register failed\n");
 			return ret;
 		}
 	} else if (g_jack_support == JACK_DET_EXTCON) {
 		ret = snd_sunxi_jack_extcon_register(card);
 		if (ret < 0) {
-			SND_LOG_ERR("jack init failed\n");
+			SND_LOG_ERR("snd_sunxi_jack_extcon_register failed\n");
 			return ret;
 		}
-	} else {
+	} else if (g_jack_support == JACK_DET_GPIO) {
 		ret = snd_sunxi_jack_gpio_register(card);
 		if (ret < 0) {
-			SND_LOG_ERR("jack init failed\n");
+			SND_LOG_ERR("snd_sunxi_jack_gpio_register failed\n");
+			return ret;
+		}
+	} else if (g_jack_support == JACK_DET_ADV) {
+		ret = snd_sunxi_jack_adv_register(card);
+		if (ret) {
+			SND_LOG_ERR("snd_sunxi_jack_adv_register failed\n");
 			return ret;
 		}
 	}
@@ -169,3 +183,29 @@ void snd_sunxi_jack_unregister(struct snd_soc_card *card, enum JACK_DET_METHOD j
 	return;
 }
 EXPORT_SYMBOL(snd_sunxi_jack_unregister);
+
+/* jack mode selection interface probe */
+void sunxi_jack_typec_mode_set(struct sunxi_jack_typec_cfg *jack_typec_cfg,
+			       enum sunxi_jack_modes mode)
+{
+	int i;
+	struct sunxi_jack_pins *jack_pins = jack_typec_cfg->jack_pins;
+	struct sunxi_jack_modes_map *modes_map = jack_typec_cfg->modes_map;
+
+	if (!modes_map || !jack_pins) {
+		SND_LOG_ERR("modes map or jack pins is NULL\n");
+		return;
+	}
+
+	if (mode >= SND_JACK_MODE_CNT || modes_map[mode].type == SND_JACK_MODE_NULL) {
+		SND_LOG_WARN("missing mode value,mode:%d\n", mode);
+		return;
+	}
+
+	for (i = 0; i < jack_typec_cfg->sw_pin_max; ++i) {
+		if (!jack_pins[i].used || modes_map[mode].map_value[i] == 0xf)
+			continue;
+		gpio_set_value(jack_pins[i].pin, modes_map[mode].map_value[i]);
+	}
+}
+EXPORT_SYMBOL(sunxi_jack_typec_mode_set);

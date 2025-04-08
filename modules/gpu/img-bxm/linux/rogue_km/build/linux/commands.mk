@@ -283,6 +283,7 @@ AR_SECONDARY ?= $(AR)
 BISON ?= bison
 CC ?= gcc
 CC_SECONDARY ?= $(CC)
+CMAKE ?= cmake
 CROSS_COMPILE_SECONDARY ?= $(CROSS_COMPILE)
 CXX ?= g++
 CXX_SECONDARY ?= $(CXX)
@@ -328,7 +329,7 @@ $(warning https://www.python.org/dev/peps/pep-0373/#id4)
 $(warning ******************************************************)
 endif
 
-ifneq ($(SUPPORT_BUILD_LWS),)
+ifeq ($(SUPPORT_BUILD_LWS),1)
 WAYLAND_SCANNER := `$(PKG_CONFIG) --variable=wayland_scanner wayland-scanner`
 else
 WAYLAND_SCANNER ?= wayland-scanner
@@ -375,21 +376,31 @@ ifneq ($(CROSS_COMPILE_SECONDARY),)
    __clang_target := mipsel-linux-android
   endif
   __gcc_bindir  := $(dir $(shell which $(CROSS_COMPILE_SECONDARY)gcc))
+  # For buildbot, use absolute path for CROSS_COMPILE_SECONDARY
   ifeq ($(wildcard $(__gcc_bindir)),)
    __gcc_bindir := $(dir $(CROSS_COMPILE_SECONDARY)gcc)
   endif
   override CC_SECONDARY   := \
    $(CC_SECONDARY) \
-   -target $(__clang_target) \
-   -B$(__gcc_bindir) \
-   -B$(__gcc_bindir)/../$(CROSS_TRIPLE_SECONDARY)/bin \
-   --gcc-toolchain=$(__gcc_bindir)/..
+   -target $(__clang_target)
   override CXX_SECONDARY  := \
    $(CXX_SECONDARY) \
-   -target $(__clang_target) \
-   -B$(__gcc_bindir) \
-   -B$(__gcc_bindir)/../$(CROSS_TRIPLE_SECONDARY)/bin \
-   --gcc-toolchain=$(__gcc_bindir)/..
+   -target $(__clang_target)
+  # Only override with --gcc-toolchain if *-gcc exists
+  ifneq ($(wildcard $(__gcc_bindir)$(CROSS_COMPILE_SECONDARY)gcc)$(wildcard $(CROSS_COMPILE_SECONDARY)gcc),)
+   ifeq ($(SUPPORT_ANDROID_PLATFORM),1)
+    override CC_SECONDARY  := \
+     $(CC_SECONDARY) \
+     -B$(__gcc_bindir) \
+     -B$(__gcc_bindir)/../$(CROSS_TRIPLE_SECONDARY)/bin \
+     --gcc-toolchain=$(__gcc_bindir)/..
+    override CXX_SECONDARY := \
+     $(CXX_SECONDARY) \
+     -B$(__gcc_bindir) \
+     -B$(__gcc_bindir)/../$(CROSS_TRIPLE_SECONDARY)/bin \
+     --gcc-toolchain=$(__gcc_bindir)/..
+   endif
+  endif
  else
   ifeq ($(origin CC_SECONDARY),file)
    override CC_SECONDARY  := $(CROSS_COMPILE_SECONDARY)$(CC_SECONDARY)
@@ -447,21 +458,31 @@ override RANLIB_SECONDARY  := $(if $(V),,@)$(RANLIB_SECONDARY)
 ifneq ($(CROSS_COMPILE),)
  ifeq ($(cc-is-clang),true)
   __gcc_bindir  := $(dir $(shell which $(CROSS_COMPILE)gcc))
+  # For buildbot, use absolute path for CROSS_COMPILE
   ifeq ($(wildcard $(__gcc_bindir)),)
    __gcc_bindir := $(dir $(CROSS_COMPILE)gcc)
   endif
   override CC   := \
    $(CC) \
-   -target $(CROSS_TRIPLE) \
-   -B$(__gcc_bindir) \
-   -B$(__gcc_bindir)/../$(CROSS_TRIPLE)/bin \
-   --gcc-toolchain=$(__gcc_bindir)/..
+   -target $(CROSS_TRIPLE)
   override CXX  := \
    $(CXX) \
-   -target $(CROSS_TRIPLE) \
-   -B$(__gcc_bindir) \
-   -B$(__gcc_bindir)/../$(CROSS_TRIPLE)/bin \
-   --gcc-toolchain=$(__gcc_bindir)/..
+   -target $(CROSS_TRIPLE)
+  # Only override with --gcc-toolchain if *-gcc exists
+  ifneq ($(wildcard $(__gcc_bindir)$(CROSS_COMPILE)gcc)$(wildcard $(CROSS_COMPILE)gcc),)
+   ifeq ($(SUPPORT_ANDROID_PLATFORM),1)
+    override CC  := \
+     $(CC) \
+     -B$(__gcc_bindir) \
+     -B$(__gcc_bindir)/../$(CROSS_TRIPLE)/bin \
+     --gcc-toolchain=$(__gcc_bindir)/..
+    override CXX := \
+     $(CXX) \
+     -B$(__gcc_bindir) \
+     -B$(__gcc_bindir)/../$(CROSS_TRIPLE)/bin \
+     --gcc-toolchain=$(__gcc_bindir)/..
+   endif
+  endif
  else
   ifeq ($(origin CC),file)
    override CC  := $(CROSS_COMPILE)$(CC)
@@ -519,6 +540,7 @@ override BISON             := $(if $(V),,@)$(BISON)
 override BZIP2             := $(if $(V),,@)bzip2 -9
 override CAT               := $(if $(V),,@)cat
 override CC                := $(if $(V),,@)$(strip $(CCACHE)$(DISTCC) $(CC))
+override CMAKE             := $(if $(V),,@)$(CMAKE)
 override CHECK             := $(if $(CHECK),$(if $(V),,@)$(CHECK),)
 override CP                := $(if $(V),,@)cp
 override CXX               := $(if $(V),,@)$(strip $(CCACHE)$(DISTCC) $(CXX))
@@ -559,7 +581,6 @@ override PYTHON3           := $(if $(V),,@)$(PYTHON3)
 override RANLIB            := $(if $(V),,@)$(RANLIB)
 override RM                := $(if $(V),,@)rm -f
 override SED               := $(if $(V),,@)sed
-override SIGNFILE          := $(if $(V),,@)$(KERNELDIR)/scripts/sign-file
 override STRIP             := $(if $(V),,@)$(STRIP)
 override STRIP_SECONDARY   := $(if $(V),,@)$(STRIP_SECONDARY)
 override TAR               := $(if $(V),,@)tar
@@ -572,4 +593,12 @@ override ZIP               := $(if $(V),,@)$(ZIP)
 
 ifeq ($(SUPPORT_NEUTRINO_PLATFORM),1)
 include $(MAKE_TOP)/common/neutrino/commands_neutrino.mk
+endif
+
+ifneq ($(filter darwin,$(HOST_OS) $(TARGET_OS)),)
+include $(MAKE_TOP)/common/darwin/commands_darwin.mk
+endif
+
+ifeq ($(SUPPORT_ANDROID_PLATFORM),1)
+include $(MAKE_TOP)/common/android/commands_android.mk
 endif

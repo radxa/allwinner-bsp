@@ -30,6 +30,8 @@
 
 #include "timer-of.h"
 
+#define SUN4I_TIMER_MODULE_VERSION 	"1.0.5"
+
 #define TIMER_IRQ_EN_REG	0x00
 #define TIMER_IRQ_EN(val)		BIT(val)
 #define TIMER_IRQ_ST_REG	0x04
@@ -258,7 +260,7 @@ static int __init sun4i_timer_init(struct device_node *node)
 	val = readl(timer_of_base(&to) + TIMER_IRQ_EN_REG);
 	writel(val | TIMER_IRQ_EN(0), timer_of_base(&to) + TIMER_IRQ_EN_REG);
 
-	sunxi_info(NULL, "sun4i-soc-timer init ok !\n");
+	sunxi_info(NULL, "sun4i-soc-timer init ok, driver version: %s\n", SUN4I_TIMER_MODULE_VERSION);
 	return ret;
 }
 TIMER_OF_DECLARE(sun4i, "allwinner,sun4i-a10-timer",
@@ -273,4 +275,4 @@ TIMER_OF_DECLARE(suniv, "allwinner,suniv-f1c100s-timer",
 		       sun4i_timer_init);
 
 MODULE_AUTHOR("rengaomin<rengaomin@allwinnertech.com>");
-MODULE_VERSION("1.0.4");
+MODULE_VERSION(SUN4I_TIMER_MODULE_VERSION);

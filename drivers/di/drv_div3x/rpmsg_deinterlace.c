@@ -10,7 +10,7 @@
 * warranty of any kind, whether express or implied.
 */
 
-#include "di_debug.h"
+#include "../common/di_debug.h"
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/rpmsg.h>

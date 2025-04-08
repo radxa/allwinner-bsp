@@ -53,51 +53,18 @@
 #include <linux/kref.h>
 #include <linux/module.h>
 #include <linux/uaccess.h>
-#include <linux/version.h>
 #include <linux/syscalls.h>
 #include <linux/miscdevice.h>
 #include <linux/anon_inodes.h>
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0))
-#include <linux/sync.h>
-#include <linux/sw_sync.h>
-#else
 #include <../drivers/staging/android/sync.h>
 #include <../drivers/staging/android/sw_sync.h>
-#endif
 
 #include "linux_sw_sync.h"
 
 #include "pvr_sync_api.h"
 
 #include "kernel_compatibility.h"
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0))
-
-static inline int sync_fence_get_status(struct sync_fence *psFence)
-{
-	return psFence->status;
-}
-
-static inline struct sync_timeline *sync_pt_parent(struct sync_pt *pt)
-{
-	return pt->parent;
-}
-
-static inline int sync_pt_get_status(struct sync_pt *pt)
-{
-	return pt->status;
-}
-
-static inline ktime_t sync_pt_get_timestamp(struct sync_pt *pt)
-{
-	return pt->timestamp;
-}
-
-#define for_each_sync_pt(s, f, c) \
-	list_for_each_entry((s), &(f)->pt_list_head, pt_list)
-
-#else /* (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)) */
 
 static inline int sync_fence_get_status(struct sync_fence *psFence)
 {
@@ -132,7 +99,6 @@ static inline ktime_t sync_pt_get_timestamp(struct sync_pt *pt)
 	     (c)++,   (s) = (c) < (f)->num_fences ? \
 		(struct sync_pt *)(f)->cbs[c].sync_pt : NULL)
 
-#endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)) */
 
 /* #define DEBUG_OUTPUT 1 */
 
@@ -426,7 +392,6 @@ static void _dump_fence(struct sync_fence *fence,
 						DUMPDEBUG_PRINTF_FUNC *dump_debug_printf,
 						void *dump_debug_file)
 {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 10, 0))
 	struct sync_pt *sync_point;
 	char time_str[16]  = { '\0' };
 	char pt_value_str[64]  = { '\0' };
@@ -483,11 +448,6 @@ static void _dump_fence(struct sync_fence *fence,
 				  value_str,
 				  fence_ops->get_timeline_name(&sync_point->base));
 	}
-#else
-		PVR_DUMPDEBUG_LOG(dump_debug_printf,
-						  dump_debug_file,
-						  "Fence stats not available on this platform!");
-#endif
 }
 
 /* Sync prim helpers */
@@ -2099,6 +2059,16 @@ int pvr_sync_api_force_sw_only(void *api_priv, void **api_priv_new)
 	return 0;
 }
 
+int pvr_sync_api_force_exp_only(void *api_priv, void *api_data)
+{
+	return -EPERM;
+}
+
+int pvr_sync_api_create_export_fence(void *api_priv, void *user_data)
+{
+	return -EPERM;
+}
+
 int pvr_sync_api_sw_create_fence(void *api_priv, void *user_data)
 {
 	struct pvr_sw_sync_timeline *pvr_sw_timeline = api_priv;
@@ -2740,7 +2710,6 @@ enum PVRSRV_ERROR_TAG sync_sw_dump_timeline(void *sw_timeline_obj,
 					DUMPDEBUG_PRINTF_FUNC *dump_debug_printf,
 					void *dump_debug_file)
 {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 10, 0))
 	struct pvr_sw_sync_timeline *timeline =
 			(struct pvr_sw_sync_timeline *) sw_timeline_obj;
 
@@ -2750,10 +2719,5 @@ enum PVRSRV_ERROR_TAG sync_sw_dump_timeline(void *sw_timeline_obj,
 					  timeline->sw_sync_timeline->obj.name,
 					  timeline->current_value,
 					  timeline->next_value);
-#else
-	PVR_DUMPDEBUG_LOG(dump_debug_printf,
-					  dump_debug_file,
-					  "Timeline Stats not available on this kernel!");
-#endif
 	return PVRSRV_OK;
 }

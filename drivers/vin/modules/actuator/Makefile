@@ -11,4 +11,4 @@ obj-$(CONFIG_ACTUATOR_FP5510)   += fp5510_act.o
 obj-$(CONFIG_ACTUATOR_OV8825)   += ov8825_act.o
 obj-$(CONFIG_ACTUATOR_AN41908A)   += an41908a_act.o
 obj-$(CONFIG_ACTUATOR_AD5823)   += ad5823_act.o
-
+obj-$(CONFIG_ACTUATOR_CN3927)   += cn3927_act.o

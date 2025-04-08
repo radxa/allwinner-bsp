@@ -2297,5 +2297,18 @@
 			status = "okay";
 		};
 
+		gpu: gpu@1800000 {
+			device_type = "gpu";
+			compatible = "img,gpu";
+			reg = <0x0 0x01800000 0x0 0x8ffff>;
+			interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 64 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "IRQGPU", "IRQGPUDVFS";
+			clocks = <&ccu CLK_GPU0PLL>, <&ccu CLK_GPU0>, <&ccu CLK_BUS_GPU0>;
+			clock-names = "clk_parent", "clk", "clk_bus";
+			resets = <&ccu RST_BUS_GPU0>;
+			reset-names = "reset_bus";
+		};
+
 	};
 };

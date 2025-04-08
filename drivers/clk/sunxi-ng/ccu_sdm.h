@@ -38,6 +38,9 @@ struct ccu_sdm_internal {
 	/* second enable bit in tuning register */
 	u32		tuning_enable;
 	u16		tuning_reg;
+	/* on some platforms, the sdm enable bit in pattern1 register */
+	u32		pattern1_enable;
+	u16		pattern1_reg;
 };
 
 struct clk_sdm_info {
@@ -48,20 +51,37 @@ struct clk_sdm_info {
 	int sdm_freq;
 };
 
-#define _SUNXI_CCU_SDM(_table, _enable,			\
-		       _reg, _reg_enable)		\
+#define _SUNXI_CCU_SDM_COMPLETE(_table, _enable,	\
+				   _reg, _reg_enable, _reg_1, _reg_1_enable)		\
 	{						\
 		.table		= _table,		\
-		.table_size	= ARRAY_SIZE(_table),	\
-		.enable		= _enable,		\
+		.table_size = ARRAY_SIZE(_table),	\
+		.enable 	= _enable,		\
 		.tuning_enable	= _reg_enable,		\
-		.tuning_reg	= _reg,			\
+		.tuning_reg = _reg, 		\
+		.pattern1_enable	= _reg_1_enable,		\
+		.pattern1_reg	= _reg_1,			\
 	}
+
+#define _SUNXI_CCU_SDM(_table, _enable,	_reg, _reg_enable)		\
+	_SUNXI_CCU_SDM_COMPLETE(_table, _enable, _reg, _reg_enable, 0, 0)
+
+#define _SUNXI_CCU_SDM_PATTERN1(_table, _reg, _reg_enable, _reg_1, _reg_1_enable)		\
+	_SUNXI_CCU_SDM_COMPLETE(_table, 0, _reg, _reg_enable, _reg_1, _reg_1_enable)
+
 
 #define _SUNXI_CCU_SDM_INFO(_enable, _reg)		\
 	{						\
 		.enable		= _enable,			\
 		.tuning_reg	= _reg,		\
+	}
+
+#define _SUNXI_CCU_SDM_PATTERN1_INFO(_enable, _reg, _enable_1, _reg_1)		\
+	{						\
+		.enable		= _enable,			\
+		.tuning_reg	= _reg,		\
+		.pattern1_enable	= _enable_1,		\
+		.pattern1_reg	= _reg_1,			\
 	}
 
 #define DTS_SDM_OFF	0

@@ -29,6 +29,13 @@ extern void sunxi_reset_device_iommu(unsigned int master_id);
 extern struct iommu_domain *global_iommu_domain;
 ssize_t sunxi_iommu_dump_pgtable(char *buf, size_t buf_len,
 					       bool for_sysfs_show);
+void sunxi_iommu_prevent_hang_enable(int enable);
+void sunxi_iommu_enable_interrupt(int enable);
+#if IS_ENABLED(CONFIG_AW_IOMMU_DISTRIBUTE)
+void sunxi_iommu_master_ready(struct device *dev);
+#else
+static inline void sunxi_iommu_master_ready(struct device *dev) { ; }
+#endif
 
 enum iommu_dma_cookie_type {
 	IOMMU_DMA_IOVA_COOKIE,

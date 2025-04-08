@@ -13,8 +13,8 @@
 #ifndef _DE_FMT_H_
 #define _DE_FMT_H_
 
-#include "de_top.h"
 #include <linux/types.h>
+#include "de_base.h"
 
 struct de_fmt_config {
 	unsigned int enable; /* return mod en info */
@@ -66,11 +66,24 @@ struct de_fmt_config {
 
 };
 
-s32 de_fmt_set_para(u32 disp);
+struct de_fmt_handle {
+	struct module_create_info cinfo;
+	u32 disp_reg_base;
+	unsigned int block_num;
+	struct de_reg_block **block;
+	struct de_fmt_private *private;
+};
 
-s32 de_fmt_init(u32 disp, u8 __iomem *de_reg_base);
-s32 de_fmt_exit(u32 disp);
-s32 de_fmt_get_reg_blocks(u32 disp,
-	struct de_reg_block **blks, u32 *blk_num);
+struct de_fmt_info {
+	enum de_format_space px_fmt_space;
+	enum de_yuv_sampling yuv_sampling;
+	enum de_data_bits bits;
+	u32 width;
+	u32 height;
+};
+
+s32 de_fmt_apply(struct de_fmt_handle *hdl, const struct de_fmt_info *out_info);
+struct de_fmt_handle *de_fmt_create(struct module_create_info *info);
+void de_fmt_dump_state(struct drm_printer *p, struct de_fmt_handle *hdl);
 
 #endif /* #ifndef _DE_FMT_H_ */

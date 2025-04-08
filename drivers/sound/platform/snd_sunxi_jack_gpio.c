@@ -160,7 +160,7 @@ int snd_sunxi_jack_gpio_init(void *jack_data)
 	struct sunxi_jack_gpio *jack_gpio;
 	char *det_gpio_name = "hp-det-gpio";
 	char *gpio_name	= "Headphone detection";
-	enum of_gpio_flags flags;
+	unsigned int temp_val;
 	int ret;
 
 	SND_LOG_DEBUG("\n");
@@ -177,17 +177,25 @@ int snd_sunxi_jack_gpio_init(void *jack_data)
 		return -1;
 	}
 	of_node = jack_gpio->pdev->dev.of_node;
-	jack_gpio->det_gpio = of_get_named_gpio_flags(of_node, det_gpio_name, 0, &flags);
+	jack_gpio->det_gpio = of_get_named_gpio(of_node, det_gpio_name, 0);
 	if (jack_gpio->det_gpio == -EPROBE_DEFER) {
 		SND_LOG_ERR("get jack-detgpio failed\n");
 		return -EPROBE_DEFER;
 	}
+
+	ret = of_property_read_u32(of_node, "jack-det-level", &temp_val);
+	if (ret < 0) {
+		SND_LOG_DEBUG("jack-det-level miss, default 0\n");
+		jack_gpio->det_level = 0;
+	} else {
+		jack_gpio->det_level = temp_val;
+	}
+
 	if (!gpio_is_valid(jack_gpio->det_gpio)) {
 		SND_LOG_ERR("jack-detgpio (%d) is invalid\n", jack_gpio->det_gpio);
 		return -1;
 	}
 
-	jack_gpio->det_level = !!(flags & OF_GPIO_ACTIVE_LOW);
 	jack_gpio->debounce_time = 200;
 
 	ret = gpio_request_one(jack_gpio->det_gpio, GPIOF_IN, gpio_name);
@@ -219,7 +227,6 @@ int snd_sunxi_jack_gpio_init(void *jack_data)
 
 	return 0;
 }
-EXPORT_SYMBOL(snd_sunxi_jack_gpio_init);
 
 void snd_sunxi_jack_gpio_exit(void *jack_data)
 {
@@ -241,7 +248,6 @@ void snd_sunxi_jack_gpio_exit(void *jack_data)
 	cancel_work_sync(&sunxi_jack.det_irq_work);
 	cancel_delayed_work_sync(&sunxi_jack.det_sacn_work);
 }
-EXPORT_SYMBOL(snd_sunxi_jack_gpio_exit);
 
 /*******************************************************************************
  * for machcine

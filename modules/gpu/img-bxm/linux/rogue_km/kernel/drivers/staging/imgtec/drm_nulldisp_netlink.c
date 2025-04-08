@@ -172,7 +172,7 @@ static struct nlpvrdpy *nlpvrdpy_lookup(u32 minor)
 	return nlpvrdpy;
 }
 
-static int nlpvrdpy_pre_cmd(const struct genl_ops *ops,
+static int nlpvrdpy_pre_cmd(const struct genl_split_ops *ops,
 				struct sk_buff *skb,
 				struct genl_info *info)
 {
@@ -220,12 +220,6 @@ err_unlock:
 	return ret;
 }
 
-static void nlpvrdpy_post_cmd(const struct genl_ops *ops,
-				struct sk_buff *skb,
-				struct genl_info *info)
-{
-}
-
 static struct genl_family nlpvrdpy_family = {
 	.name = "nlpvrdpy",
 	.version = 1,
@@ -234,7 +228,6 @@ static struct genl_family nlpvrdpy_family = {
 	.policy = nlpvrdpy_policy,
 #endif
 	.pre_doit = &nlpvrdpy_pre_cmd,
-	.post_doit = &nlpvrdpy_post_cmd
 };
 
 /* Must be called with the struct nlpvrdpy mutex held */

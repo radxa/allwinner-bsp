@@ -61,7 +61,6 @@ EMULATOR ?= 0
 HDMI_FORCE_MODE ?= 0
 PVRSRV_FORCE_UNLOAD_IF_BAD_STATE := 1
 PLATO_PDP_MAX_RELOADS ?= 15
-ZEUS_SUPPORT_DEVICE_LOCAL_HEAP ?= 1
 
 PLATO_DDR_BDLR_TRAINING ?= 1
 
@@ -83,7 +82,7 @@ ifeq ($(SUPPORT_KMS),1)
  PVR_LDM_PLATFORM_PRE_REGISTERED := 1
 
  ifeq ($(SUPPORT_PLATO_DISPLAY),1)
-  PLATO_MEMORY_CONFIG ?= PLATO_MEMORY_HYBRID
+  PLATO_MEMORY_CONFIG ?= PLATO_MEMORY_LOCAL
   DISPLAY_CONTROLLER ?= drm_pdp
   HDMI_CONTROLLER ?= drm_pdp2_hdmi
   PVR_DRM_MODESET_DRIVER_NAME ?= pdp
@@ -98,7 +97,7 @@ else
  PVR_SYSTEM := plato
  PVR_LOADER := pvr_pci_drv
 
- PLATO_MEMORY_CONFIG ?= PLATO_MEMORY_HYBRID
+ PLATO_MEMORY_CONFIG ?= PLATO_MEMORY_LOCAL
 
  ifeq ($(SUPPORT_DISPLAY_CLASS),1)
   ifeq ($(SUPPORT_PLATO_DISPLAY),1)
@@ -130,6 +129,16 @@ endif
 
 KERNEL_COMPONENTS += $(DISPLAY_CONTROLLER) $(HDMI_CONTROLLER)
 
+# Setting this to 0, prevents core.mk from enabling the build option
+# SUPPORT_WRAP_EXTMEM in the C config_*.h headers, disabling the feature.
+# This is necessary since Plato cards can not reliably access system RAM at
+# present. Hence we can't enable this DDK feature later in this Makefile
+# on certain PLATO_MEMORY_CONFIG values, as is done in other systems.
+SUPPORT_WRAP_EXTMEM := 0
+
+# Enable the IMA/DLM heaps.
+PVRSRV_ENABLE_DYNAMIC_PHYSHEAPS ?= 1
+
 # Should be last
 include ../config/core.mk
 -include ../common/lws.mk
@@ -149,7 +158,7 @@ $(eval $(call TunableUserConfigC,GC_PERF_OVERLAY,1))
 endif
 
 $(eval $(call TunableKernelConfigC,PLATO_MEMORY_SIZE_GIGABYTES, $(PLATO_MEMORY_SIZE_GB)ULL))
-$(eval $(call TunableKernelConfigC,PLATO_MEMORY_CONFIG,$(PLATO_MEMORY_CONFIG)))
+$(eval $(call TunableBothConfigC,PLATO_MEMORY_CONFIG,$(PLATO_MEMORY_CONFIG)))
 $(eval $(call TunableKernelConfigC,PLATO_DDR_BDLR_TRAINING,$(PLATO_DDR_BDLR_TRAINING)))
 $(eval $(call TunableKernelConfigC,SUPPORT_PLATO_DISPLAY,$(SUPPORT_PLATO_DISPLAY)))
 

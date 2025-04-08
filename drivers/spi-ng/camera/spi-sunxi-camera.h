@@ -9,7 +9,8 @@
 #define _SUNXI_SPI_CAMERA_H_
 
 #include "../spi-sunxi.h"
-#include "spi-sunxi-camera-api.h"
+
+#define SUNXI_SPI_FRAMEHEAD_MAX	(8)
 
 /* SPI Slave Vsync Cycle Number Register */
 #define SUNXI_SPI_SVCN_REG		(0x160)
@@ -39,12 +40,22 @@
 #define SUNXI_SPI_SIWVR_REG		(0x17C)
 	#define SUNXI_SPI_SIWVR			GENMASK(15, 0)	/* Slave Idle Wait Value Reset */
 
-extern void sunxi_spi_camera_enable_idlewait(struct sunxi_spi *sspi);
-extern void sunxi_spi_camera_disable_idlewait(struct sunxi_spi *sspi);
-extern void sunxi_spi_camera_enable_framehead(struct sunxi_spi *sspi);
-extern void sunxi_spi_camera_disable_framehead(struct sunxi_spi *sspi);
-extern void sunxi_spi_camera_enable_vsync(struct sunxi_spi *sspi);
-extern void sunxi_spi_camera_disable_vsync(struct sunxi_spi *sspi);
-extern int sunxi_spi_camera_get_frame_head(struct sunxi_spi *sspi, u8 *buf, int len);
+#if IS_ENABLED(CONFIG_AW_SPI_NG_CAMERA)
+void sunxi_spi_camera_enable_idlewait(struct sunxi_spi *sspi);
+void sunxi_spi_camera_disable_idlewait(struct sunxi_spi *sspi);
+void sunxi_spi_camera_enable_framehead(struct sunxi_spi *sspi);
+void sunxi_spi_camera_disable_framehead(struct sunxi_spi *sspi);
+void sunxi_spi_camera_enable_vsync(struct sunxi_spi *sspi);
+void sunxi_spi_camera_disable_vsync(struct sunxi_spi *sspi);
+int sunxi_spi_camera_get_frame_head(struct sunxi_spi *sspi, u8 *buf, int len);
+#else
+static inline void sunxi_spi_camera_enable_idlewait(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_camera_disable_idlewait(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_camera_enable_framehead(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_camera_disable_framehead(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_camera_enable_vsync(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_camera_disable_vsync(struct sunxi_spi *sspi) {};
+static inline int sunxi_spi_camera_get_frame_head(struct sunxi_spi *sspi, u8 *buf, int len) { return -EINVAL; };
+#endif
 
 #endif /* _SUNXI_SPI_CAMERA_H_ */

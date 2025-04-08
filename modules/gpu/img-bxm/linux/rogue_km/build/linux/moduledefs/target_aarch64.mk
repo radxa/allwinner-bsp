@@ -66,7 +66,9 @@ ifneq ($(SUPPORT_ANDROID_PLATFORM),)
 MODULE_EXE_LDFLAGS := \
  -Bdynamic -nostdlib -Wl,-dynamic-linker,/system/bin/linker64
 
-MODULE_LIBGCC := -Wl,--version-script,$(MAKE_TOP)/common/libgcc.lds $(LIBGCC)
+ifneq ($(LIBGCC),)
+ MODULE_LIBGCC := -Wl,--version-script,$(MAKE_TOP)/common/libgcc.lds $(LIBGCC)
+endif
 
 ifeq ($(NDK_ROOT),)
 
@@ -74,21 +76,28 @@ include $(MAKE_TOP)/common/android/moduledefs_defs.mk
 
 # Android prebuilts for AARCH64 defaults to bfd linker. x86 and ARM use gold linker.
 # Use gold linker for AARCH64. BFD linker gives unexpected results.
-
-ifeq ($(USE_LLD),1)
- MODULE_LDFLAGS += -fuse-ld=lld
-else
- MODULE_LDFLAGS += -fuse-ld=gold
+ifneq ($(USE_LLD_LINKER),1)
+MODULE_LDFLAGS += -fuse-ld=gold
 endif
 
-_obj := $(TARGET_ROOT)/product/$(TARGET_DEVICE)/obj
 _lib := lib64
+ifneq ($(SUPPORT_ARC_PLATFORM),)
+_obj := $(SYSROOT)/usr
+
+SYSTEM_LIBRARY_LIBC  := $(_obj)/$(_lib)/libc.so
+SYSTEM_LIBRARY_LIBM  := $(_obj)/$(_lib)/libm.so
+SYSTEM_LIBRARY_LIBDL := $(_obj)/$(_lib)/libdl.so
+else
+_obj := $(TARGET_ROOT)/product/$(TARGET_DEVICE)/obj
 
 SYSTEM_LIBRARY_LIBC  := $(strip $(call path-to-system-library,$(_lib),c))
 SYSTEM_LIBRARY_LIBM  := $(strip $(call path-to-system-library,$(_lib),m))
 SYSTEM_LIBRARY_LIBDL := $(strip $(call path-to-system-library,$(_lib),dl))
+endif
 
 MODULE_EXE_LDFLAGS += $(SYSTEM_LIBRARY_LIBC)
+
+ifeq ($(SUPPORT_ARC_PLATFORM),)
 
 # APK unittests
 ifneq (,$(findstring $(THIS_MODULE),$(PVR_UNITTESTS_APK)))
@@ -116,6 +125,17 @@ MODULE_SYSTEM_LIBRARY_DIR_FLAGS := \
  -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/$(_apex-vndk)/lib64 \
  -Xlinker -rpath-link=$(TARGET_ROOT)/product/$(TARGET_DEVICE)/$(_apex-vndk)/lib64
 
+# Oreo-mr1 library paths
+ifeq ($(filter-out 27,$(API_LEVEL)),)
+MODULE_SYSTEM_LIBRARY_DIR_FLAGS := \
+ -L$(OUT_DIR)/soong/ndk/platforms/android-$(API_LEVEL)/arch-arm64/usr/lib \
+ -Xlinker -rpath-link=$(OUT_DIR)/soong/ndk/platforms/android-$(API_LEVEL)/arch-arm64/usr/lib \
+ -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk \
+ -Xlinker -rpath-link=$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk \
+ -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk-sp \
+ -Xlinker -rpath-link=$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk-sp
+endif
+
 # Vendor libraries are required for gralloc, hwcomposer, and proprietary HIDL HALs.
 MODULE_VENDOR_LIBRARY_DIR_FLAGS := \
  -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/vendor/lib64 \
@@ -136,8 +156,10 @@ MODULE_LIBRARY_FLAGS_SUBST += \
  perfetto_client_experimental:$(_obj)/STATIC_LIBRARIES/libperfetto_client_experimental_intermediates/libperfetto_client_experimental.a \
  protobuf-cpp-lite:$(_obj)/STATIC_LIBRARIES/libprotobuf-cpp-lite_intermediates/libprotobuf-cpp-lite.a \
  perfetto_trace_protos:$(_obj)/STATIC_LIBRARIES/perfetto_trace_protos_intermediates/perfetto_trace_protos.a \
- clang_rt:$(__clang_bindir)../lib64/clang/$(__clang_version)/lib/linux/libclang_rt.builtins-aarch64-android.a \
- dmabufinfo:$(_obj)/STATIC_LIBRARIES/libdmabufinfo_intermediates/libdmabufinfo.a
+ c++_static:$(__clang_bindir)../android_libc++/platform/aarch64/lib/libc++_static.a \
+ clang_rt:$(lib_clang_dir)/lib/linux/libclang_rt.builtins-aarch64-android.a \
+ dmabufinfo:$(_obj)/STATIC_LIBRARIES/libdmabufinfo_intermediates/libdmabufinfo.a \
+ aidlcommonsupport:$(_obj)/STATIC_LIBRARIES/libaidlcommonsupport_intermediates/libaidlcommonsupport.a
 
 # Unittests dependent on libRScpp_static.a
 ifneq (,$(findstring $(THIS_MODULE),$(PVR_UNITTESTS_DEP_LIBRSCPP)))
@@ -163,6 +185,8 @@ MODULE_ARCH_TAG := arm64-v8a
 _arch := arm64
 _obj := $(strip $(call path-to-libc-rt,$(_obj),$(_arch)))
 _lib := lib
+
+endif # SUPPORT_ARC_PLATFORM
 
 else # NDK_ROOT
 
@@ -232,6 +256,11 @@ MODULE_ARCH_TAG := arm64-v8a
 
 endif # NDK_ROOT
 
+# The lib path must be lib64 to retrieve the CRT modules in ARC++ environments.
+ifneq ($(SUPPORT_ARC_PLATFORM),)
+_lib := lib64
+endif
+
 MODULE_LIB_LDFLAGS := $(MODULE_EXE_LDFLAGS)
 
 MODULE_EXE_CRTBEGIN := $(_obj)/$(_lib)/crtbegin_dynamic.o
@@ -247,6 +276,10 @@ MODULE_LDFLAGS += \
  $(MODULE_VENDOR_LIBRARY_DIR_FLAGS)
 
 endif # SUPPORT_ANDROID_PLATFORM
+
+ifeq ($(call cc-is-macos-clang),true)
+MODULE_ARCH_TAG := arm64
+endif
 
 ifneq ($(BUILD),debug)
 ifeq ($(USE_LTO),1)

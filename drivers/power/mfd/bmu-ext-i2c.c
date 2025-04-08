@@ -14,26 +14,24 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/acpi.h>
-#include <linux/err.h>
-#include <linux/i2c.h>
-#include <linux/module.h>
-#include <power/bmu-ext.h>
-#include <linux/of.h>
-#include <linux/regmap.h>
-#include <linux/slab.h>
-#include <linux/version.h>
+#include "sunxi-power-mfd.h"
+#include "bmu-ext.h"
 
 static const struct of_device_id bmu_ext_i2c_of_match_table[] = {
 	{ .compatible = "eta,eta6973", .data = (void *)ETA6973_ID },
 	{ .compatible = "x-powers-ext,axp519", .data = (void *)AXP519_ID },
 	{ .compatible = "x-powers-ext,axp2601", .data = (void *)AXP2601_ID },
+	{ .compatible = "x-powers-ext,axp2602", .data = (void *)AXP2602_ID },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, bmu_ext_i2c_of_match_table);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 static int bmu_ext_i2c_probe(struct i2c_client *client,
 							 const struct i2c_device_id *ids)
+#else
+static int bmu_ext_i2c_probe(struct i2c_client *client)
+#endif
 {
 	struct bmu_ext_dev *ext;
 	int ret;

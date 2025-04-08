@@ -35,7 +35,7 @@ static struct de_version_dci de350 = {
 
 static struct de_version_dci de352 = {
 	.version = 0x352,
-	.dci_cnt = ARRAY_SIZE(de352_dci),
+	.dci_cnt = 0, // maybe only support ftd
 	.dci = &de352_dci[0],
 };
 

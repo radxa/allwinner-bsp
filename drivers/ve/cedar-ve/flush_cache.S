@@ -26,7 +26,7 @@
  */
 #if IS_ENABLED(CONFIG_ARM64)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
-#if defined (CONFIG_ARCH_SUN55IW3) ||  (CONFIG_ARCH_SUN50IW9)
+#if defined (CONFIG_ARCH_SUN55IW3) ||  (CONFIG_ARCH_SUN50IW9) || (CONFIG_ARCH_SUN55IW6) || (CONFIG_ARCH_SUN60IW2) || (CONFIG_ARCH_SUN65IW1)
 #include <asm/asm-uaccess.h>
 #include "flush_cache.h"
 SYM_FUNC_START_PI(cedar_dma_flush_range)
@@ -140,6 +140,7 @@ SYM_FUNC_END(cedar_dma_flush_range)
 #endif
 #endif
 #else
+#if !IS_ENABLED(CONFIG_RISCV)
 ENTRY(cedar_dma_flush_range)
 	mrc     15, 0, r3, cr0, cr0, 1
 	lsr     r3, r3, #16
@@ -156,4 +157,5 @@ ENTRY(cedar_dma_flush_range)
 	dsb     st
 	bx      lr
 ENDPROC(cedar_dma_flush_range)
+#endif
 #endif

@@ -106,6 +106,9 @@ int panel_rgb_regulator_enable(struct drm_panel *panel)
 	struct panel_rgb *rgb = to_panel_rgb(panel);
 	int err, i;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	panel->prepared = true;
+#endif
 	for (i = 0; i < POWER_MAX; i++) {
 		if (rgb->supply[i]) {
 			err = regulator_enable(rgb->supply[i]);
@@ -144,6 +147,32 @@ static int panel_rgb_prepare(struct drm_panel *panel)
 
 	return 0;
 }
+
+bool panel_rgb_is_support_backlight(struct drm_panel *panel)
+{
+	return panel->backlight;
+}
+EXPORT_SYMBOL(panel_rgb_is_support_backlight);
+
+int panel_rgb_get_backlight_value(struct drm_panel *panel)
+{
+	if (panel->backlight)
+		return backlight_get_brightness(panel->backlight);
+
+	return 0;
+}
+EXPORT_SYMBOL(panel_rgb_get_backlight_value);
+
+void panel_rgb_set_backlight_value(struct drm_panel *panel, int brightness)
+{
+	if (!panel->backlight || backlight_is_blank(panel->backlight) || brightness <= 0)
+		return ;
+
+	// TODO: support backlight mapping
+	panel->backlight->props.brightness = brightness;
+	backlight_update_status(panel->backlight);
+}
+EXPORT_SYMBOL(panel_rgb_set_backlight_value);
 
 static int panel_rgb_enable(struct drm_panel *panel)
 {

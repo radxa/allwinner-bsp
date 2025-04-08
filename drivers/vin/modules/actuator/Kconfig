@@ -27,4 +27,8 @@ config ACTUATOR_AD5823
 	tristate "use ad5823 driver"
 	default n
 
+config ACTUATOR_CN3927
+	tristate "use cn3927 driver"
+	default n
+
 endmenu

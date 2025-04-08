@@ -32,6 +32,15 @@ sunxi_drm_create_attach_property_range(struct drm_device *drm,
 					 uint64_t min, uint64_t max,
 					 uint64_t init_val);
 
+struct drm_property *
+sunxi_drm_create_attach_property_bitmask(struct drm_device *drm,
+					 struct drm_mode_object *base,
+					 const char *name,
+					 const struct drm_prop_enum_list *list,
+					 int num,
+					 uint64_t support_bit,
+					 uint64_t init_bit);
+
 int drm_mode_to_sunxi_video_timings(struct drm_display_mode *mode,
 				    struct disp_video_timings *timing);
 

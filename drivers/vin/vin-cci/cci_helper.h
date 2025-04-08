@@ -114,7 +114,7 @@ extern int cci_read_a16_d32(struct v4l2_subdev *sd, unsigned short addr,
 extern int cci_write_a16_d16(struct v4l2_subdev *sd, unsigned short addr,
 			     unsigned short value);
 extern int cci_write_a16_d32(struct v4l2_subdev *sd, unsigned short addr,
-			     unsigned int value);
+				unsigned int value);
 extern int cci_write_a0_d16(struct v4l2_subdev *sd, unsigned short value);
 extern int cci_write_a16_d8_continuous_helper(struct v4l2_subdev *sd,
 					      unsigned short addr,

@@ -16,16 +16,6 @@
 #ifndef _DI_DEV_H_
 #define _DI_DEV_H_
 
-#ifdef CONFIG_ARCH_SUN50IW9
-#define USE_DI300
-#endif
-
-#ifdef CONFIG_ARCH_SUN55IW3
-#define USE_DI300
-#endif
-
-#ifdef USE_DI300
-#include "lowlevel_v3x/di300.h"
-#endif
+#include "lowlevel_v3x/di30x.h"
 
 #endif /* #ifndef _DI_DEV_H_ */

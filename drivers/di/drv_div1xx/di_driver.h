@@ -45,6 +45,7 @@ struct di_driver_data {
 	struct clk *clk_source;
 	struct clk *clk_bus;
 	struct clk *iclk;
+	int iclk_freq;	/* clk frequence */
 	struct reset_control *rst_bus_di;
 
 	struct mutex mlock;
@@ -60,4 +61,5 @@ struct di_driver_data {
 	enum di_drv_state state;
 
 };
+
 #endif /* #ifndef _DI_DRIVER_H_ */

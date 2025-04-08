@@ -53,10 +53,6 @@ MODULE_CFLAGS   := $(ALL_HOST_CFLAGS) $($(THIS_MODULE)_cflags)
 MODULE_CXXFLAGS := $(ALL_HOST_CXXFLAGS) $($(THIS_MODULE)_cxxflags)
 MODULE_LDFLAGS  := $(ALL_HOST_LDFLAGS) -L$(MODULE_OUT) $($(THIS_MODULE)_ldflags)
 
-ifeq ($(USE_LLD),1)
- MODULE_LDFLAGS += -fuse-ld=lld
-endif
-
 ifneq ($(BUILD),debug)
 ifeq ($(USE_LTO),1)
 MODULE_LDFLAGS := \
@@ -67,7 +63,7 @@ endif
 
 ifeq ($(SUPPORT_ANDROID_PLATFORM),1)
  MODULE_LIBRARY_FLAGS_SUBST += \
-  clang_rt:$(__clang_bindir)../lib64/clang/$(__clang_version)/lib/linux/libclang_rt.builtins-x86_64-android.a
+  clang_rt:$(lib_clang_dir)/lib/linux/libclang_rt.builtins-x86_64-android.a
 endif
 
 MESON_CROSS_SYSTEM  := linux

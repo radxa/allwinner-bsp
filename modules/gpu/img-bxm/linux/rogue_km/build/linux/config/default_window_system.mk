@@ -1,6 +1,6 @@
 ########################################################################### ###
 #@File
-#@Title         Set the default window system to Nullws
+#@Title         Set the default window system to Wayland
 #@Copyright     Copyright (c) Imagination Technologies Ltd. All Rights Reserved
 #@License       Dual MIT/GPLv2
 #
@@ -40,33 +40,5 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### ###########################################################################
 
-WINDOW_SYSTEM ?= nullws
-
-ifneq ($(MESA_EGL),)
- $(warning ******************************************************)
- $(warning WARNING: You have tried to set MESA_EGL but this)
- $(warning is not supported and will be ignored.)
- $(warning ******************************************************)
-
- override undefine MESA_EGL
-endif
-
-ifneq ($(MESA_WSI),)
- $(warning ******************************************************)
- $(warning WARNING: You have tried to set MESA_WSI but this)
- $(warning is not supported and will be ignored.)
- $(warning ******************************************************)
-
- override undefine MESA_WSI
-endif
-
-ifneq ($(SUPPORT_BUILD_LWS),)
- $(warning ******************************************************)
- $(warning WARNING: You have enabled SUPPORT_BUILD_LWS but this)
- $(warning is not supported and so will be ignored.)
- $(warning To remove this warning you should instead set SYSROOT)
- $(warning as described in the Rogue DDK Linux Platform Guide.)
- $(warning ******************************************************)
-
- override SUPPORT_BUILD_LWS :=
-endif
+WINDOW_SYSTEM ?= wayland
+MESA_EGL ?= 1

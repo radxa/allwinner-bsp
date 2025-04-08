@@ -1359,6 +1359,15 @@ PVRSRV_ERROR DCExampleInit(IMG_UINT32 *puiNumDevices)
 	/* Get the number of physically registered devices in the system. */
 	uiNumDevicesConfigured = psModuleParams->ui32NumDevices;
 
+	/* Validate the number-of-devices passed in as a driver parameter */
+	if (uiNumDevicesConfigured > PVRSRV_MAX_DEVICES)
+	{
+		DC_OSDebugPrintf(DBGLVL_ERROR,
+		                 "num_devices '%u': exceeds PVRSRV_MAX_DEVICES '%u'\n",
+		                 uiNumDevicesConfigured, PVRSRV_MAX_DEVICES);
+		return PVRSRV_ERROR_INVALID_PARAMS;
+	}
+
 	DCEX_DEBUG_PRINT("%s: Num Registered = %u\n", __func__, uiNumDevicesConfigured);
 
 	for (uiCurDev = 0; uiCurDev < uiNumDevicesConfigured; uiCurDev++)
@@ -1419,8 +1428,8 @@ PVRSRV_ERROR DCExampleInit(IMG_UINT32 *puiNumDevices)
 			where that memory is so we have to acquire the heap we want
 			to use (a carveout of the card memory) so we can get it's address
 		*/
-		eError = psDeviceData->sPVRServicesFuncs.pfnPhysHeapAcquireByUsage(
-					PHYS_HEAP_USAGE_DISPLAY,
+		eError = psDeviceData->sPVRServicesFuncs.pfnPhysHeapAcquireByID(
+					PVRSRV_PHYS_HEAP_DISPLAY,
 					psDevNode,
 					&psDeviceData->psPhysHeap);
 

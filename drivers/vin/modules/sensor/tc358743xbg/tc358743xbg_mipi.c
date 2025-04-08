@@ -489,7 +489,7 @@ static int tc_enum_dv_timings(struct v4l2_subdev *sd,
 }
 
 static int tc_query_dv_timings(struct v4l2_subdev *sd,
-		struct v4l2_dv_timings *timings)
+       struct v4l2_dv_timings *timings)
 {
 	struct sensor_info *info = to_state(sd);
 	struct sensor_indetect *sensor_indet = &info->sensor_indet;

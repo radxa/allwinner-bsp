@@ -28,11 +28,15 @@
 #include <linux/of_platform.h>
 #include <sunxi-sip.h>
 
-#define DRAM_CLK_REG			0x800
-#define DIV_SHIFT			0
-#define DIV_WIDTH			5
-
 #define DRIVER_NAME	"DDR-Clock-Driver"
+
+struct sunxi_ddrclk_plat_data {
+	unsigned int dram_clk_reg_offset;
+	unsigned int div_shift;
+	unsigned int div_width;
+	/* the freq factor about ddrc and memory die, 1:2 or 1:4*/
+	unsigned int factor;
+};
 
 /*
  * PLL_DDR / (DIV + 1) = DDR_CLK;
@@ -50,6 +54,7 @@ struct sunxi_ddrclk {
 	unsigned int	dram_div;
 	struct clk_hw	hw;
 	struct mutex  ddrfreq_lock;
+	const struct sunxi_ddrclk_plat_data *plat_data;
 	spinlock_t      lock;
 };
 
@@ -78,15 +83,16 @@ static unsigned long sunxi_ddr_clk_recalc_rate(struct clk_hw *hw,
 					       unsigned long parent_rate)
 {
 	struct sunxi_ddrclk *ddrclk = to_sunxi_ddrclk_hw(hw);
+	const struct sunxi_ddrclk_plat_data *plat_data = ddrclk->plat_data;
 	unsigned int reg_val, div;
-	unsigned long rate = parent_rate;
+	unsigned long rate = parent_rate << plat_data->factor;
 
-	reg_val = readl_relaxed(ddrclk->ccmu_base + DRAM_CLK_REG);
+	reg_val = readl_relaxed(ddrclk->ccmu_base + plat_data->dram_clk_reg_offset);
 
-	div = (reg_val >> DIV_SHIFT) & GENMASK(DIV_WIDTH - 1, 0);
+	div = (reg_val >> plat_data->div_shift) & GENMASK(plat_data->div_width - 1, 0);
 	rate /= (div + 1);
 
-	return rate << 1;
+	return rate;
 }
 
 static long sunxi_ddr_clk_round_rate(struct clk_hw *hw,
@@ -94,34 +100,36 @@ static long sunxi_ddr_clk_round_rate(struct clk_hw *hw,
 				     unsigned long *prate)
 {
 	struct sunxi_ddrclk *ddrclk = to_sunxi_ddrclk_hw(hw);
+	const struct sunxi_ddrclk_plat_data *plat_data = ddrclk->plat_data;
 	unsigned int dram_div = ddrclk->dram_div;
+	unsigned long rate = *prate << plat_data->factor;
 
 	if ((dram_div & 0x1f) == 0x3) {
-		if (target_rate <= (*prate << 1) / (((dram_div >> 24) & 0x1f) + 1))
-			return (*prate << 1) / (((dram_div >> 24) & 0x1f) + 1);
-		else if (target_rate <= (*prate << 1) / (((dram_div >> 16) & 0x1f) + 1))
-			return (*prate << 1) / (((dram_div >> 16) & 0x1f) + 1);
-		else if (target_rate <= (*prate << 1) / (((dram_div >> 8) & 0x1f) + 1))
-			return (*prate << 1) / (((dram_div >> 8) & 0x1f) + 1);
+		if (target_rate <= rate / (((dram_div >> 24) & 0x1f) + 1))
+			return rate / (((dram_div >> 24) & 0x1f) + 1);
+		else if (target_rate <= rate / (((dram_div >> 16) & 0x1f) + 1))
+			return rate / (((dram_div >> 16) & 0x1f) + 1);
+		else if (target_rate <= rate / (((dram_div >> 8) & 0x1f) + 1))
+			return rate / (((dram_div >> 8) & 0x1f) + 1);
 		else
-			return (*prate << 1) / ((dram_div & 0x1f) + 1);
+			return rate / ((dram_div & 0x1f) + 1);
 	} else {
-		if (target_rate <= (*prate << 1) / (((dram_div >> 24) & 0x1f) + 1))
-			return (*prate << 1) / (((dram_div >> 24) & 0x1f) + 1);
-		else if (target_rate <= (*prate << 1) / (((dram_div >> 16) & 0x1f) + 1))
-			return (*prate << 1) / (((dram_div >> 16) & 0x1f) + 1);
-		else if (target_rate <= (*prate << 1) / (((dram_div >> 8) & 0x1f) + 1))
-			return (*prate << 1) / (((dram_div >> 8) & 0x1f) + 1);
-		else if (target_rate <= (*prate << 1) / ((dram_div & 0x1f) + 1))
-			return (*prate << 1) / ((dram_div & 0x1f) + 1);
-		else if (target_rate <= (*prate << 1) / 7)
-			return (*prate << 1) / 7;
-		else if (target_rate <= (*prate << 1) / 6)
-			return (*prate << 1) / 6;
-		else if (target_rate <= (*prate << 1) / 5)
-			return (*prate << 1) / 5;
+		if (target_rate <= rate / (((dram_div >> 24) & 0x1f) + 1))
+			return rate / (((dram_div >> 24) & 0x1f) + 1);
+		else if (target_rate <= rate / (((dram_div >> 16) & 0x1f) + 1))
+			return rate / (((dram_div >> 16) & 0x1f) + 1);
+		else if (target_rate <= rate / (((dram_div >> 8) & 0x1f) + 1))
+			return rate / (((dram_div >> 8) & 0x1f) + 1);
+		else if (target_rate <= rate / ((dram_div & 0x1f) + 1))
+			return rate / ((dram_div & 0x1f) + 1);
+		else if (target_rate <= rate / 7)
+			return rate / 7;
+		else if (target_rate <= rate / 6)
+			return rate / 6;
+		else if (target_rate <= rate / 5)
+			return rate / 5;
 		else
-			return (*prate << 1) / 4;
+			return rate / 4;
 	}
 }
 
@@ -129,32 +137,34 @@ static int sunxi_ddr_clk_set_rate(struct clk_hw *hw, unsigned long drate,
 				  unsigned long prate)
 {
 	struct sunxi_ddrclk *ddrclk = to_sunxi_ddrclk_hw(hw);
+	const struct sunxi_ddrclk_plat_data *plat_data = ddrclk->plat_data;
 	unsigned int dram_div = ddrclk->dram_div;
+	unsigned long rate = prate << plat_data->factor;
 	unsigned int freq_id;
 
 	if ((dram_div & 0x1f) == 0x3) {
-		if (drate <= (prate << 1) / (((dram_div >> 24) & 0x1f) + 1))
+		if (drate <= rate / (((dram_div >> 24) & 0x1f) + 1))
 			freq_id = 3;
-		else if (drate <= (prate << 1) / (((dram_div >> 16) & 0x1f) + 1))
+		else if (drate <= rate / (((dram_div >> 16) & 0x1f) + 1))
 			freq_id = 2;
-		else if (drate <= (prate << 1) / (((dram_div >> 8) & 0x1f) + 1))
+		else if (drate <= rate / (((dram_div >> 8) & 0x1f) + 1))
 			freq_id = 1;
 		else
 			freq_id = 0;
 	} else {
-		if (drate <= (prate << 1) / (((dram_div >> 24) & 0x1f) + 1))
+		if (drate <= rate / (((dram_div >> 24) & 0x1f) + 1))
 			freq_id = 7;
-		else if (drate <= (prate << 1) / (((dram_div >> 16) & 0x1f) + 1))
+		else if (drate <= rate / (((dram_div >> 16) & 0x1f) + 1))
 			freq_id = 6;
-		else if (drate <= (prate << 1) / (((dram_div >> 8) & 0x1f) + 1))
+		else if (drate <= rate / (((dram_div >> 8) & 0x1f) + 1))
 			freq_id = 5;
-		else if (drate <= (prate << 1) / ((dram_div & 0x1f) + 1))
+		else if (drate <= rate / ((dram_div & 0x1f) + 1))
 			freq_id = 4;
-		else if (drate <= (prate << 1) / 7)
+		else if (drate <= rate / 7)
 			freq_id = 3;
-		else if (drate <= (prate << 1) / 6)
+		else if (drate <= rate / 6)
 			freq_id = 2;
-		else if (drate <= (prate << 1) / 5)
+		else if (drate <= rate / 5)
 			freq_id = 1;
 		else
 			freq_id = 0;
@@ -174,16 +184,38 @@ const struct clk_ops sunxi_ddrclk_ops = {
 	.set_rate = sunxi_ddr_clk_set_rate,
 };
 
+static const struct sunxi_ddrclk_plat_data ddrclk_sun55iw3_data = {
+	.dram_clk_reg_offset = 0x800,
+	.div_shift = 0,
+	.div_width = 5,
+	.factor = 1,
+};
+
+static const struct sunxi_ddrclk_plat_data ddrclk_sun55iw6_data = {
+	.dram_clk_reg_offset = 0xc00,
+	.div_shift = 0,
+	.div_width = 5,
+	.factor = 1,
+};
+
+static const struct sunxi_ddrclk_plat_data ddrclk_sun60iw2_data = {
+	.dram_clk_reg_offset = 0xc00,
+	.div_shift = 0,
+	.div_width = 5,
+	.factor = 2,
+};
+
 static const struct of_device_id clk_ddr_of_match[] = {
-	{
-		.compatible = "allwinner,clock_ddr",
-	},
+	{ .compatible = "allwinner,clock_ddr", .data = &ddrclk_sun55iw3_data},
+	{ .compatible = "allwinner,sun55iw6_clock_ddr", .data = &ddrclk_sun55iw6_data},
+	{ .compatible = "allwinner,sun60iw2_clock_ddr", .data = &ddrclk_sun60iw2_data},
 	{ },
 };
 MODULE_DEVICE_TABLE(of, clk_ddr_of_match);
 
 static int ddr_clock_probe(struct platform_device *pdev)
 {
+	struct device *dev = &pdev->dev;
 	struct device_node *np = pdev->dev.of_node;
 	struct device_node *dram_np;
 	struct sunxi_ddrclk *ddrclk;
@@ -260,6 +292,7 @@ static int ddr_clock_probe(struct platform_device *pdev)
 	init.num_parents = 1;
 	init.flags |= CLK_SET_RATE_NO_REPARENT | CLK_GET_RATE_NOCACHE;
 
+	ddrclk->plat_data = of_device_get_match_data(dev);
 	clk = devm_clk_register(&pdev->dev, &ddrclk->hw);
 	if (IS_ERR(clk)) {
 		sunxi_err(&pdev->dev, "clk_register failed\n");

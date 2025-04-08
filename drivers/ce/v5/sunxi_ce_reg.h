@@ -56,7 +56,14 @@
 
 #define CE_CHAN_PENDING			0x3
 
-#if defined(CONFIG_ARCH_SUN55IW3)
+#if defined(CONFIG_ARCH_SUN60IW2)
+#define CE_REG_LPC			0xD0
+#define CE_REG_TRNG_ENT			CE_REG_LPC
+#define CE_DBL_ENT_SRC_EN		BIT(1)
+#define CE_LOW_POWER_EN			BIT(0)
+#endif
+
+#if defined(CONFIG_ARCH_SUN55IW3) || defined(CONFIG_ARCH_SUN60IW2)
 #define CE_REG_TLR_SYMM_TYPE_SHIFT	0
 #define CE_REG_TLR_ASYM_TYPE_SHIFT	5
 #define CE_REG_TLR_HASH_RBG_TYPE_SHIFT	10
@@ -312,6 +319,7 @@ void ss_hash_method_set(int type, ce_new_task_desc_t *task);
 void ss_rng_method_set(int hash_type, int type, ce_new_task_desc_t *task);
 void ss_hash_rng_ctrl_start(ce_new_task_desc_t *task);
 void ss_hash_data_len_set(int len, ce_new_task_desc_t *task);
+void ss_hash_total_data_len_set(u64 len, ce_new_task_desc_t *task);
 
 void ce_task_data_len_set(u32 len, u8 *dst);
 void ce_task_addr_set(u8 *vir_addr, phys_addr_t phy_addr, u8 *dst);
@@ -319,5 +327,8 @@ void ce_iv_phyaddr_set(dma_addr_t phy_addr, ce_task_desc_t *task);
 phys_addr_t ce_task_addr_get(u8 *dst);
 void ss_hash_cmd_set(int channel_id, ce_new_task_desc_t *task);
 void ss_ctrl_hash_start(ce_new_task_desc_t *task, int type, int mode);
+#ifdef CE_DBL_ENT_SRC_EN
+void ss_trng_dbl_ent_en(void);
+#endif
 
 #endif /* end of _SUNXI_SECURITY_SYSTEM_REG_H_ */

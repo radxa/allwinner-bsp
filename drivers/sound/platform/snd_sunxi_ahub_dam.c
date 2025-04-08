@@ -38,7 +38,6 @@ static struct audio_reg_label ahub_reg_public[] = {
 	REG_LABEL(SUNXI_AHUB_VER),
 	REG_LABEL(SUNXI_AHUB_RST),
 	REG_LABEL(SUNXI_AHUB_GAT),
-	REG_LABEL_END,
 };
 /* APBIF */
 static struct audio_reg_label ahub_reg_apbif0[] = {
@@ -57,7 +56,6 @@ static struct audio_reg_label ahub_reg_apbif0[] = {
 	REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO_CONT(0)),
 	/* REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO(0)), */
 	REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO_CNT(0)),
-	REG_LABEL_END,
 };
 static struct audio_reg_label ahub_reg_apbif1[] = {
 	REG_LABEL(SUNXI_AHUB_APBIF_TX_CTL(1)),
@@ -75,7 +73,6 @@ static struct audio_reg_label ahub_reg_apbif1[] = {
 	REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO_CONT(1)),
 	/* REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO(1)), */
 	REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO_CNT(1)),
-	REG_LABEL_END,
 };
 static struct audio_reg_label ahub_reg_apbif2[] = {
 	REG_LABEL(SUNXI_AHUB_APBIF_TX_CTL(2)),
@@ -93,7 +90,6 @@ static struct audio_reg_label ahub_reg_apbif2[] = {
 	REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO_CONT(2)),
 	/* REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO(2)), */
 	REG_LABEL(SUNXI_AHUB_APBIF_RXFIFO_CNT(2)),
-	REG_LABEL_END,
 };
 /* I2S */
 static struct audio_reg_label ahub_reg_i2s0[] = {
@@ -122,7 +118,6 @@ static struct audio_reg_label ahub_reg_i2s0[] = {
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP1(0)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP2(0)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP3(0)),
-	REG_LABEL_END,
 };
 static struct audio_reg_label ahub_reg_i2s1[] = {
 	REG_LABEL(SUNXI_AHUB_I2S_CTL(1)),
@@ -150,7 +145,6 @@ static struct audio_reg_label ahub_reg_i2s1[] = {
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP1(1)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP2(1)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP3(1)),
-	REG_LABEL_END,
 };
 static struct audio_reg_label ahub_reg_i2s2[] = {
 	REG_LABEL(SUNXI_AHUB_I2S_CTL(2)),
@@ -178,7 +172,6 @@ static struct audio_reg_label ahub_reg_i2s2[] = {
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP1(2)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP2(2)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP3(2)),
-	REG_LABEL_END,
 };
 static struct audio_reg_label ahub_reg_i2s3[] = {
 	REG_LABEL(SUNXI_AHUB_I2S_CTL(3)),
@@ -206,7 +199,6 @@ static struct audio_reg_label ahub_reg_i2s3[] = {
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP1(3)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP2(3)),
 	REG_LABEL(SUNXI_AHUB_I2S_IN_CHMAP3(3)),
-	REG_LABEL_END,
 };
 /* DAM */
 static struct audio_reg_label ahub_reg_dam0[] = {
@@ -230,7 +222,6 @@ static struct audio_reg_label ahub_reg_dam0[] = {
 	REG_LABEL(SUNXI_AHUB_DAM_GAIN_CTL5(0)),
 	REG_LABEL(SUNXI_AHUB_DAM_GAIN_CTL6(0)),
 	REG_LABEL(SUNXI_AHUB_DAM_GAIN_CTL7(0)),
-	REG_LABEL_END,
 };
 static struct audio_reg_label ahub_reg_dam1[] = {
 	REG_LABEL(SUNXI_AHUB_DAM_CTL(1)),
@@ -253,20 +244,19 @@ static struct audio_reg_label ahub_reg_dam1[] = {
 	REG_LABEL(SUNXI_AHUB_DAM_GAIN_CTL5(1)),
 	REG_LABEL(SUNXI_AHUB_DAM_GAIN_CTL6(1)),
 	REG_LABEL(SUNXI_AHUB_DAM_GAIN_CTL7(1)),
-	REG_LABEL_END,
 };
 
-struct audio_reg_label *ahub_reg_all[] = {
-	ahub_reg_public,
-	ahub_reg_apbif0,
-	ahub_reg_apbif1,
-	ahub_reg_apbif2,
-	ahub_reg_i2s0,
-	ahub_reg_i2s1,
-	ahub_reg_i2s2,
-	ahub_reg_i2s3,
-	ahub_reg_dam0,
-	ahub_reg_dam1,
+static struct audio_reg_group sunxi_reg_groups[] = {
+	REG_GROUP(ahub_reg_public),
+	REG_GROUP(ahub_reg_apbif0),
+	REG_GROUP(ahub_reg_apbif1),
+	REG_GROUP(ahub_reg_apbif2),
+	REG_GROUP(ahub_reg_i2s0),
+	REG_GROUP(ahub_reg_i2s1),
+	REG_GROUP(ahub_reg_i2s2),
+	REG_GROUP(ahub_reg_i2s3),
+	REG_GROUP(ahub_reg_dam0),
+	REG_GROUP(ahub_reg_dam1),
 };
 
 static struct resource sunxi_res;
@@ -282,7 +272,9 @@ struct sunxi_ahub_mem sunxi_mem = {
 };
 static struct sunxi_ahub_clk sunxi_clk;
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 static struct sunxi_ahub_dump sunxi_dump;
+#endif
 
 static int snd_sunxi_clk_init(struct platform_device *pdev, struct sunxi_ahub_clk *clk);
 static void snd_sunxi_clk_exit(struct sunxi_ahub_clk *clk);
@@ -303,19 +295,12 @@ static int sunxi_ahub_dam_suspend(struct snd_soc_component *component)
 {
 	struct sunxi_ahub_clk *clk = &sunxi_clk;
 	struct regmap *regmap = sunxi_mem.regmap;
+	unsigned int i;
 
 	SND_LOG_DEBUG("\n");
 
-	snd_sunxi_save_reg(regmap, ahub_reg_public);
-	snd_sunxi_save_reg(regmap, ahub_reg_apbif0);
-	snd_sunxi_save_reg(regmap, ahub_reg_apbif1);
-	snd_sunxi_save_reg(regmap, ahub_reg_apbif2);
-	snd_sunxi_save_reg(regmap, ahub_reg_i2s0);
-	snd_sunxi_save_reg(regmap, ahub_reg_i2s1);
-	snd_sunxi_save_reg(regmap, ahub_reg_i2s2);
-	snd_sunxi_save_reg(regmap, ahub_reg_i2s3);
-	snd_sunxi_save_reg(regmap, ahub_reg_dam0);
-	snd_sunxi_save_reg(regmap, ahub_reg_dam1);
+	for (i = 0; i < ARRAY_SIZE(sunxi_reg_groups); ++i)
+		snd_sunxi_save_reg(regmap, &sunxi_reg_groups[i]);
 
 	snd_sunxi_clk_disable(clk);
 
@@ -326,6 +311,7 @@ static int sunxi_ahub_dam_resume(struct snd_soc_component *component)
 {
 	struct sunxi_ahub_clk *clk = &sunxi_clk;
 	struct regmap *regmap = sunxi_mem.regmap;
+	unsigned int i;
 	int ret;
 
 	SND_LOG_DEBUG("\n");
@@ -336,16 +322,8 @@ static int sunxi_ahub_dam_resume(struct snd_soc_component *component)
 		return ret;
 	}
 
-	snd_sunxi_echo_reg(regmap, ahub_reg_public);
-	snd_sunxi_echo_reg(regmap, ahub_reg_apbif0);
-	snd_sunxi_echo_reg(regmap, ahub_reg_apbif1);
-	snd_sunxi_echo_reg(regmap, ahub_reg_apbif2);
-	snd_sunxi_echo_reg(regmap, ahub_reg_i2s0);
-	snd_sunxi_echo_reg(regmap, ahub_reg_i2s1);
-	snd_sunxi_echo_reg(regmap, ahub_reg_i2s2);
-	snd_sunxi_echo_reg(regmap, ahub_reg_i2s3);
-	snd_sunxi_echo_reg(regmap, ahub_reg_dam0);
-	snd_sunxi_echo_reg(regmap, ahub_reg_dam1);
+	for (i = 0; i < ARRAY_SIZE(sunxi_reg_groups); ++i)
+		snd_sunxi_echo_reg(regmap, &sunxi_reg_groups[i]);
 
 	return 0;
 }
@@ -899,6 +877,7 @@ static void snd_sunxi_clk_disable(struct sunxi_ahub_clk *clk)
 	reset_control_assert(clk->clk_rst);
 }
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 /* sysfs debug */
 static void snd_sunxi_dump_version(void *priv, char *buf, size_t *count)
 {
@@ -942,7 +921,7 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 {
 	size_t count_tmp = 0;
 	struct sunxi_ahub_dump *ahub_dump = (struct sunxi_ahub_dump *)priv;
-	int i = 0, j = 0;
+	unsigned int i = 0, j = 0;
 	int reg_domain;
 	unsigned int output_reg_val;
 	struct regmap *regmap;
@@ -962,25 +941,24 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 
 	/* show specify domain reg */
 	if (reg_domain != 0) {
-		while (ahub_reg_all[reg_domain][i].name) {
-			regmap_read(regmap, ahub_reg_all[reg_domain][i].address, &output_reg_val);
+		for (i = 0; i < sunxi_reg_groups[reg_domain].size; ++i) {
+			regmap_read(regmap, sunxi_reg_groups[reg_domain].label[i].address,
+				    &output_reg_val);
 			count_tmp += sprintf(buf + count_tmp, "[0x%03x]: 0x%8x\n",
-				     ahub_reg_all[reg_domain][i].address, output_reg_val);
-			i++;
+					     sunxi_reg_groups[reg_domain].label[i].address,
+					     output_reg_val);
 		}
 		goto end;
 	}
 
 	/* show all domain reg */
-	for (i = 0; i < 10; i++) {
-		while (ahub_reg_all[i][j].name) {
-			regmap_read(regmap, ahub_reg_all[i][j].address, &output_reg_val);
+	for (i = 0; i < ARRAY_SIZE(sunxi_reg_groups); ++i) {
+		for (j = 0; j < sunxi_reg_groups[i].size; ++j) {
+			regmap_read(regmap, sunxi_reg_groups[i].label[j].address, &output_reg_val);
 			count_tmp += sprintf(buf + count_tmp, "[0x%03x]: 0x%8x\n",
-				     ahub_reg_all[i][j].address, output_reg_val);
-			j++;
+				     sunxi_reg_groups[i].label[j].address, output_reg_val);
 		}
 		count_tmp += sprintf(buf + count_tmp, "\n");
-		j = 0;
 	}
 
 end:
@@ -1032,6 +1010,7 @@ static int snd_sunxi_dump_store(void *priv, const char *buf, size_t count)
 
 	return 0;
 }
+#endif
 
 static int sunxi_ahub_dam_dev_probe(struct platform_device *pdev)
 {
@@ -1039,7 +1018,9 @@ static int sunxi_ahub_dam_dev_probe(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	struct sunxi_ahub_mem *mem = &sunxi_mem;
 	struct sunxi_ahub_clk *clk = &sunxi_clk;
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump = &sunxi_dump.dump;
+#endif
 
 	SND_LOG_DEBUG("\n");
 
@@ -1064,6 +1045,7 @@ static int sunxi_ahub_dam_dev_probe(struct platform_device *pdev)
 		goto err_snd_soc_register_component;
 	}
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	sunxi_dump.pdev = pdev;
 	sunxi_dump.show_reg_num = -1;	/* default: unshow */
 	sunxi_dump.regmap = mem->regmap;
@@ -1077,6 +1059,7 @@ static int sunxi_ahub_dam_dev_probe(struct platform_device *pdev)
 	ret = snd_sunxi_dump_register(dump);
 	if (ret)
 		SND_LOG_WARN("snd_sunxi_dump_register failed\n");
+#endif
 
 	SND_LOG_DEBUG("register ahub_dam platform success\n");
 
@@ -1095,11 +1078,16 @@ static int sunxi_ahub_dam_dev_remove(struct platform_device *pdev)
 {
 	struct sunxi_ahub_mem *mem = &sunxi_mem;
 	struct sunxi_ahub_clk *clk = &sunxi_clk;
+
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump = &sunxi_dump.dump;
+#endif
 
 	SND_LOG_DEBUG("\n");
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	snd_sunxi_dump_unregister(dump);
+#endif
 	snd_soc_unregister_component(&pdev->dev);
 
 	snd_sunxi_mem_exit(pdev, mem);
@@ -1149,5 +1137,5 @@ module_exit(sunxi_ahub_dam_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.1");
+MODULE_VERSION("1.0.2");
 MODULE_DESCRIPTION("sunxi soundcard platform of ahub_dam");

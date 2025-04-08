@@ -47,7 +47,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "img_types.h"
 #include "img_defs.h"
 #include "pvrsrv_error.h"
-#include "sync_server.h"
+#include "powervr/pvrsrv_sync_ext.h"
+#include "pvr_notifier.h"
+#include "device.h"
 
 
 typedef struct _SCP_CONTEXT_ SCP_CONTEXT;	/*!< Opaque handle to a software command processor context */
@@ -89,10 +91,6 @@ PVRSRV_ERROR SCPCreate(PVRSRV_DEVICE_NODE *psDevNode,
                 be called with the command complete data.
 
 @Input          psSCPContext            Context to allocate from
-
-@Input          ui32SyncPrimCount       Number of Sync Prim operations
-
-@Input          papsSync                Pointer to array of pointers to server syncs
 
 @Input          iAcquireFence           The fence that must be signalled
                                         before the command will be actioned

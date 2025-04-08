@@ -14,24 +14,14 @@
  * published by the Free Software Foundation.
  */
 
-
-#include <linux/interrupt.h>
-#include <linux/mfd/core.h>
-#include <linux/module.h>
-#include <linux/of_device.h>
-#include <linux/acpi.h>
-#include <linux/of.h>
-#include <linux/slab.h>
-#include <linux/err.h>
-#include <linux/version.h>
-
-#include <power/bmu-ext.h>
+#include "sunxi-power-mfd.h"
+#include "bmu-ext.h"
 
 #define INIT_REGMAP_IRQ(_variant, _irq, _off, _mask)			\
 	[_variant##_IRQ_##_irq] = { .reg_offset = (_off), .mask = BIT(_mask) }
 
 static const char *const bmu_ext_model_names[] = {
-	"ETA6973", "AXP519", "AXP2601",
+	"ETA6973", "AXP519", "AXP2601", "AXP2602",
 };
 
 static const struct regmap_range eta6973_writeable_ranges[] = {
@@ -105,7 +95,9 @@ static const struct regmap_irq_chip axp519_regmap_irq_chip = {
 	.status_base		= AXP519_IRQ0,
 	.ack_base		= AXP519_IRQ0,
 	.mask_base		= AXP519_IRQ_EN0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_invert		= false,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp519_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp519_regmap_irqs),
@@ -162,13 +154,14 @@ static const struct regmap_irq_chip axp2601_regmap_irq_chip = {
 	.status_base		= AXP2601_IRQ,
 	.ack_base		= AXP2601_IRQ,
 	.mask_base		= AXP2601_IRQ_EN,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_invert		= false,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp2601_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp2601_regmap_irqs),
 	.num_regs		= 1,
 };
-
 
 static const struct regmap_range axp2601_writeable_ranges[] = {
 	regmap_reg_range(AXP2601_CHIP_ID, AXP2601_END),
@@ -201,6 +194,73 @@ const struct regmap_config axp2601_regmap_config = {
 
 /*---------------------------------*/
 
+static const struct regmap_irq axp2602_regmap_irqs[] = {
+	INIT_REGMAP_IRQ(AXP2602, CUR_ERR,	0, 6),
+	INIT_REGMAP_IRQ(AXP2602, SMOOTH_END,	0, 5),
+	INIT_REGMAP_IRQ(AXP2602, SOC_ERR,	0, 4),
+	INIT_REGMAP_IRQ(AXP2602, WDT,		0, 3),
+	INIT_REGMAP_IRQ(AXP2602, OT,		0, 2),
+	INIT_REGMAP_IRQ(AXP2602, NEWSOC,	0, 1),
+	INIT_REGMAP_IRQ(AXP2602, LOWSOC,	0, 0),
+};
+
+static struct resource axp2602_bat_power_supply_resources[] = {
+	DEFINE_RES_IRQ_NAMED(AXP2602_IRQ_CUR_ERR, "cur_err"),
+	DEFINE_RES_IRQ_NAMED(AXP2602_IRQ_SMOOTH_END, "smooth_end"),
+	DEFINE_RES_IRQ_NAMED(AXP2602_IRQ_SOC_ERR, "soc_err"),
+	DEFINE_RES_IRQ_NAMED(AXP2602_IRQ_WDT, "watchdog_reset"),
+	DEFINE_RES_IRQ_NAMED(AXP2602_IRQ_OT, "over_tempture"),
+	DEFINE_RES_IRQ_NAMED(AXP2602_IRQ_NEWSOC, "gauge_new_soc"),
+	DEFINE_RES_IRQ_NAMED(AXP2602_IRQ_LOWSOC, "soc_drop_w"),
+};
+
+static const struct regmap_irq_chip axp2602_regmap_irq_chip = {
+	.name			= "axp2602_irq_chip",
+	.status_base	= AXP2602_IRQ,
+	.ack_base		= AXP2602_IRQ,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+	.mask_base		= AXP2602_IRQ_EN,
+	.mask_invert		= true,
+#else
+	.unmask_base		= AXP2602_IRQ_EN,
+#endif
+	.init_ack_masked	= true,
+	.irqs			= axp2602_regmap_irqs,
+	.num_irqs		= ARRAY_SIZE(axp2602_regmap_irqs),
+	.num_regs		= 1,
+};
+
+static const struct regmap_range axp2602_writeable_ranges[] = {
+	regmap_reg_range(AXP2602_CHIP_ID, AXP2602_END),
+};
+
+static const struct regmap_range axp2602_volatile_ranges[] = {
+	regmap_reg_range(AXP2602_CHIP_ID, AXP2602_END),
+};
+
+static const struct regmap_access_table axp2602_writeable_table = {
+	.yes_ranges	= axp2602_writeable_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(axp2602_writeable_ranges),
+};
+
+static const struct regmap_access_table axp2602_volatile_table = {
+	.yes_ranges	= axp2602_volatile_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(axp2602_volatile_ranges),
+};
+
+const struct regmap_config axp2602_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.wr_table	= &axp2602_writeable_table,
+	.volatile_table	= &axp2602_volatile_table,
+	.max_register   = AXP2602_END,
+	.use_single_read = true,
+	.use_single_write = true,
+	.cache_type     = REGCACHE_RBTREE,
+};
+
+/*---------------------------------*/
+
 static struct mfd_cell eta6973_cells[] = {
 	{
 		.name = "eta6973-charger-power-supply",
@@ -225,6 +285,15 @@ static struct mfd_cell axp2601_cells[] = {
 		.of_compatible = "x-powers-ext,axp2601-bat-power-supply",
 		.resources = axp2601_bat_power_supply_resources,
 		.num_resources = ARRAY_SIZE(axp2601_bat_power_supply_resources),
+	},
+};
+
+static struct mfd_cell axp2602_cells[] = {
+	{
+		.name = "axp2602-bat-power-supply",
+		.of_compatible = "x-powers-ext,axp2602-bat-power-supply",
+		.resources = axp2602_bat_power_supply_resources,
+		.num_resources = ARRAY_SIZE(axp2602_bat_power_supply_resources),
 	},
 };
 
@@ -348,6 +417,14 @@ int bmu_ext_match_device(struct bmu_ext_dev *ext)
 //		ext->dts_parse = eta6973_dts_parse;
 		break;
 /**************************************/
+	case AXP2602_ID:
+		ext->nr_cells = ARRAY_SIZE(axp2602_cells);
+		ext->cells = axp2602_cells;
+		ext->regmap_cfg = &axp2602_regmap_config;
+		ext->regmap_irq_chip = &axp2602_regmap_irq_chip;
+//		ext->dts_parse = eta6973_dts_parse;
+		break;
+/**************************************/
 	default:
 		PMIC_DEV_ERR(dev, "unsupported ext ID %lu\n", ext->variant);
 		return -EINVAL;
@@ -420,9 +497,8 @@ static const struct thermal_cooling_device_ops psy_tcd_ops = {
 
 int bmu_ext_register_cooler(struct power_supply *psy)
 {
-	psy->tcd = thermal_cooling_device_register(
-						(char *)psy->desc->name,
-						psy, &psy_tcd_ops);
+	psy->tcd = devm_thermal_of_cooling_device_register(&psy->dev,
+		psy->of_node, (char *)psy->desc->name, psy, &psy_tcd_ops);
 
 	return PTR_ERR_OR_ZERO(psy->tcd);
 }

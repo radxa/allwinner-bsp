@@ -567,24 +567,7 @@ static int sunxi_scaler_subdev_set_selection(struct v4l2_subdev *sd,
 	return 0;
 }
 #endif
-/*
-* vipp cgc config func.
-* this function is called when using the vipp cgc feature
-static int sunxi_scaler_cgc_cfg(int id, int on, __u32 colorspace)
-{
-#if defined VIPP_200
-	int cgc_gain_cfg_val[1][4] =  {{0xdb, 0xe0, 0x10, 0x10}};
-	int cgc_clip_cfg_val[1][4] =  {{0x10, 0xeb, 0x10, 0xf0}};
 
-	if (on && colorspace != V4L2_COLORSPACE_REC709 && colorspace != V4L2_COLORSPACE_BT2020) {
-		vipp_cgc_gain_cfg(id, cgc_gain_cfg_val, 0);
-		vipp_cgc_clip_cfg(id, cgc_clip_cfg_val, 0);
-	}
-	vipp_cgc_f2l_en(id, on);
-#endif
-	return 0;
-}
-*/
 int sunxi_scaler_subdev_init(struct v4l2_subdev *sd, u32 val)
 {
 	struct scaler_dev *scaler = v4l2_get_subdevdata(sd);
@@ -611,6 +594,37 @@ int sunxi_scaler_subdev_init(struct v4l2_subdev *sd, u32 val)
 	}
 	return 0;
 }
+
+#if defined VIPP_200
+static void vin_streamoff_logic_isp(struct scaler_dev *logic_scaler, unsigned char virtual_id)
+{
+#if defined SUPPORT_ISP_TDM && defined TDM_V200
+	struct vin_md *vind = dev_get_drvdata(logic_scaler->subdev.v4l2_dev->dev);
+	struct vin_core *vinc = vind->vinc[virtual_id];
+	struct vin_vid_cap *cap = &vinc->vid_cap;
+	struct tdm_rx_dev *tdm_rx = NULL;
+	struct tdm_dev *tdm = NULL;
+
+	if (vinc->tdm_rx_sel != 0xff) {
+		tdm_rx = container_of(cap->pipe.sd[VIN_IND_TDM_RX], struct tdm_rx_dev, subdev);
+		tdm = container_of(tdm_rx, struct tdm_dev, tdm_rx[tdm_rx->id]);
+
+		if (tdm->stream_cnt == 0) {
+			bsp_isp_top_capture_stop(tdm->id);
+			bsp_isp_enable(tdm->id, 0);
+			/* bsp_isp_sram_boot_mode_ctrl(tdm->id, SRAM_BOOT_MODE); */
+
+			csic_tdm_set_speed_dn(tdm->id, 0);
+			csic_tdm_tx_cap_disable(tdm->id);
+			csic_tdm_tx_disable(tdm->id);
+			csic_tdm_disable(tdm->id);
+			csic_tdm_top_disable(tdm->id);
+			sunxi_tdm_buffer_free(tdm->id);
+		}
+	}
+#endif
+}
+#endif
 
 static int sunxi_scaler_logic_s_stream(unsigned char virtual_id, int on)
 {
@@ -652,10 +666,17 @@ static int sunxi_scaler_logic_s_stream(unsigned char virtual_id, int on)
 #endif
 		vipp_cap_enable(logic_scaler->id);
 	} else {
+		if (logic_scaler->work_mode == VIPP_ONLINE) {
+			vipp_cap_disable(logic_scaler->id);
+			vipp_top_clk_en(logic_scaler->id, on);
+		}
 		vipp_cap_disable(logic_scaler->id);
 		vipp_clear_status(logic_scaler->id, VIPP_STATUS_ALL);
 		vipp_irq_disable(logic_scaler->id, VIPP_EN_ALL);
-		vipp_top_clk_en(logic_scaler->id, on);
+
+		if (logic_scaler->work_mode == VIPP_OFFLINE) {
+			vin_streamoff_logic_isp(logic_scaler, virtual_id);
+		}
 	}
 #endif
 	return 0;
@@ -825,8 +846,6 @@ static int sunxi_scaler_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 		scaler_cfg.sc_w_shift = __scaler_w_shift(scaler->para.xratio, scaler->para.yratio);
 		vipp_scaler_cfg(scaler->id, &scaler_cfg);
 		vipp_output_fmt_cfg(scaler->id, out_fmt);
-		/* vipp cgc config func */
-		/* sunxi_scaler_cgc_cfg(scaler->id, enable, scaler->formats[SCALER_PAD_SINK].colorspace); */
 #if defined VIPP_200 && IS_ENABLED(CONFIG_VIPP_YUV2RGB)
 		if (res->res_pix_fmt == V4L2_PIX_FMT_RGB24 || \
 			res->res_pix_fmt == V4L2_PIX_FMT_BGR24 || \
@@ -864,7 +883,14 @@ static int sunxi_scaler_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 		vipp_set_para_ready(scaler->id, NOT_READY);
 #else
 		vipp_chn_cap_disable(scaler->id);
+#if VIN_FALSE
+		/* set chn_cap_en(bit0) to 0, but read it is 1 until frame is processed */
+		vipp_chn_cap_disable(scaler->id);
+		/* set para_ready(ready) to 0, read chn_cap_en(bit0) is 1, and than set it lead to hn_cap_en(bit0) is 1*/
 		vipp_set_para_ready(scaler->id, NOT_READY);
+#else
+		vipp_chn_cap_disable_para_notready(scaler->id);
+#endif
 #endif
 		vipp_chroma_ds_en(scaler->id, 0);
 		vipp_osd_en(scaler->id, 0);
@@ -879,8 +905,6 @@ static int sunxi_scaler_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 #endif
 				vipp_yuv2rgb_en(scaler->id, 0);
 #endif
-		/* vipp cgc config func */
-		/* sunxi_scaler_cgc_cfg(scaler->id, enable, scaler->formats[SCALER_PAD_SINK].colorspace); */
 		vipp_set_osd_ov_update(scaler->id, NOT_UPDATED);
 		vipp_set_osd_cv_update(scaler->id, NOT_UPDATED);
 		sunxi_scaler_logic_s_stream(scaler->id, enable);
@@ -1186,14 +1210,14 @@ static int scaler_irq_enable(void *dev, void *data, int len)
 			return -EINVAL;
 		}
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 			vin_iommu_en(CSI_IOMMU_MASTER, true);
 #endif
 	} else if (!strncmp(data, "get", len)) {
 		if (scaler->irq)
 			free_irq(scaler->irq, scaler);
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		vin_iommu_en(CSI_IOMMU_MASTER, false);
 #endif
 	}
@@ -1287,7 +1311,7 @@ static int scaler_probe(struct platform_device *pdev)
 			ret = -EINVAL;
 			goto unmap;
 		}
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		vin_iommu_en(CSI_IOMMU_MASTER, true);
 #endif
 		scaler->delay_para_ready = 0;

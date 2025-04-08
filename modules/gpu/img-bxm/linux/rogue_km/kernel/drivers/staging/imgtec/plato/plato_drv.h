@@ -56,6 +56,12 @@
 #include <linux/version.h>
 #include <linux/delay.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
+#include <linux/stringify.h>
+
+#define	PLATO_MULTI_DEVICE
+#endif
+
 // Debug output:
 // Sometimes will want to always output info or error even in release mode.
 // In that case use dev_info, dev_err directly.
@@ -82,6 +88,15 @@
 #define PCI_DEVICE_ID_PLATO				(0x0003)
 
 #define PLATO_SYSTEM_NAME				"Plato"
+
+#define PLATO_MAX_CARDS					4
+
+#define	PLATO_MAX_DEVICE_NAME_LEN			32
+
+#if defined(PLATO_MULTI_DEVICE)
+#define	PLATO_MAKE_DEVICE_TEMPLATE(p)			(p "_%u")
+#define	PLATO_MAKE_DEVICE_NAME(p, i)			(p "_" __stringify(i))
+#endif
 
 /* Interrupt defines */
 enum PLATO_INTERRUPT {
@@ -112,7 +127,23 @@ struct plato_io_region {
  * driver to the respective sub-drivers
  */
 
-#define PLATO_DEVICE_NAME_PDP			"plato_pdp"
+#define PLATO_DEVICE_NAME_PDP_PREFIX		"plato_pdp"
+
+#if defined(PLATO_MULTI_DEVICE)
+#define PLATO_DEVICE_NAME_PDP_TEMPLATE		PLATO_MAKE_DEVICE_TEMPLATE( \
+						PLATO_DEVICE_NAME_PDP_PREFIX)
+
+#define	PLATO_DEVICE_NAME_PDP_PRINTF_ARGS(i)	PLATO_DEVICE_NAME_PDP_TEMPLATE, i
+
+#define	PLATO_MAKE_DEVICE_NAME_PDP(i)		PLATO_MAKE_DEVICE_NAME( \
+						PLATO_DEVICE_NAME_PDP_PREFIX, \
+						i)
+#else
+#define PLATO_DEVICE_NAME_PDP_TEMPLATE		PLATO_DEVICE_NAME_PDP_PREFIX
+#define	PLATO_DEVICE_NAME_PDP_PRINTF_ARGS(i)	PLATO_DEVICE_NAME_PDP_TEMPLATE
+#define PLATO_DEVICE_NAME_PDP			PLATO_DEVICE_NAME_PDP_PREFIX
+#endif
+
 #define PLATO_PDP_RESOURCE_REGS			"pdp-regs"
 #define PLATO_PDP_RESOURCE_BIF_REGS		"pdp-bif-regs"
 
@@ -139,7 +170,23 @@ struct plato_hdmi_platform_data {
 };
 
 
-#define PLATO_DEVICE_NAME_ROGUE			"plato_rogue"
+#define PLATO_DEVICE_NAME_ROGUE_PREFIX	"plato_rogue"
+
+#if defined(PLATO_MULTI_DEVICE)
+#define PLATO_DEVICE_NAME_ROGUE_TEMPLATE	PLATO_MAKE_DEVICE_TEMPLATE( \
+						PLATO_DEVICE_NAME_ROGUE_PREFIX)
+
+#define	PLATO_DEVICE_NAME_ROGUE_PRINTF_ARGS(i)	PLATO_DEVICE_NAME_ROGUE_TEMPLATE, i
+
+#define	PLATO_MAKE_DEVICE_NAME_ROGUE(i)		PLATO_MAKE_DEVICE_NAME( \
+						PLATO_DEVICE_NAME_ROGUE_PREFIX, \
+						i)
+#else
+#define PLATO_DEVICE_NAME_ROGUE_TEMPLATE	PLATO_DEVICE_NAME_ROGUE_PREFIX
+#define	PLATO_DEVICE_NAME_ROGUE_PRINTF_ARGS(i)	PLATO_DEVICE_NAME_ROGUE_TEMPLATE
+#define PLATO_DEVICE_NAME_ROGUE			PLATO_DEVICE_NAME_ROGUE_PREFIX
+#endif
+
 #define PLATO_ROGUE_RESOURCE_REGS		"rogue-regs"
 
 struct plato_rogue_platform_data {
@@ -192,9 +239,8 @@ struct plato_device {
 	struct platform_device *hdmi_dev;
 #endif
 
-#if defined(CONFIG_MTRR) || (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
 	int mtrr;
-#endif
+	int instance;
 };
 
 #if defined(PLATO_LOG_CHECKPOINTS)
@@ -217,9 +263,9 @@ struct plato_device {
 
 #if defined(PLATO_MEMORY_CONFIG)
 #if (PLATO_MEMORY_CONFIG == PLATO_MEMORY_HYBRID)
-#define PVRSRV_PHYS_HEAP_CONFIG_PDP_LOCAL_ID 2
+#define PVRSRV_PHYS_HEAP_CONFIG_PDP_LOCAL_ID 3
 #elif (PLATO_MEMORY_CONFIG == PLATO_MEMORY_LOCAL)
-#define PVRSRV_PHYS_HEAP_CONFIG_PDP_LOCAL_ID 1
+#define PVRSRV_PHYS_HEAP_CONFIG_PDP_LOCAL_ID 2
 #endif
 #endif /* PLATO_MEMORY_CONFIG */
 

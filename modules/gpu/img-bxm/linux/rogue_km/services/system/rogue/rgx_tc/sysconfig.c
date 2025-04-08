@@ -62,28 +62,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #if defined(__linux__)
 #include <linux/dma-mapping.h>
 #endif
-/*
-Notes on device virtualization support on PCI systems:
-	Host/Guest driver expectations in VM domain:
-		- RGX discovery available on vPCI/bus.
-		- RGX PCI/BAR available on vPCI/bus.
-	Guest driver limitations in VM domain:
-		- Does not perform device management.
-		- Does not power RGX up/down.
- */
-#include "vz_vmm_pvz.h"
 
 #if (TC_MEMORY_CONFIG == TC_MEMORY_LOCAL)
 #define	HOST_PCI_INIT_FLAGS	0
 #else
 #define	HOST_PCI_INIT_FLAGS	HOST_PCI_INIT_FLAG_BUS_MASTER
 #endif
-
-/* The VM information page size which is allocated from LMA memory, this
-   page allows VZ drivers to communicate information without going via
-   the hypervisor. This is used only by VZ drivers to synchronise
-   cross-VM interrupt handling */
-#define VM_INFOPG_SIZE          0x1000
 
 /* This is used only by guest drivers during interrupt handling */
 #define IRQ_ACK_RETRY_CLEAR_MAX 2
@@ -132,6 +116,34 @@ module_param_named(sys_wresp_latency, ui32MemWriteResponseLatency, uint, S_IRUGO
 #define MACRO_VERSION_MAX_LEN 8 /* current longest format: "x.yz" */
 
 #define HEX2DEC(hexIntVal)    ((((hexIntVal) >> 4) * 10) + ((hexIntVal) & 0x0F))
+
+#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
+/* Fake DVFS configuration used purely for testing purposes */
+
+static const IMG_OPP g_asOPPTable[] =
+{
+	{ 8,  25000000},
+	{ 16, 50000000},
+	{ 32, 75000000},
+	{ 64, 100000000},
+};
+
+#define LEVEL_COUNT (sizeof(g_asOPPTable) / sizeof(IMG_OPP))
+
+static void SetFrequency(IMG_HANDLE hSysData, IMG_UINT32 ui32Frequency)
+{
+	PVR_UNREFERENCED_PARAMETER(hSysData);
+
+	PVR_DPF((PVR_DBG_ERROR, "SetFrequency %u", ui32Frequency));
+}
+
+static void SetVoltage(IMG_HANDLE hSysData, IMG_UINT32 ui32Voltage)
+{
+	PVR_UNREFERENCED_PARAMETER(hSysData);
+
+	PVR_DPF((PVR_DBG_ERROR, "SetVoltage %u", ui32Voltage));
+}
+#endif
 
 static PVRSRV_ERROR InitMemory(PVRSRV_DEVICE_CONFIG *psSysConfig, SYS_DATA *psSysData);
 static INLINE void DeInitMemory(PVRSRV_DEVICE_CONFIG *psSysConfig, SYS_DATA *psSysData);
@@ -255,130 +267,17 @@ static IMG_BOOL SystemISRHandler(void *pvData)
 	IMG_UINT32 i;
 	IMG_UINT32 ui32InterruptStatus;
 	IMG_UINT32 ui32InterruptClear = 0;
-	IMG_UINT32 ui32InterruptClear2 = 0;
 	SYS_DATA *psSysData = (SYS_DATA *)pvData;
 
-	/* Read device interrupt status register on entry, for VZ multiple drivers might sample same value */
+	/* Read device interrupt status register on entry */
 	ui32InterruptStatus = OSReadHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_INTERRUPT_STATUS);
-	if (! PVRSRV_VZ_MODE_IS(NATIVE))
-	{
-		/*
-		  Multi-VM PCI device sharing/virtualization
-
-		  PCI device sharing is problematic, almost all hypervisors do not support it; for
-		  those that do (i.e. Fiasco/L4), it's not possible to correctly handle clearing
-		  device interrupt register concurrently from multiple VM/drivers without the aid
-		  of an external interrupt routing logic that forwards vIRQ to VM, also this logic
-		  would have to be implemented per-hypervisor environment. An alternative approach
-		  used here is to always perform the clearing of the device interrupt register in
-		  the host driver and only do so in the guest as a last resort mostly so that the
-		  guest can still function on a VM shared interrupt line with same or other active
-		  VM device drivers. NOTE: This assumes underlying hypervisor or vm manager walks
-		  and delivers vIRQ into each VM vPCI/bus for every RGX interrupt it receives thus
-		  ensuring interrupt events are not lost, it's OK if pending interrupts are merged.
-		*/
-		if ((ui32InterruptStatus & psSysData->sInterruptData[0].ui32InterruptFlag) ||
-			(ui32InterruptStatus & psSysData->sInterruptData[1].ui32InterruptFlag))
-		{
-			/* Set RGX/PDP interrupt status, we cannot assume what's interrupting */
-			ui32InterruptClear = (0x1 << EXT_INT_SHIFT) | (0x1 << PDP1_INT_SHIFT);
-			ui32InterruptClear2 = ui32InterruptClear;
-
-			if (PVRSRV_VZ_MODE_IS(HOST))
-			{
-				/*
-				   Assigning a fixed driver (i.e. the host) the responsibility of clearing
-				   the RGX interrupt register does not always work because the hypervisor
-				   might schedule another VM and run it long enough for that VM OS/kernel
-				   to detect that RGX interrupt line has not been cleared after multiple
-				   successive back-to-back calls to the guest interrupt handler. To help
-				   mitigate against this, the host driver updates this counter for valid
-				   RGX interrupt events only and the guest driver samples it to know how
-				   to respond/acknowledge interrupt events to its OS/kernel.
-				 */
-				(void) OSAtomicIncrement((void*)psSysData->pui32IRQCount);
-			}
-		}
-
-		/*
-		  The idea here is to always assume the driver is being called due to RGX IRQ event
-		  because multiple devices may be sharing same interrupt line both at BIOS hypervisor
-		  level and/or VM level and due to possibility of race between host/guest clearing
-		  the interrupt register. Doing this means drivers never miss any IRQ event & all
-		  LISR routine is guaranteed to be called for every HW irq event, the down side is
-		  that the LISR routine is called in all driver VM for every IRQ event on line.
-		 */
-		ui32InterruptStatus = 0xFFFFFFFF;
-	}
 
 	for (i = 0; i < ARRAY_SIZE(psSysData->sInterruptData); i++)
 	{
-		/* Should this array grow, ensure to unroll the loop for the VZ condition above */
 		if ((ui32InterruptStatus & psSysData->sInterruptData[i].ui32InterruptFlag) != 0)
 		{
 			psSysData->sInterruptData[i].pfnLISR(psSysData->sInterruptData[i].pvData);
 			ui32InterruptClear |= psSysData->sInterruptData[i].ui32InterruptFlag;
-		}
-	}
-
-	if (PVRSRV_VZ_MODE_IS(HOST))
-	{
-		/* Only clear interrupt register if device has actually interrupted */
-		ui32InterruptClear = ui32InterruptClear2 ? ui32InterruptClear : 0;
-	}
-	else if (PVRSRV_VZ_MODE_IS(GUEST))
-	{
-		/* If neither of two conditions below are met, then RGX/PDP is not interrupting */
-		IMG_UINT32 ui32CurrentIrqCount = OSAtomicRead((void *)psSysData->pui32IRQCount);
-		static IMG_UINT32 ui32IrqAckRetryClearCount = 0;
-		static IMG_UINT32 ui32LastIrqCount = 0;
-		ui32InterruptClear = 0;
-
-		if (ui32CurrentIrqCount != ui32LastIrqCount)
-		{
-			/*
-			   One complication is knowing if the RGX device is the only device on its PCI
-			   interrupt line either within VM or down at the BIOS/hypervisor level and
-			   if RGX device is also sharing line with another VM PCI device driver. As
-			   it is impossible to determine this, guest driver requires a way of filtering
-			   RGX IRQ events such that it can positively respond back to the OS/kernel
-			   that it has handled interrupts due to it else the OS/kernel might disable
-			   the RGX interrupt line which on some hypervisor environments will impact
-			   interrupt delivery to all the VMs sharing the PCI/RGX device.
-			*/
-			ui32LastIrqCount = ui32CurrentIrqCount;
-			return IMG_TRUE;
-		}
-		else if (ui32InterruptClear2)
-		{
-			/*
-			   The guest driver has been called with the RGX/PDP interrupt flag bits still
-			   pending so we need to determine if this is a back-to-back call. If not we
-			   give priority to the host driver to clear it else guest drivers does it.
-			   This can be due to guest VM/driver running ahead of host VM/driver for this
-			   interrupt event and/or the hypervisor scheduler has parked momentarily the
-			   host VM/driver whilst running the guest VM/driver across many cycles right
-			   up to this point.
-			*/
-			if (ui32IrqAckRetryClearCount < IRQ_ACK_RETRY_CLEAR_MAX)
-			{
-				/* NOTE: This assumes OS/kernel calls-back into this ISR a couple of times
-				   before giving-up and disabling the interrupt line if said interrupt
-				   line is still asserted after each ISR invocation */
-				ui32IrqAckRetryClearCount = ui32IrqAckRetryClearCount + 1;
-				return IMG_TRUE;
-			}
-
-			/*
-			   Now the race between the host/guest(s) driver here can result in two outcomes.
-			   First of which is that the loser(s) will clear the interrupt register after it
-			   has been cleared by the winner and before the device has raised another IRQ
-			   event - the effects of this should be benign. Second is that this write will
-			   happen after the device has raised another IRQ event - the effects of this is
-			   should be OK so long as the hypervisor delivers the corresponding vIRQ.
-			 */
-			ui32InterruptClear = ui32InterruptClear2;
-			ui32IrqAckRetryClearCount = 0;
 		}
 	}
 
@@ -412,7 +311,6 @@ static PVRSRV_ERROR SPI_Read(void *pvLinRegBaseAddr,
 {
 	IMG_UINT32 ui32Count = 0;
 	*pui32Value = 0;
-	PVRSRV_VZ_RET_IF_MODE(GUEST, PVRSRV_OK);
 
 	OSWriteHWReg32(pvLinRegBaseAddr,
 				   TCF_CLK_CTRL_TCF_SPI_MST_ADDR_RDNWR,
@@ -443,7 +341,6 @@ static void SPI_Write(void *pvLinRegBaseAddr,
 					  IMG_UINT32 ui32Offset,
 					  IMG_UINT32 ui32Value)
 {
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 	OSWriteHWReg32(pvLinRegBaseAddr, TCF_CLK_CTRL_TCF_SPI_MST_ADDR_RDNWR, ui32Offset);
 	OSWriteHWReg32(pvLinRegBaseAddr, TCF_CLK_CTRL_TCF_SPI_MST_WDATA, ui32Value);
 	OSWriteHWReg32(pvLinRegBaseAddr, TCF_CLK_CTRL_TCF_SPI_MST_GO, TCF_SPI_MST_GO_MASK);
@@ -494,7 +391,6 @@ static IMG_BOOL IsInterfaceAligned(IMG_UINT32 ui32Eyes,
 
 static IMG_UINT32 SAI_Read(void *base, IMG_UINT32 addr)
 {
-	PVRSRV_VZ_RET_IF_MODE(GUEST, 0);
 	OSWriteHWReg32(base, 0x300, 0x200 | addr);
 	OSWriteHWReg32(base, 0x318, 1);
 	return OSReadHWReg32(base, 0x310);
@@ -510,7 +406,6 @@ static PVRSRV_ERROR ApolloHardReset(SYS_DATA *psSysData)
 #endif
 	//This is required for SPI reset which is not yet implemented.
 	//IMG_UINT32 ui32AuxResetsN;
-	PVRSRV_VZ_RET_IF_MODE(GUEST, PVRSRV_OK);
 
 #if !defined(TC_APOLLO_BONNIE)
 	//power down
@@ -705,6 +600,10 @@ static PVRSRV_ERROR ApolloHardReset(SYS_DATA *psSysData)
 		PVR_LOG(("FPGA Release: %u.%02u", ui32RevID >> 8 & 0xf, ui32RevID & 0xff));
 	}
 
+	/* Clear all interrupts. Prevents interrupt storm if
+	   device was in bad state after PCI reset. */
+	OSWriteHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_INTERRUPT_CLEAR, (1 << INTERRUPT_MASTER_CLEAR_SHIFT));
+
 	return PVRSRV_OK;
 }
 
@@ -755,16 +654,8 @@ static PVRSRV_ERROR PCIInitDev(PVRSRV_DEVICE_CONFIG *psDevice, void *pvOSDevice)
 	IMG_CPU_PHYADDR	sApolloRegCpuPBase;
 	IMG_UINT32 uiApolloRegSize;
 	PVRSRV_ERROR eError;
-#if defined(TC_APOLLO_BONNIE)
-	IMG_UINT32 ui32Value;
-#endif
 
 	PVR_ASSERT(pvOSDevice);
-
-	if (psDevice->pvOSDevice)
-	{
-		return PVRSRV_ERROR_INVALID_DEVICE;
-	}
 
 #if defined(__linux__)
 	dma_set_mask(pvOSDevice, DMA_BIT_MASK(32));
@@ -893,7 +784,6 @@ static PVRSRV_ERROR PCIInitDev(PVRSRV_DEVICE_CONFIG *psDevice, void *pvOSDevice)
 		goto ErrorDeInitMemory;
 	}
 
-	psDevice->pvOSDevice = pvOSDevice;
 #if defined(SUPPORT_LMA_SUSPEND_TO_RAM) && defined(__x86_64__)
 	psSysData->psDevConfig = psDevice;
 #endif
@@ -936,9 +826,7 @@ PVRSRV_ERROR SysDebugInfo(PVRSRV_DEVICE_CONFIG *psDevice,
 	SYS_DATA		*psSysData = psDevice->hSysData;
 	IMG_UINT32		ui32RegVal;
 
-	PVR_DUMPDEBUG_LOG("------[ rgx_tc system debug ]------");
-
-	PVRSRV_VZ_RET_IF_MODE(GUEST, PVRSRV_OK);
+	PVR_DUMPDEBUG_LOG("------[ rgx_tc System Debug - Device ID:%u ]------", psDevice->psDevNode->sDevId.ui32InternalID);
 
 #if !defined(TC_APOLLO_BONNIE)
 	/* Read the temperature */
@@ -982,35 +870,10 @@ SysDebugInfo_exit:
 
 #define polrgx(reg,val,msk) pol(pvRegsBaseKM, reg, val, msk)
 
-#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
-/* Fake DVFS configuration used purely for testing purposes */
-
-static const IMG_OPP asOPPTable[] =
-{
-	{ 8,  25000000},
-	{ 16, 50000000},
-	{ 32, 75000000},
-	{ 64, 100000000},
-};
-
-#define LEVEL_COUNT (sizeof(asOPPTable) / sizeof(IMG_OPP))
-
-static void SetFrequency(IMG_UINT32 ui32Frequency)
-{
-	PVR_DPF((PVR_DBG_ERROR, "SetFrequency %u", ui32Frequency));
-}
-
-static void SetVoltage(IMG_UINT32 ui32Voltage)
-{
-	PVR_DPF((PVR_DBG_ERROR, "SetVoltage %u", ui32Voltage));
-}
-#endif
-
 static void SPI_Write(void *pvLinRegBaseAddr,
 					  IMG_UINT32 ui32Offset,
 					  IMG_UINT32 ui32Value)
 {
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 	OSWriteHWReg32(pvLinRegBaseAddr, TCF_CLK_CTRL_TCF_SPI_MST_ADDR_RDNWR, ui32Offset);
 	OSWriteHWReg32(pvLinRegBaseAddr, TCF_CLK_CTRL_TCF_SPI_MST_WDATA, ui32Value);
 	OSWriteHWReg32(pvLinRegBaseAddr, TCF_CLK_CTRL_TCF_SPI_MST_GO, TCF_SPI_MST_GO_MASK);
@@ -1024,7 +887,6 @@ static PVRSRV_ERROR SPI_Read(void *pvLinRegBaseAddr,
 {
 	IMG_UINT32 ui32Count = 0;
 	*pui32Value = ui32Count;
-	PVRSRV_VZ_RET_IF_MODE(NATIVE, PVRSRV_OK);
 
 	OSWriteHWReg32(pvLinRegBaseAddr,
 				   TCF_CLK_CTRL_TCF_SPI_MST_ADDR_RDNWR,
@@ -1059,7 +921,6 @@ static void RGXInitBistery(IMG_CPU_PHYADDR sRegisters, IMG_UINT32 ui32Size)
 	void *pvRegsBaseKM;
 	IMG_UINT instance;
 	IMG_UINT i;
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	pvRegsBaseKM = OSMapPhysToLin(sRegisters, ui32Size, PVRSRV_MEMALLOCFLAG_CPU_UNCACHED);
 
@@ -1265,7 +1126,6 @@ static void ApolloFPGAUpdateDUTClockFreq(SYS_DATA   *psSysData,
 {
 #if defined(SUPPORT_FPGA_DUT_CLK_INFO)
 	IMG_UINT32 ui32Reg;
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	/* DUT_CLK_INFO available only if SW_IF_VERSION >= 1 */
 	ui32Reg = OSReadHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_SW_IF_VERSION);
@@ -1301,7 +1161,6 @@ static PVRSRV_ERROR SetClocks(SYS_DATA *psSysData,
 	void *pvPLLRegCpuVBase;
 	IMG_UINT32 ui32Value;
 	PVRSRV_ERROR eError;
-	PVRSRV_VZ_RET_IF_MODE(GUEST, PVRSRV_OK);
 
 	/* Reserve the PLL register region and map the registers in */
 	eError = OSPCIRequestAddrRegion(psSysData->hRGXPCI, SYS_APOLLO_REG_PCI_BASENUM, SYS_APOLLO_REG_PLL_OFFSET, SYS_APOLLO_REG_PLL_SIZE);
@@ -1359,7 +1218,6 @@ static void ApolloHardReset(SYS_DATA *psSysData)
 {
 	IMG_UINT32 ui32Value;
 	IMG_UINT32 ui32PolValue;
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 #if defined(TC_APOLLO_TCF5)
 #if defined(TC_APOLLO_TCF5_BVNC_NOT_SUPPORTED)
@@ -1433,7 +1291,6 @@ static void SetMemoryLatency(SYS_DATA *psSysData)
 {
 	IMG_UINT32 ui32Latency = 0, ui32RegVal = 0;
 	PVRSRV_ERROR eError;
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	if (ui32MemReadLatency <= 4)
 	{
@@ -1497,11 +1354,6 @@ static PVRSRV_ERROR PCIInitDev(PVRSRV_DEVICE_CONFIG *psDevice, void *pvOSDevice)
 	PVRSRV_ERROR eError;
 
 	PVR_ASSERT(psDevice);
-
-	if (psDevice->pvOSDevice)
-	{
-		return PVRSRV_ERROR_INVALID_DEVICE;
-	}
 
 #if defined(__linux__)
 	dma_set_mask(pvOSDevice, DMA_BIT_MASK(32));
@@ -1623,7 +1475,6 @@ static PVRSRV_ERROR PCIInitDev(PVRSRV_DEVICE_CONFIG *psDevice, void *pvOSDevice)
 	((RGX_DATA *)psDevice->hDevData)->psRGXTimingInfo->ui32CoreClockSpeed = ui32CoreClockSpeed;
 	OSSleepms(600);
 #else
-	if (! PVRSRV_VZ_MODE_IS(GUEST))
 	{
 		IMG_UINT32 ui32Value;
 		/* Enable the rogue PLL (defaults to 3x), giving a Rogue clock of 3 x RGX_TC_CORE_CLOCK_SPEED */
@@ -1673,22 +1524,6 @@ static PVRSRV_ERROR PCIInitDev(PVRSRV_DEVICE_CONFIG *psDevice, void *pvOSDevice)
 				 __func__));
 		goto ErrorDeInitMemory;
 	}
-
-#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
-	/* Fake DVFS configuration used purely for testing purposes */
-	psDevice->sDVFS.sDVFSDeviceCfg.pasOPPTable = asOPPTable;
-	psDevice->sDVFS.sDVFSDeviceCfg.ui32OPPTableSize = LEVEL_COUNT;
-	psDevice->sDVFS.sDVFSDeviceCfg.pfnSetFrequency = SetFrequency;
-	psDevice->sDVFS.sDVFSDeviceCfg.pfnSetVoltage = SetVoltage;
-#endif
-#if defined(SUPPORT_LINUX_DVFS)
-	psDevice->sDVFS.sDVFSDeviceCfg.ui32PollMs = 1000;
-	psDevice->sDVFS.sDVFSDeviceCfg.bIdleReq = IMG_TRUE;
-	psDevice->sDVFS.sDVFSGovernorCfg.ui32UpThreshold = 90;
-	psDevice->sDVFS.sDVFSGovernorCfg.ui32DownDifferential = 10;
-#endif
-
-	psDevice->pvOSDevice = pvOSDevice;
 
 	return PVRSRV_OK;
 
@@ -1770,8 +1605,8 @@ size_t GetMemorySize(IMG_CPU_PHYADDR sMemCpuPhyAddr, IMG_UINT64 pciBarSize)
 	pvHostMapped = OSMapPhysToLin(sMemCpuPhyAddr, pciBarSize, PVRSRV_MEMALLOCFLAG_CPU_UNCACHED);
 	if (pvHostMapped == NULL)
 	{
-		PVR_DPF((PVR_DBG_ERROR, "%s: Cannot map PCI memory at phys 0x%"\
-				IMG_UINT64_FMTSPECx" for size 0x%"IMG_UINT64_FMTSPECx,\
+		PVR_DPF((PVR_DBG_ERROR, "%s: Cannot map PCI memory at phys 0x%"
+				IMG_UINT64_FMTSPECx" for size 0x%"IMG_UINT64_FMTSPECx,
 				__func__, (IMG_UINT64) sMemCpuPhyAddr.uiAddr, pciBarSize));
 	}
 	else
@@ -1791,7 +1626,7 @@ size_t GetMemorySize(IMG_CPU_PHYADDR sMemCpuPhyAddr, IMG_UINT64 pciBarSize)
 			mem_size <<= 1;     // double the offset we probe each time.
 		}
 		OSUnMapPhysToLin(pvHostMapped, pciBarSize);
-		PVR_DPF((PVR_DBG_MESSAGE, "%s: Local memory size 0x" IMG_SIZE_FMTSPECX " (PCI BAR size 0x%llx)", __func__, mem_size, pciBarSize));
+		PVR_DPF((PVR_DBG_MESSAGE, "%s: Local memory size 0x" IMG_SIZE_FMTSPECX " (PCI BAR size 0x%" IMG_UINT64_FMTSPECx ")", __func__, mem_size, pciBarSize));
 	}
 
 	return mem_size;
@@ -1873,8 +1708,9 @@ static PVRSRV_ERROR AcquireLocalMemory(SYS_DATA *psSysData, IMG_CPU_PHYADDR *psM
 	eError = OSPCIRequestAddrRegion(psSysData->hRGXPCI, SYS_DEV_MEM_PCI_BASENUM, 0, uiMemSize);
 	if (eError != PVRSRV_OK)
 	{
-		PVR_DPF((PVR_DBG_ERROR, "%s: Device memory region not available",
-				 __func__));
+		PVR_DPF((PVR_DBG_ERROR,
+				"%s: Device memory region not available - 0..0x%x",
+				 __func__, uiMemSize));
 		return eError;
 	}
 
@@ -1909,11 +1745,49 @@ static INLINE void ReleaseLocalMemory(SYS_DATA *psSysData, IMG_CPU_PHYADDR *psMe
 	OSPCIReleaseResourceMTRRs(psSysData->hRGXPCI, SYS_DEV_MEM_PCI_BASENUM);
 }
 
-static INLINE PVRSRV_ERROR InitLocalMemoryHeaps(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData)
+static inline
+IMG_CHAR* GetHeapName(PHYS_HEAP_USAGE_FLAGS ui32Flags)
 {
-	IMG_UINT64 ui64CardBase = 0;
+	if (BITMASK_HAS(ui32Flags,PHYS_HEAP_USAGE_GPU_LOCAL))   return "lma_gpu_local";
+	if (BITMASK_HAS(ui32Flags,PHYS_HEAP_USAGE_CPU_LOCAL))   return "lma_cpu_local";
+	if (BITMASK_HAS(ui32Flags,PHYS_HEAP_USAGE_GPU_PRIVATE)) return "lma_gpu_priv";
+	if (BITMASK_HAS(ui32Flags,PHYS_HEAP_USAGE_DISPLAY))     return "lma_gpu_display";
+	if (BITMASK_HAS(ui32Flags,PHYS_HEAP_USAGE_FW_SHARED))   return "lma_fw_shared";
+	else                                                    return "Unexpected Heap";
+}
+
+static void
+InitLocalHeap(PHYS_HEAP_CONFIG *psPhysHeap,
+			  IMG_UINT64 uiGpuPhysicalBaseAddr,
+			  IMG_UINT64 uiCpuPhysicalBaseAddr,
+			  IMG_UINT64 uiSize,
+			  IMG_HANDLE hPrivData,
+			  PHYS_HEAP_FUNCTIONS *psFuncs,
+			  PHYS_HEAP_USAGE_FLAGS ui32Flags)
+{
+	psPhysHeap->eType = PHYS_HEAP_TYPE_LMA;
+	psPhysHeap->ui32UsageFlags = ui32Flags;
+	psPhysHeap->uConfig.sLMA.pszPDumpMemspaceName = "LMA";
+	psPhysHeap->uConfig.sLMA.psMemFuncs = psFuncs;
+	psPhysHeap->uConfig.sLMA.pszHeapName = GetHeapName(ui32Flags);
+	psPhysHeap->uConfig.sLMA.sStartAddr.uiAddr = IMG_CAST_TO_CPUPHYADDR_UINT(uiCpuPhysicalBaseAddr);
+	psPhysHeap->uConfig.sLMA.sCardBase.uiAddr = uiGpuPhysicalBaseAddr;
+	psPhysHeap->uConfig.sLMA.uiSize = uiSize;
+	psPhysHeap->uConfig.sLMA.hPrivData = hPrivData;
+}
+
+static INLINE PVRSRV_ERROR InitLocalMemoryHeaps(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData, IMG_UINT32 *pui32HeapNumOut)
+{
+	IMG_UINT64 ui64GpuPhysicalBase = 0;
+	IMG_UINT64 ui64CpuPhysicalBase = 0;
+	IMG_UINT64 uiHeapSize;
+	IMG_UINT64 uiOrigHeapSize;
+	PHYS_HEAP_FUNCTIONS *psHeapFuncs;
 	IMG_UINT32 ui32HeapNum = 0;
 	PVRSRV_ERROR eError;
+	PHYS_HEAP_CONFIG *psPhysHeap = NULL;
+	IMG_UINT64 uiFwCarveoutSize;
+	IMG_UINT64 uiReserved;
 
 	eError = AcquireLocalMemory(psSysData, &psSysData->sLocalMemCpuPBase, &psSysData->uiLocalMemSize);
 	if (eError != PVRSRV_OK)
@@ -1921,57 +1795,102 @@ static INLINE PVRSRV_ERROR InitLocalMemoryHeaps(PVRSRV_DEVICE_CONFIG *psDevConfi
 		return eError;
 	}
 
-	if (! PVRSRV_VZ_MODE_IS(NATIVE))
+#if (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID)
+	ui64GpuPhysicalBase = psSysData->sLocalMemCpuPBase.uiAddr;
+	psHeapFuncs = &gsHybridPhysHeapFuncs;
+#else
+	ui64GpuPhysicalBase = 0U;
+	psHeapFuncs = &gsLocalPhysHeapFuncs;
+#endif
+
+	ui64CpuPhysicalBase = psSysData->sLocalMemCpuPBase.uiAddr;
+
+	uiOrigHeapSize = psSysData->uiLocalMemSize;
+
+	/* Set up the GPU physheap */
+	psPhysHeap = &psDevConfig->pasPhysHeaps[ui32HeapNum++];
+
+	/* Carveout out enough LMA memory to hold the heaps of all supported VMs */
+	uiFwCarveoutSize = (RGX_NUM_DRIVERS_SUPPORTED * RGX_FIRMWARE_RAW_HEAP_SIZE);
+
+#if defined(SUPPORT_AUTOVZ)
+	/* Increase carveout size to be able to hold the FW page tables section at the end */
+	uiFwCarveoutSize += RGX_FIRMWARE_MAX_PAGETABLE_SIZE;
+#endif
+
+	uiReserved = uiFwCarveoutSize;
+#if defined(SUPPORT_DISPLAY_CLASS)
+	uiReserved += RGX_TC_RESERVE_DC_MEM_SIZE;
+#endif
+
+	uiHeapSize = SysRestrictGpuLocalPhysheap(uiOrigHeapSize);
+
+	if (uiOrigHeapSize != uiHeapSize)
 	{
-		/* In VZ mode, allocate LMA space for the shared cross-VM information page */
-		psSysData->pui32IRQCount = (void*) OSMapPhysToLin(psSysData->sLocalMemCpuPBase,
-		                                                  (IMG_UINT64)VM_INFOPG_SIZE,
-		                                                  PVRSRV_MEMALLOCFLAG_CPU_UNCACHED);
-		if (psSysData->pui32IRQCount == NULL)
-		{
-			PVR_DPF((PVR_DBG_ERROR, "%s: Failed to map local memory page",
-					__func__));
-			return PVRSRV_ERROR_MAPPING_NOT_FOUND;
-		}
+		IMG_UINT64 uiPrivHeapSize = uiOrigHeapSize - (uiHeapSize + uiReserved);
 
-		/* Initialise the only cross-VM information page entry to zero */
-		(void) OSAtomicWrite((void*)psSysData->pui32IRQCount, 0);
+		InitLocalHeap(psPhysHeap,
+					  ui64GpuPhysicalBase,
+					  0,
+					  uiPrivHeapSize,
+					  &psSysData->sLocalMemCpuPBase.uiAddr,
+					  psHeapFuncs,
+					  PHYS_HEAP_USAGE_GPU_PRIVATE);
 
-		/* Update LMA memory range spec. to reflect above deduction */
-		psSysData->uiLocalMemSize -= (IMG_UINT64)VM_INFOPG_SIZE;
-		ui64CardBase = (IMG_UINT64)VM_INFOPG_SIZE;
+		psPhysHeap = &psDevConfig->pasPhysHeaps[ui32HeapNum++];
+		ui64CpuPhysicalBase += uiPrivHeapSize;
+		ui64GpuPhysicalBase += uiPrivHeapSize;
+	}
+	else
+	{
+		uiHeapSize -= uiReserved;
 	}
 
-	/* Setup the Rogue LMA heap */
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sStartAddr.uiAddr =
-			psSysData->sLocalMemCpuPBase.uiAddr;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sCardBase.uiAddr =
-#if (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID)
-			psSysData->sLocalMemCpuPBase.uiAddr +
-#endif
-			ui64CardBase;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].uiSize =
-			psSysData->uiLocalMemSize
-#if defined(SUPPORT_DISPLAY_CLASS)
-			- RGX_TC_RESERVE_DC_MEM_SIZE
-#endif
-			;
-	ui32HeapNum++;
 
+	InitLocalHeap(psPhysHeap,
+				  ui64GpuPhysicalBase,
+				  ui64CpuPhysicalBase,
+				  uiHeapSize,
+				  &psSysData->sLocalMemCpuPBase.uiAddr,
+				  psHeapFuncs,
+				  PHYS_HEAP_USAGE_GPU_LOCAL);
+
+	/* Set up the Firmware physheap */
+	psPhysHeap = &psDevConfig->pasPhysHeaps[ui32HeapNum++];
+	ui64CpuPhysicalBase += uiHeapSize;
+	ui64GpuPhysicalBase += uiHeapSize;
+
+	/* The Fw Carveout can hold the heaps of all supported VMs,
+	 * but this Fw physheap is declared for one OS only.*/
+	uiHeapSize = RGX_FIRMWARE_RAW_HEAP_SIZE;
+
+	InitLocalHeap(psPhysHeap,
+				  ui64GpuPhysicalBase,
+				  ui64CpuPhysicalBase,
+				  uiHeapSize,
+				  &psSysData->sLocalMemCpuPBase.uiAddr,
+				  psHeapFuncs,
+				  PHYS_HEAP_USAGE_FW_SHARED);
 
 #if defined(SUPPORT_DISPLAY_CLASS)
-	/* Setup the DC heap */
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sStartAddr.uiAddr =
-		psDevConfig->pasPhysHeaps[ui32HeapNum - 1].sStartAddr.uiAddr +
-		ui64CardBase + psDevConfig->pasPhysHeaps[ui32HeapNum - 1].uiSize;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sCardBase.uiAddr =
-#if (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID)
-		psSysData->sLocalMemCpuPBase.uiAddr +
+	/* Set up the DC heap */
+	psPhysHeap = &psDevConfig->pasPhysHeaps[ui32HeapNum++];
+
+	ui64CpuPhysicalBase += uiHeapSize;
+	ui64GpuPhysicalBase += uiHeapSize;
+
+	uiHeapSize = RGX_TC_RESERVE_DC_MEM_SIZE;
+
+	InitLocalHeap(psPhysHeap,
+				  ui64GpuPhysicalBase,
+				  ui64CpuPhysicalBase,
+				  uiHeapSize,
+				  &psSysData->sLocalMemCpuPBase.uiAddr,
+				  psHeapFuncs,
+				  PHYS_HEAP_USAGE_DISPLAY);
 #endif
-		ui64CardBase + psDevConfig->pasPhysHeaps[ui32HeapNum - 1].uiSize;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].uiSize = RGX_TC_RESERVE_DC_MEM_SIZE;
-	ui32HeapNum++;
-#endif
+
+	*pui32HeapNumOut = ui32HeapNum;
 
 	return PVRSRV_OK;
 }
@@ -1980,24 +1899,20 @@ static INLINE void DeInitLocalMemoryHeaps(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS
 {
 	IMG_UINT32 ui32HeapNum = 0;
 
-	if (! PVRSRV_VZ_MODE_IS(NATIVE))
-	{
-		OSUnMapPhysToLin(psSysData->pui32IRQCount, VM_INFOPG_SIZE);
-	}
-
 	ReleaseLocalMemory(psSysData, &psSysData->sLocalMemCpuPBase, psSysData->uiLocalMemSize);
 
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sStartAddr.uiAddr = 0;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sCardBase.uiAddr = 0;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].uiSize = 0;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sLMA.sStartAddr.uiAddr = 0;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sLMA.sCardBase.uiAddr = 0;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sLMA.uiSize = 0;
 	ui32HeapNum++;
 
 #if defined(SUPPORT_DISPLAY_CLASS)
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sStartAddr.uiAddr = 0;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].sCardBase.uiAddr = 0;
-	psDevConfig->pasPhysHeaps[ui32HeapNum].uiSize = 0;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sLMA.sStartAddr.uiAddr = 0;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sLMA.sCardBase.uiAddr = 0;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sLMA.uiSize = 0;
 	ui32HeapNum++;
 #endif
+
 }
 #endif /* (TC_MEMORY_CONFIG == TC_MEMORY_LOCAL) || (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID) */
 
@@ -2005,16 +1920,16 @@ static INLINE void DeInitLocalMemoryHeaps(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS
 static PVRSRV_ERROR InitLocalMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData)
 {
 	IMG_UINT32 ui32Value;
+	IMG_UINT32 ui32HeapNum = 0;
 	PVRSRV_ERROR eError;
 
-	eError = InitLocalMemoryHeaps(psDevConfig, psSysData);
+	eError = InitLocalMemoryHeaps(psDevConfig, psSysData, &ui32HeapNum);
 	if (eError != PVRSRV_OK)
 	{
 		return eError;
 	}
 
-	/* No additional setup needed by guests drivers */
-	PVRSRV_VZ_RET_IF_MODE(GUEST, PVRSRV_OK);
+	PVR_LOG_RETURN_IF_INVALID_PARAM((ui32HeapNum == psDevConfig->ui32PhysHeapCount), "psDevConfig->ui32PhysHeapCount");
 
 	/* Configure Apollo for regression compatibility (i.e. local memory) mode */
 	ui32Value = OSReadHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_TEST_CTRL);
@@ -2032,7 +1947,6 @@ static PVRSRV_ERROR InitLocalMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA 
 static void DeInitLocalMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData)
 {
 	DeInitLocalMemoryHeaps(psDevConfig, psSysData);
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	/* Set the register back to the default value */
 	OSWriteHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_TEST_CTRL, 0x1 << ADDRESS_FORCE_SHIFT);
@@ -2046,7 +1960,13 @@ static PVRSRV_ERROR InitHostMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *
 {
 	IMG_UINT32 ui32Value;
 	PVR_UNREFERENCED_PARAMETER(psDevConfig);
-	PVRSRV_VZ_RET_IF_MODE(GUEST, PVRSRV_OK);
+
+	psDevConfig->pasPhysHeaps[0].eType = PHYS_HEAP_TYPE_UMA;
+	psDevConfig->pasPhysHeaps[0].ui32UsageFlags = PHYS_HEAP_USAGE_GPU_LOCAL;
+	psDevConfig->pasPhysHeaps[0].uConfig.sUMA.pszPDumpMemspaceName = "SYSMEM";
+	psDevConfig->pasPhysHeaps[0].uConfig.sUMA.psMemFuncs = &gsSystemPhysHeapFuncs;
+	psDevConfig->pasPhysHeaps[0].uConfig.sUMA.pszHeapName = "uma_gpu_local";
+	psDevConfig->pasPhysHeaps[0].uConfig.sUMA.hPrivData = (IMG_HANDLE)psDevConfig;
 
 	/* Configure Apollo for host only mode */
 	ui32Value = OSReadHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_TEST_CTRL);
@@ -2064,7 +1984,6 @@ static PVRSRV_ERROR InitHostMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *
 static void DeInitHostMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData)
 {
 	PVR_UNREFERENCED_PARAMETER(psDevConfig);
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	/* Set the register back to the default value */
 	OSWriteHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_TEST_CTRL, 0x1 << ADDRESS_FORCE_SHIFT);
@@ -2077,16 +1996,23 @@ static void DeInitHostMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysD
 static PVRSRV_ERROR InitHybridMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData)
 {
 	IMG_UINT32 ui32Value;
+	IMG_UINT32 ui32HeapNum = 0;
 	PVRSRV_ERROR eError;
 
-	eError = InitLocalMemoryHeaps(psDevConfig, psSysData);
+	eError = InitLocalMemoryHeaps(psDevConfig, psSysData, &ui32HeapNum);
 	if (eError != PVRSRV_OK)
 	{
 		return eError;
 	}
 
-	/* No additional setup needed for guest driver(s) */
-	PVRSRV_VZ_RET_IF_MODE(GUEST, PVRSRV_OK);
+	psDevConfig->pasPhysHeaps[ui32HeapNum].eType = PHYS_HEAP_TYPE_UMA;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].ui32UsageFlags = PHYS_HEAP_USAGE_CPU_LOCAL;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sUMA.pszPDumpMemspaceName = "SYSMEM";
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sUMA.psMemFuncs = &gsHybridPhysHeapFuncs;
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sUMA.pszHeapName = "uma_cpu_local";
+	psDevConfig->pasPhysHeaps[ui32HeapNum].uConfig.sUMA.hPrivData = (IMG_HANDLE)psDevConfig;
+
+	PVR_LOG_RETURN_IF_INVALID_PARAM((++ui32HeapNum == psDevConfig->ui32PhysHeapCount), "psDevConfig->ui32PhysHeapCount");
 
 	/* No additional setup needed for the Rogue UMA heap */
 
@@ -2122,7 +2048,6 @@ static PVRSRV_ERROR InitHybridMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA
 static void DeInitHybridMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData)
 {
 	DeInitLocalMemoryHeaps(psDevConfig, psSysData);
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	/* Set the register back to the default value */
 	OSWriteHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_TEST_CTRL, 0x1 << ADDRESS_FORCE_SHIFT);
@@ -2135,7 +2060,46 @@ static void DeInitHybridMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSy
 
 static PVRSRV_ERROR InitMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSysData)
 {
+	IMG_UINT32 uiHeapCount = 1;			/* GPU heap present by default */
+	PHYS_HEAP_CONFIG *pasPhysHeaps;
 	PVRSRV_ERROR eError = PVRSRV_OK;
+
+#if (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID)
+	/* additional UMA heap required on hybrid systems */
+	uiHeapCount++;
+#endif
+
+#if (TC_MEMORY_CONFIG != TC_MEMORY_HOST)
+	/* LMA systems use a dedicated Fw heap alongside the GPU heap */
+	uiHeapCount++;
+#endif
+
+#if defined(SUPPORT_DISPLAY_CLASS) && (TC_MEMORY_CONFIG != TC_MEMORY_HOST)
+	/* DC heap */
+	uiHeapCount++;
+#endif
+
+	/* Check if we are restricting the GPU_LOCAL heap, if so add
+	 * another heap for GPU_PRIVATE
+	 */
+	if (SysRestrictGpuLocalAddPrivateHeap())
+	{
+		uiHeapCount++;
+		psDevConfig->bHasNonMappableLocalMemory = IMG_TRUE;
+	}
+	else
+	{
+		psDevConfig->bHasNonMappableLocalMemory = IMG_FALSE;
+	}
+
+	pasPhysHeaps = OSAllocZMem(sizeof(*pasPhysHeaps) * uiHeapCount);
+	if (!pasPhysHeaps)
+	{
+		return PVRSRV_ERROR_OUT_OF_MEMORY;
+	}
+
+	psDevConfig->pasPhysHeaps = pasPhysHeaps;
+	psDevConfig->ui32PhysHeapCount = uiHeapCount;
 
 #if (TC_MEMORY_CONFIG == TC_MEMORY_LOCAL)
 	eError = InitLocalMemory(psDevConfig, psSysData);
@@ -2144,6 +2108,10 @@ static PVRSRV_ERROR InitMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psSy
 #elif (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID)
 	eError = InitHybridMemory(psDevConfig, psSysData);
 #endif
+	if (eError != PVRSRV_OK)
+	{
+		OSFreeMem(pasPhysHeaps);
+	}
 
 	return eError;
 }
@@ -2157,12 +2125,13 @@ static INLINE void DeInitMemory(PVRSRV_DEVICE_CONFIG *psDevConfig, SYS_DATA *psS
 #elif (TC_MEMORY_CONFIG == TC_MEMORY_HYBRID)
 	DeInitHybridMemory(psDevConfig, psSysData);
 #endif
+
+	OSFreeMem(psDevConfig->pasPhysHeaps);
 }
 
 static void EnableInterrupt(SYS_DATA *psSysData, IMG_UINT32 ui32InterruptFlag)
 {
 	IMG_UINT32 ui32Value;
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	/* Set sense to active high */
 	ui32Value = OSReadHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_INTERRUPT_OP_CFG);
@@ -2186,7 +2155,6 @@ static void EnableInterrupt(SYS_DATA *psSysData, IMG_UINT32 ui32InterruptFlag)
 static void DisableInterrupt(SYS_DATA *psSysData, IMG_UINT32 ui32InterruptFlag)
 {
 	IMG_UINT32 ui32Value;
-	PVRSRV_VZ_RETN_IF_MODE(GUEST);
 
 	ui32Value = OSReadHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_INTERRUPT_ENABLE);
 	ui32Value &= ~(ui32InterruptFlag);
@@ -2195,6 +2163,15 @@ static void DisableInterrupt(SYS_DATA *psSysData, IMG_UINT32 ui32InterruptFlag)
 	/* Flush register write */
 	(void)OSReadHWReg32(psSysData->pvSystemRegCpuVBase, TCF_CLK_CTRL_INTERRUPT_ENABLE);
 	OSWaitus(10);
+}
+
+static void DeviceConfigDestroy(PVRSRV_DEVICE_CONFIG *psDevConfig)
+{
+	RGX_DATA *psRGXData = (RGX_DATA *)psDevConfig->hDevData;
+
+	OSFreeMem(psRGXData->psRGXTimingInfo);
+	OSFreeMem(psRGXData);
+	OSFreeMem(psDevConfig);
 }
 
 static void PCIDeInitDev(PVRSRV_DEVICE_CONFIG *psDevice)
@@ -2236,16 +2213,16 @@ static void TCLocalCpuPAddrToDevPAddr(IMG_HANDLE hPrivData,
 					  IMG_DEV_PHYADDR *psDevPAddr,
 					  IMG_CPU_PHYADDR *psCpuPAddr)
 {
-	PVRSRV_DEVICE_CONFIG *psDevConfig = (PVRSRV_DEVICE_CONFIG *)hPrivData;
+	IMG_UINT64 uiAddr = *((IMG_UINT64*)hPrivData);
 
 	/* Optimise common case */
-	psDevPAddr[0].uiAddr = psCpuPAddr[0].uiAddr - psDevConfig->pasPhysHeaps[PVRSRV_PHYS_HEAP_GPU_LOCAL].sStartAddr.uiAddr;
+	psDevPAddr[0].uiAddr = psCpuPAddr[0].uiAddr - uiAddr;
 	if (ui32NumOfAddr > 1)
 	{
 		IMG_UINT32 ui32Idx;
 		for (ui32Idx = 1; ui32Idx < ui32NumOfAddr; ++ui32Idx)
 		{
-			psDevPAddr[ui32Idx].uiAddr = psCpuPAddr[ui32Idx].uiAddr - psDevConfig->pasPhysHeaps[PVRSRV_PHYS_HEAP_GPU_LOCAL].sStartAddr.uiAddr;
+			psDevPAddr[ui32Idx].uiAddr = psCpuPAddr[ui32Idx].uiAddr - uiAddr;
 		}
 	}
 }
@@ -2255,16 +2232,16 @@ static void TCLocalDevPAddrToCpuPAddr(IMG_HANDLE hPrivData,
 					  IMG_CPU_PHYADDR *psCpuPAddr,
 					  IMG_DEV_PHYADDR *psDevPAddr)
 {
-	PVRSRV_DEVICE_CONFIG *psDevConfig = (PVRSRV_DEVICE_CONFIG *)hPrivData;
+	IMG_UINT64 uiAddr = *((IMG_UINT64*)hPrivData);
 
 	/* Optimise common case */
-	psCpuPAddr[0].uiAddr = psDevPAddr[0].uiAddr + psDevConfig->pasPhysHeaps[PVRSRV_PHYS_HEAP_GPU_LOCAL].sStartAddr.uiAddr;
+	psCpuPAddr[0].uiAddr = psDevPAddr[0].uiAddr + uiAddr;
 	if (ui32NumOfAddr > 1)
 	{
 		IMG_UINT32 ui32Idx;
 		for (ui32Idx = 1; ui32Idx < ui32NumOfAddr; ++ui32Idx)
 		{
-			psCpuPAddr[ui32Idx].uiAddr = psDevPAddr[ui32Idx].uiAddr + psDevConfig->pasPhysHeaps[PVRSRV_PHYS_HEAP_GPU_LOCAL].sStartAddr.uiAddr;
+			psCpuPAddr[ui32Idx].uiAddr = psDevPAddr[ui32Idx].uiAddr + uiAddr;
 		}
 	}
 }
@@ -2392,7 +2369,7 @@ static PVRSRV_ERROR PrePower(IMG_HANDLE hSysData,
 	/* The transition might be both from ON or OFF states to OFF state so check
 	 * only for the *new* state. Also this is only valid for suspend requests. */
 	if (eNewPowerState != PVRSRV_SYS_POWER_STATE_OFF ||
-	    !BITMASK_HAS(ePwrFlags, PVRSRV_POWER_FLAGS_SUSPEND_REQ))
+	    !BITMASK_HAS(ePwrFlags, PVRSRV_POWER_FLAGS_OSPM_SUSPEND_REQ))
 	{
 		return PVRSRV_OK;
 	}
@@ -2410,7 +2387,7 @@ static PVRSRV_ERROR PrePower(IMG_HANDLE hSysData,
 	/* dump video RAM content to system RAM */
 
 	eError = LMA_HeapIteratorCreate(psSysData->psDevConfig->psDevNode,
-	                                PHYS_HEAP_USAGE_GPU_LOCAL,
+	                                PVRSRV_PHYS_HEAP_GPU_LOCAL,
 	                                &psSysData->psHeapIter);
 	PVR_LOG_GOTO_IF_ERROR(eError, "LMA_HeapIteratorCreate", enable_interrupts);
 
@@ -2514,7 +2491,7 @@ static PVRSRV_ERROR PostPower(IMG_HANDLE hSysData,
 	/* The transition might be both to ON or OFF states from OFF state so check
 	 * only for the *current* state. Also this is only valid for resume requests. */
 	if ((eCurrentPowerState != eNewPowerState && eCurrentPowerState != PVRSRV_SYS_POWER_STATE_OFF) ||
-	    !BITMASK_HAS(ePwrFlags, PVRSRV_POWER_FLAGS_RESUME_REQ))
+	    !BITMASK_HAS(ePwrFlags, PVRSRV_POWER_FLAGS_OSPM_RESUME_REQ))
 	{
 		return PVRSRV_OK;
 	}
@@ -2577,7 +2554,7 @@ static PVRSRV_ERROR PostPower(IMG_HANDLE hSysData,
 	/* reset DC devices */
 	{
 		PVRSRV_DEVICE_NODE *psDevNode = psSysData->psDevConfig->psDevNode;
-		IMG_UINT32 uiDeviceCount = 0, auiDeviceIndex[16];
+		IMG_UINT32 uiDeviceCount = 0, auiDeviceIndex[PVRSRV_MAX_DEVICES];
 
 		eError = DCDevicesEnumerate(NULL, psDevNode, ARRAY_SIZE(auiDeviceIndex),
 		                            &uiDeviceCount, auiDeviceIndex);
@@ -2612,20 +2589,128 @@ free_buffer:
 }
 #endif /* defined(SUPPORT_LMA_SUSPEND_TO_RAM) && defined(__x86_64__) */
 
+static PVRSRV_ERROR DeviceConfigCreate(void *pvOSDevice,
+									   PVRSRV_DEVICE_CONFIG **ppsDevConfigOut)
+{
+	PVRSRV_DEVICE_CONFIG *psDevConfig;
+	RGX_DATA *psRGXData;
+	RGX_TIMING_INFORMATION *psRGXTimingInfo;
+#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
+	int i;
+	IMG_DVFS_DEVICE_CFG *psDVFSDeviceCfg;
+#endif
+#if defined(SUPPORT_LINUX_DVFS)
+	IMG_DVFS_GOVERNOR_CFG *psDVFSGovernorCfg;
+#endif
+
+	psDevConfig = OSAllocZMem(sizeof(*psDevConfig));
+	if (!psDevConfig)
+	{
+		return PVRSRV_ERROR_OUT_OF_MEMORY;
+	}
+
+	psRGXData = OSAllocZMem(sizeof(*psRGXData));
+	if (!psRGXData)
+	{
+		OSFreeMem(psDevConfig);
+		return PVRSRV_ERROR_OUT_OF_MEMORY;
+	}
+
+	psRGXTimingInfo = OSAllocZMem(sizeof(*psRGXTimingInfo));
+	if (!psRGXTimingInfo)
+	{
+		OSFreeMem(psRGXData);
+		OSFreeMem(psDevConfig);
+		return PVRSRV_ERROR_OUT_OF_MEMORY;
+	}
+
+	/* Set up the RGX timing information */
+	psRGXTimingInfo->ui32CoreClockSpeed = ui32CoreClockSpeed;
+
+#if defined(SUPPORT_AUTOVZ)
+	/* The AutoVz driver enables a virtualisation watchdog not compatible with APM */
+	psRGXTimingInfo->bEnableActivePM = IMG_FALSE;
+#else
+	psRGXTimingInfo->bEnableActivePM = IMG_TRUE;
+#endif
+	psRGXTimingInfo->bEnableRDPowIsland = IMG_FALSE;
+	psRGXTimingInfo->ui32ActivePMLatencyms = SYS_RGX_ACTIVE_POWER_LATENCY_MS;
+
+	/* Set up the RGX data */
+	psRGXData->psRGXTimingInfo = psRGXTimingInfo;
+
+	psDevConfig->pvOSDevice = pvOSDevice;
+	psDevConfig->pszName = TC_SYSTEM_NAME;
+
+	psDevConfig->eDefaultHeap = PVRSRV_PHYS_HEAP_GPU_LOCAL;
+
+	psDevConfig->eCacheSnoopingMode = PVRSRV_DEVICE_SNOOP_NONE;
+	psDevConfig->bHasFBCDCVersion31 = IMG_FALSE;
+
+	/* Only required for LMA but having this always set shouldn't be a problem */
+	psDevConfig->bDevicePA0IsValid	= IMG_TRUE,
+
+	psDevConfig->hDevData = psRGXData;
+	psDevConfig->hSysData = NULL;
+
+	psDevConfig->pfnSysDevFeatureDepInit = NULL;
+
+	/* device error notify callback function */
+	psDevConfig->pfnSysDevErrorNotify = NULL;
+
+#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
+	psDVFSDeviceCfg = &psDevConfig->sDVFS.sDVFSDeviceCfg;
+
+	PVR_DPF((PVR_DBG_MESSAGE,"--- OPP Table ---"));
+	for (i = (LEVEL_COUNT - 1); i>=0; i--)
+	{
+		PVR_DPF((PVR_DBG_MESSAGE,
+		         "%u/%u",
+		         g_asOPPTable[i].ui32Volt,
+		         g_asOPPTable[i].ui32Freq));
+	}
+
+	/* Fake DVFS configuration used purely for testing purposes */
+	psDVFSDeviceCfg->pasOPPTable = g_asOPPTable;
+	psDVFSDeviceCfg->ui32OPPTableSize = LEVEL_COUNT;
+	psDVFSDeviceCfg->pfnSetFrequency = SetFrequency;
+	psDVFSDeviceCfg->pfnSetVoltage = SetVoltage;
+#endif
+#if defined(SUPPORT_LINUX_DVFS)
+	psDVFSDeviceCfg->ui32PollMs = 1000;
+	psDVFSDeviceCfg->bIdleReq = IMG_TRUE;
+
+	psDVFSGovernorCfg = &psDevConfig->sDVFS.sDVFSGovernorCfg;
+	psDVFSGovernorCfg->ui32UpThreshold = 90;
+	psDVFSGovernorCfg->ui32DownDifferential = 10;
+#endif
+
+	*ppsDevConfigOut = psDevConfig;
+
+	return PVRSRV_OK;
+}
+
 PVRSRV_ERROR SysDevInit(void *pvOSDevice, PVRSRV_DEVICE_CONFIG **ppsDevConfig)
 {
-	PVRSRV_DEVICE_CONFIG *psDevConfig = &gsDevices[0];
+	PVRSRV_DEVICE_CONFIG *psDevConfig;
 	PVRSRV_ERROR eError;
 
-	eError = PCIInitDev(psDevConfig, pvOSDevice);
+	eError = DeviceConfigCreate(pvOSDevice, &psDevConfig);
 	if (eError != PVRSRV_OK)
 	{
 		return eError;
 	}
 
+	eError = PCIInitDev(psDevConfig, pvOSDevice);
+	if (eError != PVRSRV_OK)
+	{
+		DeviceConfigDestroy(psDevConfig);
+
+		return eError;
+	}
+
 	/* Set psDevConfig->pfnSysDevErrorNotify callback */
 	psDevConfig->pfnSysDevErrorNotify = SysRGXErrorNotify;
-	psDevConfig->eDefaultHeap = PVRSRV_PHYS_HEAP_GPU_LOCAL;
 
 #if defined(SUPPORT_LMA_SUSPEND_TO_RAM) && defined(__x86_64__)
 	/* power functions */
@@ -2641,6 +2726,8 @@ PVRSRV_ERROR SysDevInit(void *pvOSDevice, PVRSRV_DEVICE_CONFIG **ppsDevConfig)
 void SysDevDeInit(PVRSRV_DEVICE_CONFIG *psDevConfig)
 {
 	PCIDeInitDev(psDevConfig);
+
+	DeviceConfigDestroy(psDevConfig);
 }
 
 PVRSRV_ERROR SysInstallDeviceLISR(IMG_HANDLE hSysData,

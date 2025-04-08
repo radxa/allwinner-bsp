@@ -6,7 +6,6 @@
  * Maxime Ripard <maxime.ripard@free-electrons.com>
  */
 
-#include <sunxi-log.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/iopoll.h>
@@ -14,18 +13,28 @@
 #include <linux/syscore_ops.h>
 #include <linux/module.h>
 #include <linux/clkdev.h>
+#include <linux/delay.h>
 #include <sunxi-autogen.h>
 #include "ccu_common.h"
 #include "ccu_gate.h"
 #include "ccu_reset.h"
 #include "ccu_nm.h"
 
+#define SUNXI_CCU_COMMON_VERSION	"1.2.4"
+
 static DEFINE_SPINLOCK(ccu_lock);
 
+#if (defined CONFIG_AW_FPGA_BOARD)
+void ccu_helper_wait_for_lock(struct ccu_common *common, u32 lock)
+{
+}
+#else
 void ccu_helper_wait_for_lock(struct ccu_common *common, u32 lock)
 {
 	void __iomem *addr;
-	u32 reg;
+	__maybe_unused u32 reg;
+	__maybe_unused int read_times = 0;
+	__maybe_unused int lock_times = 0;
 
 	if (!lock)
 		return;
@@ -35,9 +44,37 @@ void ccu_helper_wait_for_lock(struct ccu_common *common, u32 lock)
 	else
 		addr = common->base + common->reg;
 
-	WARN_ON(readl_relaxed_poll_timeout(addr, reg, reg & lock, 100, 70000));
-}
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	/*
+	 * Judge the lock status every 3us, if lock, lock_times +1, when lock_times is 3,
+	 * indicates that the current pll is basically stable. if not lock, print err msg.
+	*/
+	while (read_times != 100 && lock_times != 3) {
+		if (readl(addr) & lock)
+			lock_times += 1;
+		else
+			lock_times = 0;
 
+		udelay(3);
+
+		read_times += 1;
+	}
+
+	if (lock_times == 3)
+		udelay(20);
+	else
+		WARN(1, " %s fail to wait lock, please check if pll rate in vco range!\n", clk_hw_get_name(&common->hw));
+#else
+	WARN_ON(readl_relaxed_poll_timeout(addr, reg, reg & lock, 100, 70000));
+#endif
+}
+#endif
+
+#if (defined CONFIG_AW_FPGA_BOARD)
+void ccu_helper_wait_for_clear(struct ccu_common *common, u32 clear)
+{
+}
+#else
 void ccu_helper_wait_for_clear(struct ccu_common *common, u32 clear)
 {
 	void __iomem *addr;
@@ -52,6 +89,7 @@ void ccu_helper_wait_for_clear(struct ccu_common *common, u32 clear)
 
 	WARN_ON(readl_relaxed_poll_timeout_atomic(addr, reg, !(reg & clear), 100, 10000));
 }
+#endif
 EXPORT_SYMBOL_GPL(ccu_helper_wait_for_clear);
 
 /*
@@ -124,6 +162,19 @@ static void ccu_save(void __iomem *base, struct ccu_reg_dump *rd,
 		rd->value = readl(base + rd->offset);
 }
 
+static void ccu_restore_with_value(void __iomem *base,
+			const struct ccu_reg_dump *rd,
+			unsigned int num_regs)
+{
+	unsigned int reg, restore_reg;
+
+	for (; num_regs > 0; --num_regs, ++rd) {
+		reg = readl(base + rd->offset);
+		restore_reg = rd->value | reg;
+		writel(restore_reg, base + rd->offset);
+	}
+}
+
 static void ccu_restore(void __iomem *base,
 			const struct ccu_reg_dump *rd,
 			unsigned int num_regs)
@@ -155,12 +206,9 @@ static int ccu_suspend(void)
 {
 	struct sunxi_clock_reg_cache *reg_cache;
 
-	list_for_each_entry(reg_cache, &ccu_reg_cache_list, node) {
+	list_for_each_entry(reg_cache, &ccu_reg_cache_list, node)
 		ccu_save(reg_cache->reg_base, reg_cache->rdump,
 			 reg_cache->rd_num);
-		ccu_restore(reg_cache->reg_base, reg_cache->rsuspend,
-			    reg_cache->rsuspend_num);
-	}
 	return 0;
 }
 
@@ -168,9 +216,12 @@ static void ccu_resume(void)
 {
 	struct sunxi_clock_reg_cache *reg_cache;
 
-	list_for_each_entry(reg_cache, &ccu_reg_cache_list, node)
+	list_for_each_entry(reg_cache, &ccu_reg_cache_list, node) {
 		ccu_restore(reg_cache->reg_base, reg_cache->rdump,
 				reg_cache->rd_num);
+		ccu_restore_with_value(reg_cache->reg_base, reg_cache->rsuspend,
+			    reg_cache->rsuspend_num);
+	}
 }
 
 static struct syscore_ops sunxi_clk_syscore_ops = {
@@ -266,7 +317,7 @@ int sunxi_ccu_probe(struct device_node *node, void __iomem *reg,
 		ret = of_clk_hw_register(node, hw);
 
 /* add this CONFIG for clk SATA */
-#ifdef CONFIG_AW_CCU_DEBUG
+#if IS_ENABLED(CONFIG_AW_CCU_DEBUG)
 		clk_hw_register_clkdev(hw, name, NULL);
 #endif
 
@@ -301,6 +352,7 @@ int sunxi_ccu_probe(struct device_node *node, void __iomem *reg,
 
 	sunxi_info(NULL, "%s: sunxi ccu init OK\n", node->name);
 
+	sunxi_info_once(NULL, "sunxi ccu common driver version: %s\n", SUNXI_CCU_COMMON_VERSION);
 	return 0;
 
 err_of_clk_unreg:
@@ -367,6 +419,30 @@ int ccu_is_sdm_enabled(struct clk *clk)
 }
 EXPORT_SYMBOL_GPL(ccu_is_sdm_enabled);
 
+unsigned int ccu_get_table_div(const struct clk_div_table *table,
+							unsigned int val)
+{
+	const struct clk_div_table *clkt;
+
+	for (clkt = table; clkt->div; clkt++)
+		if (clkt->val == val)
+			return clkt->div;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ccu_get_table_div);
+
+unsigned int ccu_get_table_val(const struct clk_div_table *table,
+							unsigned int div)
+{
+	const struct clk_div_table *clkt;
+
+	for (clkt = table; clkt->div; clkt++)
+		if (clkt->div == div)
+			return clkt->val;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ccu_get_table_val);
+
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.1.7");
+MODULE_VERSION(SUNXI_CCU_COMMON_VERSION);
 MODULE_AUTHOR("rengaomin<rengaomin@allwinnertech.com>");

@@ -338,7 +338,7 @@ static void de_rtmx_chn_blend_attr(struct de_chn_info *chn_info, struct display_
 	bool is_premul[MAX_LAYER_NUM_PER_CHN];
 
 	/* FIXME maybe bug, this is used for scaler as chn's alpha, however every layer has its own alpha */
-	chn_info->glb_alpha = state->base.alpha;
+	chn_info->glb_alpha = (state->base.alpha >> 8);
 	memset((void *)chn_info->lay_premul, DE_OVL_PREMUL_NON_TO_NON, sizeof(chn_info->lay_premul));
 	chn_info->alpha_mode = ~DE_ALPHA_MODE_PREMUL;
 
@@ -391,6 +391,7 @@ static s32 de_rtmx_chn_calc_size(struct de_channel_handle *hdl, struct de_chn_in
 	struct de_rect64_s crop64;
 	struct de_rect win;
 	struct de_scaler_cal_lay_cfg cal_lay_cfg;
+	struct de_frontend_feedback frontend_data;
 	s32 right, bottom;
 	u32 i;
 
@@ -422,10 +423,8 @@ static s32 de_rtmx_chn_calc_size(struct de_channel_handle *hdl, struct de_chn_in
 	chn_info->scn_win.top = win.top;
 	chn_info->scn_win.width = win.right - win.left;
 	chn_info->scn_win.height = win.bottom - win.top;
-	/* FIXME BUG: snr size err when ovl down fetch or multi layer enable */
-	chn_info->snr_en = de_frontend_apply_snr(hdl->private->frontend, state,
-				((unsigned long long)state->base.src_w) >> 16,
-				((unsigned long long)state->base.src_h) >> 16);
+	de_frontend_get_after_check_config(hdl->private->frontend, state, &frontend_data);
+	chn_info->snr_en = frontend_data.snr_en;
 
 	win.left = win.top = 0x7FFFFFFF;
 	win.right = win.bottom = 0x0;
@@ -450,8 +449,18 @@ static s32 de_rtmx_chn_calc_size(struct de_channel_handle *hdl, struct de_chn_in
 		if (i == 0) {
 			crop64.left = (((unsigned long long)state->base.src_x) >> 16) << 32;
 			crop64.top = (((unsigned long long)state->base.src_y) >> 16) << 32;
-			crop64.width = (((unsigned long long)state->base.src_w) >> 16) << 32;
-			crop64.height = (((unsigned long long)state->base.src_h) >> 16) << 32;
+			if ((state->base.fb->format->format == DRM_FORMAT_YVU420 ||
+			     state->base.fb->format->format == DRM_FORMAT_YUV420 ||
+			     state->base.fb->format->format == DRM_FORMAT_NV12 ||
+			     state->base.fb->format->format == DRM_FORMAT_NV21) &&
+			    ((state->base.rotation & DRM_MODE_ROTATE_90) == DRM_MODE_ROTATE_90 ||
+			     (state->base.rotation & DRM_MODE_ROTATE_270) == DRM_MODE_ROTATE_270)) {
+				crop64.width = (((unsigned long long)state->base.src_h) >> 16) << 32;
+				crop64.height = (((unsigned long long)state->base.src_w) >> 16) << 32;
+			} else {
+				crop64.width = (((unsigned long long)state->base.src_w) >> 16) << 32;
+				crop64.height = (((unsigned long long)state->base.src_h) >> 16) << 32;
+			}
 		} else {
 			crop64.left = (((unsigned long long)state->src_x[i - 1]) >> 16) << 32;
 			crop64.top = (((unsigned long long)state->src_y[i - 1]) >> 16) << 32;
@@ -498,6 +507,7 @@ static s32 de_rtmx_chn_calc_size(struct de_channel_handle *hdl, struct de_chn_in
 	return 0;
 }
 
+__attribute__((unused))
 static u32 de_rtmx_chn_fix_size_for_ability(const struct de_chn_info *chn_info, unsigned int de_ouput_height, unsigned int device_fps, unsigned long de_freq, u32 *height_out)
 {
 	u32 tmp;
@@ -535,10 +545,38 @@ static u32 de_rtmx_chn_fix_size_for_ability(const struct de_chn_info *chn_info, 
 	return 0;
 }
 
+/* de_performance:
+ * Pde = 1 pixel/clk
+ * lay_w * lay_h / Pde * Tde(1 / de_freq) <= htotal * disp_h * (1 / dclk) -->
+ * lay_w * lay_h / Pde * dclk <= htotal * disp_h * de_freq
+ * NOTE: maybe not suitable for compositing multiple layers in one ovl
+ */
+static u32 de_rtmx_chn_fix_size_for_hw_performance(const struct de_chn_info *chn_info, unsigned int htotal, unsigned long dclk_khz, unsigned long de_freq_khz, u32 *fix_height)
+{
+	u64 frame_piexl_process_required_time, refresh_zone_time;
+	u32 efficiency = 90; // 90% efficiency
+
+	frame_piexl_process_required_time = chn_info->ovl_win.width * chn_info->ovl_win.height * dclk_khz * 100 / efficiency;
+	refresh_zone_time = htotal * chn_info->scn_win.height * de_freq_khz;
+
+	if (frame_piexl_process_required_time > refresh_zone_time) {
+		u64 tmp;
+
+		tmp = chn_info->ovl_win.height * refresh_zone_time / frame_piexl_process_required_time;
+		*fix_height = (u32)tmp;
+		DRM_DEBUG_DRIVER("de_performance: in(%dx%d), dclk %ld, htotal %d, disp_height %d, de_clk %ld, height_out %d\n",
+				chn_info->ovl_win.width, chn_info->ovl_win.height, dclk_khz, htotal, chn_info->scn_win.height, de_freq_khz, *fix_height);
+		return RTMX_CUT_INHEIGHT;
+	}
+
+	return 0;
+}
+
 //chn_info->scale_en
 static s32 de_rtmx_chn_fix_size(struct de_scaler_handle *hdl, struct de_chn_info *chn_info,
 				    unsigned int de_ouput_width, unsigned int de_ouput_height,
-				    unsigned int device_fps, unsigned long de_freq)
+				    unsigned int device_fps, unsigned long de_freq,
+					unsigned int htotal, unsigned long dclk_khz)
 {
 	u32 fix_size_result = 0;
 
@@ -564,8 +602,10 @@ static s32 de_rtmx_chn_fix_size(struct de_scaler_handle *hdl, struct de_chn_info
 		fix_size_result |= de_scaler_fix_big_size(hdl,
 			&(chn_info->ovl_out_win), &(chn_info->scn_win),
 			chn_info->px_fmt_space, chn_info->yuv_sampling);
-		fix_size_result |= de_rtmx_chn_fix_size_for_ability(chn_info, de_ouput_height,
-							    device_fps, de_freq, &chn_info->ovl_out_win.height);
+		// fix_size_result |= de_rtmx_chn_fix_size_for_ability(chn_info, de_ouput_height,
+								// device_fps, de_freq, &chn_info->ovl_out_win.height);
+		fix_size_result |= de_rtmx_chn_fix_size_for_hw_performance(chn_info, htotal, dclk_khz,
+				de_freq / 1000, &chn_info->ovl_out_win.height);
 	}
 
 	de_scaler_calc_scale_para(hdl, fix_size_result,
@@ -643,15 +683,22 @@ int channel_apply(struct de_channel_handle *hdl, struct display_channel_state *s
 	}
 	hdl->private->info.enable = true;
 
+	if (hdl->private->afbd)
+		hdl->private->info.fbd_en = de_afbd_should_enable(hdl->private->afbd, state);
+	if (hdl->private->tfbd)
+		hdl->private->info.tfbd_en = de_tfbd_should_enable(hdl->private->tfbd, state);
+
 	/* cal chn info  */
 	cal_channel_enable_layer_cnt(hdl, state);
 	de_rtmx_chn_data_attr(&hdl->private->info, state);
 	de_rtmx_chn_blend_attr(&hdl->private->info, state, hdl->layer_cnt);
 	de_rtmx_chn_calc_size(hdl, &hdl->private->info, state, hdl->layer_cnt);
-	de_rtmx_chn_fix_size(hdl->private->scaler, &hdl->private->info, de_info->width, de_info->height, de_info->device_fps, de_info->de_clk_freq);
+	de_rtmx_chn_fix_size(hdl->private->scaler, &hdl->private->info, de_info->width, de_info->height,
+			de_info->max_device_fps, de_info->de_clk_freq, de_info->htotal, de_info->pclk_khz);
 
 	/* config afbd  */
 	if (hdl->private->afbd) {
+		afbd_cfg.lay_premul = hdl->private->info.lay_premul[0];
 		memcpy(&afbd_cfg.ovl_win, &hdl->private->info.ovl_win, sizeof(afbd_cfg.ovl_win));
 		de_afbd_apply_lay(hdl->private->afbd, state, &afbd_cfg, &afbd_en);
 	}
@@ -926,11 +973,36 @@ void dump_channel_state(struct drm_printer *p, struct de_channel_handle *hdl, co
 
 	if (!state_only) {
 		de_dump_ovl_state(p, hdl->private->ovl, state);
+		if (hdl->private->afbd)
+			de_dump_afbd_state(p, hdl->private->afbd, state);
+		if (hdl->private->tfbd)
+			de_dump_tfbd_state(p, hdl->private->tfbd, state);
 		if (hdl->private->scaler)
 			dump_scaler_state(p, hdl->private->scaler, state);
 		if (hdl->private->frontend)
 			de_frontend_dump_state(p, hdl->private->frontend);
 	}
+}
+
+int get_size_by_chn(struct de_channel_handle *hdl, int *width, int *height)
+{
+	bool in_enable;
+	in_enable = hdl->private->info.enable;
+	if (in_enable) {
+		*width = hdl->private->info.ovl_win.width;
+		*height = hdl->private->info.ovl_win.height;
+	} else {
+		*width = 0;
+		*height = 0;
+	}
+	return 0;
+}
+
+unsigned int get_chn_size_on_scn(struct de_channel_handle *hdl, int *width, int *height)
+{
+	*width = hdl->private->info.scn_win.width;
+	*height = hdl->private->info.scn_win.height;
+	return 0;
 }
 
 struct de_channel_handle *de_channel_create(struct module_create_info *cinfo)
@@ -974,25 +1046,35 @@ struct de_channel_handle *de_channel_create(struct module_create_info *cinfo)
 	if (hdl->private->scaler && hdl->private->scaler->is_asu)
 		info.extra = hdl->private->scaler;
 	hdl->private->frontend = de_frontend_create(&info);
+	if (hdl->private->frontend)
+		hdl->routine_job = hdl->private->frontend->routine_job;
 	info.extra = NULL;
 
 	hdl->formats = hdl->private->ovl->formats;
-	if (hdl->private->scaler)
+	if (hdl->private->scaler) {
 		hdl->exclusive_scaler_ids = hdl->private->scaler->linebuff_share_ids;
+		hdl->lbuf.scaler_lbuffer_yuv = hdl->private->scaler->linebuff_yuv;
+		hdl->lbuf.scaler_lbuffer_rgb = hdl->private->scaler->linebuff_rgb;
+		hdl->lbuf.scaler_lbuffer_yuv_ed = hdl->private->scaler->linebuff_yuv_ed;
+	}
 	hdl->format_count = hdl->private->ovl->format_count;
 	hdl->layer_cnt = hdl->private->ovl->layer_cnt;
 
 	if (hdl->private->afbd || hdl->private->tfbd)
 		format_modifiers_num = (hdl->private->afbd ? hdl->private->afbd->format_modifiers_num : 0) +
 				       (hdl->private->tfbd ? hdl->private->tfbd->format_modifiers_num : 0);
-	else
-		format_modifiers_num = ARRAY_SIZE(format_modifiers_common) - 1;
+
+	/* for each channel ,should reserve for DRM_FORMAT_MOD_LINEAR and others */
+	format_modifiers_num += ARRAY_SIZE(format_modifiers_common) - 1;
+
 	hdl->format_modifiers_comb = kmalloc(sizeof(*(hdl->format_modifiers_comb)) *
 					(format_modifiers_num + 1), GFP_KERNEL | __GFP_ZERO);
 	modifier_ptr = hdl->format_modifiers_comb;
 	if (hdl->private->afbd || hdl->private->tfbd) {
 		if (hdl->private->afbd) {
 			hdl->afbc_rot_support = hdl->private->afbd->rotate_support;
+			hdl->lbuf.afbc_rotate_support = hdl->private->afbd->rotate_support;
+			hdl->lbuf.limit_afbc_rotate_height = hdl->private->afbd->rotate_limit_height;
 			memcpy(modifier_ptr, hdl->private->afbd->format_modifiers,
 			       hdl->private->afbd->format_modifiers_num *
 			       sizeof(*(hdl->format_modifiers_comb)));
@@ -1004,11 +1086,17 @@ struct de_channel_handle *de_channel_create(struct module_create_info *cinfo)
 			       sizeof(*(hdl->format_modifiers_comb)));
 			modifier_ptr += hdl->private->tfbd->format_modifiers_num;
 		}
+
+		/* add default DRM_FORMAT_MOD_LINEAR */
+		memcpy(modifier_ptr, format_modifiers_common,
+		       ARRAY_SIZE(format_modifiers_common) - 1);
+		modifier_ptr += ARRAY_SIZE(format_modifiers_common) - 1;
 	} else {
 		memcpy(modifier_ptr, format_modifiers_common,
 		       format_modifiers_num);
 		modifier_ptr += format_modifiers_num;
 	}
+
 	*modifier_ptr = DRM_FORMAT_MOD_INVALID;
 
 	hdl->is_video = hdl->private->ovl->is_video;
@@ -1026,8 +1114,10 @@ struct de_channel_handle *de_channel_create(struct module_create_info *cinfo)
 	if (hdl->private->scaler)
 		block_num += hdl->private->scaler->block_num;
 
-	if (hdl->private->frontend)
+	if (hdl->private->frontend) {
+		memcpy(&hdl->mod, &hdl->private->frontend->mod, sizeof(hdl->mod));
 		block_num += hdl->private->frontend->block_num;
+	}
 
 	hdl->block = kmalloc(sizeof(*hdl->block) * block_num, GFP_KERNEL | __GFP_ZERO);
 

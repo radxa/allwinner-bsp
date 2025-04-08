@@ -60,9 +60,14 @@ ifeq ($(ARCH),i386)
 else
  TARGET_PRIMARY_ARCH := target_x86_64
  ifeq ($(MULTIARCH),1)
-  ifeq ($(CROSS_COMPILE_SECONDARY),)
-   # The secondary architecture is being built with a native 64-bit compiler
-   INCLUDE_I386-LINUX-GNU := true
+  ifeq ($(call cc-is-macos-clang),false)
+   ifeq ($(CROSS_COMPILE_SECONDARY),)
+    # The secondary architecture is being built with a native 64-bit compiler
+    INCLUDE_I386-LINUX-GNU := true
+   endif
+  else
+   # If MULTIARCH is set for a macOS target create a universal binary
+   TARGET_PRIMARY_ARCH := target_darwin_universal
   endif
  endif
 endif

@@ -73,8 +73,25 @@ struct de_tfbd_info {
 	enum tfbc_lossy_rate lossy_rate;
 };
 
+struct de_tfbd_debug_info {
+	bool enable;
+	u32 in_width;
+	u32 in_height;
+	u32 crop_r;
+	u32 crop_t;
+	u32 crop_w;
+	u32 crop_h;
+	u32 ovl_r;
+	u32 ovl_t;
+	u32 ovl_w;
+	u32 ovl_h;
+	struct de_tfbd_drmformat_mapping tfbd_layout;
+	struct de_tfbd_info tfbd_info;
+};
+
 struct de_tfbd_private {
 	struct de_reg_mem_info reg_mem_info;
+	struct de_tfbd_debug_info debug;
 	u32 reg_blk_num;
 	struct de_reg_block reg_blks[OVL_TFBD_REG_BLK_NUM];
 };
@@ -239,6 +256,7 @@ static s32 de_tfbd_disable(struct de_tfbd_handle *handle)
 	struct ovl_v_tfbd_reg *reg = get_tfbd_reg(priv);
 
 	DRM_DEBUG_DRIVER("[SUNXI-DE] %s %d ch %d\n", __FUNCTION__, __LINE__, handle->cinfo.id);
+	priv->debug.enable = false;
 	reg->ctrl.dwval = 0;
 	tfbd_set_block_dirty(priv, OVL_TFBD_REG_BLK, 1);
 	return 0;
@@ -274,6 +292,12 @@ static s32 de_tfbd_get_info(const struct drm_framebuffer *fb, struct de_tfbd_inf
 	return 0;
 }
 
+bool de_tfbd_should_enable(struct de_tfbd_handle *handle, struct display_channel_state *state)
+{
+	struct drm_framebuffer *fb = state->base.fb;
+	return fb && de_tfbd_format_mod_supported(handle, fb ? fb->format->format : 0, fb->modifier);
+}
+
 int de_tfbd_apply_lay(struct de_tfbd_handle *handle, struct display_channel_state *state, struct de_tfbd_cfg *cfg, bool *is_enable)
 {
 	u32 dwval;
@@ -296,6 +320,20 @@ int de_tfbd_apply_lay(struct de_tfbd_handle *handle, struct display_channel_stat
 	}
 
 	de_tfbd_get_info(state->base.fb, &tfbd_info, &tfbd_layout);
+
+	priv->debug.enable = true;
+	memcpy(&priv->debug.tfbd_layout, &tfbd_layout, sizeof(tfbd_layout));
+	memcpy(&priv->debug.tfbd_info, &tfbd_info, sizeof(tfbd_info));
+	priv->debug.in_width = fb->width;
+	priv->debug.in_height = fb->height;
+	priv->debug.crop_r = (u32)((state->base.src_x) >> 16);
+	priv->debug.crop_t = (u32)((state->base.src_y) >> 16);
+	priv->debug.crop_w = (u32)((state->base.src_w) >> 16);
+	priv->debug.crop_h = (u32)((state->base.src_h) >> 16);
+	priv->debug.ovl_r = cfg->ovl_win.left;
+	priv->debug.ovl_t = cfg->ovl_win.top;
+	priv->debug.ovl_w = cfg->ovl_win.width;
+	priv->debug.ovl_h = cfg->ovl_win.height;
 
 	dwval = 1;
 	dwval |= ((state->base.pixel_blend_mode != DRM_MODE_BLEND_PIXEL_NONE ? 2 : 1) << 2);
@@ -417,4 +455,22 @@ struct de_tfbd_handle *de_tfbd_create(struct module_create_info *info)
 	for (i = 0; i < hdl->private->reg_blk_num; i++)
 		hdl->block[i] = &priv->reg_blks[i];
 	return hdl;
+}
+
+void de_dump_tfbd_state(struct drm_printer *p, struct de_tfbd_handle *handle, const struct display_channel_state *state)
+{
+	struct de_tfbd_debug_info *debug = &handle->private->debug;
+	unsigned long base = (unsigned long)handle->private->reg_blks[0].reg_addr;
+	unsigned long de_base = (unsigned long)handle->cinfo.de_reg_base;
+
+	drm_printf(p, "\n\ttfbd@%8x: %sable\n", (unsigned int)(base - de_base), debug->enable ? "en" : "dis");
+	if (debug->enable) {
+		drm_printf(p, "\t\tformat: %p4cc lossy: %d layout: %dx%d\n", &debug->tfbd_layout.format,
+			   debug->tfbd_info.lossy_rate * 25,
+			   debug->tfbd_layout.memory_layout[0], debug->tfbd_layout.memory_layout[1]);
+		drm_printf(p, "\t\tin(%4dx%4d) ==> c(%4dx%4d+%4d+%4d) ==> out(%4dx%4d)\n",
+			   debug->in_width, debug->in_height,
+			   debug->crop_w, debug->crop_h, debug->crop_r, debug->crop_t,
+			   debug->ovl_w, debug->ovl_h);
+	}
 }

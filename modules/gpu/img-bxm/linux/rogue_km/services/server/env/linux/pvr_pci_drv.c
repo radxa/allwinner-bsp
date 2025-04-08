@@ -61,11 +61,12 @@
 /* This header must always be included last */
 #include "kernel_compatibility.h"
 
+MODULE_IMPORT_NS(DMA_BUF);
+
 static struct drm_driver pvr_drm_pci_driver;
 
 static int pvr_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 	struct drm_device *ddev;
 	int ret;
 
@@ -127,11 +128,6 @@ err_pci_dev_disable:
 err_drm_dev_put:
 	drm_dev_put(ddev);
 	return ret;
-#else
-	DRM_DEBUG_DRIVER("device %p\n", &pdev->dev);
-
-	return drm_get_pci_dev(pdev, ent, &pvr_drm_pci_driver);
-#endif
 }
 
 static void pvr_remove(struct pci_dev *pdev)
@@ -140,7 +136,6 @@ static void pvr_remove(struct pci_dev *pdev)
 
 	DRM_DEBUG_DRIVER("device %p\n", &pdev->dev);
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 	drm_dev_unregister(ddev);
 
 	/* The unload callback, called from drm_dev_unregister, is
@@ -152,9 +147,6 @@ static void pvr_remove(struct pci_dev *pdev)
 	pci_disable_device(pdev);
 
 	drm_dev_put(ddev);
-#else
-	drm_put_dev(ddev);
-#endif
 }
 
 static void pvr_shutdown(struct pci_dev *pdev)
@@ -195,8 +187,7 @@ static int __init pvr_init(void)
 	DRM_DEBUG_DRIVER("\n");
 
 	pvr_drm_pci_driver = pvr_drm_generic_driver;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0) && \
-	LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0))
 	pvr_drm_pci_driver.set_busid = drm_pci_set_busid;
 #endif
 
@@ -204,22 +195,14 @@ static int __init pvr_init(void)
 	if (err)
 		return err;
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 	return pci_register_driver(&pvr_pci_driver);
-#else
-	return drm_pci_init(&pvr_drm_pci_driver, &pvr_pci_driver);
-#endif
 }
 
 static void __exit pvr_exit(void)
 {
 	DRM_DEBUG_DRIVER("\n");
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
 	pci_unregister_driver(&pvr_pci_driver);
-#else
-	drm_pci_exit(&pvr_drm_pci_driver, &pvr_pci_driver);
-#endif
 	PVRSRVDriverDeinit();
 
 	DRM_DEBUG_DRIVER("done\n");

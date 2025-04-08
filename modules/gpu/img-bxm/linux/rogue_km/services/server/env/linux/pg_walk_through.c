@@ -124,19 +124,29 @@ PVRSRV_ERROR _TryFindVMA(IMG_DEVMEM_SIZE_T uiSize,
 	uintptr_t uAddr;
 	PVRSRV_ERROR eError = PVRSRV_OK;
 
-	/* Find the VMA */
-	psVMArea = psPrivData->psVMArea;
-	if (psVMArea == NULL)
+	mmap_read_lock(current->mm);
+
+	/* Find the VMA and check that it is the expected one for this VAddr */
+	psVMArea = find_vma(current->mm, pvCpuVAddr);
+	if ((psVMArea == NULL) || (psVMArea != psPrivData->psVMArea))
 	{
 		PVR_DPF((PVR_DBG_ERROR,
 				"%s: Couldn't find memory region containing start address %p",
 				__func__,
 				(void*) pvCpuVAddr));
 		eError = PVRSRV_ERROR_INVALID_CPU_ADDR;
-		goto e0;
+		goto eUnlockReturn;
 	}
 
-	mmap_read_lock(current->mm);
+	/* Make sure that we've been given a valid end-address */
+	if (pvCpuVAddrEnd >= psVMArea->vm_end)
+	{
+		PVR_DPF((PVR_DBG_ERROR,
+		        "%s: End address %p is outside of the region returned by find_vma",
+		        __func__, (void *) pvCpuVAddrEnd));
+		eError = PVRSRV_ERROR_BAD_PARAM_SIZE;
+		goto eUnlockReturn;
+	}
 
 	/* Does the region represent memory mapped I/O? */
 	if (!(psVMArea->vm_flags & VM_IO))
@@ -146,7 +156,7 @@ PVRSRV_ERROR _TryFindVMA(IMG_DEVMEM_SIZE_T uiSize,
 				__func__,
 				psVMArea->vm_flags));
 		eError = PVRSRV_ERROR_INVALID_FLAGS;
-		goto e0;
+		goto eUnlockReturn;
 	}
 
 	/* We require read and write access */
@@ -157,7 +167,7 @@ PVRSRV_ERROR _TryFindVMA(IMG_DEVMEM_SIZE_T uiSize,
 				__func__,
 				psVMArea->vm_flags));
 		eError = PVRSRV_ERROR_INVALID_FLAGS;
-		goto e0;
+		goto eUnlockReturn;
 	}
 
 	/* Do the actual page table walk and fill the private data arrays
@@ -176,7 +186,7 @@ PVRSRV_ERROR _TryFindVMA(IMG_DEVMEM_SIZE_T uiSize,
 					"%s: Invalid CPU virtual address",
 					__func__));
 			eError = PVRSRV_ERROR_FAILED_TO_ACQUIRE_PAGES;
-			goto e1;
+			goto eReleasePages;
 		}
 
 		psPrivData->ppvPhysAddr[i].uiAddr = IMG_CAST_TO_CPUPHYADDR_UINT(ui32PFN << PAGE_SHIFT);
@@ -189,7 +199,7 @@ PVRSRV_ERROR _TryFindVMA(IMG_DEVMEM_SIZE_T uiSize,
 					__func__,
 					ui32PFN));
 			eError = PVRSRV_ERROR_FAILED_TO_ACQUIRE_PAGES;
-			goto e1;
+			goto eReleasePages;
 		}
 	}
 
@@ -198,7 +208,7 @@ PVRSRV_ERROR _TryFindVMA(IMG_DEVMEM_SIZE_T uiSize,
 	mmap_read_unlock(current->mm);
 	return eError;
 
-e1:
+eReleasePages:
 	for (; i != 0; i--)
 	{
 		if (psPrivData->ppsPageArray[i-1] != NULL)
@@ -206,7 +216,7 @@ e1:
 			put_page(psPrivData->ppsPageArray[i-1]);
 		}
 	}
-e0:
+eUnlockReturn:
 	mmap_read_unlock(current->mm);
 	return eError;
 }

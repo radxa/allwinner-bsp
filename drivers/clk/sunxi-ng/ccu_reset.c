@@ -21,6 +21,9 @@ static int ccu_reset_assert(struct reset_controller_dev *rcdev,
 	spin_lock_irqsave(ccu->lock, flags);
 
 	reg = readl(ccu->base + map->reg);
+	if (map->key_value)
+		reg = reg | map->key_value;
+
 	writel(reg & ~map->bit, ccu->base + map->reg);
 
 	spin_unlock_irqrestore(ccu->lock, flags);
@@ -39,6 +42,9 @@ static int ccu_reset_deassert(struct reset_controller_dev *rcdev,
 	spin_lock_irqsave(ccu->lock, flags);
 
 	reg = readl(ccu->base + map->reg);
+	if (map->key_value)
+		reg = reg | map->key_value;
+
 	writel(reg | map->bit, ccu->base + map->reg);
 
 	spin_unlock_irqrestore(ccu->lock, flags);

@@ -7,8 +7,8 @@
 
 #define SUNXI_MODNAME "spi"
 #include <sunxi-log.h>
-#include "spi-sunxi-debug.h"
 #include "spi-sunxi-bit.h"
+#include "../spi-sunxi-debug.h"
 
 /* SPI Controller Hardware Register Operation Start */
 

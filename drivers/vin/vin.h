@@ -290,7 +290,7 @@ struct vin_md {
 	struct mutex mclk_pin_lock;
 	unsigned int isp_bd_tatol;
 	unsigned int csi_bd_tatol;
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if defined VIN_MAX_PINCTRL
 	struct regulator *vin_pinctrl[VIN_MAX_PINCTRL];
 	unsigned int dram_dfs_time;
 #endif

@@ -55,84 +55,14 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "rgx_hwperf.h"
 
 #define PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST			0
-#define PVRSRV_BRIDGE_RGXHWPERF_RGXCTRLHWPERF			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+0
-#define PVRSRV_BRIDGE_RGXHWPERF_RGXCONFIGUREHWPERFBLOCKS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+1
-#define PVRSRV_BRIDGE_RGXHWPERF_RGXGETHWPERFBVNCFEATUREFLAGS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+2
-#define PVRSRV_BRIDGE_RGXHWPERF_RGXCONTROLHWPERFBLOCKS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+3
-#define PVRSRV_BRIDGE_RGXHWPERF_RGXGETCONFIGUREDHWPERFCOUNTERS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+4
-#define PVRSRV_BRIDGE_RGXHWPERF_RGXGETENABLEDHWPERFBLOCKS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+5
-#define PVRSRV_BRIDGE_RGXHWPERF_CMD_LAST			(PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+5)
-
-/*******************************************
-            RGXCtrlHWPerf
- *******************************************/
-
-/* Bridge in structure for RGXCtrlHWPerf */
-typedef struct PVRSRV_BRIDGE_IN_RGXCTRLHWPERF_TAG
-{
-	IMG_UINT64 ui64Mask;
-	IMG_UINT32 ui32StreamId;
-	IMG_BOOL bToggle;
-} __packed PVRSRV_BRIDGE_IN_RGXCTRLHWPERF;
-
-/* Bridge out structure for RGXCtrlHWPerf */
-typedef struct PVRSRV_BRIDGE_OUT_RGXCTRLHWPERF_TAG
-{
-	PVRSRV_ERROR eError;
-} __packed PVRSRV_BRIDGE_OUT_RGXCTRLHWPERF;
-
-/*******************************************
-            RGXConfigureHWPerfBlocks
- *******************************************/
-
-/* Bridge in structure for RGXConfigureHWPerfBlocks */
-typedef struct PVRSRV_BRIDGE_IN_RGXCONFIGUREHWPERFBLOCKS_TAG
-{
-	RGX_HWPERF_CONFIG_CNTBLK *psBlockConfigs;
-	IMG_UINT32 ui32ArrayLen;
-	IMG_UINT32 ui32CtrlWord;
-} __packed PVRSRV_BRIDGE_IN_RGXCONFIGUREHWPERFBLOCKS;
-
-/* Bridge out structure for RGXConfigureHWPerfBlocks */
-typedef struct PVRSRV_BRIDGE_OUT_RGXCONFIGUREHWPERFBLOCKS_TAG
-{
-	PVRSRV_ERROR eError;
-} __packed PVRSRV_BRIDGE_OUT_RGXCONFIGUREHWPERFBLOCKS;
-
-/*******************************************
-            RGXGetHWPerfBvncFeatureFlags
- *******************************************/
-
-/* Bridge in structure for RGXGetHWPerfBvncFeatureFlags */
-typedef struct PVRSRV_BRIDGE_IN_RGXGETHWPERFBVNCFEATUREFLAGS_TAG
-{
-	IMG_UINT32 ui32EmptyStructPlaceholder;
-} __packed PVRSRV_BRIDGE_IN_RGXGETHWPERFBVNCFEATUREFLAGS;
-
-/* Bridge out structure for RGXGetHWPerfBvncFeatureFlags */
-typedef struct PVRSRV_BRIDGE_OUT_RGXGETHWPERFBVNCFEATUREFLAGS_TAG
-{
-	RGX_HWPERF_BVNC sBVNC;
-	PVRSRV_ERROR eError;
-} __packed PVRSRV_BRIDGE_OUT_RGXGETHWPERFBVNCFEATUREFLAGS;
-
-/*******************************************
-            RGXControlHWPerfBlocks
- *******************************************/
-
-/* Bridge in structure for RGXControlHWPerfBlocks */
-typedef struct PVRSRV_BRIDGE_IN_RGXCONTROLHWPERFBLOCKS_TAG
-{
-	IMG_UINT16 *pui16BlockIDs;
-	IMG_UINT32 ui32ArrayLen;
-	IMG_BOOL bEnable;
-} __packed PVRSRV_BRIDGE_IN_RGXCONTROLHWPERFBLOCKS;
-
-/* Bridge out structure for RGXControlHWPerfBlocks */
-typedef struct PVRSRV_BRIDGE_OUT_RGXCONTROLHWPERFBLOCKS_TAG
-{
-	PVRSRV_ERROR eError;
-} __packed PVRSRV_BRIDGE_OUT_RGXCONTROLHWPERFBLOCKS;
+#define PVRSRV_BRIDGE_RGXHWPERF_RGXGETCONFIGUREDHWPERFCOUNTERS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+0
+#define PVRSRV_BRIDGE_RGXHWPERF_RGXGETENABLEDHWPERFBLOCKS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+1
+#define PVRSRV_BRIDGE_RGXHWPERF_RGXGETHWPERFTIMESTAMP			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+2
+#define PVRSRV_BRIDGE_RGXHWPERF_RGXCTRLHWPERF			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+3
+#define PVRSRV_BRIDGE_RGXHWPERF_RGXGETHWPERFBVNCFEATUREFLAGS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+4
+#define PVRSRV_BRIDGE_RGXHWPERF_RGXCONTROLHWPERFBLOCKS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+5
+#define PVRSRV_BRIDGE_RGXHWPERF_RGXCONFIGUREHWPERFBLOCKS			PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+6
+#define PVRSRV_BRIDGE_RGXHWPERF_CMD_LAST			(PVRSRV_BRIDGE_RGXHWPERF_CMD_FIRST+6)
 
 /*******************************************
             RGXGetConfiguredHWPerfCounters
@@ -170,5 +100,93 @@ typedef struct PVRSRV_BRIDGE_OUT_RGXGETENABLEDHWPERFBLOCKS_TAG
 	PVRSRV_ERROR eError;
 	IMG_UINT32 ui32BlockCount;
 } __packed PVRSRV_BRIDGE_OUT_RGXGETENABLEDHWPERFBLOCKS;
+
+/*******************************************
+            RGXGetHWPerfTimeStamp
+ *******************************************/
+
+/* Bridge in structure for RGXGetHWPerfTimeStamp */
+typedef struct PVRSRV_BRIDGE_IN_RGXGETHWPERFTIMESTAMP_TAG
+{
+	IMG_UINT32 ui32EmptyStructPlaceholder;
+} __packed PVRSRV_BRIDGE_IN_RGXGETHWPERFTIMESTAMP;
+
+/* Bridge out structure for RGXGetHWPerfTimeStamp */
+typedef struct PVRSRV_BRIDGE_OUT_RGXGETHWPERFTIMESTAMP_TAG
+{
+	IMG_UINT64 ui64TimeStamp;
+	PVRSRV_ERROR eError;
+} __packed PVRSRV_BRIDGE_OUT_RGXGETHWPERFTIMESTAMP;
+
+/*******************************************
+            RGXCtrlHWPerf
+ *******************************************/
+
+/* Bridge in structure for RGXCtrlHWPerf */
+typedef struct PVRSRV_BRIDGE_IN_RGXCTRLHWPERF_TAG
+{
+	IMG_UINT64 ui64Mask;
+	IMG_UINT32 ui32StreamId;
+	IMG_BOOL bToggle;
+} __packed PVRSRV_BRIDGE_IN_RGXCTRLHWPERF;
+
+/* Bridge out structure for RGXCtrlHWPerf */
+typedef struct PVRSRV_BRIDGE_OUT_RGXCTRLHWPERF_TAG
+{
+	PVRSRV_ERROR eError;
+} __packed PVRSRV_BRIDGE_OUT_RGXCTRLHWPERF;
+
+/*******************************************
+            RGXGetHWPerfBvncFeatureFlags
+ *******************************************/
+
+/* Bridge in structure for RGXGetHWPerfBvncFeatureFlags */
+typedef struct PVRSRV_BRIDGE_IN_RGXGETHWPERFBVNCFEATUREFLAGS_TAG
+{
+	IMG_UINT32 ui32EmptyStructPlaceholder;
+} __packed PVRSRV_BRIDGE_IN_RGXGETHWPERFBVNCFEATUREFLAGS;
+
+/* Bridge out structure for RGXGetHWPerfBvncFeatureFlags */
+typedef struct PVRSRV_BRIDGE_OUT_RGXGETHWPERFBVNCFEATUREFLAGS_TAG
+{
+	RGX_HWPERF_BVNC sBVNC;
+	PVRSRV_ERROR eError;
+} __packed PVRSRV_BRIDGE_OUT_RGXGETHWPERFBVNCFEATUREFLAGS;
+
+/*******************************************
+            RGXControlHWPerfBlocks
+ *******************************************/
+
+/* Bridge in structure for RGXControlHWPerfBlocks */
+typedef struct PVRSRV_BRIDGE_IN_RGXCONTROLHWPERFBLOCKS_TAG
+{
+	IMG_UINT16 *pui16BlockIDs;
+	IMG_UINT32 ui32ArrayLen;
+	IMG_BOOL bEnable;
+} __packed PVRSRV_BRIDGE_IN_RGXCONTROLHWPERFBLOCKS;
+
+/* Bridge out structure for RGXControlHWPerfBlocks */
+typedef struct PVRSRV_BRIDGE_OUT_RGXCONTROLHWPERFBLOCKS_TAG
+{
+	PVRSRV_ERROR eError;
+} __packed PVRSRV_BRIDGE_OUT_RGXCONTROLHWPERFBLOCKS;
+
+/*******************************************
+            RGXConfigureHWPerfBlocks
+ *******************************************/
+
+/* Bridge in structure for RGXConfigureHWPerfBlocks */
+typedef struct PVRSRV_BRIDGE_IN_RGXCONFIGUREHWPERFBLOCKS_TAG
+{
+	RGX_HWPERF_CONFIG_CNTBLK *psBlockConfigs;
+	IMG_UINT32 ui32ArrayLen;
+	IMG_UINT32 ui32CtrlWord;
+} __packed PVRSRV_BRIDGE_IN_RGXCONFIGUREHWPERFBLOCKS;
+
+/* Bridge out structure for RGXConfigureHWPerfBlocks */
+typedef struct PVRSRV_BRIDGE_OUT_RGXCONFIGUREHWPERFBLOCKS_TAG
+{
+	PVRSRV_ERROR eError;
+} __packed PVRSRV_BRIDGE_OUT_RGXCONFIGUREHWPERFBLOCKS;
 
 #endif /* COMMON_RGXHWPERF_BRIDGE_H */

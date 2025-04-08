@@ -114,11 +114,12 @@ u32 tcon_lcd_irq_query(struct sunxi_tcon_lcd *tcon, enum __lcd_irq_id_t id);
 u32 tcon_lcd_get_start_delay(struct sunxi_tcon_lcd *tcon);
 u32 tcon_lcd_get_cur_line(struct sunxi_tcon_lcd *tcon);
 s32 tcon_lcd_get_status(struct sunxi_tcon_lcd *tcon);
-
+bool tcon_lcd_vrr_irq(struct sunxi_tcon_lcd *tcon, bool enable);
 void tcon_lcd_enable_vblank(struct sunxi_tcon_lcd *tcon, bool enable);
 s32 tcon_lcd_src_select(struct sunxi_tcon_lcd *tcon, enum __lcd_src_t src);
 s32 tcon_lcd_src_get(struct sunxi_tcon_lcd *tcon);
-
+int sunxi_tcon_updata_vt(struct sunxi_tcon_lcd *tcon,
+		struct disp_video_timings *timings, u32 vrr_setp);
 /**
  * @name       :tcon_fsync_set_pol
  * @brief      :set fsync's polarity

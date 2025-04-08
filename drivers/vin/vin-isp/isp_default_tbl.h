@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  * isp_default_tbl.h for all v4l2 subdev manage
@@ -19,11 +19,11 @@
 
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW16P1)
 #include "isp520/isp520_reg_cfg.h"
-#elif defined CONFIG_ARCH_SUN8IW19P1
+#elif IS_ENABLED(CONFIG_ARCH_SUN8IW19P1)
 #include "isp521/isp521_reg_cfg.h"
-#elif defined CONFIG_ARCH_SUN50IW10
+#elif IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 #include "isp522/isp522_reg_cfg.h"
-#elif defined CONFIG_ARCH_SUN55IW3 || defined CONFIG_ARCH_SUN55IW6 || defined CONFIG_ARCH_SUN60IW1 || defined CONFIG_ARCH_SUN60IW2
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 #include "isp600/isp600_reg_cfg.h"
 #else
 #include "isp500/isp500_reg_cfg.h"

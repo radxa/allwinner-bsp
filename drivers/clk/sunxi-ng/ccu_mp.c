@@ -5,7 +5,6 @@
  * Maxime Ripard <maxime.ripard@free-electrons.com>
  */
 
-#include <sunxi-log.h>
 #include <linux/clk-provider.h>
 #include <linux/io.h>
 #include <linux/version.h>
@@ -18,7 +17,7 @@
 #define NORMAL_MODE 2
 
 static void ccu_mp_find_best(int mode, unsigned long parent, unsigned long rate,
-			     unsigned int max_m, unsigned int max_p,
+			     unsigned int max_m, unsigned int min_m, unsigned int max_p,
 			     unsigned int *m, unsigned int *p)
 {
 	unsigned long best_rate = 0;
@@ -27,7 +26,7 @@ static void ccu_mp_find_best(int mode, unsigned long parent, unsigned long rate,
 
 	if (mode == INDEX_MODE) {
 		for (_p = 1; _p <= max_p; _p <<= 1) {
-			for (_m = 1; _m <= max_m; _m++) {
+			for (_m = min_m; _m <= max_m; _m++) {
 				unsigned long tmp_rate = parent / _p / _m;
 
 				if (tmp_rate > rate)
@@ -42,7 +41,7 @@ static void ccu_mp_find_best(int mode, unsigned long parent, unsigned long rate,
 		}
 	} else if (mode == NORMAL_MODE) {
 		for (_p = 1; _p <= max_p; _p++) {
-			for (_m = 1; _m <= max_m; _m++) {
+			for (_m = min_m; _m <= max_m; _m++) {
 				unsigned long tmp_rate = parent / _p / _m;
 
 				if (tmp_rate > rate)
@@ -70,6 +69,7 @@ static unsigned long ccu_mp_find_best_with_parent_adj(struct clk_hw *hw,
 						      unsigned long *parent,
 						      unsigned long rate,
 						      unsigned int max_m,
+						      unsigned int min_m,
 						      unsigned int max_p)
 {
 	unsigned long parent_rate_saved;
@@ -88,7 +88,7 @@ static unsigned long ccu_mp_find_best_with_parent_adj(struct clk_hw *hw,
 	maxdiv = min(ULONG_MAX / rate, maxdiv);
 
 	for (_p = 1; _p <= max_p; _p <<= 1) {
-		for (_m = 1; _m <= max_m; _m++) {
+		for (_m = min_m; _m <= max_m; _m++) {
 			div = _m * _p;
 
 			if (div > maxdiv)
@@ -129,11 +129,13 @@ static unsigned long ccu_mp_round_rate(struct ccu_mux_internal *mux,
 {
 	struct ccu_mp *cmp = data;
 	unsigned int max_m, max_p;
+	unsigned int min_m;
 	unsigned int m, p;
 
 	if (cmp->common.features & CCU_FEATURE_FIXED_POSTDIV)
 		rate *= cmp->fixed_post_div;
 
+	min_m = cmp->m.min ?: 1;
 	max_m = cmp->m.max ?: 1 << cmp->m.width;
 	if (unlikely(cmp->common.features & CCU_FEATURE_MP_NO_INDEX_MODE))
 		max_p = cmp->p.max ?: 1 << cmp->p.width;
@@ -145,14 +147,14 @@ static unsigned long ccu_mp_round_rate(struct ccu_mux_internal *mux,
 	 */
 	if (!(clk_hw_get_flags(&cmp->common.hw) & CLK_SET_RATE_PARENT)) {
 		if (unlikely(cmp->common.features & CCU_FEATURE_MP_NO_INDEX_MODE))
-			ccu_mp_find_best(NORMAL_MODE, *parent_rate, rate, max_m, max_p, &m, &p);
+			ccu_mp_find_best(NORMAL_MODE, *parent_rate, rate, max_m, min_m, max_p, &m, &p);
 		else
-			ccu_mp_find_best(INDEX_MODE, *parent_rate, rate, max_m, max_p, &m, &p);
+			ccu_mp_find_best(INDEX_MODE, *parent_rate, rate, max_m, min_m, max_p, &m, &p);
 
 		rate = *parent_rate / p / m;
 	} else {
 		rate = ccu_mp_find_best_with_parent_adj(hw, parent_rate, rate,
-							max_m, max_p);
+							max_m, min_m, max_p);
 	}
 
 	if (cmp->common.features & CCU_FEATURE_FIXED_POSTDIV)
@@ -255,6 +257,7 @@ static int ccu_mp_set_rate(struct clk_hw *hw, unsigned long rate,
 	struct ccu_mp *cmp = hw_to_ccu_mp(hw);
 	unsigned long flags;
 	unsigned int max_m, max_p;
+	unsigned int min_m;
 	unsigned int m, p;
 	u32 reg;
 
@@ -262,6 +265,7 @@ static int ccu_mp_set_rate(struct clk_hw *hw, unsigned long rate,
 	parent_rate = ccu_mux_helper_apply_prediv(&cmp->common, &cmp->mux, -1,
 						  parent_rate);
 
+	min_m = cmp->m.min ?: 1;
 	max_m = cmp->m.max ?: 1 << cmp->m.width;
 
 	if (unlikely(cmp->common.features & CCU_FEATURE_MP_NO_INDEX_MODE))
@@ -274,9 +278,9 @@ static int ccu_mp_set_rate(struct clk_hw *hw, unsigned long rate,
 		rate = rate * cmp->fixed_post_div;
 
 	if (unlikely(cmp->common.features & CCU_FEATURE_MP_NO_INDEX_MODE))
-		ccu_mp_find_best(NORMAL_MODE, parent_rate, rate, max_m, max_p, &m, &p);
+		ccu_mp_find_best(NORMAL_MODE, parent_rate, rate, max_m, min_m, max_p, &m, &p);
 	else
-		ccu_mp_find_best(INDEX_MODE, parent_rate, rate, max_m, max_p, &m, &p);
+		ccu_mp_find_best(INDEX_MODE, parent_rate, rate, max_m, min_m, max_p, &m, &p);
 
 	spin_lock_irqsave(cmp->common.lock, flags);
 

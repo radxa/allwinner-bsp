@@ -42,7 +42,6 @@ struct de_snr_private {
 	u8 demo_hor_end;
 	u8 demo_ver_start;
 	u8 demo_ver_end;
-	u8 demo_en;
 
 	s32 (*de_snr_enable)(struct de_snr_handle *hdl, u32 snr_enable);
 	s32 (*de_snr_set_para)(struct de_snr_handle *hdl, struct display_channel_state *state, struct de_snr_para *snr_para);
@@ -133,7 +132,8 @@ static void de_snr_restore_old_config_locked(struct de_snr_handle *hdl)
 	struct snr_reg *reg = de35x_get_snr_shadow_reg(priv);
 	int i;
 
-	reg->snr_ctrl.bits.en = priv->init;
+	/* can not enable snr if not init */
+	reg->snr_ctrl.bits.en = reg->snr_ctrl.bits.en && priv->init;
 	for (i = 0; i < SNR_REG_BLK_NUM; i++) {
 		de_snr_request_update(priv, i, 1);
 	}
@@ -167,6 +167,35 @@ s32 de35x_snr_enable(struct de_snr_handle *hdl, u32 snr_enable)
 	return 0;
 }
 
+s32 de_snr_set_demo_mode(struct de_snr_handle *hdl, bool enable)
+{
+	struct de_snr_private *priv = hdl->private;
+	struct snr_reg *reg = de35x_get_snr_shadow_reg(priv);
+
+	mutex_lock(&priv->lock);
+	reg->snr_ctrl.bits.demo_en = enable ? 1 : 0;
+	de_snr_request_update(priv, SNR_REG_BLK_CTL, 1);
+
+	mutex_unlock(&priv->lock);
+	return 0;
+}
+
+s32 de_snr_set_window(struct de_snr_handle *hdl,
+		      u32 x, u32 y, u32 w, u32 h)
+{
+	struct de_snr_private *priv = hdl->private;
+
+	mutex_lock(&priv->lock);
+
+	priv->demo_hor_start = x;
+	priv->demo_hor_end = x + w;
+	priv->demo_ver_start = y;
+	priv->demo_ver_end = y + h;
+
+	mutex_unlock(&priv->lock);
+	return 0;
+}
+
 s32 de_snr_set_size(struct de_snr_handle *hdl, u32 width, u32 height)
 {
 	struct de_snr_private *priv = hdl->private;
@@ -175,6 +204,16 @@ s32 de_snr_set_size(struct de_snr_handle *hdl, u32 width, u32 height)
 	mutex_lock(&priv->lock);
 	reg->snr_size.bits.width  = width - 1;
 	reg->snr_size.bits.height = height - 1;
+
+	reg->demo_win_hor.bits.demo_horz_start =
+	    width * priv->demo_hor_start / 100;
+	reg->demo_win_hor.bits.demo_horz_end =
+	    width * priv->demo_hor_end / 100;
+	reg->demo_win_ver.bits.demo_vert_start =
+	    height * priv->demo_ver_start / 100;
+	reg->demo_win_ver.bits.demo_vert_end =
+	    height * priv->demo_ver_end / 100;
+
 	de_snr_request_update(priv, SNR_REG_BLK_CTL, 1);
 	mutex_unlock(&priv->lock);
 	return 0;
@@ -187,7 +226,7 @@ static int de_snr_pq_proc(struct de_snr_handle *hdl, snr_module_param_t *para)
 
 	if (para->cmd == PQ_READ) {
 		para->value[0] = reg->snr_ctrl.bits.en;
-		/*para->value[1] = reg->snr_ctrl.bits.demo_en;*/
+		para->value[1] = reg->snr_ctrl.bits.demo_en;
 		para->value[2] = reg->snr_strength.bits.strength_y;
 		para->value[3] = reg->snr_strength.bits.strength_u;
 		para->value[4] = reg->snr_strength.bits.strength_v;
@@ -201,11 +240,10 @@ static int de_snr_pq_proc(struct de_snr_handle *hdl, snr_module_param_t *para)
 		para->value[8] = priv->demo_hor_end;
 		para->value[9] = priv->demo_ver_start;
 		para->value[10] = priv->demo_ver_end;
-		para->value[1] = priv->demo_en;
 	} else {
 		/* shoulde not open snr when rgb fmt, snr only can handle yuv input */
 		reg->snr_ctrl.bits.en = para->value[0];
-		/*reg->snr_ctrl.bits.demo_en = para->value[1];*/
+		reg->snr_ctrl.bits.demo_en = para->value[1];
 		reg->snr_strength.bits.strength_y = para->value[2];
 		reg->snr_strength.bits.strength_u = para->value[3];
 		reg->snr_strength.bits.strength_v = para->value[4];
@@ -219,7 +257,6 @@ static int de_snr_pq_proc(struct de_snr_handle *hdl, snr_module_param_t *para)
 		priv->demo_hor_end = para->value[8];
 		priv->demo_ver_start = para->value[9];
 		priv->demo_ver_end = para->value[10];
-		priv->demo_en = para->value[1];
 		reg->demo_win_hor.bits.demo_horz_start =
 		    reg->snr_size.bits.width * priv->demo_hor_start / 100;
 		reg->demo_win_hor.bits.demo_horz_end =
@@ -228,7 +265,6 @@ static int de_snr_pq_proc(struct de_snr_handle *hdl, snr_module_param_t *para)
 		    reg->snr_size.bits.height * priv->demo_ver_start / 100;
 		reg->demo_win_ver.bits.demo_vert_end =
 		    reg->snr_size.bits.height * priv->demo_ver_end / 100;
-		reg->snr_ctrl.bits.demo_en = priv->demo_en;
 		priv->init = true;
 		de_snr_request_update(priv, SNR_REG_BLK_CTL, 1);
 	}
@@ -299,7 +335,7 @@ s32 de35x_snr_set_para(struct de_snr_handle *hdl, struct display_channel_state *
 		reg->snr_size.bits.height = height - 1;
 	}
 
-	reg->snr_ctrl.bits.en = para->en;
+	reg->snr_ctrl.bits.en = para->enable;
 	reg->snr_ctrl.bits.demo_en = para->demo_en;
 /*	reg->demo_win_hor.bits.demo_horz_start = para->demo_x;
 	reg->demo_win_hor.bits.demo_horz_end = para.demo_x + para.demo_width;

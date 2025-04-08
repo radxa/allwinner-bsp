@@ -1,17 +1,17 @@
-From 9ad16f84f6048fda96618db4f1f4131d8c53d352 Mon Sep 17 00:00:00 2001
+From 2fe9fce1ac57ee06609886fbf9dab10ff99d4193 Mon Sep 17 00:00:00 2001
 From: Rufus Hamade <rufus.hamade@imgtec.com>
 Date: Thu, 21 Apr 2016 16:21:02 +0100
-Subject: [PATCH 2/8] Infrastructure for in-kernel driver build
+Subject: [PATCH] Infrastructure for in-kernel driver build
 
 ---
  arch/x86/configs/tc_defconfig             | 303 ++++++++++++++++++++++
  drivers/gpu/drm/Kconfig                   |   2 +
  drivers/gpu/drm/Makefile                  |   2 +
  drivers/gpu/drm/img-rogue/Kconfig         |  40 +++
- drivers/gpu/drm/img-rogue/Makefile        |  19 ++
+ drivers/gpu/drm/img-rogue/Makefile        |  20 ++
  drivers/gpu/drm/img-rogue/apollo/Makefile |   9 +
  drivers/gpu/drm/img-rogue/pdp/Makefile    |  10 +
- 7 files changed, 385 insertions(+)
+ 7 files changed, 386 insertions(+)
  create mode 100644 arch/x86/configs/tc_defconfig
  create mode 100644 drivers/gpu/drm/img-rogue/Kconfig
  create mode 100644 drivers/gpu/drm/img-rogue/Makefile
@@ -401,16 +401,17 @@ index 000000000000..4353b970f591
 +	default n
 diff --git a/drivers/gpu/drm/img-rogue/Makefile b/drivers/gpu/drm/img-rogue/Makefile
 new file mode 100644
-index 000000000000..7ce9f77e58a3
+index 000000000000..d292ec76659f
 --- /dev/null
 +++ b/drivers/gpu/drm/img-rogue/Makefile
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,20 @@
 +img_basedir := drivers/gpu/drm/img-rogue
 +include $(img_basedir)/config_kernel.mk
 +
 +obj-$(CONFIG_DRM_POWERVR_ROGUE) += pvrsrvkm.o
 +
 +ccflags-y += \
++ -include arch/x86/include/asm/cpufeatures.h \
 + -include config_kernel.h \
 + -Iinclude/drm \
 + -I$(img_basedir) \

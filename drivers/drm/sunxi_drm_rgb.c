@@ -33,7 +33,7 @@
 #include "sunxi_drm_intf.h"
 #include "sunxi_drm_crtc.h"
 #include "panel/panels.h"
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW6)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 #define RGB_DISPLL_CLK
 #endif
 struct rgb_data {
@@ -53,6 +53,7 @@ struct sunxi_drm_rgb {
 
 	struct clk *pclk;
 	unsigned long mode_flags;
+	unsigned long pclk_clk_rate;
 
 };
 static const struct rgb_data rgb0_data = {
@@ -155,7 +156,25 @@ static int sunxi_lcd_pin_set_state(struct device *dev, char *name)
 exit:
 	return ret;
 }
+static int sunxi_rgb_displl_enable(struct sunxi_drm_rgb *rgb)
+{
+	if (rgb->pclk) {
+		clk_set_rate(rgb->pclk, rgb->pclk_clk_rate);
+		clk_prepare_enable(rgb->pclk);
+	}
 
+	return 0;
+}
+
+static int sunxi_rgb_displl_disable(struct sunxi_drm_rgb *rgb)
+{
+	if (rgb->pclk) {
+		clk_set_rate(rgb->pclk, 24000000);
+		clk_disable_unprepare(rgb->pclk);
+	}
+
+	return 0;
+}
 void sunxi_drm_rgb_encoder_atomic_enable(struct drm_encoder *encoder,
 					struct drm_atomic_state *state)
 {
@@ -166,7 +185,6 @@ void sunxi_drm_rgb_encoder_atomic_enable(struct drm_encoder *encoder,
 	struct sunxi_drm_rgb *rgb = encoder_to_sunxi_drm_rgb(encoder);
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(crtc_state);
 	struct disp_output_config disp_cfg;
-	unsigned long pclk_clk_rate;
 
 	DRM_INFO("[RGB] %s start\n", __FUNCTION__);
 	drm_mode_to_sunxi_video_timings(&rgb->mode, &rgb->rgb_para.timings);
@@ -185,9 +203,11 @@ void sunxi_drm_rgb_encoder_atomic_enable(struct drm_encoder *encoder,
 #else
 	disp_cfg.displl_clk = false;
 #endif
+	if (rgb->rgb_data->id == 1)
+		disp_cfg.displl_clk = false;
 	sunxi_tcon_mode_init(rgb->sdrm.tcon_dev, &disp_cfg);
 
-	pclk_clk_rate = rgb->rgb_para.timings.pixel_clk * disp_cfg.tcon_lcd_div;
+	rgb->pclk_clk_rate = rgb->rgb_para.timings.pixel_clk * disp_cfg.tcon_lcd_div;
 
 	sunxi_lcd_pin_set_state(rgb->dev, "active");
 
@@ -199,14 +219,10 @@ void sunxi_drm_rgb_encoder_atomic_enable(struct drm_encoder *encoder,
 		}
 		panel_rgb_regulator_enable(rgb->sdrm.panel);
 	} else {
-		if (rgb->phy) {
+		if (rgb->phy)
 			phy_power_on(rgb->phy);
-			if (rgb->pclk) {
-				clk_set_rate(rgb->pclk, pclk_clk_rate);
-				clk_prepare_enable(rgb->pclk);
-			}
-		}
 		drm_panel_prepare(rgb->sdrm.panel);
+		sunxi_rgb_displl_enable(rgb);
 		ret = sunxi_rgb_enable_output(rgb->sdrm.tcon_dev);
 		if (ret < 0)
 			DRM_DEV_INFO(rgb->dev, "failed to enable rgb ouput\n");
@@ -223,16 +239,15 @@ void sunxi_drm_rgb_encoder_atomic_disable(struct drm_encoder *encoder,
 	struct sunxi_drm_rgb *rgb = encoder_to_sunxi_drm_rgb(encoder);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	rgb->sdrm.panel.prepare_prev_first = false;
+	rgb->sdrm.panel->prepare_prev_first = false;
 #endif
 	drm_panel_disable(rgb->sdrm.panel);
+	sunxi_rgb_displl_disable(rgb);
 	drm_panel_unprepare(rgb->sdrm.panel);
 
 	if (rgb->phy) {
 		phy_power_off(rgb->phy);
 	}
-	if (rgb->pclk)
-		clk_disable_unprepare(rgb->pclk);
 
 	sunxi_lcd_pin_set_state(rgb->dev, "sleep");
 	sunxi_rgb_disable_output(rgb->sdrm.tcon_dev);
@@ -265,6 +280,24 @@ static void sunxi_rgb_enable_vblank(bool enable, void *data)
 	sunxi_tcon_enable_vblank(rgb->sdrm.tcon_dev, enable);
 }
 
+static bool sunxi_rgb_is_support_backlight(void *data)
+{
+	struct sunxi_drm_rgb *rgb = (struct sunxi_drm_rgb *)data;
+	return panel_rgb_is_support_backlight(rgb->sdrm.panel);
+}
+
+static int sunxi_rgb_get_backlight_value(void *data)
+{
+	struct sunxi_drm_rgb *rgb = (struct sunxi_drm_rgb *)data;
+	return panel_rgb_get_backlight_value(rgb->sdrm.panel);
+}
+
+static void sunxi_rgb_set_backlight_value(void *data, int brightness)
+{
+	struct sunxi_drm_rgb *rgb = (struct sunxi_drm_rgb *)data;
+	panel_rgb_set_backlight_value(rgb->sdrm.panel, brightness);
+}
+
 int sunxi_drm_rgb_encoder_atomic_check(struct drm_encoder *encoder,
 				struct drm_crtc_state *crtc_state,
 				struct drm_connector_state *conn_state)
@@ -278,6 +311,9 @@ int sunxi_drm_rgb_encoder_atomic_check(struct drm_encoder *encoder,
 	scrtc_state->tcon_id = rgb->sdrm.tcon_id;
 	scrtc_state->get_cur_line = sunxi_rgb_get_current_line;
 	scrtc_state->is_sync_time_enough = sunxi_rgb_is_sync_time_enough;
+	scrtc_state->is_support_backlight = sunxi_rgb_is_support_backlight;
+	scrtc_state->get_backlight_value = sunxi_rgb_get_backlight_value;
+	scrtc_state->set_backlight_value = sunxi_rgb_set_backlight_value;
 	scrtc_state->enable_vblank = sunxi_rgb_enable_vblank;
 	scrtc_state->check_status = sunxi_rgb_fifo_check;
 	scrtc_state->output_dev_data = rgb;

@@ -1084,7 +1084,7 @@ static PVRSRV_ERROR DCPDPBufferAlloc(IMG_HANDLE hDisplayContext,
 	}
 
 	/* Make sure we get a buffer with the size that we're expecting (this should be page aligned) */
-	DC_ASSERT((IMG_UINT32)DC_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height, DC_OSGetPageSize()) <= psDeviceData->ui32BufferSize);
+	DC_ASSERT((IMG_UINT32)PVR_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height, DC_OSGetPageSize()) <= psDeviceData->ui32BufferSize);
 
 	*puiLog2PageSize	= DC_OSGetPageShift();
 	*pui32PageCount		= psBuffer->ui32SizeInPages;
@@ -1292,7 +1292,7 @@ static PVRSRV_ERROR InitSystemBuffer(DCPDP_DEVICE *psDeviceData)
 	}
 
 	/* Setup simple buffer allocator */
-	psDeviceData->ui32BufferSize = (IMG_UINT32)DC_ALIGN(psDeviceData->pasTimingData[psDeviceData->uiTimingDataIndex].ui32HDisplay *
+	psDeviceData->ui32BufferSize = (IMG_UINT32)PVR_ALIGN(psDeviceData->pasTimingData[psDeviceData->uiTimingDataIndex].ui32HDisplay *
 							    psDeviceData->pasTimingData[psDeviceData->uiTimingDataIndex].ui32VDisplay *
 							    DCPDP_PIXEL_FORMAT_BPP,
 							    DC_OSGetPageSize());
@@ -1337,7 +1337,7 @@ static PVRSRV_ERROR InitSystemBuffer(DCPDP_DEVICE *psDeviceData)
 	PDP_DEBUG_PRINT("- %s: System buffer width: %d, height: %d, starting addr: %lx\n", __func__, psBuffer->ui32Width, psBuffer->ui32Height, psBuffer->sCpuPAddr.uiAddr);
 
 	/* Make sure we get a buffer with the size that we're expecting (this should be page aligned) */
-	DC_ASSERT((IMG_UINT32)DC_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height, DC_OSGetPageSize()) <= psDeviceData->ui32BufferSize);
+	DC_ASSERT((IMG_UINT32)PVR_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height, DC_OSGetPageSize()) <= psDeviceData->ui32BufferSize);
 
 	/* Initialise the system buffer to a nice rainbow. */
 	pvBufferCpuVAddr = DC_OSMapPhysAddr(psBuffer->sCpuPAddr, psBuffer->ui32SizeInBytes);
@@ -1549,7 +1549,7 @@ PVRSRV_ERROR DCPDPInit(void *pvDevice, DCPDP_DEVICE **ppsDeviceData, IMG_UINT32 
 
 	/* Services manages the card memory so we need to acquire the display controller
 	   heap (which is a carve out of the card memory) so we can allocate our own buffers. */
-	eError = psDeviceData->sPVRServicesFuncs.pfnPhysHeapAcquireByUsage(PHYS_HEAP_USAGE_DISPLAY,
+	eError = psDeviceData->sPVRServicesFuncs.pfnPhysHeapAcquireByID(PVRSRV_PHYS_HEAP_DISPLAY,
 								    psDevNode,
 								    &psDeviceData->psPhysHeap);
 	if (eError != PVRSRV_OK)

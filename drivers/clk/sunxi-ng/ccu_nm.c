@@ -30,7 +30,7 @@ static u64 ccu_nm_calc_rate(unsigned long parent,
 }
 
 static void ccu_nm_find_best(unsigned long parent, u64 rate,
-			     struct _ccu_nm *nm)
+			     const struct clk_div_table *table, struct _ccu_nm *nm)
 {
 	u64 best_rate = 0;
 	unsigned long best_n = 0, best_m = 0;
@@ -38,8 +38,21 @@ static void ccu_nm_find_best(unsigned long parent, u64 rate,
 
 	for (_n = nm->min_n; _n <= nm->max_n; _n++) {
 		for (_m = nm->min_m; _m <= nm->max_m; _m++) {
-			u64 tmp_rate = ccu_nm_calc_rate(parent,
-							 _n, _m);
+			u64 tmp_rate, div = 0;
+
+			/* Look for div in the table first, no div in the table skip this loop */
+			if (table) {
+				div = ccu_get_table_div(table, (_m - 1));
+				if (!div) {
+					sunxi_info(NULL, "val %lu has no corresponding div in table\n", (_m - 1));
+					continue;
+				}
+			} else {
+				div = _m;
+			}
+
+			tmp_rate = ccu_nm_calc_rate(parent,
+							 _n, div);
 
 			if (tmp_rate > rate)
 				continue;
@@ -47,7 +60,7 @@ static void ccu_nm_find_best(unsigned long parent, u64 rate,
 			if ((rate - tmp_rate) < (rate - best_rate)) {
 				best_rate = tmp_rate;
 				best_n = _n;
-				best_m = _m;
+				best_m = div;
 			}
 		}
 	}
@@ -60,7 +73,11 @@ static void ccu_nm_disable(struct clk_hw *hw)
 {
 	struct ccu_nm *nm = hw_to_ccu_nm(hw);
 
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	return ccu_pll_gate_helper_disable(&nm->common, nm->enable, nm->output, nm->lock_enable, nm->ldo_en);
+#else
 	return ccu_gate_helper_disable(&nm->common, nm->enable);
+#endif
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
@@ -88,7 +105,11 @@ static int ccu_nm_enable(struct clk_hw *hw)
 {
 	struct ccu_nm *nm = hw_to_ccu_nm(hw);
 
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	return ccu_pll_gate_helper_enable(&nm->common, nm->enable, nm->output, nm->lock, nm->lock_enable, nm->ldo_en);
+#else
 	return ccu_gate_helper_enable(&nm->common, nm->enable);
+#endif
 }
 
 static int ccu_nm_is_enabled(struct clk_hw *hw)
@@ -137,7 +158,10 @@ static unsigned long ccu_nm_recalc_rate(struct clk_hw *hw,
 
 	m = reg >> nm->m.shift;
 	m &= (1 << nm->m.width) - 1;
-	m += nm->m.offset;
+	if (nm->m.table)
+		m = ccu_get_table_div(nm->m.table, m);
+	else
+		m += nm->m.offset;
 	if (!m)
 		m++;
 
@@ -145,6 +169,9 @@ static unsigned long ccu_nm_recalc_rate(struct clk_hw *hw,
 		rate = ccu_sdm_helper_read_rate(&nm->common, &nm->sdm, m, n);
 	else
 		rate = ccu_nm_calc_rate(parent_rate, n, m);
+
+	if (nm->common.features & CCU_FEATURE_FIXED_PREDIV)
+		rate *= nm->fixed_pre_div;
 
 	if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 		do_div(rate, nm->fixed_post_div);
@@ -166,10 +193,15 @@ static long ccu_nm_round_rate(struct clk_hw *hw, unsigned long _rate,
 	if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 		rate *= nm->fixed_post_div;
 
+	if (nm->common.features & CCU_FEATURE_FIXED_PREDIV)
+		do_div(rate, nm->fixed_pre_div);
+
 	if (rate < nm->min_rate) {
 		rate = nm->min_rate;
 		if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 			do_div(rate, nm->fixed_post_div);
+		if (nm->common.features & CCU_FEATURE_FIXED_PREDIV)
+			rate *= nm->fixed_pre_div;
 		return rate;
 	}
 
@@ -177,18 +209,24 @@ static long ccu_nm_round_rate(struct clk_hw *hw, unsigned long _rate,
 		rate = nm->max_rate;
 		if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 			do_div(rate, nm->fixed_post_div);
+		if (nm->common.features & CCU_FEATURE_FIXED_PREDIV)
+			rate *= nm->fixed_pre_div;
 		return rate;
 	}
 
 	if (ccu_frac_helper_has_rate(&nm->common, &nm->frac, rate)) {
 		if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 			do_div(rate, nm->fixed_post_div);
+		if (nm->common.features & CCU_FEATURE_FIXED_PREDIV)
+			rate *= nm->fixed_pre_div;
 		return rate;
 	}
 
 	if (ccu_sdm_helper_has_rate(&nm->common, &nm->sdm, rate)) {
 		if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 			do_div(rate, nm->fixed_post_div);
+		if (nm->common.features & CCU_FEATURE_FIXED_PREDIV)
+			rate *= nm->fixed_pre_div;
 		return rate;
 	}
 
@@ -197,11 +235,14 @@ static long ccu_nm_round_rate(struct clk_hw *hw, unsigned long _rate,
 	_nm.min_m = 1;
 	_nm.max_m = nm->m.max ?: 1 << nm->m.width;
 
-	ccu_nm_find_best(*parent_rate, rate, &_nm);
+	ccu_nm_find_best(*parent_rate, rate, nm->m.table, &_nm);
 	rate = ccu_nm_calc_rate(*parent_rate, _nm.n, _nm.m);
 
 	if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 		do_div(rate, nm->fixed_post_div);
+
+	if (nm->common.features & CCU_FEATURE_FIXED_PREDIV)
+		rate *= nm->fixed_pre_div;
 
 	return rate;
 }
@@ -218,6 +259,10 @@ static int ccu_nm_set_rate(struct clk_hw *hw, unsigned long _rate,
 	/* Adjust target rate according to post-dividers */
 	if (nm->common.features & CCU_FEATURE_FIXED_POSTDIV)
 		rate = rate * nm->fixed_post_div;
+
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	ccu_pll_output_helper_disable(&nm->common, nm->output);
+#endif
 
 	if (ccu_frac_helper_has_rate(&nm->common, &nm->frac, rate)) {
 		spin_lock_irqsave(nm->common.lock, flags);
@@ -243,35 +288,59 @@ static int ccu_nm_set_rate(struct clk_hw *hw, unsigned long _rate,
 	_nm.max_m = nm->m.max ?: 1 << nm->m.width;
 
 	if (ccu_sdm_helper_has_rate(&nm->common, &nm->sdm, rate)) {
-		ccu_sdm_helper_enable(&nm->common, &nm->sdm, rate);
-
 		/* Sigma delta modulation requires specific N and M factors */
 		ccu_sdm_helper_get_factors(&nm->common, &nm->sdm, rate,
 					   &_nm.m, &_nm.n);
 	} else {
 		ccu_sdm_helper_disable(&nm->common, &nm->sdm);
-		ccu_nm_find_best(parent_rate, rate, &_nm);
+		ccu_nm_find_best(parent_rate, rate, nm->m.table, &_nm);
 	}
 
 	spin_lock_irqsave(nm->common.lock, flags);
 
 	reg = readl(nm->common.base + nm->common.reg);
+
 	if (nm->n.width)
 		reg &= ~GENMASK(nm->n.width + nm->n.shift - 1, nm->n.shift);
 	if (nm->m.width)
 		reg &= ~GENMASK(nm->m.width + nm->m.shift - 1, nm->m.shift);
 
 	reg |= (_nm.n - nm->n.offset) << nm->n.shift;
-	reg |= (_nm.m - nm->m.offset) << nm->m.shift;
+	if (nm->m.table)
+		reg |= (ccu_get_table_val(nm->m.table, _nm.m)) << nm->m.shift;
+	else
+		reg |= (_nm.m - nm->m.offset) << nm->m.shift;
+
 	writel(reg, nm->common.base + nm->common.reg);
+
+	spin_unlock_irqrestore(nm->common.lock, flags);
+
+	if (ccu_sdm_helper_has_rate(&nm->common, &nm->sdm, rate))
+		ccu_sdm_helper_enable(&nm->common, &nm->sdm, rate);
+
+	spin_lock_irqsave(nm->common.lock, flags);
 
 	if (nm->common.features & CCU_FEATURE_CLEAR_MOD)
 		ccu_helper_wait_for_clear(&nm->common, nm->common.clear);
+
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	/* Enable lock enable */
+	reg = readl(nm->common.base + nm->common.reg);
+	reg &= ~(nm->lock_enable);
+	writel(reg, nm->common.base + nm->common.reg);
+
+	reg = readl(nm->common.base + nm->common.reg);
+	reg |= (nm->lock_enable);
+	writel(reg, nm->common.base + nm->common.reg);
+#endif
 
 	spin_unlock_irqrestore(nm->common.lock, flags);
 
 	ccu_helper_wait_for_lock(&nm->common, nm->lock);
 
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	ccu_pll_output_helper_enable(&nm->common, nm->output);
+#endif
 	return 0;
 }
 

@@ -47,7 +47,7 @@ MODULE_LICENSE("GPL");
 
 #define SENSOR_NUM	0x2
 #define SENSOR_NAME "gc030a_mipi"
-#define SENSOR_NAME_2 "gc030a_mipi_f"
+#define SENSOR_NAME_2 "gc030a_mipi_2"
 
 /*
  * The default register settings
@@ -258,28 +258,28 @@ static int sensor_s_gain(struct v4l2_subdev *sd, unsigned int gain_val)
 	if ((ANALOG_GAIN_1 <= All_gain) && (All_gain < ANALOG_GAIN_2)) {
 		sensor_write(sd, 0xb6, 0x00);
 		Digital_gain = All_gain;
-		sensor_write(sd, 0xb1, Digital_gain >> 6);
-		sensor_write(sd, 0xb2, (Digital_gain << 2)&0xfc);
+		sensor_write(sd, 0xb1, (Digital_gain >> 6) & 0x0f);
+		sensor_write(sd, 0xb2, (Digital_gain << 2) & 0xfc);
 	} else if ((ANALOG_GAIN_2 <= All_gain) && (All_gain < ANALOG_GAIN_3)) {
 		sensor_write(sd, 0xb6, 0x01);
 		Digital_gain = 64*All_gain/ANALOG_GAIN_2;
-		sensor_write(sd, 0xb1, Digital_gain >> 6);
-		sensor_write(sd, 0xb2, (Digital_gain << 2)&0xfc);
+		sensor_write(sd, 0xb1, (Digital_gain >> 6) & 0x0f);
+		sensor_write(sd, 0xb2, (Digital_gain << 2) & 0xfc);
 	} else if ((ANALOG_GAIN_3 <= All_gain) && (All_gain < ANALOG_GAIN_4)) {
 		sensor_write(sd, 0xb6, 0x02);
 		Digital_gain = 64*All_gain/ANALOG_GAIN_3;
-		sensor_write(sd, 0xb1, Digital_gain >> 6);
-		sensor_write(sd, 0xb2, (Digital_gain << 2)&0xfc);
+		sensor_write(sd, 0xb1, (Digital_gain >> 6) & 0x0f);
+		sensor_write(sd, 0xb2, (Digital_gain << 2) & 0xfc);
 	} else if ((ANALOG_GAIN_4 <= All_gain) && (All_gain < ANALOG_GAIN_5)) {
 		sensor_write(sd, 0xb6, 0x03);
 		Digital_gain = 64*All_gain/ANALOG_GAIN_4;
-		sensor_write(sd, 0xb1, Digital_gain >> 6);
-		sensor_write(sd, 0xb2, (Digital_gain << 2)&0xfc);
+		sensor_write(sd, 0xb1, (Digital_gain >> 6) & 0x0f);
+		sensor_write(sd, 0xb2, (Digital_gain << 2) & 0xfc);
 	} else {
 		sensor_write(sd, 0xb6, 0x04);
 		Digital_gain = 64*All_gain/ANALOG_GAIN_5;
-		sensor_write(sd, 0xb1, Digital_gain >> 6);
-		sensor_write(sd, 0xb2, (Digital_gain << 2)&0xfc);
+		sensor_write(sd, 0xb1, (Digital_gain >> 6) & 0x0f);
+		sensor_write(sd, 0xb2, (Digital_gain << 2) & 0xfc);
 	}
 
 	sensor_dbg("sensor_set_gain = %d, Done!\n", gain_val);
@@ -523,8 +523,8 @@ static struct sensor_win_size sensor_win_sizes[] = {
 	.hoffset    = 0,
 	.voffset    = 0,
 	.hts        = 1579,
-	.vts        = 506,
-	.pclk       = 42*1000*1000,
+	.vts        = 509,
+	.pclk       = 24*1000*1000,
 	.mipi_bps   = 144*1000*1000,
 	.fps_fixed  = 30,
 	.bin_factor = 1,
@@ -544,7 +544,12 @@ static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 				struct v4l2_mbus_config *cfg)
 {
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	cfg->bus.mipi_csi2.num_data_lanes = 0 | V4L2_MBUS_CSI2_1_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#else
 	cfg->flags = 0 | V4L2_MBUS_CSI2_1_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#endif
 
 	return 0;
 }
@@ -611,8 +616,8 @@ static int sensor_reg_init(struct sensor_info *info)
 		exp_gain.exp_val = info->exp;
 		exp_gain.gain_val = info->gain;
 	} else {
-		exp_gain.exp_val = 8000;
-		exp_gain.gain_val = 1024;
+		exp_gain.exp_val = 7680;
+		exp_gain.gain_val = 64;
 	}
 	sensor_s_exp_gain(sd, &exp_gain);
 
@@ -712,8 +717,12 @@ static int sensor_init_controls(struct v4l2_subdev *sd, const struct v4l2_ctrl_o
 }
 
 static int sensor_dev_id;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int sensor_probe(struct i2c_client *client)
+#else
 static int sensor_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	struct v4l2_subdev *sd;
 	struct sensor_info *info;
@@ -754,7 +763,11 @@ static int sensor_probe(struct i2c_client *client,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 static int sensor_remove(struct i2c_client *client)
+#else
+static void sensor_remove(struct i2c_client *client)
+#endif
 {
 	struct v4l2_subdev *sd;
 	int i;
@@ -770,7 +783,9 @@ static int sensor_remove(struct i2c_client *client)
 	}
 
 	kfree(to_state(sd));
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id sensor_id[] = {

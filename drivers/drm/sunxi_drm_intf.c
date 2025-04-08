@@ -8,6 +8,7 @@
 */
 
 #include "sunxi_drm_intf.h"
+#include "sunxi_drm_crtc.h"
 
 struct drm_property *
 sunxi_drm_create_attach_property_enum(struct drm_device *drm,
@@ -30,7 +31,6 @@ sunxi_drm_create_attach_property_enum(struct drm_device *drm,
 	return prop;
 }
 
-
 struct drm_property *
 sunxi_drm_create_attach_property_range(struct drm_device *drm,
 					 struct drm_mode_object *base,
@@ -48,6 +48,27 @@ sunxi_drm_create_attach_property_range(struct drm_device *drm,
 
 	drm_object_attach_property(base, prop, init_val);
 
+	return prop;
+}
+
+struct drm_property *
+sunxi_drm_create_attach_property_bitmask(struct drm_device *drm,
+					 struct drm_mode_object *base,
+					 const char *name,
+					 const struct drm_prop_enum_list *list,
+					 int num,
+					 uint64_t support_bit,
+					 uint64_t init_bit)
+{
+	struct drm_property *prop;
+
+	prop = drm_property_create_bitmask(drm, 0, name, list, num, support_bit);
+	if (IS_ERR_OR_NULL(prop)) {
+		DRM_ERROR("sunxi drm fails to create bitmask property: %s\n", name);
+		return NULL;
+	}
+
+	drm_object_attach_property(base, prop, init_bit);
 	return prop;
 }
 

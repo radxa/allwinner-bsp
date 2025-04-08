@@ -35,7 +35,7 @@
 /* REG-Analog */
 #define SUNXI_DAC_AN_REG	0x310
 
-#define SUNXI_RAMP		0x31c
+#define SUNXI_RAMP_REG		0x31C
 #define SUNXI_BIAS_AN_CTL	0x320
 #define SUNXI_AUDIO_MAX_REG	SUNXI_BIAS_AN_CTL
 
@@ -98,7 +98,11 @@
 #define OPVR_OI_CTRL			7
 #define LINEOUT_DIFFEN			6
 #define LINEOUT_GAIN			0
+/* SUNXI_RAMP_REG:0x31C */
+#define RMC_EN				1
+#define RD_EN				0
 /* SUNXI_BIAS_AN_CTL:0x320 */
+#define BIASDATA			0
 
 #define DACDRC_SHIFT		1
 #define DACHPF_SHIFT		2
@@ -111,6 +115,9 @@ struct sunxi_codec_mem {
 };
 
 struct sunxi_codec_clk {
+	/* parent */
+	struct clk *clk_pll_audio0_4x;
+	struct clk *clk_pll_audio1_4x;
 	/* module */
 	struct clk *clk_audio_dac;
 	/* bus & reset */
@@ -147,9 +154,10 @@ struct sunxi_codec {
 
 	struct sunxi_codec_mem mem;
 	struct sunxi_codec_clk clk;
-	struct sunxi_codec_rglt rglt;
 	struct sunxi_codec_dts dts;
+	struct snd_sunxi_rglt *rglt;
 	struct sunxi_audio_status audio_sta;
+	enum SND_SUNXI_CLK_STATUS clk_sta;
 
 	unsigned int pa_pin_max;
 	struct snd_sunxi_pacfg *pa_cfg;

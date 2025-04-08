@@ -42,6 +42,7 @@ struct sunxi_drm_device {
 	struct drm_panel *panel;
 	struct drm_bridge *bridge;
 	struct device *tcon_dev;
+	struct device *video_sys_dev;
 	unsigned int tcon_id;
 	unsigned int hw_id;
 };
@@ -60,11 +61,15 @@ struct sunxi_drm_private {
 	struct drm_property *prop_layer_id;
 	struct drm_property *prop_frontend_data;
 	struct drm_property *prop_backend_data;
+	struct drm_property *prop_sunxi_ctm;
+	struct drm_property *prop_feature;
 	struct drm_property *prop_eotf;
 	struct drm_property *prop_color_space;
 	struct drm_property *prop_color_format;
 	struct drm_property *prop_color_depth;
 	struct drm_property *prop_color_range;
+	struct drm_property *prop_frame_rate_change;
+	struct drm_property *prop_compressed_image_crop;
 	struct sunxi_drm_pri *priv;
 };
 
@@ -73,8 +78,13 @@ struct sunxi_drm_private {
 bool sunxi_drm_check_if_need_sw_enable(struct drm_connector *connector);
 bool sunxi_drm_check_device_boot_enabled(struct drm_device *dev,
 			unsigned int connector_type, unsigned int connector_id);
+bool sunxi_drm_check_tcon_top_boot_enabled(struct drm_device *drm, unsigned int tcon_top_id);
+bool sunxi_drm_check_de_boot_enabled(struct drm_device *drm, unsigned int de_id);
 int sunxi_drm_get_logo_info(struct drm_device *dev, struct sunxi_logo_info *logo,
 			    unsigned int *scn_w, unsigned int *scn_h);
+int sunxi_drm_get_device_max_fps(struct drm_device *drm);
+unsigned int sunxi_drm_get_de_max_freq(struct drm_device *drm);
 void sunxi_drm_signal_sw_enable_done(struct drm_crtc *crtc);
+struct proc_dir_entry *sunxi_drm_get_procfs_dir(void);
 
 #endif

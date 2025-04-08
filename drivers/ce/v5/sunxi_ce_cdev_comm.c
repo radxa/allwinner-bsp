@@ -331,7 +331,7 @@ static int aes_crypto_start(crypto_aes_req_ctx_t *req, u8 *src_buffer,
 	if (req->ion_flag) {
 		dst_phy = req->dst_phy;
 	} else {
-		dst_phy = dma_map_single(ce_cdev->pdevice, dst_buffer, src_length, DMA_TO_DEVICE);
+		dst_phy = dma_map_single(ce_cdev->pdevice, dst_buffer, src_length, DMA_FROM_DEVICE);
 	}
 	SS_DBG("dst = 0x%px, dst_phy_addr = 0x%px\n", dst_buffer, (void *)dst_phy);
 
@@ -373,14 +373,14 @@ out:
 	/* key */
 	if (req->key_length) {
 		dma_unmap_single(ce_cdev->pdevice,
-			key_phy, req->key_length, DMA_FROM_DEVICE);
+			key_phy, req->key_length, DMA_TO_DEVICE);
 	}
 
 	/* iv */
 	if (req->ion_flag && padding_flag) {
 		;
 	} else {
-		task_iv_init(req, task, DMA_FROM_DEVICE);
+		task_iv_init(req, task, DMA_TO_DEVICE);
 	}
 
 	/* data */
@@ -388,7 +388,7 @@ out:
 		;
 	} else {
 		dma_unmap_single(ce_cdev->pdevice,
-				src_phy, src_length, DMA_FROM_DEVICE);
+				src_phy, src_length, DMA_TO_DEVICE);
 	}
 
 	if (req->ion_flag) {
@@ -605,19 +605,18 @@ static int rsa_crypto_start(crypto_rsa_req_ctx_t *req)
 
 	/* task_set */
 	ce_rsa_config(req, task);
-
 	pkey_phy = dma_map_single(ce_cdev->pdevice, req->pkey_buffer,
-				  req->pkey_length, DMA_MEM_TO_DEV);
+				  req->pkey_length, DMA_TO_DEVICE);
 	SS_DBG("pkey = 0x%px, pkey_phy_addr = 0x%px\n", req->pkey_buffer,
 	       (void *)pkey_phy);
 
 	sign_phy = dma_map_single(ce_cdev->pdevice, req->sign_buffer,
-				  req->sign_length, DMA_MEM_TO_DEV);
+				  req->sign_length, DMA_TO_DEVICE);
 	SS_DBG("sign = 0x%px, sign_phy_addr = 0x%px\n", req->sign_buffer,
 	       (void *)sign_phy);
 
 	dst_phy = dma_map_single(ce_cdev->pdevice, req->dst_buffer,
-				 req->dst_length, DMA_MEM_TO_DEV);
+				 req->dst_length, DMA_FROM_DEVICE);
 	SS_DBG("dst = 0x%px, dst_phy_addr = 0x%px\n", req->dst_buffer,
 	       (void *)dst_phy);
 
@@ -641,20 +640,11 @@ static int rsa_crypto_start(crypto_rsa_req_ctx_t *req)
 		ce_task_destroy(task);
 		ce_reset();
 		ret = -ETIMEDOUT;
+		goto out;
 	}
 
 	ss_irq_disable(channel_id);
 	ce_task_destroy(task);
-
-	/* pkey */
-	dma_unmap_single(ce_cdev->pdevice, pkey_phy, req->pkey_length,
-			 DMA_DEV_TO_MEM);
-	/* data */
-	dma_unmap_single(ce_cdev->pdevice, sign_phy, req->sign_length,
-			 DMA_DEV_TO_MEM);
-
-	dma_unmap_single(ce_cdev->pdevice, dst_phy, req->dst_length,
-			 DMA_DEV_TO_MEM);
 
 	SS_DBG("After CE, TSR: 0x%08x, ERR: 0x%08x\n", ss_reg_rd(CE_REG_TSR),
 	       ss_reg_rd(CE_REG_ERR));
@@ -662,9 +652,23 @@ static int rsa_crypto_start(crypto_rsa_req_ctx_t *req)
 	if (ss_flow_err(channel_id)) {
 		ce_rsa_task_print(req);
 		SS_ERR("CE return error: %d\n", ss_flow_err(channel_id));
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
-	return 0;
+
+	ret = 0;
+out:
+	/* pkey */
+	dma_unmap_single(ce_cdev->pdevice, pkey_phy, req->pkey_length,
+			 DMA_TO_DEVICE);
+	/* data */
+	dma_unmap_single(ce_cdev->pdevice, sign_phy, req->sign_length,
+			 DMA_TO_DEVICE);
+
+	dma_unmap_single(ce_cdev->pdevice, dst_phy, req->dst_length,
+			 DMA_FROM_DEVICE);
+
+	return ret;
 }
 
 int do_rsa_crypto(crypto_rsa_req_ctx_t *req_ctx)
@@ -720,23 +724,23 @@ int do_ecc_crypto(crypto_ecc_req_ctx_t *req)
 	ce_ecc_config(req, task);
 
 	key_phy = dma_map_single(ce_cdev->pdevice, req->key_buffer,
-				  req->key_length, DMA_MEM_TO_DEV);
+				  req->key_length, DMA_TO_DEVICE);
 	SS_DBG("pkey = 0x%px, key_phy_addr = 0x%px\n", req->key_buffer,
 	       (void *)key_phy);
 
 	iv_phy = dma_map_single(ce_cdev->pdevice, req->iv_buffer,
-				  req->iv_length, DMA_MEM_TO_DEV);
+				  req->iv_length, DMA_TO_DEVICE);
 	SS_DBG("sign = 0x%px, iv_phy_addr = 0x%px\n", req->iv_buffer,
 	       (void *)iv_phy);
 
 	dst_phy = dma_map_single(ce_cdev->pdevice, req->dst_buffer,
-				 req->dst_length, DMA_MEM_TO_DEV);
+				 req->dst_length, DMA_FROM_DEVICE);
 	SS_DBG("dst = 0x%px, dst_phy_addr = 0x%px\n", req->dst_buffer,
 	       (void *)dst_phy);
 
 	src_phy = dma_map_single(ce_cdev->pdevice, req->src_buffer,
-				  req->src_length, DMA_MEM_TO_DEV);
-	SS_DBG("pkey = 0x%px, src_phy_addr = 0x%px\n", req->src_buffer,
+				  req->src_length, DMA_TO_DEVICE);
+	SS_DBG("src = 0x%px, src_phy_addr = 0x%px\n", req->src_buffer,
 	       (void *)src_phy);
 
 	switch (req->mode) {
@@ -850,28 +854,34 @@ int do_ecc_crypto(crypto_ecc_req_ctx_t *req)
 		ce_task_destroy(task);
 		ce_reset();
 		err = -ETIMEDOUT;
+		goto out;
 	}
 
 	ss_irq_disable(channel_id);
 	ce_task_destroy(task);
 
+	SS_DBG("After CE, TSR: 0x%08x, ERR: 0x%08x\n", ss_reg_rd(CE_REG_TSR),
+	       ss_reg_rd(CE_REG_ERR));
+
+	err = 0;
+out:
 	/* key */
 	dma_unmap_single(ce_cdev->pdevice, key_phy, req->key_length,
-			 DMA_DEV_TO_MEM);
+			 DMA_TO_DEVICE);
 	/* iv */
 	dma_unmap_single(ce_cdev->pdevice, iv_phy, req->iv_length,
-			 DMA_DEV_TO_MEM);
+			 DMA_TO_DEVICE);
 
 	/* dst */
 	dma_unmap_single(ce_cdev->pdevice, dst_phy, req->dst_length,
-			 DMA_DEV_TO_MEM);
+			 DMA_FROM_DEVICE);
 
 	/* src */
 	dma_unmap_single(ce_cdev->pdevice, src_phy, req->src_length,
-			 DMA_DEV_TO_MEM);
+			 DMA_TO_DEVICE);
 
-	SS_DBG("After CE, TSR: 0x%08x, ERR: 0x%08x\n", ss_reg_rd(CE_REG_TSR),
-	       ss_reg_rd(CE_REG_ERR));
+	if (err)
+		return err;
 
 	if (ss_flow_err(channel_id)) {
 		SS_ERR("CE return error: %d\n", ss_flow_err(channel_id));
@@ -884,14 +894,14 @@ int do_ecc_crypto(crypto_ecc_req_ctx_t *req)
 	 */
 	if (req->mode == CE_ECC_OP_VERIFY) {
 		SS_DBG("the verify is %d\n", req->dst_buffer[0]);
-		if (req->dst_buffer[0] == 1) {
-			return 0;
-		} else {
+		if (req->dst_buffer[0] != 1) {
 			SS_ERR("ecc verify failed\n");
-			return 1;
+			return -2;
 		}
 	}
+
 	return 0;
+
 }
 
 static int check_hash_ctx_vaild(crypto_hash_req_ctx_t *req)
@@ -938,7 +948,7 @@ static void ce_task_hash_init(crypto_hash_req_ctx_t *req, phys_addr_t key_phy,
 			      phys_addr_t text_phy, phys_addr_t dst_phy,
 			      phys_addr_t iv_phy, ce_new_task_desc_t *ptask)
 {
-	ulong total_bit_len = req->text_length * 8;
+	u64 total_bit_len = req->text_length * 8;
 	ce_task_addr_set(0, text_phy, ptask->ce_sg[0].src_addr);
 	ptask->ce_sg[0].src_len = req->text_length;
 
@@ -946,6 +956,10 @@ static void ce_task_hash_init(crypto_hash_req_ctx_t *req, phys_addr_t key_phy,
 	ptask->ce_sg[0].dst_len = req->dst_length;
 
 	memcpy(ptask->data_len, &total_bit_len, 4);
+#ifdef SS_TOTAL_DATALEN_ENABLE
+	/* muilt_packets hash should config total_datalen */
+	ss_hash_total_data_len_set(total_bit_len, ptask);
+#endif
 
 	if (req->key_length) {
 		ce_task_addr_set(0, key_phy, ptask->key_addr);
@@ -1001,6 +1015,7 @@ void ce_hash_rng_task_desc_print(ce_new_task_desc_t *task)
 	pr_err("[comm_ctl] 0x%lx\n", ((ulong)ptask->comm_ctl));
 	pr_err("[main_cmd] 0x%lx\n", ((ulong)ptask->main_cmd));
 	pr_err("[data_len] = 0x%llx\n", (u64)ce_task_addr_get(ptask->data_len));
+	pr_err("[total data_len] = %u\n", ptask->reserved[2]);
 
 	for (i = 0; i < 8; i++) {
 		pr_err("[ce_sg%d src_addr] 0x%llx\n", i,
@@ -1033,14 +1048,14 @@ int hash_crypto_start(crypto_hash_req_ctx_t *req)
 	/* task_key_set */
 	if (req->key_length) {
 		key_phy = dma_map_single(ce_cdev->pdevice, req->key_buffer,
-					 req->key_length, DMA_MEM_TO_DEV);
+					 req->key_length, DMA_TO_DEVICE);
 		SS_DBG("key = 0x%px, key_phy_addr = 0x%px\n", req->key_buffer,
 		       (void *)key_phy);
 	}
 
 	if (req->iv_length) {
 		iv_phy = dma_map_single(ce_cdev->pdevice, req->iv_buffer,
-					req->iv_length, DMA_MEM_TO_DEV);
+					req->iv_length, DMA_TO_DEVICE);
 		SS_DBG("iv = %px, iv_phy_addr = %pa\n", req->iv_buffer,
 		       &iv_phy);
 	}
@@ -1051,14 +1066,14 @@ int hash_crypto_start(crypto_hash_req_ctx_t *req)
 		text_phy = req->text_phy;
 	} else {
 		text_phy = dma_map_single(ce_cdev->pdevice, req->text_buffer,
-					  req->text_length, DMA_MEM_TO_DEV);
+					  req->text_length, DMA_TO_DEVICE);
 	}
 	SS_DBG("src = 0x%px, src_phy_addr = 0x%px\n", req->text_buffer,
 	       (void *)text_phy);
 
 	/* the dst_buf is from user */
 	dst_phy = dma_map_single(ce_cdev->pdevice, req->dst_buffer,
-					 req->dst_length, DMA_MEM_TO_DEV);
+					 req->dst_length, DMA_FROM_DEVICE);
 	SS_DBG("dst = 0x%px, dst_phy_addr = 0x%px\n", req->dst_buffer,
 	       (void *)dst_phy);
 
@@ -1081,22 +1096,29 @@ int hash_crypto_start(crypto_hash_req_ctx_t *req)
 		ce_reset();
 		ret = -ETIMEDOUT;
 		ce_hash_rng_task_desc_print(task);
-		return ret;
+		goto out;
 	}
 
 	ss_irq_disable(channel_id);
 	ce_task_hash_rng_destroy(task);
 
+	if (ss_flow_err(channel_id)) {
+		SS_ERR("CE return error: %d\n", ss_flow_err(channel_id));
+		ret = -EINVAL;
+		goto out;
+	}
+	ret = 0;
+out:
 	/* key */
 	if (req->key_length) {
 		dma_unmap_single(ce_cdev->pdevice, key_phy, req->key_length,
-				 DMA_DEV_TO_MEM);
+				 DMA_TO_DEVICE);
 	}
 
 	/* iv */
 	if (req->iv_length) {
 		dma_unmap_single(ce_cdev->pdevice, iv_phy, req->iv_length,
-				 DMA_DEV_TO_MEM);
+				 DMA_TO_DEVICE);
 	}
 
 	/* data */
@@ -1104,17 +1126,13 @@ int hash_crypto_start(crypto_hash_req_ctx_t *req)
 		;
 	} else {
 		dma_unmap_single(ce_cdev->pdevice, text_phy, req->text_length,
-				 DMA_DEV_TO_MEM);
+				 DMA_TO_DEVICE);
 	}
 
 	dma_unmap_single(ce_cdev->pdevice, dst_phy, req->dst_length,
-			 DMA_DEV_TO_MEM);
+			 DMA_FROM_DEVICE);
 
-	if (ss_flow_err(channel_id)) {
-		SS_ERR("CE return error: %d\n", ss_flow_err(channel_id));
-		return -EINVAL;
-	}
-	return 0;
+	return ret;
 }
 
 int do_hash_crypto(crypto_hash_req_ctx_t *req_ctx)
@@ -1176,7 +1194,7 @@ int do_rng_crypto(crypto_rng_req_ctx_t *req)
 		req->key_length = 5 * sizeof(int);
 		/* ce_task_data_len_set(0, task->data_len); */
 		key_phy = dma_map_single(ce_cdev->pdevice, req->key_buffer,
-					 req->key_length, DMA_MEM_TO_DEV);
+					 req->key_length, DMA_TO_DEVICE);
 		SS_DBG("key = 0x%px, key_phy_addr = 0x%px\n", req->key_buffer,
 								(void *)key_phy);
 		ss_rng_key_set(req->key_buffer, req->key_length, task);
@@ -1194,7 +1212,7 @@ int do_rng_crypto(crypto_rng_req_ctx_t *req)
 
 	/* the dst_buf is from user */
 	dst_phy = dma_map_single(ce_cdev->pdevice, req->dst_buffer,
-					 req->dst_length, DMA_MEM_TO_DEV);
+					 req->dst_length, DMA_FROM_DEVICE);
 	SS_DBG("dst = 0x%px, dst_phy_addr = 0x%px\n", req->dst_buffer,
 							(void *)dst_phy);
 
@@ -1218,25 +1236,28 @@ int do_rng_crypto(crypto_rng_req_ctx_t *req)
 		ce_reset();
 		ret = -ETIMEDOUT;
 		ce_hash_rng_task_desc_print(task);
-		return ret;
+		goto out;
 	}
 
 	ss_irq_disable(channel_id);
 	ce_task_hash_rng_destroy(task);
 
+	if (ss_flow_err(channel_id)) {
+		SS_ERR("CE return error: %d\n", ss_flow_err(channel_id));
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = 0;
+
+out:
 	/* key */
 	if (!req->trng) {
 		dma_unmap_single(ce_cdev->pdevice, key_phy, req->key_length,
-								DMA_DEV_TO_MEM);
+								DMA_TO_DEVICE);
 	}
 
 	dma_unmap_single(ce_cdev->pdevice, dst_phy, req->dst_length,
-							DMA_DEV_TO_MEM);
-
-	if (ss_flow_err(channel_id)) {
-		SS_ERR("CE return error: %d\n", ss_flow_err(channel_id));
-		return -EINVAL;
-	}
-
-	return 0;
+							DMA_FROM_DEVICE);
+	return ret;
 }

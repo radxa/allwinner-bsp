@@ -38,12 +38,9 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### ###########################################################################
 
-ifneq ($(SERVICES_SC),1)
-
 modules := dc_pdp2
 
 dc_pdp2_type := kernel_module
 dc_pdp2_target := dc_pdp2.ko
 dc_pdp2_makefile := $(THIS_DIR)/Kbuild.mk
 
-endif # SERVICES_SC

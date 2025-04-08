@@ -17,6 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+//#define DEBUG
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <sunxi-smc.h>
@@ -26,7 +27,7 @@
 #include <linux/version.h>
 #include <linux/arm-smccc.h>
 #include <linux/bitops.h>
-
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/printk.h>
 #include <linux/kernel.h>
@@ -36,6 +37,13 @@
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <asm/cacheflush.h>
+#include <sunxi-log.h>
+
+struct smc_tee_secure_key_addr_group {
+	uint32_t out_tee;
+	uint32_t in_tee;
+	uint32_t private;
+};
 
 #ifndef OPTEE_SMC_STD_CALL_VAL
 #define OPTEE_SMC_STD_CALL_VAL(func_num) \
@@ -97,16 +105,19 @@
 	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_CRASHDUMP)
 
 #if defined(CONFIG_ARM64)
+
 /* cmd to call ATF service */
 #define ARM_SVC_EFUSE_PROBE_SECURE_ENABLE (0xc000fe03)
 #define ARM_SVC_READ_SEC_REG (0xC000ff05)
 #define ARM_SVC_WRITE_SEC_REG (0xC000ff06)
 #define ARM_SVC_EFUSE_READ_AARCH64 (0xc000fe00)
 #define ARM_SVC_EFUSE_WRITE_AARCH64 (0xc000fe01)
+#define ARM_SVC_EFUSE_READ_EXTRA_AARCH64 (0xc000ff07)
 #define ARM_SVC_EFUSE_READ ARM_SVC_EFUSE_READ_AARCH64
 #define ARM_SVC_EFUSE_WRITE ARM_SVC_EFUSE_WRITE_AARCH64
 
 #elif defined(CONFIG_ARCH_SUN50I) && defined(CONFIG_ARM)
+
 #define ARM_SVC_EFUSE_PROBE_SECURE_ENABLE (0x8000fe03)
 #define ARM_SVC_READ_SEC_REG (0x8000ff05)
 #define ARM_SVC_WRITE_SEC_REG (0x8000ff06)
@@ -116,12 +127,14 @@
 #define ARM_SVC_EFUSE_WRITE ARM_SVC_EFUSE_WRITE_AARCH32
 
 #else
+
 /* cmd to call TEE service */
 #define ARM_SVC_READ_SEC_REG OPTEE_SMC_READ_REG
 #define ARM_SVC_WRITE_SEC_REG OPTEE_SMC_WRITE_REG
 #define ARM_SVC_EFUSE_READ OPTEE_SMC_EFUSE_OP
 #define ARM_SVC_EFUSE_WRITE OPTEE_SMC_EFUSE_OP
-#endif
+
+#endif  /* CONFIG_ARM64 */
 
 #define ROUND(a, b) (((a) + (b)-1) & ~((b)-1))
 
@@ -156,6 +169,51 @@ int sunxi_smc_writel(u32 value, phys_addr_t addr)
 #endif
 }
 EXPORT_SYMBOL(sunxi_smc_writel);
+
+#if defined(CONFIG_ARM64)
+/* Currently 'ARM_SVC_EFUSE_READ_EXTRA_AARCH64' only supports ARM64 in atf. */
+int sunxi_smc_read_extra(const char *key, void *val, unsigned long len)
+{
+	char *key_linear;
+	void *val_linear;
+	unsigned long key_pa;
+	unsigned long val_pa;
+	struct arm_smccc_res res;
+	int ret;
+
+	/* Prepare linear buffer for 'key' */
+	key_linear = kzalloc(strlen(key) + 1, GFP_KERNEL);
+	if (!key_linear) {
+		sunxi_err(NULL, "Fail to kmalloc 0x%lx bytes for 'key_linear'\n", (unsigned long)(strlen(key) + 1));
+		return -ENOMEM;
+	}
+	strcpy(key_linear, key);
+	key_pa = virt_to_phys((volatile void *)key_linear);
+
+	/* Prepare linear buffer for 'val' */
+	val_linear = kzalloc(len, GFP_KERNEL);
+	if (!val_linear) {
+		sunxi_err(NULL, "Fail to kmalloc 0x%lx bytes for 'val_linear'\n", len);
+		kfree(key_linear);
+		return -ENOMEM;
+	}
+	val_pa = virt_to_phys((volatile void *)val_linear);
+
+	sunxi_debug(NULL, "arm_smccc_smc(ARM_SVC_EFUSE_READ_EXTRA_AARCH64): key='%s', len=0x%lx\n", key, len);
+	arm_smccc_smc(ARM_SVC_EFUSE_READ_EXTRA_AARCH64, key_pa, val_pa, len, 0, 0, 0, 0, &res);
+	sunxi_debug(NULL, "arm_smccc_smc(ARM_SVC_EFUSE_READ_EXTRA_AARCH64): return 0x%lx\n", res.a0);
+	ret = res.a0;
+	if (ret < 0)
+		sunxi_err(NULL, "Fail in smc call\n");
+	else
+		memcpy(val, val_linear, len);
+
+	kfree(val_linear);
+	kfree(key_linear);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(sunxi_smc_read_extra);
+#endif  /* CONFIG_ARM64 */
 
 #if defined(CONFIG_TEE) && defined(CONFIG_ARM)
 static int optee_ctx_match(struct tee_ioctl_version_data *ver, const void *data)
@@ -400,7 +458,7 @@ int  optee_probe_drm_configure(unsigned long *drm_base,
 
 	arm_smccc_smc(OPTEE_SMC_GET_DRM_INFO, 0, 0, 0, 0, 0, 0, 0, &res);
 	if (res.a0  != 0) {
-		printk("drm config service not available: %X", (uint32_t)res.a0);
+		pr_err("drm config service not available: %X", (uint32_t)res.a0);
 		return -EINVAL;
 	}
 
@@ -408,9 +466,9 @@ int  optee_probe_drm_configure(unsigned long *drm_base,
 	*drm_size = res.a2;
 	*tee_base = res.a3;
 
-	printk("drm_base=0x%x\n", (uint32_t)*drm_base);
-	printk("drm_size=0x%x\n", (uint32_t)*drm_size);
-	printk("tee_base=0x%x\n", (uint32_t)*tee_base);
+	pr_debug("drm_base=0x%x\n", (uint32_t)*drm_base);
+	pr_debug("drm_size=0x%x\n", (uint32_t)*drm_size);
+	pr_debug("tee_base=0x%x\n", (uint32_t)*tee_base);
 
 	return 0;
 }
@@ -422,13 +480,129 @@ int sunxi_optee_call_crashdump(void)
 
 	arm_smccc_smc(OPTEE_SMC_CRASHDUMP, 0, 0, 0, 0, 0, 0, 0, &res);
 	if (res.a0  != 0) {
-		printk("optee call crashdump error: %X", (uint32_t)res.a0);
+		pr_err("optee call crashdump error: %X", (uint32_t)res.a0);
 		return -EINVAL;
 	}
 
 	return 0;
 }
 EXPORT_SYMBOL(sunxi_optee_call_crashdump);
+
+#define TEESMC_PROBE_SHM_BASE    2
+#define TEESMC_HUK_ENCRYPT       8
+#define TEESMC_HUK_DECRYPT       9
+
+static struct smc_tee_secure_key_addr_group *tee_addr;
+int smc_tee_secure_key_encrypt(char *out_buf, char *in_buf, int len, enum secure_key_type key)
+{
+	struct arm_smccc_res param = { 0 };
+	int align_len = 0;
+	//align_len = ALIGN(len, CACHE_LINE_SIZE);
+	align_len = ALIGN(len, 64);
+	//align_len = len;
+
+	if (out_buf == NULL || in_buf == NULL) {
+		pr_err("smc enc parameter error\n");
+		return -EINVAL;
+	}
+
+	if (len > 4096) {
+		pr_err("smc enc len error\n");
+		return -EINVAL;
+	}
+
+	arm_smccc_smc(OPTEE_SMC_CRYPT, TEESMC_PROBE_SHM_BASE, 0, 0, 0, 0, 0, 0, &param);
+	if (param.a0 != 0) {
+		return param.a0;
+		pr_err("smc tee probe share memory base failed\n");
+	}
+
+	tee_addr = (struct smc_tee_secure_key_addr_group *)phys_to_virt(
+	param.a1);
+	tee_addr->in_tee = param.a1 + 0x100;
+	tee_addr->out_tee = param.a1 + 0x100 + 4096;
+
+	memset((void *)phys_to_virt(tee_addr->in_tee), 0x0, align_len);
+	memcpy((void *)phys_to_virt(tee_addr->in_tee), in_buf, len);
+
+	flush_cache_all();
+
+	memset(&param, 0, sizeof(param));
+	//pr_info("==========encrypt start=============\n");
+	switch (key) {
+	case CE_KEY_SELECT_HUK:
+		arm_smccc_smc(OPTEE_SMC_CRYPT, TEESMC_HUK_ENCRYPT,
+			virt_to_phys((tee_addr)),
+			align_len, 0, 0, 0, 0, &param);
+		break;
+	default:
+		pr_err("this secure key not support\n");
+		return -EINVAL;
+	}
+	//pr_info("==========encrypt end=============\n");
+	if (param.a0 != 0) {
+		pr_err("smc tee encrypt with huk failed with: %ld\n", param.a0);
+		return param.a0;
+	}
+
+	memcpy(out_buf, (void *)phys_to_virt(tee_addr->out_tee), align_len);
+
+	return 0;
+}
+EXPORT_SYMBOL(smc_tee_secure_key_encrypt);
+
+int smc_tee_secure_key_decrypt(char *out_buf, char *in_buf, int len, enum secure_key_type key)
+{
+	struct arm_smccc_res param = { 0 };
+
+	arm_smccc_smc(OPTEE_SMC_CRYPT, TEESMC_PROBE_SHM_BASE, 0, 0, 0, 0, 0, 0,
+		&param);
+	if (param.a0 != 0) {
+		pr_err("smc tee probe share memory base failed\n ");
+		return param.a0;
+	}
+
+	if (out_buf == NULL || in_buf == NULL) {
+		pr_err("smc enc parameter error\n");
+		return -EINVAL;
+	}
+
+	if (len > 4096) {
+		pr_err("smc enc len error\n");
+		return -EINVAL;
+	}
+
+	tee_addr = (struct smc_tee_secure_key_addr_group *)phys_to_virt(
+	param.a1);
+	tee_addr->in_tee = param.a1 + 0x100;
+	tee_addr->out_tee = param.a1 + 0x100 + 4096;
+	memcpy((void *)phys_to_virt(tee_addr->in_tee), in_buf, len);
+
+	flush_cache_all();
+
+	memset(&param, 0, sizeof(param));
+
+	//pr_info("==========decrypt start=============\n");
+	switch (key) {
+	case CE_KEY_SELECT_HUK:
+		arm_smccc_smc(OPTEE_SMC_CRYPT, TEESMC_HUK_DECRYPT,
+			virt_to_phys(tee_addr), len, 0,
+			0, 0, 0, &param);
+		break;
+	default:
+		pr_err("this secure key not support\n");
+		return -EINVAL;
+	}
+	//pr_info("==========decrypt end=============\n");
+	if (param.a0 != 0) {
+		pr_err("smc tee decrypt with huk failed with: %ld", param.a0);
+		return param.a0;
+	}
+
+	memcpy(out_buf, (void *)phys_to_virt(tee_addr->out_tee), len);
+	return 0;
+}
+EXPORT_SYMBOL(smc_tee_secure_key_decrypt);
 
 static int __init sunxi_smc_init(void)
 {
@@ -442,6 +616,6 @@ static void __exit sunxi_smc_exit(void)
 module_init(sunxi_smc_init);
 module_exit(sunxi_smc_exit);
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.2");
 MODULE_AUTHOR("weidonghui<weidonghui@allwinnertech.com>");
 MODULE_DESCRIPTION("sunxi smc.");

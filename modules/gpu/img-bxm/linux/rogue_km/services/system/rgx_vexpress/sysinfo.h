@@ -46,19 +46,18 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 /*!< System specific poll/timeout details */
 #if defined(VIRTUAL_PLATFORM)
-#define MAX_HW_TIME_US								(5000000)
+#define MAX_HW_TIME_US                              (5000000)
+#define DEVICES_WATCHDOG_POWER_ON_SLEEP_TIMEOUT     (10000)
+#define EVENT_OBJECT_TIMEOUT_US                     (120000000)
 #else
-#define MAX_HW_TIME_US								(500000)
+#define MAX_HW_TIME_US                              (500000)
+#define DEVICES_WATCHDOG_POWER_ON_SLEEP_TIMEOUT     (1500)
+#define EVENT_OBJECT_TIMEOUT_US                     (100000)
 #endif
 
-#define FATAL_ERROR_DETECTION_POLL_MS				(10000)
-#if defined(VIRTUAL_PLATFORM)
-#define DEVICES_WATCHDOG_POWER_ON_SLEEP_TIMEOUT		(10000)
-#else
-#define DEVICES_WATCHDOG_POWER_ON_SLEEP_TIMEOUT		(1500)//(10000)
-#endif
-#define DEVICES_WATCHDOG_POWER_OFF_SLEEP_TIMEOUT	(3600000)
-#define WAIT_TRY_COUNT								(10000)
+#define FATAL_ERROR_DETECTION_POLL_MS               (10000)
+#define DEVICES_WATCHDOG_POWER_OFF_SLEEP_TIMEOUT    (3600000)
+#define WAIT_TRY_COUNT                              (10000)
 
 
 #if defined(VIRTUAL_PLATFORM)

@@ -40,18 +40,25 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */ /**************************************************************************/
 
 #include <linux/console.h>
-#include <linux/module.h>
 #include <linux/fb.h>
+#include <linux/mm.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
 
 #include "kerneldisplay.h"
 #include "powervr/imgpixfmts.h"
 #include "pvrmodule.h" /* for MODULE_LICENSE() */
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,0))
+#error dc_fbdev is not supported for Linux version 6.1.0 or later.
+#endif
 
 #if !defined(CONFIG_FB)
 #error dc_fbdev needs Linux framebuffer support. Enable it in your kernel.
 #endif
 
 #define DRVNAME					"dc_fbdev"
+#define DEVNAME					DRVNAME
 #define MAX_COMMANDS_IN_FLIGHT	2
 
 #if defined(DC_FBDEV_NUM_PREFERRED_BUFFERS)
@@ -153,14 +160,10 @@ void DC_FBDEV_Clean(IMG_HANDLE hDisplayContext, IMG_HANDLE *ahBuffers)
 			spinlock_t spinlock = {0};
 			flush_cache_all();
 #if defined(CONFIG_OUTER_CACHE)
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,16,0))
 			spin_lock_init(&spinlock);
 			spin_lock_irqsave(&spinlock, uiLockFlags);
 			outer_clean_range(0, ULONG_MAX);
 			spin_unlock_irqrestore(&spinlock, uiLockFlags);
-#else
-			outer_clean_range(0, ULONG_MAX)
-#endif
 #endif
 			PVR_UNREFERENCED_PARAMETER(uiLockFlags);
 			PVR_UNREFERENCED_PARAMETER(spinlock);
@@ -735,7 +738,7 @@ static bool DC_FBDEV_FlipPossible(struct fb_info *psLINFBInfo)
 	return true;
 }
 
-static int __init DC_FBDEV_init(void)
+static int DC_FBDEV_Probe(struct platform_device *psDev)
 {
 	static DC_DEVICE_FUNCTIONS sDCFunctions =
 	{
@@ -774,9 +777,11 @@ static int __init DC_FBDEV_init(void)
 	if (!psLINFBInfo)
 	{
 		pr_err("No Linux framebuffer (/dev/fbdev%u) device is registered!\n"
+			   "Deferring device probe.\n"
 			   "Check you have a framebuffer driver compiled into your "
 			   "kernel\nand that it is enabled on the cmdline.\n",
 			   gui32fb_devminor);
+		err = -EPROBE_DEFER;
 		goto err_out;
 	}
 
@@ -917,7 +922,7 @@ err_module_put:
 	goto err_unlock;
 }
 
-static void __exit DC_FBDEV_exit(void)
+static int DC_FBDEV_Remove(struct platform_device *psDev)
 {
 	DC_FBDEV_DEVICE *psDeviceData = gpsDeviceData;
 	struct fb_info *psLINFBInfo = psDeviceData->psLINFBInfo;
@@ -935,6 +940,74 @@ static void __exit DC_FBDEV_exit(void)
 
 	DCUnregisterDevice(psDeviceData->hSrvHandle);
 	kfree(psDeviceData);
+
+	return 0;
+}
+
+static void DC_FBDEV_Shutdown(struct platform_device *psDev)
+{
+}
+
+static struct platform_device_id dc_fbdev_platform_device_id_table[] =
+{
+	{ .name = DEVNAME, .driver_data = 0 },
+	{ },
+};
+
+static struct platform_driver dc_fbdev_platform_driver =
+{
+	.probe         = DC_FBDEV_Probe,
+	.remove        = DC_FBDEV_Remove,
+	.shutdown      = DC_FBDEV_Shutdown,
+	.driver = {
+	        .owner = THIS_MODULE,
+	        .name  = DRVNAME,
+	},
+	.id_table      = dc_fbdev_platform_device_id_table,
+};
+
+static struct platform_device_info dc_fbdev_device_info =
+{
+	.name = DEVNAME,
+	.id   = -1,
+};
+
+static struct platform_device *dc_fbdev;
+
+static int __init DC_FBDEV_init(void)
+{
+	int err;
+
+	dc_fbdev = platform_device_register_full(&dc_fbdev_device_info);
+	if (IS_ERR(dc_fbdev))
+	{
+		err = PTR_ERR(dc_fbdev);
+		goto err_clear_device;
+	}
+
+	err = platform_driver_register(&dc_fbdev_platform_driver);
+	if (err)
+	{
+		goto err_device_unregister;
+	}
+
+	return err;
+
+err_device_unregister:
+	platform_device_unregister(dc_fbdev);
+err_clear_device:
+	dc_fbdev = NULL;
+	return err;
+}
+
+static void __exit DC_FBDEV_exit(void)
+{
+	if (dc_fbdev)
+	{
+		platform_device_unregister(dc_fbdev);
+	}
+
+	platform_driver_unregister(&dc_fbdev_platform_driver);
 }
 
 module_init(DC_FBDEV_init);

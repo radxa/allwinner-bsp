@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
- * drivers/char/sunxi_sys_info/sunxi-smc.c
- *
  * Copyright(c) 2015-2016 Allwinnertech Co., Ltd.
  *         http://www.allwinnertech.com
  *
@@ -21,6 +19,16 @@
 
 #define SUNXI_OPTEE_SMC_OFFSET (0x200)
 
+enum secure_key_type {
+	CE_KEY_SELECT_SSK = 1,
+	CE_KEY_SELECT_HUK,
+	CE_KEY_SELECT_RSSK,
+};
+
+#if IS_ENABLED(CONFIG_AW_SBI)
+extern int sbi_efuse_write(phys_addr_t key_buf);
+#endif
+
 extern int invoke_smc_fn(u32 function_id, u64 arg0, u64 arg1, u64 arg2);
 extern u32 sunxi_smc_readl(phys_addr_t addr);
 extern int sunxi_smc_writel(u32 value, phys_addr_t addr);
@@ -33,5 +41,7 @@ extern int sunxi_smc_call_offset(void);
 extern int  optee_probe_drm_configure(unsigned long *drm_base,
 	size_t *drm_size, unsigned long  *tee_base);
 extern int sunxi_optee_call_crashdump(void);
+extern int smc_tee_secure_key_encrypt(char *out_buf, char *in_buf, int in_len, enum secure_key_type key);
+extern int smc_tee_secure_key_decrypt(char *out_buf, char *in_buf, int len, enum secure_key_type key);
 
 #endif  /* __SUNXI_SMC_H */

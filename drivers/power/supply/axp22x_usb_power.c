@@ -11,18 +11,7 @@
  * option) any later version.
  */
 
-#include <linux/device.h>
-#include <linux/init.h>
-#include <linux/interrupt.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/of.h>
-#include <linux/platform_device.h>
-#include <linux/power_supply.h>
-#include <linux/regmap.h>
-#include <linux/slab.h>
 #include "axp22x_charger.h"
-#include "power/axp2101.h"
 
 struct axp22x_usb_power {
 	char                      *name;
@@ -33,6 +22,7 @@ struct axp22x_usb_power {
 	struct delayed_work        usb_supply_mon;
 	struct delayed_work        usb_chg_state;
 
+	bool battery_supply_exist;
 	atomic_t set_current_limit;
 };
 
@@ -129,7 +119,7 @@ static int axp22x_usb_get_property(struct power_supply *psy,
 					union power_supply_propval *val)
 {
 	int ret = 0;
-	unsigned int reg_value;
+	unsigned int reg_value = 0;
 	struct axp22x_usb_power *usb_power = power_supply_get_drvdata(psy);
 
 	switch (psp) {
@@ -149,6 +139,11 @@ static int axp22x_usb_get_property(struct power_supply *psy,
 		val->intval = !!(reg_value & AXP22X_STATUS_VBUS_USED);
 		break;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+		regmap_read(usb_power->regmap, AXP22X_MODE_CHGSTATUS, &reg_value);
+		if ((reg_value & BIT(4)) && (reg_value & BIT(5)))
+			reg_value = 1;
+		if ((usb_power->battery_supply_exist) && (!reg_value))
+			break;
 		ret = axp22x_usb_get_ihold(usb_power);
 		if (ret < 0)
 			return ret;
@@ -220,8 +215,17 @@ static irqreturn_t axp22x_usb_power_in_irq(int irq, void *data)
 {
 	struct axp22x_usb_power *usb_power = data;
 	struct axp_config_info *axp_config = &usb_power->dts_info;
+	unsigned int reg_val = 0;
 
 	power_supply_changed(usb_power->usb_supply);
+
+	regmap_read(usb_power->regmap, AXP22X_MODE_CHGSTATUS, &reg_val);
+
+	if ((reg_val & BIT(4)) && (reg_val & BIT(5)))
+		reg_val = 1;
+
+	if ((usb_power->battery_supply_exist) && (!reg_val))
+		return IRQ_HANDLED;
 
 	axp22x_usb_set_ihold(usb_power, axp_config->pmu_usbpc_cur);
 	atomic_set(&usb_power->set_current_limit, 0);
@@ -289,6 +293,7 @@ static int axp22x_usb_power_probe(struct platform_device *pdev)
 	struct axp20x_dev *axp_dev = dev_get_drvdata(pdev->dev.parent);
 	struct power_supply_config psy_cfg = {};
 	struct axp22x_usb_power *usb_power;
+	struct device_node *np = NULL;
 	int i, irq;
 	int ret = 0;
 
@@ -307,6 +312,22 @@ static int axp22x_usb_power_probe(struct platform_device *pdev)
 	usb_power->name = "axp22x-usb-power";
 	usb_power->dev = &pdev->dev;
 	usb_power->regmap = axp_dev->regmap;
+	usb_power->battery_supply_exist = false;
+
+	np = of_parse_phandle(usb_power->dev->of_node, "det_battery_supply", 0);
+	if (of_device_is_available(np)) {
+		of_property_read_u32(np, "pmu_bat_unused", &ret);
+		if (ret > 0) {
+			usb_power->battery_supply_exist = false;
+		} else {
+			usb_power->battery_supply_exist = true;
+		}
+		PMIC_INFO("battery device is get: %s\n",
+			usb_power->battery_supply_exist ? "havs battery mode" : "non-battery mode");
+	} else {
+		usb_power->battery_supply_exist = false;
+		PMIC_INFO("battery device is not get\n");
+	}
 
 	platform_set_drvdata(pdev, usb_power);
 
@@ -456,3 +477,4 @@ module_platform_driver(axp22x_usb_power_driver);
 MODULE_AUTHOR("wangxiaoliang <wangxiaoliang@x-powers.com>");
 MODULE_DESCRIPTION("axp22x usb power driver");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0.0");

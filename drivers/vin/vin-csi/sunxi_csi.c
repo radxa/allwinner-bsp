@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  * Copyright (c) 2007-2017 Allwinnertech Co., Ltd.
@@ -364,6 +364,15 @@ static int __csi_set_fmt_hw(struct csi_dev *csi)
 			csi->ncsi_if.intf = PRS_IF_INTLV_16BIT;
 		else
 			csi->ncsi_if.intf = PRS_IF_INTLV;
+		if (res->pclk_dly > 0x00 && res->pclk_dly <= 0x1F) {
+			csic_prs_set_pclk_dly(csi->id, res->pclk_dly);
+		} else {
+			if (csi->ncsi_if.ddr_sample == 1) {
+				csic_prs_set_pclk_dly(csi->id, 0xb);
+			} else {
+				csic_prs_set_pclk_dly(csi->id, 0x9);
+			}
+		}
 		csic_prs_mode(csi->id, PRS_NCSI);
 		csic_prs_ncsi_if_cfg(csi->id, &csi->ncsi_if);
 		csic_prs_ncsi_en(csi->id, 1);
@@ -454,6 +463,10 @@ static int __csi_set_fmt_hw(struct csi_dev *csi)
 				csi->out_size.hor_start = mf->width/2 - overlayer;
 				csi->out_size.ver_start = 0;
 			}
+		}
+		if (csi->prs_ch_mode.mode_en == 1) {
+			if (csi->prs_ch_mode.mode_sel == 1)
+				csic_prs_ch_en(csi->id, 1);
 		}
 		csic_prs_input_fmt_cfg(csi->id, i, csi->csi_fmt->infmt);
 		csic_prs_output_size_cfg(csi->id, i, &csi->out_size);
@@ -732,6 +745,8 @@ static int sunxi_csi_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 			csi->bus_info.ch_total_num++;
 		if (IS_FLAG(cfg->bus.mipi_csi2.num_data_lanes, V4L2_MBUS_CSI2_CHANNEL_3))
 			csi->bus_info.ch_total_num++;
+		if (csi->large_image == 3)
+			csi->bus_info.ch_total_num = 2;
 	} else if (cfg->type == V4L2_MBUS_PARALLEL) {
 		csi->bus_info.bus_if = V4L2_MBUS_PARALLEL;
 		csi->bus_info.ch_total_num = 1;
@@ -830,6 +845,20 @@ static int sunxi_csi_s_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 			csi->bus_info.ch_total_num++;
 		if (IS_FLAG(cfg->flags, V4L2_MBUS_CSI2_CHANNEL_3))
 			csi->bus_info.ch_total_num++;
+		if (csi->large_image == 3)
+			csi->bus_info.ch_total_num = 2;
+		if (csi->prs_ch_mode.mode_en) {
+			if (csi->bus_info.ch_total_num == 1)
+				csi->prs_ch_mode.mode_sel = 1;
+			else if (csi->bus_info.ch_total_num == 2)
+				//csi->prs_ch_mode.mode_sel = 2;
+				vin_warn("2 channel sensor does not support this function\n");
+			else {
+				vin_err("twice the number of sensor channels is:%d, more than csi total channel\n", csi->bus_info.ch_total_num * 2);
+				return -1;
+			}
+			csi->bus_info.ch_total_num = csi->prs_ch_mode.channel_num;
+		}
 	} else if (cfg->type == V4L2_MBUS_PARALLEL) {
 		csi->bus_info.bus_if = V4L2_MBUS_PARALLEL;
 		csi->bus_info.ch_total_num = 1;
@@ -1095,6 +1124,33 @@ static struct platform_driver csi_platform_driver = {
 		   .of_match_table = sunxi_csi_match,
 		   },
 };
+
+int sunxi_csi_set_ch_mode(struct v4l2_subdev *sd)
+{
+	struct csi_dev *csi = v4l2_get_subdevdata(sd);
+	struct vin_md *vind = dev_get_drvdata(csi->subdev.v4l2_dev->dev);
+	int i;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	if (csi->stream_count != 0)
+#else
+	if (sd->entity.stream_count != 0)
+#endif
+		return 0;
+
+	memset(&csi->prs_ch_mode, 0, sizeof(struct prs_ch_mode));
+
+	for (i = 0; i < VIN_MAX_DEV; i++) {
+		if (vind->vinc[i] == NULL)
+			continue;
+		if (vind->vinc[i]->csi_ch == 0xff)
+			continue;
+		if (csi->prs_ch_mode.channel_num  < ((vind->vinc[i]->csi_ch & 0xf) + 1))
+			csi->prs_ch_mode.channel_num = (vind->vinc[i]->csi_ch & 0xf) + 1;
+	}
+	csi->prs_ch_mode.mode_en = 1;
+
+	return 0;
+}
 
 int sunxi_csi_subdev_s_parm(struct v4l2_subdev *sd,
 				   struct v4l2_streamparm *param)

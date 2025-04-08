@@ -72,9 +72,6 @@ typedef struct _SYS_DATA_
 	IMG_HANDLE			hLISR;
 	IMG_UINT32			ui32IRQ;
 
-	/* Used by VZ host/guest(s) drivers */
-	IMG_UINT32			*pui32IRQCount;
-
 	/* Rogue and PDP */
 	SYS_INTERRUPT_DATA	sInterruptData[2];
 

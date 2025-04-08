@@ -48,7 +48,7 @@
 
 ifeq ($(SUPPORT_NEUTRINO_PLATFORM),)
 WINDOW_SYSTEM ?= ews
-_supported_window_systems := ews lws-generic nulldrmws nullws surfaceless wayland xorg
+_supported_window_systems := ews lws-generic nulldrmws nullws surfaceless tizen wayland xorg
 else
 WINDOW_SYSTEM ?= nullws
 _supported_window_systems := nullws screen
@@ -67,6 +67,7 @@ $(error Supported Window Systems are: $(_window_systems))
 endif
 
 ifeq ($(MESA_EGL),1)
+ override SUPPORT_EGL_KHR_NATIVE_PIXMAP := 0
  ifeq ($(WINDOW_SYSTEM),nulldrmws)
   ifeq ($(SUPPORT_FALLBACK_FENCE_SYNC),1)
    # The Mesa EGL version of nulldrmws requires a display driver that
@@ -93,8 +94,6 @@ $(call WindowSystemTunableOption,EGL_EXTENSION_ANDROID_NATIVE_FENCE_SYNC,)
 $(call WindowSystemTunableOption,GBM_BACKEND,$(if $(MESA_EGL),,nulldrmws))
 $(call WindowSystemTunableOption,MESA_EGL,nulldrmws)
 $(call WindowSystemTunableOption,MESA_WSI,nulldrmws)
-$(call WindowSystemTunableOption,SC_EGL,nullws nulldrmws)
-$(call WindowSystemTunableOption,SERVICES_SC,nullws nulldrmws)
 $(call WindowSystemTunableOption,OPK_DEFAULT,)
 $(call WindowSystemTunableOption,OPK_FALLBACK,)
 $(call WindowSystemTunableOption,SUPPORT_ACTIVE_FLUSH,\
@@ -121,19 +120,32 @@ else
  MESA_WSI ?= 1
 endif
 
-ifneq ($(filter lws-generic surfaceless,$(WINDOW_SYSTEM)),)
- ifeq ($(SUPPORT_VK_PLATFORMS),)
-  # There is no point building Mesa WSI if no platforms have been selected.
-  override undefine MESA_WSI
- else
-  override MESA_WSI := 1
- endif
-endif
-
 ifneq ($(MESA_WSI),1)
  # Tests of MESA_WSI are against the value 1 and the empty string, so values
  # other than 1, such as 0, should be mapped to the empty string.
  override undefine MESA_WSI
+endif
+
+ifneq ($(MESA_ZINK),1)
+ override undefine MESA_ZINK
+endif
+
+MESA_WSI_NO_VK_EXT_HEADLESS_SURFACE ?= $(MESA_ZINK)
+ifneq ($(MESA_WSI_NO_VK_EXT_HEADLESS_SURFACE),1)
+ override undefine MESA_WSI_NO_VK_EXT_HEADLESS_SURFACE
+endif
+
+ifneq ($(filter lws-generic,$(WINDOW_SYSTEM)),)
+ ifeq ($(MESA_WSI_NO_VK_EXT_HEADLESS_SURFACE),1)
+  ifeq ($(SUPPORT_VK_PLATFORMS),)
+   # There is no point building Mesa WSI if no platforms have been selected.
+   override undefine MESA_WSI
+  else
+   override MESA_WSI := 1
+  endif
+ else
+   override MESA_WSI := 1
+ endif
 endif
 
 ifeq ($(WINDOW_SYSTEM),xorg)
@@ -157,8 +169,20 @@ else ifeq ($(WINDOW_SYSTEM),wayland)
   SUPPORT_VK_PLATFORMS += x11
   SUPPORT_ACTIVE_FLUSH := 1
  endif
+else ifeq ($(WINDOW_SYSTEM),tizen)
+ override MESA_EGL := 1
+ override undefine MESA_WSI
+ SUPPORT_DISPLAY_CLASS := 0
+ SUPPORT_NATIVE_FENCE_SYNC := 1
+ SUPPORT_KMS := 1
+ override PVRSRV_WRAP_EXTMEM_WRITE_ATTRIB_ENABLE := 0
 else ifeq ($(WINDOW_SYSTEM),surfaceless)
  override MESA_EGL := 1
+ ifeq ($(MESA_WSI_NO_VK_EXT_HEADLESS_SURFACE),1)
+  override undefine MESA_WSI
+ else
+  override MESA_WSI := 1
+ endif
  SUPPORT_ACTIVE_FLUSH := 1
  SUPPORT_DISPLAY_CLASS := 0
  SUPPORT_NATIVE_FENCE_SYNC := 1
@@ -174,6 +198,7 @@ else ifeq ($(WINDOW_SYSTEM),ews) # Linux builds only
  SUPPORT_VK_PLATFORMS := null
  SUPPORT_SECURE_EXPORT ?= 1
  SUPPORT_DISPLAY_CLASS ?= 1
+ SUPPORT_EGL_KHR_NATIVE_PIXMAP := 1
  OPK_DEFAULT := libpvrEWS_WSEGL.so
  ifeq ($(SUPPORT_DISPLAY_CLASS),1)
   PVRSRV_WRAP_EXTMEM_WRITE_ATTRIB_ENABLE ?= 1
@@ -224,6 +249,16 @@ else ifeq ($(WINDOW_SYSTEM),screen) # Neutrino builds
  PVRSRV_WRAP_EXTMEM_WRITE_ATTRIB_ENABLE ?= 1
 endif
 
+MESA_WSI_NO_VK_KHR_PRESENT_ID ?= $(or $(MESA_ZINK),$(if $(filter wayland,$(SUPPORT_VK_PLATFORMS)),1))
+ifneq ($(MESA_WSI_NO_VK_KHR_PRESENT_ID),1)
+ override undefine MESA_WSI_NO_VK_KHR_PRESENT_ID
+endif
+
+MESA_WSI_NO_VK_KHR_PRESENT_WAIT ?= $(MESA_WSI_NO_VK_KHR_PRESENT_ID)
+ifneq ($(MESA_WSI_NO_VK_KHR_PRESENT_WAIT),1)
+ override undefine MESA_WSI_NO_VK_KHR_PRESENT_WAIT
+endif
+
 ifeq ($(SUPPORT_FALLBACK_FENCE_SYNC),1)
  ifneq ($(filter lws-generic nulldrmws surfaceless wayland xorg,\
 		 $(WINDOW_SYSTEM)),)
@@ -238,10 +273,6 @@ ifeq ($(MESA_EGL),1)
  ifeq ($(SUPPORT_NATIVE_FENCE_SYNC),1)
   EGL_EXTENSION_ANDROID_NATIVE_FENCE_SYNC := 1
  endif
-endif
-
-ifeq ($(SUPPORT_KMS),1)
- SUPPORT_DRM_FBDEV_EMULATION ?= 1
 endif
 
 ifeq ($(call is-not-target-os,neutrino),true)

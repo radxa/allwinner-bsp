@@ -23,6 +23,7 @@ obj-$(CONFIG_AW_PINCTRL_SUN50IW12)		+= pinctrl-sun50iw12.o
 obj-$(CONFIG_AW_PINCTRL_SUN50IW12_R)		+= pinctrl-sun50iw12-r.o
 obj-$(CONFIG_AW_PINCTRL_SUN60IW1)		+= pinctrl-sun60iw1.o
 obj-$(CONFIG_AW_PINCTRL_SUN60IW2)		+= pinctrl-sun60iw2.o
+obj-$(CONFIG_AW_PINCTRL_SUN60IW2_R)		+= pinctrl-sun60iw2-r.o
 obj-$(CONFIG_AW_PINCTRL_SUN20IW5)		+= pinctrl-sun20iw5.o
 obj-$(CONFIG_AW_PINCTRL_SUN65IW1)		+= pinctrl-sun65iw1.o
 obj-$(CONFIG_AW_PINCTRL_AXP22X)			+= pinctrl-axp22x.o

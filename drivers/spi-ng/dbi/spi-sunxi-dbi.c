@@ -7,8 +7,8 @@
 
 #define SUNXI_MODNAME "spi"
 #include <sunxi-log.h>
-#include "spi-sunxi-debug.h"
 #include "spi-sunxi-dbi.h"
+#include "../spi-sunxi-debug.h"
 
 static int sunxi_dbi_debug_mask;
 module_param_named(dbi_debug_mask, sunxi_dbi_debug_mask, int, 0664);

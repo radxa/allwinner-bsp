@@ -43,69 +43,12 @@ RGX_BVNC ?= 1.82.4.5
 include ../config/preconfig.mk
 include ../config/window_system.mk
 
-NO_HARDWARE := 0
-KERNEL_COMPONENTS := srvkm
+include tc_common.mk
 
-ifeq ($(SUPPORT_KMS),1)
- PVR_SYSTEM := rgx_linux_tc
- TC_DISPLAY_MEM_SIZE ?= 383
- ifeq ($(PVR_REMVIEW),1)
-  DISPLAY_CONTROLLER := "drm_nulldisp"
-  PVR_DRM_MODESET_DRIVER_NAME := "nulldisp"
- else
-  DISPLAY_CONTROLLER ?= drm_pdp
-  PVR_DRM_MODESET_DRIVER_NAME ?= pdp
- endif
-else
- ifeq ($(PVR_ARCH),volcanic)
-  PVR_SYSTEM := rgx_linux_tc
-  TC_DISPLAY_MEM_SIZE ?= 383
-  DISPLAY_CONTROLLER ?= dc_example
- else
-  PVR_SYSTEM ?= rgx_tc
-
-  ifeq ($(SUPPORT_DISPLAY_CLASS),1)
-   TC_DISPLAY_MEM_SIZE ?= 32
-   ifeq ($(TC_MEMORY_CONFIG),TC_MEMORY_HOST)
-    DISPLAY_CONTROLLER ?= dc_example
-   else
-    DISPLAY_CONTROLLER ?= dc_pdp
-   endif
-  endif
- endif
-endif
-
-ifeq ($(PVR_ARCH),volcanic)
- PVRSRV_APPHINT_FABRICCOHERENCYOVERRIDE := 0
-
- ifeq ($(PVR_BUILD_HMMU),1)
-  KERNEL_COMPONENTS += pvrhmmu
- endif
-endif
-
-ifeq ($(PVR_SYSTEM),rgx_linux_tc)
- TC_MEMORY_CONFIG ?= TC_MEMORY_LOCAL
- PVR_LDM_PLATFORM_PRE_REGISTERED := 1
- ifeq ($(TC_XILINX_DMA),1)
-  DMA_CONTROLLER ?= cdma
- endif
- KERNEL_COMPONENTS += tc
-else ifeq ($(PVR_SYSTEM),rgx_tc)
- TC_MEMORY_CONFIG ?= TC_MEMORY_HYBRID
- PVR_LOADER := pvr_pci_drv
-endif
-
-ifeq ($(DISPLAY_CONTROLLER),)
- # No display driver support so set to 0
- #
- TC_DISPLAY_MEM_SIZE := 0
-else
- KERNEL_COMPONENTS += $(DISPLAY_CONTROLLER)
-endif
-
-ifneq ($(DMA_CONTROLLER),)
- KERNEL_COMPONENTS += $(DMA_CONTROLLER)
-endif
+# if defined to 1, core.mk will skip setting SUPPORT_WRAP_EXTMEM
+# allowing us to instead set it later in this Makefile based on
+# TC_MEMORY_CONFIG
+PLATFORM_SUPPORT_WRAP_EXTMEM := 1
 
 # Should be last
 include ../config/core.mk
@@ -115,4 +58,18 @@ include ../common/testchip.mk
 
 ifeq ($(VIRTUAL_PLATFORM),1)
  $(eval $(call BothConfigC,VIRTUAL_PLATFORM,1))
+endif
+
+# Platform-specific definition of SUPPORT_WRAP_EXTMEM
+ifeq ($(PLATFORM_SUPPORT_WRAP_EXTMEM),1)
+ ifeq ($(TC_MEMORY_CONFIG),)
+  $(error TC_MEMORY_CONFIG must be defined)
+ endif
+ ifeq ($(TC_MEMORY_CONFIG),TC_MEMORY_HYBRID)
+  $(eval $(call TunableBothConfigC,SUPPORT_WRAP_EXTMEM,SUPPORT_WRAP_EXTMEM))
+ else
+  ifeq ($(TC_MEMORY_CONFIG),TC_MEMORY_HOST)
+   $(eval $(call TunableBothConfigC,SUPPORT_WRAP_EXTMEM,SUPPORT_WRAP_EXTMEM))
+  endif
+ endif
 endif

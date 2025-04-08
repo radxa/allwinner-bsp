@@ -56,6 +56,7 @@ struct ccu_mux {
 		.mux	= _SUNXI_CCU_MUX(_shift, _width),		\
 		.common	= {						\
 			.reg		= _reg,				\
+			.key_reg        = _reg,				\
 			.features	= CCU_FEATURE_KEY_FIELD_MOD,	\
 			.key_value	= _key_value,			\
 			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\

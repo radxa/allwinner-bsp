@@ -10,6 +10,8 @@ menu "SOUND Drivers"
 if SND_SOC
 	source "$(BSP_TOP)drivers/sound/codecs/Kconfig"
 	source "$(BSP_TOP)drivers/sound/platform/Kconfig"
+	source "$(BSP_TOP)drivers/sound/misc/Kconfig"
+	source "$(BSP_TOP)drivers/sound/pa/Kconfig"
 endif
 
 endmenu

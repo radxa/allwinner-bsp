@@ -271,7 +271,7 @@ void cci_lock(struct v4l2_subdev *sd)
 #else
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	i2c_mark_adapter_suspended(client->adapter);
+	i2c_lock_bus(client->adapter, I2C_LOCK_ROOT_ADAPTER);
 #endif
 }
 EXPORT_SYMBOL_GPL(cci_lock);
@@ -283,7 +283,7 @@ void cci_unlock(struct v4l2_subdev *sd)
 #else
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	i2c_mark_adapter_resumed(client->adapter);
+	i2c_unlock_bus(client->adapter, I2C_LOCK_ROOT_ADAPTER);
 #endif
 }
 EXPORT_SYMBOL_GPL(cci_unlock);

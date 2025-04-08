@@ -1,32 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define pr_fmt(x) KBUILD_MODNAME ": " x "\n"
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/slab.h>
-#include <linux/interrupt.h>
-#include <linux/device.h>
-#include <linux/mutex.h>
-#include <linux/param.h>
-#include <linux/jiffies.h>
-#include <linux/platform_device.h>
-#include <linux/power_supply.h>
-#include <linux/fs.h>
-#include <linux/ktime.h>
-#include <linux/of.h>
-#include <linux/timekeeping.h>
-#include <linux/types.h>
-#include <linux/string.h>
-#include <asm/irq.h>
-#include <linux/cdev.h>
-#include <linux/delay.h>
-#include <linux/pm_runtime.h>
-#include <linux/gpio/consumer.h>
-#include <linux/kthread.h>
-#include <linux/freezer.h>
-#include <linux/err.h>
-#include "power/axp2101.h"
 #include "axp803_charger.h"
 
 struct axp803_ac_power {
@@ -345,3 +319,4 @@ module_platform_driver(axp803_ac_power_driver);
 MODULE_AUTHOR("wangxiaoliang <wangxiaoliang@x-powers.com>");
 MODULE_DESCRIPTION("axp803 ac power driver");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0.0");

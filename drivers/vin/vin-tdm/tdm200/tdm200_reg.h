@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -28,16 +28,21 @@
 
 #define TDM_RX_NUM   4
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW6)
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+#define MAX_TX_HEAD_FIFO_DEPTH		64
+#define MAX_TX_DATA_FIFO_DEPTH		320
+#define MAX_RX_HEAD_FIFO_DEPTH		64
+#define MAX_RX_DATA_FIFO_DEPTH		880
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW6)
 #define MAX_TX_HEAD_FIFO_DEPTH		64
 #define MAX_TX_DATA_FIFO_DEPTH		160
 #define MAX_RX_HEAD_FIFO_DEPTH		64
 #define MAX_RX_DATA_FIFO_DEPTH		448
-#else
-#define MAX_TX_HEAD_FIFO_DEPTH		64
-#define MAX_TX_DATA_FIFO_DEPTH		320
-#define MAX_RX_HEAD_FIFO_DEPTH		64
-#define MAX_RX_DATA_FIFO_DEPTH		448
+#else /* CONFIG_ARCH_SUN55IW3 && CONFIG_ARCH_SUN60IW1 && CONFIG_ARCH_SUN8IW21 */
+#define MAX_TX_HEAD_FIFO_DEPTH		32
+#define MAX_TX_DATA_FIFO_DEPTH		512
+#define MAX_RX_HEAD_FIFO_DEPTH		32
+#define MAX_RX_DATA_FIFO_DEPTH		512
 #endif
 
 enum  tx_chn_cfg_mode {
@@ -260,6 +265,7 @@ void csic_tdm_rx_input_bit(unsigned int sel, unsigned int ch, enum input_image_t
 void csic_tdm_rx_input_size(unsigned int sel, unsigned int ch, unsigned int width, unsigned int height);
 void csic_tdm_rx_data_fifo_depth(unsigned int sel, unsigned int ch, unsigned int depth);
 void csic_tdm_rx_head_fifo_depth(unsigned int sel, unsigned int ch, unsigned int depth);
+void csic_tdm_rx_data_fifo_clear(unsigned int sel);
 void csic_tdm_rx_pkg_line_words(unsigned int sel, unsigned int ch, unsigned int words);
 void csic_tdm_rx_set_address(unsigned int sel, unsigned int ch, unsigned long address);
 void csic_tdm_rx_get_size(unsigned int sel, unsigned int ch, unsigned int *width, unsigned int *heigth);
@@ -269,5 +275,4 @@ unsigned int csic_tdm_rx_get_proc_num(unsigned int sel, unsigned int ch);
 unsigned int csic_tdm_rx_get_ctrl_st(unsigned int sel, unsigned int ch);
 void csic_tdm_lbc_cfg(unsigned int sel, unsigned int ch, struct tdm_rx_lbc *lbc);
 void csic_tdm_get_lbc_st(unsigned int sel, unsigned int ch, struct tdm_lbc_status *status);
-
 #endif /* __CSIC__TDM200__REG__H__ */

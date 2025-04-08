@@ -51,7 +51,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "pvrsrv.h"
 #include "sync_internal.h"
 #include "rgxfwutils.h"
-
+#include "rgxlayer.h"
 
 PVRSRV_ERROR RGXQueryAPMState(const PVRSRV_DEVICE_NODE *psDeviceNode,
 	const void *pvPrivateData,
@@ -214,6 +214,91 @@ inline const char * RGXStringifyKickTypeDM(RGX_KICK_TYPE_DM eKickTypeDM)
 		default:
 			return "Invalid DM ";
 	}
+}
+
+PHYS_HEAP_POLICY RGXPhysHeapGetLMAPolicy(PHYS_HEAP_USAGE_FLAGS ui32UsageFlags, PVRSRV_DEVICE_NODE *psDeviceNode)
+{
+	PHYS_HEAP_POLICY ui32Policy;
+
+	if (OSIsMapPhysNonContigSupported())
+	{
+		ui32Policy = PHYS_HEAP_POLICY_ALLOC_ALLOW_NONCONTIG;
+
+		if (BITMASK_ANY(ui32UsageFlags,
+			(PHYS_HEAP_USAGE_FW_SHARED    |
+			 PHYS_HEAP_USAGE_FW_PRIVATE   |
+			 PHYS_HEAP_USAGE_FW_PREMAP_PT |
+			 PHYS_HEAP_USAGE_FW_CODE      |
+			 PHYS_HEAP_USAGE_FW_PRIV_DATA)))
+		{
+			if (PVRSRV_VZ_MODE_IS(GUEST, DEVNODE, psDeviceNode))
+			{
+				/* Guest Firmware heaps are always premapped */
+				ui32Policy = PHYS_HEAP_POLICY_DEFAULT;
+			}
+#if defined(RGX_PREMAP_FW_HEAPS)
+			else if (PVRSRV_VZ_MODE_IS(HOST, DEVNODE, psDeviceNode))
+			{
+				/* All Firmware heaps are premapped under AutoVz*/
+				ui32Policy = PHYS_HEAP_POLICY_DEFAULT;
+			}
+#endif
+		}
+
+		if (BITMASK_ANY(ui32UsageFlags, PHYS_HEAP_USAGE_FW_PREMAP))
+		{
+			ui32Policy = PHYS_HEAP_POLICY_DEFAULT;
+		}
+	}
+	else
+	{
+		ui32Policy = PHYS_HEAP_POLICY_DEFAULT;
+	}
+
+	return ui32Policy;
+}
+
+IMG_BOOL RGXIsErrorAndDeviceRecoverable(PVRSRV_DEVICE_NODE *psDeviceNode, PVRSRV_ERROR *peError)
+{
+	IMG_BOOL bRecoverable = IMG_TRUE;
+
+	if (*peError == PVRSRV_OK)
+	{
+		/* No recovery required */
+		return IMG_FALSE;
+	}
+
+	if (!PVRSRVIsStatusRecoverable(OSAtomicRead(&psDeviceNode->eHealthStatus)))
+	{
+		bRecoverable = IMG_FALSE;
+	}
+	else
+	{
+		RGXUpdateHealthStatus(psDeviceNode, IMG_FALSE);
+
+		if (!PVRSRVIsStatusRecoverable(OSAtomicRead(&psDeviceNode->eHealthStatus)))
+		{
+			bRecoverable = IMG_FALSE;
+		}
+	}
+
+	if (bRecoverable && !PVRSRVIsRetryError(*peError))
+	{
+		PVR_DPF((PVR_DBG_WARNING,
+				 "%s: Device is recoverable. Changing error type (%s) to retry.",
+				 __func__, PVRSRVGetErrorString(*peError)));
+		*peError = PVRSRV_ERROR_RETRY;
+	}
+
+	if (!bRecoverable && PVRSRVIsRetryError(*peError))
+	{
+		PVR_DPF((PVR_DBG_WARNING,
+				 "%s: Device is not recoverable. Error type should not be retry (%s).",
+				 __func__, PVRSRVGetErrorString(*peError)));
+		*peError = PVRSRV_ERROR_INVALID_PARAMS;
+	}
+
+	return bRecoverable;
 }
 
 /******************************************************************************

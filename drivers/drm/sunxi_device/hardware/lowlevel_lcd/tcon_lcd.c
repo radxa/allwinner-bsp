@@ -10,7 +10,7 @@
  * warranty of any kind, whether express or implied.
  */
 #include <linux/delay.h>
-
+#include <linux/io.h>
 #include "include.h"
 #include "tcon_lcd_type.h"
 #include "tcon_top.h"
@@ -38,14 +38,98 @@ s32 tcon_lcd_set_reg_base(struct sunxi_tcon_lcd *tcon, uintptr_t base)
 	return 0;
 }
 
-s32 lvds_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
+void lvds_1903_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
 {
 	tcon->reg->tcon0_lvds_ctl.bits.tcon0_lvds_en = 1;
 	if (para->dual_lvds == 1) {
-		tcon->reg->tcon0_lvds_ana[0].bits.c = 4;
+		tcon->reg->tcon0_lvds_ana[0].bits.c = 6;
 		tcon->reg->tcon0_lvds_ana[0].bits.v = 3;
 		/*tcon->reg->tcon0_lvds_ana[0].bits.pd = 2;*/
-		tcon->reg->tcon0_lvds_ana[1].bits.c = 4;
+		tcon->reg->tcon0_lvds_ana[1].bits.c = 6;
+		tcon->reg->tcon0_lvds_ana[1].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[1].bits.pd = 2;*/
+
+		tcon->reg->tcon0_lvds_ana[0].bits.en_ldo = 0;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_ldo = 0;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_mb = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_mb = 1;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_drvc = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_drvc = 1;
+		if (para->lvds_colordepth == LVDS_6bit) {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0x7;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0x7;
+		} else {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0xf;
+		}
+	} else if (para->dual_lvds == 2) {
+		tcon->reg->tcon0_lvds_ana[0].bits.c = 6;
+		tcon->reg->tcon0_lvds_ana[0].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[0].bits.pd = 2;*/
+		tcon->reg->tcon0_lvds_ana[1].bits.c = 6;
+		tcon->reg->tcon0_lvds_ana[1].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[1].bits.pd = 2;*/
+
+		tcon->reg->tcon0_lvds_ana[0].bits.en_ldo = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_ldo = 1;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_mb = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_mb = 1;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_drvc = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_drvc = 1;
+		if (para->lvds_colordepth == LVDS_6bit) {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0x7;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0x7;
+		} else {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0xf;
+		}
+	} else {
+		if (tcon->tcon_index) {
+			tcon->reg->tcon0_lvds_ana[0].bits.c = 6;
+			tcon->reg->tcon0_lvds_ana[0].bits.v = 3;
+			/*tcon->reg->tcon0_lvds_ana[0].bits.pd = 2;*/
+
+			tcon->reg->tcon0_lvds_ana[0].bits.en_ldo = 0;
+			/* 1200ns */
+			disp_delay_us(5);
+			tcon->reg->tcon0_lvds_ana[0].bits.en_24m = 1;
+			tcon->reg->tcon0_lvds_ana[0].bits.en_lvds = 1;
+			tcon->reg->tcon0_lvds_ana[0].bits.en_mb = 1;
+			/* 1200ns */
+			disp_delay_us(5);
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvc = 1;
+			if (para->lvds_colordepth == LVDS_6bit)
+				tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0x7;
+			else
+				tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
+		}
+	}
+}
+
+void lvds_1919_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
+{
+	tcon->reg->tcon0_lvds_ctl.bits.tcon0_lvds_en = 1;
+	if (para->dual_lvds == 1) {
+		tcon->reg->tcon0_lvds_ana[0].bits.c = 5;
+		tcon->reg->tcon0_lvds_ana[0].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[0].bits.pd = 2;*/
+		tcon->reg->tcon0_lvds_ana[1].bits.c = 5;
 		tcon->reg->tcon0_lvds_ana[1].bits.v = 3;
 		/*tcon->reg->tcon0_lvds_ana[1].bits.pd = 2;*/
 
@@ -99,7 +183,6 @@ s32 lvds_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
 			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
 			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0xf;
 		}
-
 	} else {
 		if (tcon->tcon_index) {
 			tcon->reg->tcon0_lvds_ana[0].bits.c = 4;
@@ -119,9 +202,103 @@ s32 lvds_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
 				tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0x7;
 			else
 				tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
-
 		}
 	}
+}
+
+void lvds_default_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
+{
+		tcon->reg->tcon0_lvds_ctl.bits.tcon0_lvds_en = 1;
+	if (para->dual_lvds == 1) {
+		tcon->reg->tcon0_lvds_ana[0].bits.c = 5;
+		tcon->reg->tcon0_lvds_ana[0].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[0].bits.pd = 2;*/
+		tcon->reg->tcon0_lvds_ana[1].bits.c = 5;
+		tcon->reg->tcon0_lvds_ana[1].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[1].bits.pd = 2;*/
+
+		tcon->reg->tcon0_lvds_ana[0].bits.en_ldo = 0;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_ldo = 0;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_mb = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_mb = 1;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_drvc = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_drvc = 1;
+		if (para->lvds_colordepth == LVDS_6bit) {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0x7;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0x7;
+		} else {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0xf;
+		}
+	} else if (para->dual_lvds == 2) {
+		tcon->reg->tcon0_lvds_ana[0].bits.c = 4;
+		tcon->reg->tcon0_lvds_ana[0].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[0].bits.pd = 2;*/
+		tcon->reg->tcon0_lvds_ana[1].bits.c = 4;
+		tcon->reg->tcon0_lvds_ana[1].bits.v = 3;
+		/*tcon->reg->tcon0_lvds_ana[1].bits.pd = 2;*/
+
+		tcon->reg->tcon0_lvds_ana[0].bits.en_ldo = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_ldo = 1;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_24m = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_lvds = 1;
+		tcon->reg->tcon0_lvds_ana[0].bits.en_mb = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_mb = 1;
+		/* 1200ns */
+		disp_delay_us(5);
+		tcon->reg->tcon0_lvds_ana[0].bits.en_drvc = 1;
+		tcon->reg->tcon0_lvds_ana[1].bits.en_drvc = 1;
+		if (para->lvds_colordepth == LVDS_6bit) {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0x7;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0x7;
+		} else {
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
+			tcon->reg->tcon0_lvds_ana[1].bits.en_drvd = 0xf;
+		}
+	} else {
+		if (tcon->tcon_index) {
+			tcon->reg->tcon0_lvds_ana[0].bits.c = 4;
+			tcon->reg->tcon0_lvds_ana[0].bits.v = 3;
+			/*tcon->reg->tcon0_lvds_ana[0].bits.pd = 2;*/
+
+			tcon->reg->tcon0_lvds_ana[0].bits.en_ldo = 0;
+			/* 1200ns */
+			disp_delay_us(5);
+			tcon->reg->tcon0_lvds_ana[0].bits.en_24m = 1;
+			tcon->reg->tcon0_lvds_ana[0].bits.en_lvds = 1;
+			tcon->reg->tcon0_lvds_ana[0].bits.en_mb = 1;
+			/* 1200ns */
+			disp_delay_us(5);
+			tcon->reg->tcon0_lvds_ana[0].bits.en_drvc = 1;
+			if (para->lvds_colordepth == LVDS_6bit)
+				tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0x7;
+			else
+				tcon->reg->tcon0_lvds_ana[0].bits.en_drvd = 0xf;
+		}
+	}
+}
+
+s32 lvds_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
+{
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+	lvds_1903_open(tcon, para);
+#elif IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	lvds_1919_open(tcon, para);
+#else
+	lvds_default_open(tcon, para);
+#endif
 
 	return 0;
 }
@@ -275,6 +452,8 @@ s32 tcon_dsi_open(struct sunxi_tcon_lcd *tcon, struct disp_dsi_para *dsi_para)
 		tcon->reg->tcon0_dclk.bits.tcon0_dclk_en = 0xf;
 
 	tcon->reg->tcon0_ctl.bits.tcon0_en = 1;
+	msleep(100);
+
 	return 0;
 }
 
@@ -862,6 +1041,82 @@ static s32 tcon_lcd_fsync_active_time(struct sunxi_tcon_lcd *tcon, u32 pixel_num
 	}
 
 	return 0;
+}
+
+int sunxi_tcon_updata_vt(struct sunxi_tcon_lcd *tcon, struct disp_video_timings *timings,
+				u32 vrr_setp)
+{
+	u32 vt_value;
+	struct disp_video_timings timing_t;
+	u32 step = vrr_setp ? vrr_setp : 30;
+	u32 vbp_bit_h, bit_num = 0;
+	u32 vbp = tcon->reg->tcon0_basic2.bits.vbp;
+
+	tcon_lcd_get_timing(tcon, &timing_t);
+	if (timings->ver_total_time > timing_t.ver_total_time) {
+		if (timings->ver_back_porch <= timing_t.ver_back_porch + step)
+			vbp_bit_h = timings->ver_back_porch + timing_t.ver_sync_time - 1;
+		else
+			vbp_bit_h = vbp + step;
+
+		while (vbp_bit_h) {
+			vbp_bit_h >>= 1;
+			bit_num++;
+		}
+		bit_num--;
+		vt_value = timing_t.ver_total_time + step;
+		if (timings->ver_total_time <= vt_value) {
+			tcon->reg->tcon0_basic2.bits.vt = timings->ver_total_time * 2;
+			tcon->reg->tcon0_basic2.bits.vbp = (1 << bit_num) | vbp;
+			tcon->reg->tcon0_basic2.bits.vbp = timings->ver_back_porch + timing_t.ver_sync_time - 1;
+			tcon_lcd_irq_disable(tcon, LCD_IRQ_TCON0_LINE);
+
+			return 1;
+		} else {
+			tcon->reg->tcon0_basic2.bits.vt = vt_value * 2;
+			tcon->reg->tcon0_basic2.bits.vbp = (1 << bit_num) | vbp;
+			tcon->reg->tcon0_basic2.bits.vbp = vbp + step;
+		}
+	} else {
+		if (timings->ver_back_porch >= timing_t.ver_back_porch - step)
+			vbp_bit_h = timings->ver_back_porch + timing_t.ver_sync_time - 1;
+		else
+			vbp_bit_h = vbp - step;
+		while (vbp_bit_h) {
+			vbp_bit_h >>= 1;
+			bit_num++;
+		}
+		bit_num--;
+		vt_value = timing_t.ver_total_time - step;
+		if (timings->ver_total_time >= vt_value) {
+			tcon->reg->tcon0_basic2.bits.vt = timings->ver_total_time * 2;
+			tcon->reg->tcon0_basic2.bits.vbp = (1 << bit_num) | vbp;
+			tcon->reg->tcon0_basic2.bits.vbp = timings->ver_back_porch + timing_t.ver_sync_time - 1;
+			tcon_lcd_irq_disable(tcon, LCD_IRQ_TCON0_LINE);
+
+			return 1;
+		} else {
+			tcon->reg->tcon0_basic2.bits.vt = vt_value * 2;
+			tcon->reg->tcon0_basic2.bits.vbp = (1 << bit_num) | vbp;
+			tcon->reg->tcon0_basic2.bits.vbp = vbp - step;
+		}
+	}
+
+	return 0;
+}
+
+bool tcon_lcd_vrr_irq(struct sunxi_tcon_lcd *tcon, bool enable)
+{
+	struct disp_video_timings timing_t;
+
+	tcon_lcd_get_timing(tcon, &timing_t);
+	if (enable) {
+		tcon->reg->tcon_gint1.bits.tcon0_line_int_num =
+					timing_t.ver_front_porch + 10;
+		tcon_lcd_irq_enable(tcon, LCD_IRQ_TCON0_LINE);
+	}
+
+	return false;
 }
 
 void tcon_lcd_enable_vblank(struct sunxi_tcon_lcd *tcon, bool enable)

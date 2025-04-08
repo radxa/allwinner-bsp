@@ -4,8 +4,6 @@
  * Copyright (C) 2017 Chen-Yu Tsai <wens@csie.org>
  */
 
-#include <sunxi-log.h>
-#include <sunxi-common.h>
 #include <linux/clk-provider.h>
 #include <linux/io.h>
 #include <linux/spinlock.h>
@@ -29,6 +27,10 @@ int sunxi_parse_sdm_info(struct device_node *node)
 	if (!len)
 		return -EINVAL;
 
+	if (sdm_info) {
+		sunxi_err(NULL, "sdm_info has been allocated!");
+		return -EBUSY;
+	}
 	sdm_info = kcalloc(len, sizeof(*sdm_info), GFP_KERNEL);
 	if (!sdm_info) {
 		len = 0;
@@ -152,8 +154,13 @@ u32 ccu_get_sdmval(unsigned long rate, struct ccu_common *common, u32 m, u32 n)
 
 void ccu_common_set_sdm_value(struct ccu_common *common, struct ccu_sdm_internal *sdm, u32 sdmval)
 {
-	set_bits(common->base + common->reg, sdm->enable);
+	if (sdm->enable)
+		set_bits(common->base + common->reg, sdm->enable);
+
 	set_field(common->base + sdm->tuning_reg, BITS_WIDTH(0, 32), sdmval);
+
+	if (sdm->pattern1_reg)
+		set_field(common->base + sdm->pattern1_reg, BITS_WIDTH(0, 32), sdm->pattern1_enable);
 }
 
 bool ccu_sdm_helper_is_enabled(struct ccu_common *common,
@@ -165,7 +172,15 @@ bool ccu_sdm_helper_is_enabled(struct ccu_common *common,
 	if (sdm->enable && !(readl(common->base + common->reg) & sdm->enable))
 		return false;
 
-	return !!(readl(common->base + sdm->tuning_reg) & sdm->tuning_enable);
+	if (sdm->pattern1_reg) {
+		if (((readl(common->base + sdm->pattern1_reg) & sdm->pattern1_enable)) != sdm->pattern1_enable)
+			return false;
+	}
+
+	if (sdm->tuning_enable && !(readl(common->base + sdm->tuning_reg) & sdm->tuning_reg))
+		return false;
+
+	return true;
 }
 
 void ccu_sdm_helper_enable(struct ccu_common *common,
@@ -179,21 +194,32 @@ void ccu_sdm_helper_enable(struct ccu_common *common,
 	if (!(common->features & CCU_FEATURE_SIGMA_DELTA_MOD))
 		return;
 
+	/* Make sure SDM is enabled */
+	spin_lock_irqsave(common->lock, flags);
+	reg = readl(common->base + common->reg);
+	if (sdm->enable)
+		writel(reg | sdm->enable, common->base + common->reg);
+
+	spin_unlock_irqrestore(common->lock, flags);
+
 	/* Set the pattern */
-	for (i = 0; i < sdm->table_size; i++)
-		if (sdm->table[i].rate == rate)
+	for (i = 0; i < sdm->table_size; i++) {
+		if (sdm->table[i].rate == rate) {
+			if (!sdm->table[i].pattern)
+				return;
 			writel(sdm->table[i].pattern,
 			       common->base + sdm->tuning_reg);
+		}
+	}
 
 	/* Make sure SDM is enabled */
 	spin_lock_irqsave(common->lock, flags);
 	reg = readl(common->base + sdm->tuning_reg);
 	writel(reg | sdm->tuning_enable, common->base + sdm->tuning_reg);
-	spin_unlock_irqrestore(common->lock, flags);
-
-	spin_lock_irqsave(common->lock, flags);
-	reg = readl(common->base + common->reg);
-	writel(reg | sdm->enable, common->base + common->reg);
+	if (sdm->pattern1_reg) {
+		reg = readl(common->base + sdm->pattern1_reg);
+		writel(reg | sdm->pattern1_enable, common->base + sdm->pattern1_reg);
+	}
 	spin_unlock_irqrestore(common->lock, flags);
 }
 
@@ -208,12 +234,18 @@ void ccu_sdm_helper_disable(struct ccu_common *common,
 
 	spin_lock_irqsave(common->lock, flags);
 	reg = readl(common->base + common->reg);
-	writel(reg & ~sdm->enable, common->base + common->reg);
+	if (sdm->enable)
+		writel(reg & ~sdm->enable, common->base + common->reg);
+
 	spin_unlock_irqrestore(common->lock, flags);
 
 	spin_lock_irqsave(common->lock, flags);
 	reg = readl(common->base + sdm->tuning_reg);
 	writel(reg & ~sdm->tuning_enable, common->base + sdm->tuning_reg);
+	if (sdm->pattern1_reg) {
+		reg = readl(common->base + sdm->pattern1_reg);
+		writel(reg & ~sdm->pattern1_enable, common->base + sdm->pattern1_reg);
+	}
 	spin_unlock_irqrestore(common->lock, flags);
 }
 

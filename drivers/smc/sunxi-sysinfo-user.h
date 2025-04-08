@@ -22,5 +22,6 @@
 #define CHECK_SOC_FT_ZONE     0x05
 #define CHECK_SOC_ROTPK_STATUS     0x06
 #define CHECK_SOC_BATCHNO     0x07
+#define CHECK_SOC_CHIPID_ORIGIN 0x08
 
 #endif /* end of __SUNXI_SYSINFO_USER_H__ */

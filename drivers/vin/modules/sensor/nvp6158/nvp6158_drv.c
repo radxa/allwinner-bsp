@@ -91,7 +91,7 @@ u32 gpio_i2c_write(u8 da, u8 reg, u8 val)
 		cnt++;
 	}
 	if (cnt > 0)
-		sensor_print("%s sensor read retry = %d\n", gl_sd->name, cnt);
+		sensor_print("%s sensor write retry = %d, write_reg: 0x%2x, value: 0x%2x\n", gl_sd->name, cnt, reg, val);
 
 	return ret;
 }
@@ -107,7 +107,7 @@ u32 gpio_i2c_read(u8 da, u8 reg)
 		cnt++;
 	}
 	if (cnt > 0)
-		sensor_print("%s sensor read retry = %d\n", gl_sd->name, cnt);
+		sensor_print("%s sensor read retry = %d, read_reg: 0x%2x\n", gl_sd->name, cnt, reg);
 
 	return val;
 }

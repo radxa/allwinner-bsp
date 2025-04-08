@@ -32,6 +32,8 @@ struct de_csc_desc {
 		struct channel_csc_id cid;
 		struct device_csc_id did;
 	};
+	unsigned int csc_bit_width;
+	int hue_default_value;
 	enum de_csc_type type;
 	unsigned int reg_offset;
 };

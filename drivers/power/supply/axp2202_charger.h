@@ -3,7 +3,8 @@
 #ifndef _AXP2202_CHARGER_H_
 #define _AXP2202_CHARGER_H_
 
-#include "linux/types.h"
+#include "sunxi-power-supply.h"
+#include "axp2101.h"
 
 #define AXP2202_VBAT_MAX        (8000)
 #define AXP2202_VBAT_MIN        (2000)
@@ -107,6 +108,15 @@ struct axp_config_info {
 	u32 pmu_jetia_warm;
 	u32 pmu_jcool_ifall;
 	u32 pmu_jwarm_ifall;
+
+	/* battery cycle */
+	u32 pmu_bat_cycle_life;
+	u32 pmu_bat_cycle_cap_reduce;
+
+	/* battery manufacture date */
+	u32 pmu_bat_manufacture_year;
+	u32 pmu_bat_manufacture_month;
+	u32 pmu_bat_manufacture_day;
 
 	/* For Gauge2.0 */
 	u32 pmu_bat_para1;
@@ -260,12 +270,9 @@ struct axp_interrupts {
 	int irq;
 };
 
-struct gpio_config {
-	u32	data;
-	u32	gpio;
-	u32	mul_sel;
-	u32	pull;
-	u32	drv_level;
+struct axp_gpio_para {
+	int	gpio;
+	int irq_num;
 };
 
 #define SUNXI_PINCFG_PACK(type, value)  (((value) << 8) | (type & 0xFF))

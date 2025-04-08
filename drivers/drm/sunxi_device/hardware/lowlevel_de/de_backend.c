@@ -66,6 +66,33 @@ static void put_sunxi_gamma_lut(u32 *lut)
 	kfree(lut);
 }
 
+static void set_user_ctm2sunxi_ctm(struct de_color_ctm *user_ctm,
+				   struct de_color_ctm *sunxi_ctm,
+				   u32 ctm_bit_width, u32 coeff_fix_point, u32 constant_fix_point)
+{
+	int i;
+	int64_t *in_matrix = user_ctm->matrix;
+	int64_t *out_matrix = (int64_t *)sunxi_ctm->matrix;
+	int coeff_shift = 24 - coeff_fix_point;
+	int constant_shift = 24 - constant_fix_point;
+
+	for (i = 0; i < 12; i++) {
+		/*   matrix3x4 = real value*2^24
+		 *   user_matrix = real value*2^fix_point
+		 *   so here >> 24 - fix_point
+		 */
+		/* constants  multiply by databits  */
+		if (i == 3 || i == 7 || i == 11) {
+			out_matrix[i] = in_matrix[i] * (1 << (ctm_bit_width));
+			out_matrix[i] = out_matrix[i] >> constant_shift;
+			if (constant_fix_point == 0 && out_matrix[i] == (1 << (ctm_bit_width)))
+				out_matrix[i]--;
+		} else {
+			out_matrix[i] = in_matrix[i] >> coeff_shift;
+		}
+	}
+}
+
 static int de_backend_check_and_reconfig(struct de_backend_handle *hdl, struct de_backend_apply_cfg *backend_cfg)
 {
 	struct de_backend_inner_info info;
@@ -119,9 +146,12 @@ static int de_backend_check_and_reconfig(struct de_backend_handle *hdl, struct d
 	return 0;
 }
 
-static int de_backend_apply_gamma(struct de_backend_handle *hdl, struct de_backend_apply_cfg *cfg)
+static int de_backend_apply_gamma(struct de_backend_handle *hdl, struct de_backend_data *data, struct de_backend_apply_cfg *cfg)
 {
 	struct de_gamma_cfg gamma;
+	struct de_backend_inner_info *info = &hdl->private->info;
+	int w = info->width, h = info->height;
+
 	if (cfg->gamma_dirty && hdl->private->gamma) {
 		memset(&gamma, 0, sizeof(gamma));
 		gamma.enable = false;
@@ -134,12 +164,30 @@ static int de_backend_apply_gamma(struct de_backend_handle *hdl, struct de_backe
 		put_sunxi_gamma_lut(gamma.gamma_tbl);
 		DRM_DEBUG_DRIVER("[SUNXI-DE] %s gamma dirty\n", __FUNCTION__);
 	}
+
+	if (hdl->private->gamma && data->gamma_para.dirty & COMMIT_DIRTY_MASK) {
+		if (data->gamma_para.commit.dirty & PQ_DEMO_DIRTY) {
+			data->gamma_para.commit.dirty &= ~PQ_DEMO_DIRTY;
+			de_gamma_set_demo_mode(hdl->private->gamma, data->gamma_para.commit.demo_en);
+			de_gamma_set_window(hdl->private->gamma,
+					data->gamma_para.commit.demo_x,
+					data->gamma_para.commit.demo_y,
+					data->gamma_para.commit.demo_w,
+					data->gamma_para.commit.demo_h);
+			de_gamma_set_size(hdl->private->gamma, w, h);
+		}
+		data->gamma_para.dirty &= ~COMMIT_DIRTY_MASK;
+	}
+	if (info->size_dirty && hdl->private->gamma) {
+			de_gamma_set_size(hdl->private->gamma, w, h);
+	}
 	return 0;
 }
 
 static int de_backend_apply_deband(struct de_backend_handle *hdl, struct de_backend_data *data)
 {
 	struct de_backend_inner_info *info = &hdl->private->info;
+	int w = info->width, h = info->height;
 	DRM_DEBUG_DRIVER("%s %lx\n", __func__, (unsigned long)data);
 	if (hdl->private->deband && data) {
 		if (data->dirty & DEBAND_DIRTY && data->deband_para.dirty & PQD_DIRTY_MASK) {
@@ -161,36 +209,124 @@ static int de_backend_apply_deband(struct de_backend_handle *hdl, struct de_back
 
 			}
 		}
+		if (data->deband_para.dirty & COMMIT_DIRTY_MASK) {
+			if (data->deband_para.commit.dirty & PQ_DEMO_DIRTY) {
+				de_deband_set_window(hdl->private->deband,
+						  data->deband_para.commit.demo_x,
+						  data->deband_para.commit.demo_y,
+						  data->deband_para.commit.demo_w,
+						  data->deband_para.commit.demo_h);
+				de_deband_set_demo_mode(hdl->private->deband,
+						  data->deband_para.commit.demo_en);
+				de_deband_set_size(hdl->private->deband, w, h);
+			}
+		}
 		if (info->module_dirty & DEBAND_DIRTY) {
 			de_deband_enable(hdl->private->deband, info->enable & DEBAND_DIRTY);
-			de_deband_set_size(hdl->private->deband, info->width, info->height);
+			de_deband_set_size(hdl->private->deband, w, h);
 			de_deband_set_outinfo(hdl->private->deband, info->cs, info->bits, info->fmt);
 		}
 	}
 	return 0;
 }
 
-static int de_backend_apply_csc(struct de_backend_handle *hdl, struct de_backend_apply_cfg *cfg)
+static int de_backend_apply_smbl(struct de_backend_handle *hdl, struct de_backend_data *data)
+{
+	struct disp_smbl_info smbl_info = {0};
+	struct de_backend_inner_info *info = &hdl->private->info;
+	int w = info->width, h = info->height;
+	bool apply = false;
+
+	DRM_DEBUG_DRIVER("%s %lx\n", __func__, (unsigned long)data);
+	if (hdl->private->smbl && data) {
+		if (data->smbl_para.dirty & PQ_ENABLE_DIRTY) {
+			smbl_info.enable = data->smbl_para.enable;
+			drm_rect_adjust_size(&smbl_info.size, w, h);
+			smbl_info.flags |= SMBL_DIRTY_ENABLE;
+			apply = true;
+		}
+
+		if (data->smbl_para.dirty & PQ_DEMO_DIRTY) {
+			smbl_info.demo_en = data->smbl_para.demo_en;
+			smbl_info.window.x1 = data->smbl_para.demo_x;
+			smbl_info.window.y1 = data->smbl_para.demo_y;
+			smbl_info.window.x2 = data->smbl_para.demo_x + data->smbl_para.demo_w;
+			smbl_info.window.y2 = data->smbl_para.demo_y + data->smbl_para.demo_h;
+			smbl_info.window.x1 = smbl_info.window.x1 * w / 100;
+			smbl_info.window.x2 = smbl_info.window.x2 * w / 100;
+			smbl_info.window.y1 = smbl_info.window.y1 * h / 100;
+			smbl_info.window.y2 = smbl_info.window.y2 * h / 100;
+			smbl_info.flags |= SMBL_DIRTY_WINDOW;
+			apply = true;
+		}
+	}
+
+	if (apply)
+		de_smbl_apply(hdl->private->smbl, &smbl_info);
+	return 0;
+}
+
+static int de_backend_apply_csc(struct de_backend_handle *hdl, struct de_backend_data *data, struct de_backend_apply_cfg *cfg)
 {
 	struct bcsh_info bcsh;
-	if (cfg->csc_dirty) {
-		bcsh.enable = true;
-		bcsh.brightness = cfg->brightness;
-		bcsh.contrast = cfg->contrast;
-		bcsh.saturation = cfg->saturation;
-		bcsh.hue = cfg->hue;
+	struct ctm_info ctm = {0};
+
+	bcsh.dirty = bcsh.enable = false;
+	ctm.dirty = ctm.enable = false;
+
+	if (!data && !cfg) {
+		if (hdl->private->gamma && hdl->private->gamma->support_cm)
+			de_gamma_apply_csc(hdl->private->gamma, NULL, NULL, NULL, NULL);
+		else if (hdl->private->smbl && hdl->private->smbl->support_csc)
+			de_smbl_apply_csc(hdl->private->smbl, 0, 0, NULL, NULL, NULL, NULL);
+		else if (hdl->private->csc)
+			de_dcsc_apply(hdl->private->csc, NULL, NULL, NULL, NULL, NULL, true);
+		return 0;
+	}
+
+	if (cfg->csc_dirty || cfg->ctm_dirty) {
+		if (cfg->csc_dirty) {
+			bcsh.dirty = true;
+			bcsh.enable = true;
+			bcsh.brightness = cfg->brightness;
+			bcsh.contrast = cfg->contrast;
+			bcsh.saturation = cfg->saturation;
+			bcsh.hue = cfg->hue;
+		}
+
+		if (cfg->ctm_dirty)
+			ctm.dirty = true;
+		if (cfg->ctm)
+			ctm.enable = true;
 
 		if (hdl->private->gamma && hdl->private->gamma->support_cm) {
-			de_gamma_apply_csc(hdl->private->gamma, cfg->w, cfg->h,
-					    &cfg->in_csc, &cfg->out_csc, &bcsh);
+			if (ctm.enable)
+				set_user_ctm2sunxi_ctm(cfg->ctm, &ctm.ctm, hdl->private->gamma->cm_bit_width, 12, 12);
+			de_gamma_apply_csc(hdl->private->gamma,
+					    &cfg->in_csc, &cfg->out_csc, &bcsh, &ctm);
 			DRM_DEBUG_DRIVER("[SUNXI-DE] %s gamma csc dirty\n", __FUNCTION__);
-		} else if (hdl->private->smbl) {
+		} else if (hdl->private->smbl && hdl->private->smbl->support_csc) {
+			if (ctm.enable)
+				set_user_ctm2sunxi_ctm(cfg->ctm, &ctm.ctm, 8, 12, 12);
 			de_smbl_apply_csc(hdl->private->smbl, cfg->w, cfg->h,
-					    &cfg->in_csc, &cfg->out_csc, &bcsh);
+					    &cfg->in_csc, &cfg->out_csc, &bcsh, &ctm);
 			DRM_DEBUG_DRIVER("[SUNXI-DE] %s device csc dirty\n", __FUNCTION__);
+		} else if (hdl->private->csc) {
+			if (ctm.enable)
+				set_user_ctm2sunxi_ctm(cfg->ctm, &ctm.ctm, 10, 17, 0);
+			de_dcsc_apply(hdl->private->csc, &cfg->in_csc, &cfg->out_csc,
+				      &bcsh, &ctm, NULL, true);
+			DRM_DEBUG_DRIVER("[SUNXI-DE] %s device csc2 dirty\n", __FUNCTION__);
 		}
-		//TODO add csc
 	}
+
+	if (data->dirty & CSC_DIRTY && data->csc_para.dirty & PQD_DIRTY_MASK) {
+		de_dcsc_pq_matrix_proc(&data->csc_para.pqd.matrix.matrix,
+					  data->csc_para.pqd.matrix.type, true);
+		data->csc_para.dirty &= ~PQD_DIRTY_MASK;
+		data->dirty &= ~CSC_DIRTY;
+	}
+
 	return 0;
 }
 
@@ -206,11 +342,78 @@ static int de_backend_apply_crc(struct de_backend_handle *hdl)
 	return 0;
 }
 
+static inline bool de_backend_is_need_update_work(struct de_backend_handle *hdl)
+{
+	return !!hdl->private->smbl;
+}
+
+static inline bool de_backend_is_need_vblank_work(struct de_backend_handle *hdl)
+{
+	return !!hdl->private->smbl;
+}
+
+void de_backend_process_late(struct de_backend_handle *hdl, struct de_backend_tasklet_state *btstate)
+{
+	/* don't forget de_backend_is_need_update_work when new work add */
+	if (hdl->private->smbl && btstate && btstate->device_support_bk) {
+		struct disp_smbl_info smbl_info = {0};
+
+		de_smbl_get_status(hdl->private->smbl, &smbl_info);
+		if (smbl_info.enable && btstate->backlight != smbl_info.backlight &&
+		    btstate->backlight != smbl_info.backlight_after_dimming) {
+			smbl_info.backlight = btstate->backlight;
+			smbl_info.flags = SMBL_DIRTY_BL;
+			de_smbl_apply(hdl->private->smbl, &smbl_info);
+		}
+
+		de_smbl_update_local_param(hdl->private->smbl);
+		if (smbl_info.enable)
+			btstate->schedule = true;
+	}
+}
+
+void de_backend_vblank_work(struct de_backend_handle *hdl, struct de_backend_tasklet_state *btstate)
+{
+	static u32 dimming;
+
+	/* don't forget de_backend_is_need_vblank_work when new work add */
+	if (hdl->private->smbl && btstate && btstate->device_support_bk) {
+		struct disp_smbl_info smbl_info = {0};
+
+		de_smbl_get_status(hdl->private->smbl, &smbl_info);
+		if (dimming != smbl_info.backlight_dimming) {
+			btstate->dimming_changed = true;
+			btstate->dimming = dimming = smbl_info.backlight_dimming;
+			btstate->backlight_user_set = smbl_info.backlight;
+		} else
+			btstate->dimming_changed = false;
+	}
+}
+
 int de_backend_disable(struct de_backend_handle *hdl)
 {
+	DRM_DEBUG_DRIVER("[SUNXI-DE] %s \n", __FUNCTION__);
+
 	memset(&hdl->private->info, 0, sizeof(hdl->private->info));
 	if (hdl->private->deband)
 		de_deband_enable(hdl->private->deband, 0);
+
+	if (hdl->private->smbl) {
+		struct disp_smbl_info smbl_info;
+		smbl_info.enable = false;
+		smbl_info.flags = SMBL_DIRTY_ENABLE;
+		de_smbl_apply(hdl->private->smbl, &smbl_info);
+	}
+
+	if (hdl->private->gamma) {
+		struct de_gamma_cfg gamma_cfg = {0};
+		gamma_cfg.enable = false;
+		de_gamma_config(hdl->private->gamma, &gamma_cfg);
+
+	}
+
+	de_backend_apply_csc(hdl, NULL, NULL);
+
 	return 0;
 }
 
@@ -223,7 +426,6 @@ int de_backend_get_pqd_config(struct de_backend_handle *hdl, struct de_backend_d
 
 	if (hdl->private->deband && data->dirty & DEBAND_DIRTY) {
 		if ((data->deband_para.dirty & ~PQD_DIRTY_MASK) ||
-			  (!(data->deband_para.dirty & PQD_DIRTY_MASK)) ||
 			  (data->deband_para.pqd.cmd != PQ_READ)) {
 			DRM_ERROR("%s deband invalid dirty flag, only support pqd read\n", __func__);
 			return -EINVAL;
@@ -232,6 +434,21 @@ int de_backend_get_pqd_config(struct de_backend_handle *hdl, struct de_backend_d
 		data->deband_para.dirty &= ~PQD_DIRTY_MASK;
 		data->dirty &= ~DEBAND_DIRTY;
 	}
+
+	if (data->dirty & CSC_DIRTY) {
+		if ((data->csc_para.dirty & ~PQD_DIRTY_MASK) ||
+			  (data->csc_para.pqd.cmd != PQ_READ) ||
+			  (!(data->csc_para.pqd.dirty & MATRIX_DIRTY))) {
+			DRM_ERROR("%s csc invalid dirty flag, only support pqd matrix read\n", __func__);
+			return -EINVAL;
+		}
+		de_dcsc_pq_matrix_proc(&data->csc_para.pqd.matrix.matrix,
+					  data->csc_para.pqd.matrix.type,
+					  false);
+		data->csc_para.dirty &= ~PQD_DIRTY_MASK;
+		data->dirty &= ~CSC_DIRTY;
+	}
+
 	return 0;
 }
 
@@ -244,11 +461,13 @@ int de_backend_apply(struct de_backend_handle *hdl, struct de_backend_data *data
 
 	de_backend_apply_crc(hdl);
 
-	de_backend_apply_gamma(hdl, cfg);
+	de_backend_apply_gamma(hdl, data, cfg);
 
-	de_backend_apply_csc(hdl, cfg);
+	de_backend_apply_csc(hdl, data, cfg);
 
 	de_backend_apply_deband(hdl, data);
+
+	de_backend_apply_smbl(hdl, data);
 
 	return 0;
 }
@@ -264,12 +483,16 @@ int de_backend_dump_state(struct drm_printer *p, struct de_backend_handle *hdl)
 {
 	if (hdl->private->crc)
 		de_crc_dump_state(p, hdl->private->crc);
+	if (hdl->private->deband)
+		de_deband_dump_state(p, hdl->private->deband);
+	if (hdl->private->smbl)
+		de_smbl_dump_state(p, hdl->private->smbl);
+	if (hdl->private->csc)
+		de_csc_dump_state(p, hdl->private->csc);
 	if (hdl->private->gamma)
 		de_gamma_dump_state(p, hdl->private->gamma);
 	if (hdl->private->dither)
 		de_dither_dump_state(p, hdl->private->dither);
-	if (hdl->private->deband)
-		de_deband_dump_state(p, hdl->private->deband);
 	return 0;
 }
 
@@ -279,6 +502,7 @@ struct de_backend_handle *de_backend_create(struct module_create_info *cinfo)
 	struct de_backend_handle *hdl;
 	struct module_create_info info;
 	struct csc_extra_create_info csc_info;
+	struct gamma_extra_create_info gamma_info;
 	unsigned int block_num = 0;
 	int cur_block = 0;
 
@@ -289,7 +513,11 @@ struct de_backend_handle *de_backend_create(struct module_create_info *cinfo)
 	set_mask(hdl->private->default_enable, PQ_ALL_DIRTY);
 
 	hdl->private->crc = de_crc_create(&info);
+
+	info.extra = &gamma_info;
+	gamma_info.type = DEVICE_GAMMA;
 	hdl->private->gamma = de_gamma_create(&info);
+
 	hdl->private->dither = de_dither_create(&info);
 	hdl->private->smbl = de_smbl_create(&info);
 	hdl->private->deband = de_deband_create(&info);
@@ -303,8 +531,12 @@ struct de_backend_handle *de_backend_create(struct module_create_info *cinfo)
 		hdl->feat.gamma_lut_len = hdl->private->gamma->gamma_lut_len;
 	}
 
-	if (hdl->private->crc)
-		hdl->feat.support_crc = true;
+	if (hdl->private->gamma && hdl->private->gamma->support_cm)
+		hdl->feat.hue_default_value = hdl->private->gamma->hue_default_value;
+	else if (hdl->private->smbl && hdl->private->smbl->support_csc)
+		hdl->feat.hue_default_value = hdl->private->smbl->hue_default_value;
+	else if (hdl->private->csc)
+		hdl->feat.hue_default_value = hdl->private->csc->hue_default_value;
 
 	/* block info */
 	if (hdl->private->crc)
@@ -330,6 +562,7 @@ struct de_backend_handle *de_backend_create(struct module_create_info *cinfo)
 	hdl->block = kmalloc(sizeof(*hdl->block) * block_num, GFP_KERNEL | __GFP_ZERO);
 
 	if (hdl->private->crc) {
+		hdl->feat.mod.module.crc = 1;
 		for (i = 0; i < hdl->private->crc->block_num; i++, cur_block++) {
 			hdl->block[cur_block] = hdl->private->crc->block[i];
 		}
@@ -342,18 +575,21 @@ struct de_backend_handle *de_backend_create(struct module_create_info *cinfo)
 	}
 
 	if (hdl->private->dither) {
+		hdl->feat.mod.module.dither = 1;
 		for (i = 0; i < hdl->private->dither->block_num; i++, cur_block++) {
 			hdl->block[cur_block] = hdl->private->dither->block[i];
 		}
 	}
 
 	if (hdl->private->smbl) {
+		hdl->feat.mod.module.smbl = 1;
 		for (i = 0; i < hdl->private->smbl->block_num; i++, cur_block++) {
 			hdl->block[cur_block] = hdl->private->smbl->block[i];
 		}
 	}
 
 	if (hdl->private->deband) {
+		hdl->feat.mod.module.deband = 1;
 		for (i = 0; i < hdl->private->deband->block_num; i++, cur_block++) {
 			hdl->block[cur_block] = hdl->private->deband->block[i];
 		}
@@ -365,5 +601,7 @@ struct de_backend_handle *de_backend_create(struct module_create_info *cinfo)
 		}
 	}
 
+	hdl->routine_job = de_backend_is_need_update_work(hdl);
+	hdl->vblank_work = de_backend_is_need_vblank_work(hdl);
 	return hdl;
 }

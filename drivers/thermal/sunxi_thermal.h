@@ -11,7 +11,7 @@
 #include <linux/device.h>
 #include <linux/thermal.h>
 
-#define MAX_SENSOR_NUM	4
+#define MAX_SENSOR_NUM	8
 
 struct ths_device;
 

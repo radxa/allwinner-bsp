@@ -31,6 +31,9 @@ struct de_snr_handle {
 	struct de_snr_private *private;
 };
 
+s32 de_snr_set_demo_mode(struct de_snr_handle *hdl, bool enable);
+s32 de_snr_set_window(struct de_snr_handle *hdl,
+		      u32 x, u32 y, u32 w, u32 h);
 bool de_snr_is_enabled(struct de_snr_handle *hdl);
 s32 de_snr_set_para(struct de_snr_handle *hdl, struct display_channel_state *state, struct de_snr_para *snr_para);
 s32 de_snr_set_size(struct de_snr_handle *hdl, u32 width, u32 height);

@@ -32,7 +32,6 @@ struct de_deband_private {
 	u8 demo_hor_end;
 	u8 demo_ver_start;
 	u8 demo_ver_end;
-	u8 demo_en;
 	struct de_reg_block reg_blks[DEBAND_REG_BLK_NUM];
 };
 
@@ -57,25 +56,38 @@ s32 de_deband_set_size(struct de_deband_handle *hdl, u32 width, u32 height)
 
 	reg->size.bits.width = width - 1;
 	reg->size.bits.height = height - 1;
+
+	reg->demo_horz.bits.demo_horz_start =
+	    width * priv->demo_hor_start / 100;
+	reg->demo_horz.bits.demo_horz_end =
+	    width * priv->demo_hor_end / 100;
+	reg->demo_vert.bits.demo_vert_start =
+	    height * priv->demo_ver_start / 100;
+	reg->demo_vert.bits.demo_vert_end =
+	    height * priv->demo_ver_end / 100;
+
 	deband_set_block_dirty(priv, DEBAND_PARA_REG_BLK, 1);
 
 	return 0;
 }
 
-s32 de_deband_set_window(struct de_deband_handle *hdl, u32 win_enable, u32 x, u32 y, u32 w, u32 h)
+s32 de_deband_set_demo_mode(struct de_deband_handle *hdl, bool enable)
 {
 	struct de_deband_private *priv = hdl->private;
 	struct deband_reg *reg = get_deband_reg(priv);
-
-	if (win_enable) {
-		reg->demo_horz.bits.demo_horz_start = x;
-		reg->demo_horz.bits.demo_horz_end = x + w - 1;
-		reg->demo_vert.bits.demo_vert_start = y;
-		reg->demo_vert.bits.demo_vert_end = y + h - 1;
-	}
-	reg->ctl.bits.demo_en = win_enable;
+	reg->ctl.bits.demo_en = enable ? 1 : 0;
 	deband_set_block_dirty(priv, DEBAND_PARA_REG_BLK, 1);
+	return 0;
+}
 
+s32 de_deband_set_window(struct de_deband_handle *hdl, u32 x, u32 y, u32 w, u32 h)
+{
+	struct de_deband_private *priv = hdl->private;
+
+	priv->demo_hor_start = x;
+	priv->demo_hor_end = x + w;
+	priv->demo_ver_start = y;
+	priv->demo_ver_end = y + h;
 	return 0;
 }
 
@@ -154,7 +166,7 @@ int de_deband_pq_proc(struct de_deband_handle *hdl, deband_module_param_t *para)
 		para->value[1] = reg->ctl.bits.c_hdeband_en;
 		para->value[2] = reg->ctl.bits.vdeband_en;
 		para->value[3] = reg->ctl.bits.c_vdeband_en;
-		/*para->value[4] = reg->ctl.bits.demo_en;*/
+		para->value[4] = reg->ctl.bits.demo_en;
 		para->value[5] = reg->rand_dither.bits.rand_dither_en;
 		para->value[6] = reg->cs.bits.input_color_space;
 		para->value[7] = reg->output_bits.bits.output_bits;
@@ -176,13 +188,12 @@ int de_deband_pq_proc(struct de_deband_handle *hdl, deband_module_param_t *para)
 		para->value[19] = priv->demo_hor_end;
 		para->value[20] = priv->demo_ver_start;
 		para->value[21] = priv->demo_ver_end;
-		para->value[4] = priv->demo_en;
 	} else {
 		reg->ctl.bits.hdeband_en = para->value[0];
 		reg->ctl.bits.c_hdeband_en = para->value[1];
 		reg->ctl.bits.vdeband_en = para->value[2];
 		reg->ctl.bits.c_vdeband_en = para->value[3];
-		/*reg->ctl.bits.demo_en = para->value[4];*/
+		reg->ctl.bits.demo_en = para->value[4];
 		reg->rand_dither.bits.rand_dither_en = para->value[5];
 		reg->cs.bits.input_color_space = para->value[6];
 		reg->output_bits.bits.output_bits = para->value[7];
@@ -204,16 +215,14 @@ int de_deband_pq_proc(struct de_deband_handle *hdl, deband_module_param_t *para)
 		priv->demo_hor_end = para->value[19];
 		priv->demo_ver_start = para->value[20];
 		priv->demo_ver_end = para->value[21];
-		priv->demo_en = para->value[4];
-		reg->ctl.bits.demo_en = priv->demo_en;
 		reg->demo_horz.bits.demo_horz_start =
-		    reg->size.bits.width * priv->demo_hor_start / 100;
+		    (reg->size.bits.width + 1) * priv->demo_hor_start / 100;
 		reg->demo_horz.bits.demo_horz_end =
-		    reg->size.bits.width * priv->demo_hor_end / 100;
+		    (reg->size.bits.width + 1)* priv->demo_hor_end / 100;
 		reg->demo_vert.bits.demo_vert_start =
-		    reg->size.bits.height * priv->demo_ver_start / 100;
+		    (reg->size.bits.height + 1) * priv->demo_ver_start / 100;
 		reg->demo_vert.bits.demo_vert_end =
-		    reg->size.bits.height * priv->demo_ver_end / 100;
+		    (reg->size.bits.height + 1) * priv->demo_ver_end / 100;
 		priv->init = true;
 		deband_set_block_dirty(priv, DEBAND_PARA_REG_BLK, 1);
 	}

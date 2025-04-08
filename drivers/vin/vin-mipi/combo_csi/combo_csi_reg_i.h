@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  * combo csi module
@@ -35,7 +35,7 @@
 #define CMB_PHY_VREF_0P2_MASK			(0x1 << CMB_PHY_VREF_0P2)
 #define CMB_PRBS_SEL				24
 #define CMB_PRBS_SEL_MASK			(0x3 << CMB_PRBS_SEL)
-#if !defined CONFIG_ARCH_SUN50IW10
+#if !IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 #define CMB_PHY_LINK_MODE			29
 #define CMB_PHY_LINK_MODE_MASK			(0x3 << CMB_PHY_LINK_MODE)
 #endif
@@ -65,10 +65,6 @@
 #define CMB_PHY0_EN_MASK			(0x1 << CMB_PHY0_EN)
 #define CMB_PHY1_EN				1
 #define CMB_PHY1_EN_MASK			(0x1 << CMB_PHY1_EN)
-#if IS_ENABLED(CONFIG_ARCH_SUN50IW10)
-#define CMB_PHY_LINK_MODE			2
-#define CMB_PHY_LINK_MODE_MASK			(0x1 << CMB_PHY_LINK_MODE)
-#endif
 #define CMB_PHY_LANEDT_EN			4
 #define CMB_PHY_LANEDT_EN_MASK			(0xf << CMB_PHY_LANEDT_EN)
 #define CMB_PHY_LANECK_EN			8
@@ -436,6 +432,8 @@
 #define CMB_PORT_MIPI_CH1_INT_PD_REG_OFF		0x0138
 #define CMB_PORT_MIPI_CH2_INT_PD_REG_OFF		0x0158
 #define CMB_PORT_MIPI_CH3_INT_PD_REG_OFF		0x0178
+#define CMB_MIPI_FRAME_END_SYNC		3
+#define CMB_MIPI_FRAME_END_SYNC_MASK    (0x1 << CMB_MIPI_FRAME_END_SYNC)
 
 #define CMB_PORT_MIPI_CH0_PH_REG_OFF		0x011c
 #define CMB_PORT_MIPI_CUR_DT			0

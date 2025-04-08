@@ -145,8 +145,8 @@ PVRSRV_ERROR DCBufferFree(DC_BUFFER *psBuffer);
 PVRSRV_ERROR DCBufferImport(DC_DISPLAY_CONTEXT *psDisplayContext,
 							IMG_UINT32 ui32NumPlanes,
 							PMR **papsImport,
-						    DC_BUFFER_IMPORT_INFO *psSurfAttrib,
-						    DC_BUFFER **ppsBuffer);
+							DC_BUFFER_IMPORT_INFO *psSurfAttrib,
+							DC_BUFFER **ppsBuffer);
 
 PVRSRV_ERROR DCBufferUnimport(DC_BUFFER *psBuffer);
 
@@ -170,4 +170,4 @@ IMG_UINT32 DCDeviceGetIndex(IMG_HANDLE hDevice);
 IMG_HANDLE DCDeviceGetDeviceAtIndex(IMG_UINT32 ui32DeviceIndex);
 #endif
 
-#endif /*DC_SERVER_H  */
+#endif /* DC_SERVER_H */

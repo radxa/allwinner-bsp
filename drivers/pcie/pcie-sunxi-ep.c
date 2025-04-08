@@ -21,7 +21,6 @@
 #include "pci.h"
 #include "pcie-sunxi.h"
 
-
 static void sunxi_pcie_setup_ep(struct sunxi_pcie *pci)
 {
 	sunxi_pcie_plat_set_rate(pci);
@@ -98,7 +97,7 @@ static unsigned int sunxi_pcie_ep_find_ext_capability(struct sunxi_pcie *pci, in
 
 struct sunxi_pcie_ep_func *sunxi_pcie_ep_get_func_from_ep(struct sunxi_pcie_ep *ep, u8 func_no)
 {
-	struct sunxi_pcie_ep_func *ep_func;
+	struct sunxi_pcie_ep_func *ep_func = NULL;
 
 	list_for_each_entry(ep_func, &ep->func_list, list) {
 		if (ep_func->func_no == func_no)

@@ -19,6 +19,7 @@
 
 #include "snd_sunxi_common.h"
 #include "snd_sunxi_mach_utils.h"
+#include "snd_sunxi_adapter.h"
 
 int asoc_simple_clean_reference(struct snd_soc_card *card)
 {
@@ -197,7 +198,7 @@ int asoc_simple_parse_misc(struct device_node *node, char *prefix, struct asoc_s
 	if (!prefix)
 		prefix = "";
 
-	/* jack detect: 0->none, 1->codec, 2->extcon, 3->gpio */
+	/* jack detect: 0->none, 1->codec, 2->extcon, 3->gpio, 4->advance */
 	snprintf(prop, sizeof(prop), "%sjack-support", prefix);
 
 	ret = of_property_read_u32(node, prop, &val);
@@ -205,7 +206,7 @@ int asoc_simple_parse_misc(struct device_node *node, char *prefix, struct asoc_s
 		priv->jack_support = 0;
 	} else {
 		priv->jack_support = val;
-		if (priv->jack_support == 1) {
+		if (val == 0) {
 			SND_LOG_DEBUG("unsupport jack\n");
 		} else if (priv->jack_support == 1) {
 			SND_LOG_DEBUG("jack detect mode is codec\n");
@@ -213,13 +214,18 @@ int asoc_simple_parse_misc(struct device_node *node, char *prefix, struct asoc_s
 			SND_LOG_DEBUG("jack detect mode is extcon\n");
 		} else if (priv->jack_support == 3) {
 			SND_LOG_DEBUG("jack detect mode is gpio\n");
+		} else if (priv->jack_support == 4) {
+			SND_LOG_DEBUG("jack detect mode is advance\n");
+		} else {
+			priv->jack_support = 0;
+			SND_LOG_DEBUG("unsupport jack mode %u\n", val);
 		}
 	}
 
 	snprintf(prop, sizeof(prop), "%swait-time", prefix);
 	ret = of_property_read_u32(node, prop, &val);
 	if (ret)
-		priv->wait_time = 0;
+		priv->wait_time = 10000;
 	else
 		priv->wait_time = val;
 
@@ -339,6 +345,46 @@ static unsigned int asoc_simple_parse_daifmt_raw(struct device_node *np, const c
 	}
 
 	return format;
+}
+
+int asoc_simple_parse_ucfmt(struct device_node *node, char *prefix,
+			    struct asoc_simple_priv *priv)
+{
+	struct snd_soc_dai_link *dai_link = simple_priv_to_link(priv, 0);
+	struct simple_dai_props *dai_props = simple_priv_to_props(priv, 0);
+	struct snd_sunxi_dai_ucfmt *dai_ucfmt = &dai_props->dai_ucfmt;
+	int ret;
+	unsigned int temp_val;
+	char prop[128];
+
+	if (!prefix)
+		prefix = "";
+
+	snprintf(prop, sizeof(prop), "%stx-lsb-first", prefix);
+	dai_ucfmt->tx_lsb_first = of_property_read_bool(node, prop);
+	snprintf(prop, sizeof(prop), "%srx-lsb-first", prefix);
+	dai_ucfmt->rx_lsb_first = of_property_read_bool(node, prop);
+
+	dai_ucfmt->fmt = dai_link->dai_fmt & SND_SOC_DAIFMT_FORMAT_MASK;
+	snprintf(prop, sizeof(prop), "%sdata-late", prefix);
+	ret = of_property_read_u32(node, "data-late", &temp_val);
+	if (ret < 0 || temp_val > 3) {
+		SND_LOG_WARN("set data late to default\n");
+		if (dai_ucfmt->fmt == SND_SOC_DAIFMT_I2S)
+			dai_ucfmt->data_late = 1;
+		else if (dai_ucfmt->fmt == SND_SOC_DAIFMT_RIGHT_J
+			 || dai_ucfmt->fmt == SND_SOC_DAIFMT_LEFT_J)
+			dai_ucfmt->data_late = 0;
+		else if (dai_ucfmt->fmt == SND_SOC_DAIFMT_DSP_A)
+			dai_ucfmt->data_late = 1;
+		else if (dai_ucfmt->fmt == SND_SOC_DAIFMT_DSP_B)
+			dai_ucfmt->data_late = 0;
+	} else if (dai_ucfmt->fmt == SND_SOC_DAIFMT_DSP_A
+		   || dai_ucfmt->fmt == SND_SOC_DAIFMT_DSP_B) {
+		dai_ucfmt->data_late = temp_val;
+	}
+
+	return 0;
 }
 
 int asoc_simple_parse_daifmt(struct device_node *node,
@@ -482,12 +528,6 @@ int asoc_simple_parse_tdm_clk(struct device_node *cpu,
 	else
 		dai_props->cpu_pll_fs = val;
 
-	ret = of_property_read_u32(codec, prop, &val);
-	if (ret)
-		dai_props->codec_pll_fs = 1;	/* default sysclk 24.576 or 22.5792MHz * 1 */
-	else
-		dai_props->codec_pll_fs = val;
-
 	snprintf(prop, sizeof(prop), "%smclk-fs", prefix);
 	ret = of_property_read_u32(cpu, prop, &val);
 	if (ret)
@@ -497,23 +537,23 @@ int asoc_simple_parse_tdm_clk(struct device_node *cpu,
 
 	snprintf(prop, sizeof(prop), "%smclk-fp", prefix);
 	ret = of_property_read_bool(cpu, prop);
-	if (ret < 0) {
+	if (!ret) {
 		SND_LOG_DEBUG("mclk-fp not value\n");
 		dai_props->mclk_fp[0] = 0;
 		dai_props->mclk_fp[1] = 0;
 	} else {
 		ret = of_property_read_u32_index(cpu, prop, 0, &val);
 		if (ret < 0) {
-			SND_LOG_DEBUG("mclk-fp(44.1k fp) and mclk-fp(48k fp) loss,"
-				      "default 11289600 and 12288000\n");
+			SND_LOG_WARN("mclk-fp(44.1k fp) and mclk-fp(48k fp) loss,"
+				     "default 11289600 and 12288000\n");
 			dai_props->mclk_fp[0] = 11289600;
 			dai_props->mclk_fp[1] = 12288000;
 		} else {
 			dai_props->mclk_fp[0] = val;
 			ret = of_property_read_u32_index(cpu, prop, 1, &val);
 			if (ret < 0) {
-				SND_LOG_DEBUG("mclk-fp miss a value,"
-					      "default 11289600 and 12288000\n");
+				SND_LOG_WARN("mclk-fp miss a value,"
+					     "default 11289600 and 12288000\n");
 				dai_props->mclk_fp[0] = 11289600;
 				dai_props->mclk_fp[1] = 12288000;
 			} else {
@@ -521,6 +561,71 @@ int asoc_simple_parse_tdm_clk(struct device_node *cpu,
 			}
 		}
 	}
+
+	snprintf(prop, sizeof(prop), "%spll-fp", prefix);
+	ret = of_property_read_bool(codec, prop);
+	if (!ret) {
+		SND_LOG_DEBUG("pll-fp not value\n");
+		dai_props->codec_pll_fp[0] = 22579200;
+		dai_props->codec_pll_fp[1] = 24576000;
+	} else {
+		ret = of_property_read_u32_index(codec, prop, 0, &val);
+		if (ret < 0) {
+			SND_LOG_DEBUG("pll_fp invalid, default 22579200 and 24576000\n");
+			dai_props->codec_pll_fp[0] = 22579200;
+			dai_props->codec_pll_fp[1] = 24576000;
+		} else {
+			dai_props->codec_pll_fp[0] = val;
+			ret = of_property_read_u32_index(codec, prop, 1, &val);
+			if (ret < 0) {
+				SND_LOG_DEBUG("pll_fp invalid, default 22579200 and 24576000\n");
+				dai_props->codec_pll_fp[0] = 22579200;
+				dai_props->codec_pll_fp[1] = 24576000;
+			} else {
+				dai_props->codec_pll_fp[1] = val;
+			}
+		}
+	}
+
+	snprintf(prop, sizeof(prop), "%spllin-mode", prefix);
+	ret = of_property_read_u32(codec, prop, &val);
+	if (ret) {
+		dai_props->codec_pllin_mode = 0;
+	} else {
+		if (val < 3) {
+			dai_props->codec_pllin_mode = val;
+		} else {
+			dai_props->codec_pllin_mode = 0;
+			SND_LOG_DEBUG("invalid pllin-mode value, default 0\n");
+		}
+	}
+
+	snprintf(prop, sizeof(prop), "%spllin-fs", prefix);
+	ret = of_property_read_u32(codec, prop, &val);
+	if (ret)
+		dai_props->codec_pllin_fs = 1;
+	else
+		dai_props->codec_pllin_fs = val;
+
+	snprintf(prop, sizeof(prop), "%spllout-mode", prefix);
+	ret = of_property_read_u32(codec, prop, &val);
+	if (ret) {
+		dai_props->codec_pllout_mode = 0;
+	} else {
+		if (val < 3) {
+			dai_props->codec_pllout_mode = val;
+		} else {
+			dai_props->codec_pllout_mode = 0;
+			SND_LOG_DEBUG("invalid pllout-mode value, default 0\n");
+		}
+	}
+
+	snprintf(prop, sizeof(prop), "%spllout-fs", prefix);
+	ret = of_property_read_u32(codec, prop, &val);
+	if (ret)
+		dai_props->codec_pllout_fs = 1;
+	else
+		dai_props->codec_pllout_fs = val;
 
 	return 0;
 }
@@ -588,7 +693,7 @@ int asoc_simple_parse_dai(struct device_node *node,
 	 * 2) user need to rebind Sound Card everytime
 	 *    if he unbinded CPU or Codec.
 	 */
-	ret = snd_soc_of_get_dai_name(node, &dlc->dai_name);
+	ret = sunxi_adpt_of_get_dai_name(node, &dlc->dai_name);
 	if (ret < 0)
 		return ret;
 

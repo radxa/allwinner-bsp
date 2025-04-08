@@ -4,7 +4,6 @@
  * Copyright (c) 2020 huafenghuang@allwinnertech.com
  */
 
-#include <sunxi-log.h>
 #include <linux/clk-provider.h>
 #include <linux/io.h>
 #include <linux/module.h>
@@ -192,7 +191,7 @@ static void displl_resume(void)
 						com->clear) && --timeout)
 					udelay(10);
 				if (timeout == 0) {
-					sunxi_err(NULL, "Wait for clear timeout....\n");
+					pr_err("Wait for clear timeout....\n");
 					WARN_ON(1);
 				}
 				if (!rd->offset) {
@@ -203,7 +202,7 @@ static void displl_resume(void)
 						nm->lock)) && --timeout)
 						udelay(10);
 					if (timeout == 0) {
-						sunxi_err(NULL, "Wait for displl stable timeout....\n");
+						pr_err("Wait for displl stable timeout....\n");
 						WARN_ON(1);
 					}
 				}
@@ -406,7 +405,7 @@ static int sun50iw10_displl_probe(struct platform_device *pdev)
 			&pll_displl_clk);
 #endif
 
-	sunxi_info(&pdev->dev, "Sunxi displl clk init OK\n");
+	dev_info(&pdev->dev, "Sunxi displl clk init OK\n");
 
 	return 0;
 }
@@ -430,7 +429,7 @@ static int __init sunxi_ccu_displl_init(void)
 
 	ret = platform_driver_register(&sun50iw10_displl_driver);
 	if (ret)
-		sunxi_err(NULL, "register ccu sun50iw10 displl failed\n");
+		pr_err("register ccu sun50iw10 displl failed\n");
 
 	return ret;
 }
@@ -444,5 +443,5 @@ module_exit(sunxi_ccu_displl_exit);
 
 MODULE_DESCRIPTION("Allwinner sun50iw10 clk driver");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.7");
+MODULE_VERSION("1.0.6");
 MODULE_AUTHOR("rengaomin<rengaomin@allwinnertech.com>");

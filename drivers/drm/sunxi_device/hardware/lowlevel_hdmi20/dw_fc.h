@@ -135,6 +135,8 @@ u8 dw_fc_audio_get_word_length(void);
 
 void dw_fc_audio_set_mute(u8 state);
 
+int dw_fc_iteration_process(void);
+
 /*****************************************************************************
  *                                                                           *
  *                          Frame Composer Registers                         *

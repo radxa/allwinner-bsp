@@ -6,3 +6,5 @@
 
 obj-y += platform/
 obj-y += codecs/
+obj-y += misc/
+obj-y += pa/

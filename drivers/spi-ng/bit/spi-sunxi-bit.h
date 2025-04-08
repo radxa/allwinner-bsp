@@ -37,17 +37,30 @@
 #define SUNXI_SPI_BIT_3WIRE_MODE	(2)
 #define SUNXI_SPI_BIT_STD_MODE		(3)
 
-extern u32 sunxi_spi_bit_qry_irq_pending(struct sunxi_spi *sspi);
-extern void sunxi_spi_bit_clr_irq_pending(struct sunxi_spi *sspi);
-extern void sunxi_spi_bit_enable_irq(struct sunxi_spi *sspi);
-extern void sunxi_spi_bit_disable_irq(struct sunxi_spi *sspi);
-extern void sunxi_spi_bit_ss_owner(struct sunxi_spi *sspi, u32 owner);
-
-extern void sunxi_spi_bit_set_cs(struct spi_device *spi, bool status);
-extern void sunxi_spi_bit_sample_delay(struct sunxi_spi *sspi, u32 clk);
-extern void sunxi_spi_bit_config_tc(struct sunxi_spi *sspi, u32 config);
-extern int sunxi_spi_mode_check_bit(struct sunxi_spi *sspi, struct spi_transfer *t);
-extern void sunxi_spi_bit_handler(struct sunxi_spi *sspi);
-extern int sunxi_spi_xfer_bit(struct spi_device *spi, struct spi_transfer *t);
+#if IS_ENABLED(CONFIG_AW_SPI_NG_BIT)
+u32 sunxi_spi_bit_qry_irq_pending(struct sunxi_spi *sspi);
+void sunxi_spi_bit_clr_irq_pending(struct sunxi_spi *sspi);
+void sunxi_spi_bit_enable_irq(struct sunxi_spi *sspi);
+void sunxi_spi_bit_disable_irq(struct sunxi_spi *sspi);
+void sunxi_spi_bit_ss_owner(struct sunxi_spi *sspi, u32 owner);
+void sunxi_spi_bit_set_cs(struct spi_device *spi, bool status);
+void sunxi_spi_bit_sample_delay(struct sunxi_spi *sspi, u32 clk);
+void sunxi_spi_bit_config_tc(struct sunxi_spi *sspi, u32 config);
+int sunxi_spi_mode_check_bit(struct sunxi_spi *sspi, struct spi_transfer *t);
+void sunxi_spi_bit_handler(struct sunxi_spi *sspi);
+int sunxi_spi_xfer_bit(struct spi_device *spi, struct spi_transfer *t);
+#else
+static inline u32 sunxi_spi_bit_qry_irq_pending(struct sunxi_spi *sspi) { return -EINVAL; };
+static inline void sunxi_spi_bit_clr_irq_pending(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_bit_enable_irq(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_bit_disable_irq(struct sunxi_spi *sspi) {};
+static inline void sunxi_spi_bit_ss_owner(struct sunxi_spi *sspi, u32 owner) {};
+static inline void sunxi_spi_bit_set_cs(struct spi_device *spi, bool status) {};
+static inline void sunxi_spi_bit_sample_delay(struct sunxi_spi *sspi, u32 clk) {};
+static inline void sunxi_spi_bit_config_tc(struct sunxi_spi *sspi, u32 config) {};
+static inline int sunxi_spi_mode_check_bit(struct sunxi_spi *sspi, struct spi_transfer *t) { return -EINVAL; };
+static inline void sunxi_spi_bit_handler(struct sunxi_spi *sspi) {};
+static inline int sunxi_spi_xfer_bit(struct spi_device *spi, struct spi_transfer *t) { return -EINVAL; };
+#endif
 
 #endif /* _SUNXI_SPI_BIT_H_ */

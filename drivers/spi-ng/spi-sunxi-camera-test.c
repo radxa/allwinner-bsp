@@ -9,15 +9,17 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/sysfs.h>
 #include <linux/spinlock.h>
 #include <linux/completion.h>
 #include <linux/interrupt.h>
+#include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
+#include <linux/spi/sunxi-spi.h>
 
 #include "spi-sunxi-debug.h"
-#include "camera/spi-sunxi-camera-api.h"
 
 enum sunxi_spi_camera_status {
 	SUNXI_SPI_CAMERA_IDLE = 0,
@@ -52,10 +54,16 @@ struct sunxi_spi_camera_info {
 	u32 pixel_v;
 	u32 pixel_bytes;
 	enum sunxi_spi_camera_type type;
+	u32 avdd_vol;
+	u32 iovdd_vol;
+	struct clk *mclk;
+	struct regulator *avdd;
+	struct regulator *iovdd;
 	struct gpio_desc *pwdn_gpiod;
 	struct gpio_desc *vsync_gpiod;
 	int vsync_irq;
 	struct sunxi_spi_camera_framehead flag[SUNXI_SPI_FRAME_FLAG_MAX];
+	int framehead_len;
 	u8 flag_ignore_mask[SUNXI_SPI_FRAME_FLAG_MAX];
 	u32 idlewait_us;
 };
@@ -96,7 +104,12 @@ static int sunxi_spi_camera_update_buffer(struct sunxi_spi_camera_test *camera, 
 	}
 
 	spin_lock(&buffer->lock);
-	memcpy(buffer->buf, buf, len);
+	if (camera->info.type == SUNXI_SPI_CAMERA_HW_FRAMEHEAD) {
+		sunxi_spi_camera_get_framehead_flag(camera->spi, buffer->buf, camera->info.framehead_len);
+		memcpy(buffer->buf + camera->info.framehead_len, buf, len);
+	} else {
+		memcpy(buffer->buf, buf, len);
+	}
 	spin_unlock(&buffer->lock);
 
 	return 0;
@@ -229,6 +242,8 @@ static int sunxi_spi_camera_test_submit(struct sunxi_spi_camera_test *camera)
 		camera->xfer.len = camera->img_buf.len;
 		break;
 	case SUNXI_SPI_CAMERA_HW_FRAMEHEAD:
+		camera->xfer.len = camera->raw_buf.len - camera->info.framehead_len;
+		break;
 	case SUNXI_SPI_CAMERA_HW_IDLEWAIT:
 		camera->xfer.len = camera->raw_buf.len;
 		break;
@@ -385,7 +400,7 @@ static irqreturn_t sunxi_camera_vsync_handler(int irq, void *dev_id)
 static int sunxi_spi_camera_flag_property_get(struct sunxi_spi_camera_test *camera, struct sunxi_spi_camera_framehead *flag, char *name)
 {
 	struct device *dev = &camera->spi->dev;
-	struct device_node *np = camera->spi->dev.of_node;
+	struct device_node *np = dev->of_node;
 	char tmp[128];
 	int ret;
 
@@ -408,7 +423,37 @@ static int sunxi_spi_camera_flag_property_get(struct sunxi_spi_camera_test *came
 
 static int sunxi_spi_camera_hw_init(struct sunxi_spi_camera_test *camera)
 {
+	struct device *dev = &camera->spi->dev;
 	int ret = 0;
+
+	if (camera->info.avdd_vol > 0) {
+		regulator_set_voltage(camera->info.avdd, camera->info.avdd_vol, camera->info.avdd_vol);
+		ret = regulator_enable(camera->info.avdd);
+		if (ret) {
+			dev_err(dev, "regulator avdd enable %d uV failed %d\n", camera->info.avdd_vol, ret);
+			goto err_avdd;
+		}
+		dev_info(dev, "regulator avdd enable %d uV\n", camera->info.avdd_vol);
+	}
+
+	if (camera->info.iovdd_vol > 0) {
+		regulator_set_voltage(camera->info.iovdd, camera->info.iovdd_vol, camera->info.iovdd_vol);
+		ret = regulator_enable(camera->info.iovdd);
+		if (ret) {
+			dev_err(dev, "regulator iovdd enable %d uV failed %d\n", camera->info.iovdd_vol, ret);
+			goto err_iovdd;
+		}
+		dev_info(dev, "regulator iovdd enable %d uV\n", camera->info.iovdd_vol);
+	}
+
+	if (camera->info.mclk) {
+		ret = clk_prepare_enable(camera->info.mclk);
+		if (ret) {
+			dev_err(dev, "failed to enable mclk %d\n", ret);
+			goto err_mclk;
+		}
+		dev_info(dev, "enable mclk freq %ld\n", clk_get_rate(camera->info.mclk));
+	}
 
 	switch (camera->info.type) {
 	case SUNXI_SPI_CAMERA_HW_VSYNC:
@@ -428,6 +473,24 @@ static int sunxi_spi_camera_hw_init(struct sunxi_spi_camera_test *camera)
 	}
 
 	return ret;
+err_mclk:
+	if (camera->info.iovdd_vol > 0)
+		regulator_disable(camera->info.iovdd);
+err_iovdd:
+	if (camera->info.avdd_vol > 0)
+		regulator_disable(camera->info.avdd);
+err_avdd:
+	return ret;
+}
+
+static void sunxi_spi_camera_hw_exit(struct sunxi_spi_camera_test *camera)
+{
+	if (camera->info.mclk)
+		clk_disable_unprepare(camera->info.mclk);
+	if (camera->info.iovdd_vol > 0)
+		regulator_disable(camera->info.iovdd);
+	if (camera->info.avdd_vol > 0)
+		regulator_disable(camera->info.avdd);
 }
 
 static int sunxi_spi_camera_test_probe(struct spi_device *spi)
@@ -447,15 +510,27 @@ static int sunxi_spi_camera_test_probe(struct spi_device *spi)
 	spin_lock_init(&camera->img_buf.lock);
 	spin_lock_init(&camera->raw_buf.lock);
 
-	of_property_read_u32(spi->dev.of_node, "pixel-horizontal", &camera->info.pixel_h);
-	of_property_read_u32(spi->dev.of_node, "pixel-vertical", &camera->info.pixel_v);
-	of_property_read_u32(spi->dev.of_node, "pixel-bytes", &camera->info.pixel_bytes);
+	of_property_read_u32(dev->of_node, "pixel-horizontal", &camera->info.pixel_h);
+	of_property_read_u32(dev->of_node, "pixel-vertical", &camera->info.pixel_v);
+	of_property_read_u32(dev->of_node, "pixel-bytes", &camera->info.pixel_bytes);
 	if (camera->info.pixel_h && camera->info.pixel_v && camera->info.pixel_bytes) {
 		dev_info(dev, "get pixel h_%d v_%d bytes_%d\n", camera->info.pixel_h, camera->info.pixel_v, camera->info.pixel_bytes);
 	} else {
 		dev_err(dev, "failed to get pixel property h_%d v_%d bytes_%d\n", camera->info.pixel_h, camera->info.pixel_v, camera->info.pixel_bytes);
 		return -EINVAL;
 	}
+
+	camera->info.mclk = devm_clk_get_optional(dev, "mclk");
+	if (IS_ERR(camera->info.mclk)) {
+		ret = PTR_ERR(camera->info.mclk);
+		dev_err(dev, "failed to get mclk %d\n", ret);
+		return -EINVAL;
+	}
+
+	camera->info.avdd = devm_regulator_get_optional(dev, "avdd");
+	of_property_read_u32(dev->of_node, "avdd-microvolt", &camera->info.avdd_vol);
+	camera->info.iovdd = devm_regulator_get_optional(dev, "iovdd");
+	of_property_read_u32(dev->of_node, "iovdd-microvolt", &camera->info.iovdd_vol);
 
 	camera->info.pwdn_gpiod = devm_gpiod_get(dev, "pwdn", GPIOD_ASIS);
 	if (!IS_ERR(camera->info.pwdn_gpiod)) {
@@ -465,7 +540,7 @@ static int sunxi_spi_camera_test_probe(struct spi_device *spi)
 		gpiod_direction_output(camera->info.pwdn_gpiod, false);
 	}
 
-	of_property_read_u32(spi->dev.of_node, "camera-type", &camera->info.type);
+	of_property_read_u32(dev->of_node, "camera-type", &camera->info.type);
 	dev_info(dev, "camera get type %d\n", camera->info.type);
 	switch (camera->info.type) {
 	case SUNXI_SPI_CAMERA_SW_VSYNC:
@@ -488,14 +563,16 @@ static int sunxi_spi_camera_test_probe(struct spi_device *spi)
 	case SUNXI_SPI_CAMERA_HW_VSYNC:
 		break;
 	case SUNXI_SPI_CAMERA_HW_IDLEWAIT:
-		of_property_read_u32(spi->dev.of_node, "idlewait-us", &camera->info.idlewait_us);
+		of_property_read_u32(dev->of_node, "idlewait-us", &camera->info.idlewait_us);
+		dev_info(dev, "get idlewait-us %d\n", camera->info.idlewait_us);
 		fallthrough;
 	case SUNXI_SPI_CAMERA_HW_FRAMEHEAD:
 		sunxi_spi_camera_flag_property_get(camera, &camera->info.flag[SUNXI_SPI_FRAME_FLAG_SOF], "start-of-frame");
 		sunxi_spi_camera_flag_property_get(camera, &camera->info.flag[SUNXI_SPI_FRAME_FLAG_SOL], "start-of-line");
 		sunxi_spi_camera_flag_property_get(camera, &camera->info.flag[SUNXI_SPI_FRAME_FLAG_EOL], "end-of-line");
 		sunxi_spi_camera_flag_property_get(camera, &camera->info.flag[SUNXI_SPI_FRAME_FLAG_EOF], "end-of-frame");
-		ret = of_property_read_u8_array(spi->dev.of_node, "flag-ignore-mask", camera->info.flag_ignore_mask, SUNXI_SPI_FRAME_FLAG_MAX);
+		camera->info.framehead_len = camera->info.flag[SUNXI_SPI_FRAME_FLAG_SOF].size;
+		ret = of_property_read_u8_array(dev->of_node, "flag-ignore-mask", camera->info.flag_ignore_mask, SUNXI_SPI_FRAME_FLAG_MAX);
 		if (!ret) {
 			char tmp[128] = { 0 };
 			hex_dump_to_buffer(camera->info.flag_ignore_mask, SUNXI_SPI_FRAME_FLAG_MAX, SUNXI_SPI_FRAME_FLAG_MAX, 1, tmp, sizeof(tmp), false);
@@ -541,15 +618,16 @@ static int sunxi_spi_camera_test_probe(struct spi_device *spi)
 
 	spi_set_drvdata(spi, camera);
 
-	sunxi_spi_camera_create_sysfs(camera);
-
 	sunxi_spi_camera_hw_init(camera);
+
+	sunxi_spi_camera_create_sysfs(camera);
 
 	camera->status = SUNXI_SPI_CAMERA_IDLE;
 
 	return 0;
 err:
-	if (camera->info.type & (SUNXI_SPI_CAMERA_HW_IDLEWAIT | SUNXI_SPI_CAMERA_HW_FRAMEHEAD))
+	if (camera->info.type == SUNXI_SPI_CAMERA_HW_IDLEWAIT ||
+		camera->info.type == SUNXI_SPI_CAMERA_HW_FRAMEHEAD)
 		sysfs_remove_bin_file(&spi->dev.kobj, &camera->raw_bin);
 	return ret;
 }
@@ -571,6 +649,7 @@ static int sunxi_spi_camera_test_remove(struct spi_device *spi)
 	if (!IS_ERR(camera->info.pwdn_gpiod))
 		gpiod_set_value(camera->info.pwdn_gpiod, false);
 	sunxi_spi_camera_remove_sysfs(camera);
+	sunxi_spi_camera_hw_exit(camera);
 	sysfs_remove_bin_file(&spi->dev.kobj, &camera->img_bin);
 	if (camera->info.type & (SUNXI_SPI_CAMERA_HW_IDLEWAIT | SUNXI_SPI_CAMERA_HW_FRAMEHEAD))
 		sysfs_remove_bin_file(&spi->dev.kobj, &camera->raw_bin);
@@ -607,6 +686,6 @@ module_spi_driver(sunxi_spi_camera_test_driver);
 
 MODULE_AUTHOR("jingyanliang <jingyanliang@allwinnertech.com>");
 MODULE_DESCRIPTION("SUNXI SPI camera test driver");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.2");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("spi:sunxi-camera-test");

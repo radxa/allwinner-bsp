@@ -29,8 +29,11 @@ struct _ccu_nkmp_cache {
  * Clocks based on the formula parent * N * K >> P / M
  */
 struct ccu_nkmp {
-	u32			enable;
+	u32			output;
 	u32			lock;
+	u32			lock_enable;
+	u32			ldo_en;
+	u32			enable;
 
 	/*
 	 * In some Soc, such as sun8iw21, PLL_CPU_DIVX = 24M * N / P, but P not in pll_cpu reg,

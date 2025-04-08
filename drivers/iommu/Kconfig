@@ -31,6 +31,11 @@ config AW_IOMMU_V2
 config AW_IOMMU_V3
        bool "V3"
 endchoice
+
+config AW_IOMMU_DISTRIBUTE
+       bool "IOMMU is distribute"
+       default n
+       default y if AW_IOMMU_V2
 endif
 
 config AW_IOMMU_IOVA_TRACE

@@ -50,8 +50,8 @@ MODULE_LICENSE("GPL");
 #define I2C_ADDR 0x20
 
 #define SENSOR_NUM 0x2
-#define SENSOR_NAME "imx386_mipi"
-#define SENSOR_NAME_2 "imx386_mipi_2"
+#define SENSOR_NAME "imx386_2lane_mipi"
+#define SENSOR_NAME_2 "imx386_2lane_mipi_2"
 
 
 #define  PIC_OFFSET_H  (16*12)  /* 16 */
@@ -850,7 +850,7 @@ static long sensor_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 static struct sensor_format_struct sensor_formats[] = {
 	{
 		.desc = "Raw RGB Bayer",
-		.mbus_code = MEDIA_BUS_FMT_SRGGB10_1X10,
+		.mbus_code = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.regs = sensor_fmt_raw,
 		.regs_size = ARRAY_SIZE(sensor_fmt_raw),
 		.bpp = 1

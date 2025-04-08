@@ -40,15 +40,16 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "drm_pdp_drv.h"
+
 #include <linux/version.h>
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0))
 #include <drm/drmP.h>
 #endif
 
-#include <drm/drm_crtc.h>
-
-#include "drm_pdp_drv.h"
+#include <drm/drm_encoder.h>
+#include <drm/drm_modeset_helper_vtables.h>
 
 #include "kernel_compatibility.h"
 

@@ -20,6 +20,7 @@
 #include "di110_reg.h"
 #include "di110.h"
 
+#define TAG "[DI]"
 static struct di_reg *di_reg_base;
 static struct di_process_fb_arg current_fb_arg;
 
@@ -312,9 +313,10 @@ u32 di_dev_query_state_with_clear(void)
 	struct di_reg *reg = di_dev_get_reg_base();
 
 	u32 val = reg->status.bits.finish_flag;
+	u32 finish_flag_after_off_0x4 = reg->version.bits.ip_version & 0x00000001;
 	reg->status.bits.finish_flag = 1;
 
-	return val;
+	return val | finish_flag_after_off_0x4;
 }
 
 static void di_dev_apply_top_para(struct di_process_fb_arg *fb_arg)

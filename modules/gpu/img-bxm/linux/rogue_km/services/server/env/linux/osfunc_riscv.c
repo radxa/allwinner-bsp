@@ -142,7 +142,7 @@ void OSCPUCacheInvalidateRangeKM(PVRSRV_DEVICE_NODE *psDevNode,
 #endif
 }
 
-OS_CACHE_OP_ADDR_TYPE OSCPUCacheOpAddressType(void)
+OS_CACHE_OP_ADDR_TYPE OSCPUCacheOpAddressType(PVRSRV_DEVICE_NODE *psDevNode)
 {
 	/*
 	 * Need to obtain psDevNode here and do the following:
@@ -154,6 +154,7 @@ OS_CACHE_OP_ADDR_TYPE OSCPUCacheOpAddressType(void)
 	 * Return BOTH for now on.
 	 *
 	 */
+	PVR_UNREFERENCED_PARAMETER(psDevNode);
 	return OS_CACHE_OP_ADDR_TYPE_BOTH;
 }
 

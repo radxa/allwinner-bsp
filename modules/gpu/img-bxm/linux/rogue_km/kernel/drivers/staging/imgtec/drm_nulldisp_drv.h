@@ -53,7 +53,11 @@
 #define NULLDISP_USE_ATOMIC
 #endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0))
+#include <drm/drm_framebuffer.h>
+#else
 struct drm_framebuffer;
+#endif
 
 /******************************************************************************
  * Linux compatibility functions
@@ -71,11 +75,8 @@ static inline u64 nulldisp_drm_fb_modifier(struct drm_framebuffer *fb)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
 	return fb->modifier;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
-	return fb->modifier[0];
 #else
-	/* 0 represents DRM_FORMAT_MOD_NONE, doesn't exist before 4.1 */
-	return 0;
+	return fb->modifier[0];
 #endif
 }
 

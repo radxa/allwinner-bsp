@@ -18,6 +18,8 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 
+void edp_hw_scrambling_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable);
+
 static const char edid_header[] = {
 	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00
 };
@@ -448,6 +450,32 @@ bool edp_source_support_lane_invert(struct sunxi_edp_hw_desc *edp_hw)
 		return false;
 }
 
+bool edp_source_support_muti_pixel_mode(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops == NULL)
+		return false;
+
+	if (ops->support_muti_pixel_mode)
+		return ops->support_muti_pixel_mode(edp_hw);
+	else
+		return false;
+}
+
+bool edp_source_need_reset_before_enable(struct sunxi_edp_hw_desc *edp_hw)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops == NULL)
+		return false;
+
+	if (ops->need_reset_before_enable)
+		return ops->need_reset_before_enable(edp_hw);
+	else
+		return false;
+}
+
 bool edp_source_support_hdcp1x(struct sunxi_edp_hw_desc *edp_hw)
 {
 	struct sunxi_edp_hw_hdcp_ops *ops = edp_hw->hdcp_ops;
@@ -509,6 +537,18 @@ bool edp_source_support_enhance_frame(struct sunxi_edp_hw_desc *edp_hw)
 
 	if (ops->support_enhance_frame)
 		return ops->support_enhance_frame(edp_hw);
+	else
+		return false;
+}
+
+bool edp_set_use_inner_clk(struct sunxi_edp_hw_desc *edp_hw, u32 bypass)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+	if (ops == NULL)
+		return false;
+
+	if (ops->set_use_inner_clk)
+		return ops->set_use_inner_clk(edp_hw, bypass);
 	else
 		return false;
 }
@@ -612,12 +652,14 @@ s32 edp_hw_query_lane_capability(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx
 	return RET_OK;
 }
 
+
 static void edp_phy_set_lane_para(struct edp_tx_core *edp_core)
 {
 	struct edp_lane_para *lane_para = &edp_core->lane_para;
 	union phy_configure_opts phy_opts;
 	struct phy_configure_opts_dp *dp_opts = &phy_opts.dp;
 
+	memset(dp_opts, 0, sizeof(struct phy_configure_opts_dp));
 	dp_opts->link_rate = (u32)(lane_para->bit_rate / 1000000);
 	dp_opts->lanes = lane_para->lane_cnt;
 	dp_opts->set_rate = 1;
@@ -636,6 +678,7 @@ static void edp_phy_set_training_para(struct edp_tx_core *edp_core)
 	struct phy_configure_opts_dp *dp_opts = &phy_opts.dp;
 	u32 i = 0;
 
+	memset(dp_opts, 0, sizeof(struct phy_configure_opts_dp));
 	for (i = 0; i < lane_para->lane_cnt; i++) {
 		dp_opts->voltage[i] = lane_para->lane_sw[i];
 		dp_opts->pre[i] = lane_para->lane_pre[i];
@@ -708,6 +751,19 @@ s32 edp_hw_lane_invert(struct sunxi_edp_hw_desc *edp_hw, u32 lane_id, bool inver
 
 	if (ops->lane_invert)
 		return ops->lane_invert(edp_hw, lane_id, invert);
+	else
+		return RET_OK;
+}
+
+s32 edp_hw_set_pixel_mode(struct sunxi_edp_hw_desc *edp_hw, u32 pixel_mode)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops == NULL)
+		return RET_OK;
+
+	if (ops->set_pixel_mode)
+		return ops->set_pixel_mode(edp_hw, pixel_mode);
 	else
 		return RET_OK;
 }
@@ -928,8 +984,7 @@ bool edp_eq_training_done(char *link_status, u32 lane_count, u32 *fail_lane)
 
 	if ((align_status & DPCD_ALIGN_DONE) != DPCD_ALIGN_DONE) {
 		EDP_CORE_DBG("EQ training align fail!\n");
-		*fail_lane = eq_fail;
-		return false;
+		eq_fail |= (1 << 8);
 	}
 
 	if (eq_fail) {
@@ -1065,11 +1120,21 @@ s32 edp_link_cr_training(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *e
 			try_cnt = 0;
 		}
 
-		if ((change & SW_VOLTAGE_CHANGE_FLAG) || (change & PRE_EMPHASIS_CHANGE_FLAG)) {
+		/*
+		 * FIXME: not sure if it's right in such action:
+		 * We do set training para in each training not done, and ignore
+		 * if change happens.
+		 *
+		 * We have meet some cause from customer:
+		 * training fail firset time and report the same sw/pre in each
+		 * adjustment, and it would never change param in obvious code
+		 * logic which finally leads the whole training procedure fail.
+		 */
+		//if ((change & SW_VOLTAGE_CHANGE_FLAG) || (change & PRE_EMPHASIS_CHANGE_FLAG)) {
 			edp_phy_set_training_para(edp_core);
 			edp_hw_set_training_para(edp_hw, edp_core);
 			edp_dpcd_set_training_para(edp_hw, edp_core);
-		}
+		//}
 
 		timeout++;
 	}
@@ -1122,18 +1187,30 @@ s32 edp_link_eq_training(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *e
 		}
 
 		change = edp_adjust_train_para(link_status, edp_core);
-		if ((change & SW_VOLTAGE_CHANGE_FLAG) || (change & PRE_EMPHASIS_CHANGE_FLAG)) {
+
+		/*
+		 * FIXME: not sure if it's right in such action:
+		 * We do set training para in each training not done, and ignore
+		 * if change happens.
+		 *
+		 * We have meet some cause from customer:
+		 * training fail firset time and report the same sw/pre in each
+		 * adjustment, and it would never change param in obvious code
+		 * logic which finally leads the whole training procedure fail.
+		 */
+		//if ((change & SW_VOLTAGE_CHANGE_FLAG) || (change & PRE_EMPHASIS_CHANGE_FLAG)) {
 			edp_phy_set_training_para(edp_core);
 			edp_hw_set_training_para(edp_hw, edp_core);
 			edp_dpcd_set_training_para(edp_hw, edp_core);
-		}
+		//}
 	}
 
-	EDP_ERR("EQ training result: lane0:%s lane1:%s lane2:%s lane3:%s\n",
+	EDP_ERR("EQ training result: lane0:%s lane1:%s lane2:%s lane3:%s align:%s\n",
 		fail_lane & (1 << 0) ? "FAIL" : "PASS",
 		fail_lane & (1 << 1) ? "FAIL" : "PASS",
 		fail_lane & (1 << 2) ? "FAIL" : "PASS",
-		fail_lane & (1 << 3) ? "FAIL" : "PASS");
+		fail_lane & (1 << 3) ? "FAIL" : "PASS",
+		fail_lane & (1 << 8) ? "FAIL" : "PASS");
 	EDP_ERR("retry 5 times but still fail, training2(equalization training) fail!\n");
 	return RET_FAIL;
 }
@@ -1177,11 +1254,12 @@ s32 edp_fast_link_train(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *ed
 
 		fail_lane = 0;
 		if (!edp_eq_training_done(link_status, lane_count, &fail_lane)) {
-			EDP_ERR("EQ training result: lane0:%s lane1:%s lane2:%s lane3:%s\n",
+			EDP_ERR("EQ training result: lane0:%s lane1:%s lane2:%s lane3:%s align:%s\n",
 				fail_lane & (1 << 0) ? "FAIL" : "PASS",
 				fail_lane & (1 << 1) ? "FAIL" : "PASS",
 				fail_lane & (1 << 2) ? "FAIL" : "PASS",
-				fail_lane & (1 << 3) ? "FAIL" : "PASS");
+				fail_lane & (1 << 3) ? "FAIL" : "PASS",
+				fail_lane & (1 << 8) ? "FAIL" : "PASS");
 			EDP_ERR("edp fast train fail in training2");
 			return RET_FAIL;
 		}
@@ -1206,6 +1284,8 @@ s32 edp_full_link_train(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *ed
 	if (ret < 0)
 		return ret;
 
+	edp_hw_link_soft_reset(edp_hw);
+
 	ret = edp_link_cr_training(edp_hw, edp_core);
 	if (ret < 0)
 		return ret;
@@ -1227,7 +1307,8 @@ s32 edp_link_training(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_
 		return edp_full_link_train(edp_hw, edp_core);
 }
 
-s32 edp_main_link_setup(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core)
+s32 edp_main_link_setup(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *edp_core,
+			bool bypass, bool force_level)
 {
 	s32 ret = 0;
 	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
@@ -1235,22 +1316,69 @@ s32 edp_main_link_setup(struct sunxi_edp_hw_desc *edp_hw, struct edp_tx_core *ed
 	if (ops == NULL)
 		return RET_OK;
 
-	/* DP Link CTS need ech training start from level-0 */
-	edp_lane_training_para_reset(&edp_core->lane_para);
+	/*
+	 * if need force signal test, should use manaual setting level and
+	 * should not reset
+	 */
+	if (!force_level) {
+		/* DP Link CTS need ech training start from level-0 */
+		edp_lane_training_para_reset(&edp_core->lane_para);
+	}
 
 	// disable scrambling before training, because TP1/2/3 use
 	// unscrambled patterns
-	if (ops->scrambling_enable)
-		ops->scrambling_enable(edp_hw, false);
+	edp_hw_scrambling_enable(edp_hw, false);
 
-	ret = edp_link_training(edp_hw, edp_core);
-	if (ret < 0)
-		return ret;
+	if (bypass) {
+		/* only set lane para and force output if bypass */
+		edp_phy_set_lane_para(edp_core);
+		edp_hw_set_lane_para(edp_hw, edp_core);
+	} else {
+		ret = edp_link_training(edp_hw, edp_core);
+		if (ret < 0)
+			return ret;
+	}
+
+	/* if need force signal test, we force set sw and pre after training */
+	if (force_level) {
+		edp_phy_set_training_para(edp_core);
+		edp_hw_set_training_para(edp_hw, edp_core);
+	}
+
 	ret = edp_training_pattern_clear(edp_hw, edp_core);
 
-	if (ops->scrambling_enable)
-		ops->scrambling_enable(edp_hw, true);
+	edp_hw_scrambling_enable(edp_hw, true);
 
+	return ret;
+}
+
+s32 edp_hw_link_soft_reset(struct sunxi_edp_hw_desc *edp_hw)
+{
+	int ret;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops == NULL)
+		return RET_OK;
+
+	if (ops->link_soft_reset) {
+		ret = ops->link_soft_reset(edp_hw);
+	} else
+		ret = RET_OK;
+	return ret;
+}
+
+s32 edp_hw_video_soft_reset(struct sunxi_edp_hw_desc *edp_hw)
+{
+	int ret;
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops == NULL)
+		return RET_OK;
+
+	if (ops->video_soft_reset) {
+		ret = ops->video_soft_reset(edp_hw);
+	} else
+		ret = RET_OK;
 	return ret;
 }
 
@@ -1325,7 +1453,6 @@ s32 edp_hw_irq_enable(struct sunxi_edp_hw_desc *edp_hw, u32 irq_id, bool en)
 
 s32 edp_hw_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char *buf)
 {
-	u32 retry_cnt = 0;
 	s32 ret = 0;
 	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
@@ -1333,22 +1460,12 @@ s32 edp_hw_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char 
 		return RET_OK;
 
 	if (ops->aux_read) {
-		while (retry_cnt < 7) {
-			ret = ops->aux_read(edp_hw, addr, lenth, buf, retry_cnt ? true : false);
-			/*
-			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-			 * AUX_TIMEOUT, AUX_NO_STOP
-			 */
-			if ((ret != RET_AUX_NACK) &&
-			    (ret != RET_AUX_TIMEOUT) &&
-			    (ret != RET_AUX_DEFER) &&
-			    (ret != RET_AUX_NO_STOP) &&
-			    (ret != RET_AUX_RPLY_ERR))
-				break;
-			/* at least 400us between two request is request in dp cts */
-			usleep_range(500, 550);
-			retry_cnt++;
-		}
+		/*
+		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+		 * AUX_TIMEOUT, AUX_NO_STOP, lowlevel must implement with 7
+		 * retry cnt
+		 */
+		ret = ops->aux_read(edp_hw, addr, lenth, buf);
 	} else
 		ret = RET_OK;
 
@@ -1360,7 +1477,6 @@ s32 edp_hw_aux_read(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char 
 
 s32 edp_hw_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char *buf)
 {
-	u32 retry_cnt = 0;
 	s32 ret = 0;
 	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
@@ -1368,21 +1484,12 @@ s32 edp_hw_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char
 		return RET_OK;
 
 	if (ops->aux_write) {
-		while (retry_cnt < 7) {
-			ret = ops->aux_write(edp_hw, addr, lenth, buf, retry_cnt ? true : false);
-			/*
-			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-			 * AUX_TIMEOUT, AUX_NO_STOP
-			 */
-			if ((ret != RET_AUX_NACK) &&
-			    (ret != RET_AUX_TIMEOUT) &&
-			    (ret != RET_AUX_DEFER) &&
-			    (ret != RET_AUX_NO_STOP))
-				break;
-			/* at least 400us between two request is request in dp cts */
-			usleep_range(500, 550);
-			retry_cnt++;
-		}
+		/*
+		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+		 * AUX_TIMEOUT, AUX_NO_STOP, lowlevel must implement with 7
+		 * retry cnt
+		 */
+		ret = ops->aux_write(edp_hw, addr, lenth, buf);
 	} else
 		ret = RET_OK;
 
@@ -1394,7 +1501,6 @@ s32 edp_hw_aux_write(struct sunxi_edp_hw_desc *edp_hw, s32 addr, s32 lenth, char
 
 s32 edp_hw_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 lenth, char *buf)
 {
-	u32 retry_cnt = 0;
 	s32 ret = 0;
 	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
@@ -1402,21 +1508,12 @@ s32 edp_hw_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr
 		return RET_OK;
 
 	if (ops->aux_i2c_read) {
-		while (retry_cnt < 7) {
-			ret = ops->aux_i2c_read(edp_hw, i2c_addr, addr, lenth, buf, retry_cnt ? true : false);
-			/*
-			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-			 * AUX_TIMEOUT, AUX_NO_STOP
-			 */
-			if ((ret != RET_AUX_NACK) &&
-			    (ret != RET_AUX_TIMEOUT) &&
-			    (ret != RET_AUX_DEFER) &&
-			    (ret != RET_AUX_NO_STOP))
-				break;
-			/* at least 400us between two request is request in dp cts */
-			usleep_range(500, 550);
-			retry_cnt++;
-		}
+		/*
+		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+		 * AUX_TIMEOUT, AUX_NO_STOP, lowlevel must implement with 7
+		 * retry cnt
+		 */
+		ret = ops->aux_i2c_read(edp_hw, i2c_addr, addr, lenth, buf);
 	} else
 		ret = RET_OK;
 
@@ -1428,7 +1525,6 @@ s32 edp_hw_aux_i2c_read(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr
 
 s32 edp_hw_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 addr, s32 lenth, char *buf)
 {
-	u32 retry_cnt = 0;
 	s32 ret = 0;
 	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
 
@@ -1436,21 +1532,12 @@ s32 edp_hw_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 add
 		return RET_OK;
 
 	if (ops->aux_i2c_write) {
-		while (retry_cnt < 7) {
-			ret = ops->aux_i2c_write(edp_hw, i2c_addr, addr, lenth, buf, retry_cnt ? true : false);
-			/*
-			 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
-			 * AUX_TIMEOUT, AUX_NO_STOP
-			 */
-			if ((ret != RET_AUX_NACK) &&
-			    (ret != RET_AUX_TIMEOUT) &&
-			    (ret != RET_AUX_DEFER) &&
-			    (ret != RET_AUX_NO_STOP))
-				break;
-			/* at least 400us between two request is request in dp cts */
-			usleep_range(500, 550);
-			retry_cnt++;
-		}
+		/*
+		 * for CTS 4.2.1.1, 4.2.2.5, add retry when AUX_NACK, AUX_DEFER,
+		 * AUX_TIMEOUT, AUX_NO_STOP, lowlevel must implement with 7
+		 * retry cnt
+		 */
+		ret = ops->aux_i2c_write(edp_hw, i2c_addr, addr, lenth, buf);
 	} else
 		ret = RET_OK;
 
@@ -1459,6 +1546,18 @@ s32 edp_hw_aux_i2c_write(struct sunxi_edp_hw_desc *edp_hw, s32 i2c_addr, s32 add
 
 	return ret;
 }
+
+void edp_hw_scrambling_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
+{
+	struct sunxi_edp_hw_video_ops *ops = edp_hw->video_ops;
+
+	if (ops == NULL)
+		return;
+
+	if (ops->scrambling_enable)
+		ops->scrambling_enable(edp_hw, enable);
+}
+
 
 s32 edp_hw_ssc_enable(struct sunxi_edp_hw_desc *edp_hw, bool enable)
 {

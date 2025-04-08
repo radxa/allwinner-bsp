@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -59,5 +59,4 @@ extern void bsp_mipi_csi_set_para(unsigned int sel, struct mipi_para *para);
 extern void bsp_mipi_csi_set_fmt(unsigned int sel, unsigned int total_rx_ch,
 				 struct mipi_fmt_cfg *fmt);
 void bsp_mipi_csi_set_dol(unsigned int sel, unsigned int mode, unsigned int ch);
-
 #endif /* __MIPI__CSI__H__ */

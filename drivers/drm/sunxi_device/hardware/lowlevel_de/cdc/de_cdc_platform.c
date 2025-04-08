@@ -11,11 +11,18 @@
  */
 
 #include "de_cdc_platform.h"
+struct de_version_cdc {
+	unsigned int version;
+	unsigned int cdc_cnt;
+	struct de_cdc_desc **cdc;
+};
 
 static struct de_cdc_desc vch0_cdc = {
 	.name = "vch0_cdc",
 	.id = 0,
 	.reg_offset = 0x08000,
+	.support_gtm = true,
+	.support_csc = true,
 };
 
 static struct de_cdc_desc uch0_cdc = {

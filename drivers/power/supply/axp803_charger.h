@@ -2,7 +2,8 @@
 #ifndef _AXP803_H_
 #define _AXP803_H_
 
-#include "linux/types.h"
+#include "sunxi-power-supply.h"
+#include "axp2101.h"
 
 /* reg AXP803_STATUS */
 #define AXP803_STATUS_AC_PRESENT	BIT(7)

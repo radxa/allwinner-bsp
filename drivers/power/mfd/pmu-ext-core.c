@@ -17,19 +17,12 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/interrupt.h>
-#include <linux/mfd/core.h>
-#include <linux/module.h>
-#include <linux/of_device.h>
-#include <linux/acpi.h>
-#include <linux/of.h>
-#include <linux/slab.h>
-#include <linux/err.h>
 
-#include <power/pmu-ext.h>
+#include "sunxi-power-mfd.h"
+#include "pmu-ext.h"
 
 static const char *const pmu_ext_model_names[] = {
-	"TCS4838", "SY8827G", "AXP1530",
+	"TCS4838", "SY8827G", "AXP1530", "AW37501", "OCP2131"
 };
 
 #define PMU_EXT_DCDC0 "dcdc0"
@@ -121,6 +114,46 @@ static struct mfd_cell sy8827g_cells[] = {
 	},
 };
 
+#define PMU_EXT_AW37501 "ldo"
+
+static struct mfd_cell aw37501_cells[] = {
+	{
+		.name = "aw37501-regulator",
+		.of_compatible = "ext,aw37501-regulator",
+	},
+	{
+		.of_compatible = "xpower-vregulator,ext-ldo",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = PMU_EXT_AW37501,
+		.pdata_size = sizeof(PMU_EXT_AW37501),
+
+	},
+};
+
+#define PMU_EXT_OCP2131_AVDD "avdd"
+#define PMU_EXT_OCP2131_AVEE "avee"
+static struct mfd_cell ocp2131_cells[] = {
+	{
+		.of_compatible = "ext,ocp2131-regulator",
+		.name = "ocp2131-regulator",
+	},
+	{
+		.of_compatible = "xpower-vregulator,ext-avdd",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = PMU_EXT_OCP2131_AVDD,
+		.pdata_size = sizeof(PMU_EXT_OCP2131_AVDD),
+	},
+	{
+		.of_compatible = "xpower-vregulator,ext-avee",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = PMU_EXT_OCP2131_AVEE,
+		.pdata_size = sizeof(PMU_EXT_OCP2131_AVEE),
+	},
+};
+
 /* For AXP323/AXP1530 */
 static const struct regmap_range axp1530_writeable_ranges[] = {
 	regmap_reg_range(AXP1530_ON_INDICATE, AXP1530_END),
@@ -159,6 +192,24 @@ static const struct regmap_access_table sy8827g_volatile_table = {
 	.n_yes_ranges = ARRAY_SIZE(sy8827g_volatile_ranges),
 };
 
+static const struct regmap_range aw37501_volatile_ranges[] = {
+	regmap_reg_range(AW37501_OUTPUT_EN, AW37501_WRITE_PROTECT),
+};
+
+static const struct regmap_access_table aw37501_volatile_table = {
+	.yes_ranges = aw37501_volatile_ranges,
+	.n_yes_ranges = ARRAY_SIZE(aw37501_volatile_ranges),
+};
+
+static const struct regmap_range ocp2131_writeable_ranges[] = {
+	regmap_reg_range(OCP2131_POS_OUTPUT_AVDD, OCP2131_NEG_OUTPUT_AVEE),
+};
+
+static const struct regmap_access_table ocp2131_writeable_table = {
+	.yes_ranges = ocp2131_writeable_ranges,
+	.n_yes_ranges = ARRAY_SIZE(ocp2131_writeable_ranges),
+};
+
 /* For AXP323/AXP1530 */
 static const struct regmap_config axp1530_regmap_config = {
 	.reg_bits	= 8,
@@ -186,6 +237,26 @@ static const struct regmap_config sy8827g_regmap_config = {
 	.val_bits = 8,
 	.volatile_table = &sy8827g_volatile_table,
 	.max_register   = SY8827G_PGOOD,
+	.use_single_read = true,
+	.use_single_write = true,
+	.cache_type     = REGCACHE_RBTREE,
+};
+
+static const struct regmap_config aw37501_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.volatile_table = &aw37501_volatile_table,
+	.max_register   = AW37501_WRITE_PROTECT,
+	.use_single_read = true,
+	.use_single_write = true,
+	.cache_type     = REGCACHE_RBTREE,
+};
+
+static const struct regmap_config ocp2131_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.wr_table = &ocp2131_writeable_table,
+	.max_register   = OCP2131_NEG_OUTPUT_AVEE,
 	.use_single_read = true,
 	.use_single_write = true,
 	.cache_type     = REGCACHE_RBTREE,
@@ -262,12 +333,24 @@ int pmu_ext_match_device(struct pmu_ext_dev *ext)
 		ext->regmap_cfg = &sy8827g_regmap_config;
 		ext->dts_parse = sy8827g_dts_parse;
 		break;
-/*-------------------*/
+/**************************************/
 	case AXP1530_ID:
 		ext->nr_cells = ARRAY_SIZE(axp1530_ext_cells);
 		ext->cells = axp1530_ext_cells;
 		ext->regmap_cfg = &axp1530_regmap_config;
 		ext->dts_parse = axp1530_dts_parse;
+		break;
+/**************************************/
+	case AW37501_ID:
+		ext->nr_cells = ARRAY_SIZE(aw37501_cells);
+		ext->cells = aw37501_cells;
+		ext->regmap_cfg = &aw37501_regmap_config;
+		break;
+/**************************************/
+	case OCP2131_ID:
+		ext->nr_cells = ARRAY_SIZE(ocp2131_cells);
+		ext->cells = ocp2131_cells;
+		ext->regmap_cfg = &ocp2131_regmap_config;
 		break;
 	default:
 		PMIC_DEV_ERR(dev, "unsupported ext ID %lu\n", ext->variant);

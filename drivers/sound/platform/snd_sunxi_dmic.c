@@ -15,6 +15,7 @@
 #include "snd_sunxi_log.h"
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/clk.h>
@@ -30,6 +31,7 @@
 #include <sound/pcm_params.h>
 
 #include "snd_sunxi_dmic.h"
+#include "snd_sunxi_adapter.h"
 
 #define DRV_NAME	"sunxi-snd-plat-dmic"
 
@@ -52,10 +54,6 @@ static const struct sample_rate sample_rate_conv[] = {
 	{8000,  0x5},
 };
 
-/* for reg debug */
-#define REG_LABEL(constant)	{#constant, constant, 0}
-#define REG_LABEL_END		{NULL, 0, 0}
-
 static struct audio_reg_label sunxi_reg_labels[] = {
 	REG_LABEL(SUNXI_DMIC_EN),
 	REG_LABEL(SUNXI_DMIC_SR),
@@ -74,8 +72,8 @@ static struct audio_reg_label sunxi_reg_labels[] = {
 	REG_LABEL(SUNXI_DMIC_HPF_COEF),
 	REG_LABEL(SUNXI_DMIC_HPF_GAIN),
 	REG_LABEL(SUNXI_DMIC_REV),
-	REG_LABEL_END,
 };
+static struct audio_reg_group sunxi_reg_group = REG_GROUP(sunxi_reg_labels);
 
 static struct regmap_config g_regmap_config = {
 	.reg_bits = 32,
@@ -109,38 +107,19 @@ static int sunxi_dmic_dai_set_pll(struct snd_soc_dai *dai, int pll_id, int sourc
 static int sunxi_dmic_dai_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
 {
 	struct sunxi_dmic *dmic = snd_soc_dai_get_drvdata(dai);
-	struct sunxi_dmic_dts *dts = &dmic->dts;
 
 	SND_LOG_DEBUG("\n");
 
-	if (snd_dmic_clk_enable(dmic->clk)) {
-		SND_LOG_ERR("clk enable failed\n");
-		return -EINVAL;
-	}
-
-	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
 		snd_soc_dai_set_dma_data(dai, substream, &dmic->capture_dma_param);
-		if (dts->rx_sync_en && dts->rx_sync_ctl)
-			sunxi_rx_sync_startup(dts->rx_sync_domain, dts->rx_sync_id);
-	}
 
 	return 0;
 }
 
 static void sunxi_dmic_dai_shutdown(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
 {
-	struct sunxi_dmic *dmic = snd_soc_dai_get_drvdata(dai);
-	struct sunxi_dmic_dts *dts = &dmic->dts;
-
-	SND_LOG_DEBUG("\n");
-
-	snd_dmic_clk_disable(dmic->clk);
-
-	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
-		if (dts->rx_sync_en && dts->rx_sync_ctl)
-			sunxi_rx_sync_shutdown(dts->rx_sync_domain, dts->rx_sync_id);
-
-	return;
+	(void)substream;
+	(void)dai;
 }
 
 static int sunxi_dmic_dai_hw_params(struct snd_pcm_substream *substream,
@@ -148,17 +127,16 @@ static int sunxi_dmic_dai_hw_params(struct snd_pcm_substream *substream,
 				    struct snd_soc_dai *dai)
 {
 	struct sunxi_dmic *dmic = snd_soc_dai_get_drvdata(dai);
+	struct sunxi_dmic_dts *dts = &dmic->dts;
 	struct regmap *regmap = dmic->mem.regmap;
 	unsigned int channels;
-	unsigned int channels_en[8] = {
-		0x0001, 0x0003, 0x0007, 0x000f, 0x001f, 0x003f, 0x007f, 0x00ff
-	};
+	unsigned int channels_en;
 	int i;
 
 	SND_LOG_DEBUG("\n");
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		SND_LOG_ERR("unsupport playback\n");
+		SND_LOG_ERR_STD(E_DMIC_SWARG_HW_PARAMS, "unsupport playback\n");
 		return -EINVAL;
 	}
 
@@ -181,7 +159,7 @@ static int sunxi_dmic_dai_hw_params(struct snd_pcm_substream *substream,
 				   0x0 << DMIC_FIFO_MODE);
 		break;
 	default:
-		SND_LOG_ERR("unrecognized format\n");
+		SND_LOG_ERR_STD(E_DMIC_SWARG_HW_PARAMS, "unrecognized format\n");
 		return -EINVAL;
 	}
 
@@ -207,11 +185,38 @@ static int sunxi_dmic_dai_hw_params(struct snd_pcm_substream *substream,
 	channels = params_channels(params);
 	regmap_update_bits(regmap, SUNXI_DMIC_CH_NUM, 0x7 << DMIC_CH_NUM,
 			   (channels - 1) << DMIC_CH_NUM);
-	regmap_update_bits(regmap, SUNXI_DMIC_EN, 0xFF << DATA_CH_EN,
-			   channels_en[channels - 1] << DATA_CH_EN);
+	for (i = 0; i < channels; i++) {
+		channels_en = (dts->rx_chmap >> 4 * i) & 0xf;
+		regmap_update_bits(regmap, SUNXI_DMIC_EN, 0x1 << (DATA_CH_EN + channels_en),
+				   0x1 << (DATA_CH_EN + channels_en));
+		/* enabled HPF */
+		regmap_update_bits(regmap, SUNXI_DMIC_HPF_CTRL,
+				   0x1 << (HPF_DATA0_CHL_EN + channels_en),
+				   0x1 << (HPF_DATA0_CHL_EN + channels_en));
+	}
 
-	/* enabled HPF */
-	regmap_write(regmap, SUNXI_DMIC_HPF_CTRL, channels_en[channels - 1]);
+	/* enable clk after set clk rate */
+	if (snd_dmic_clk_enable(dmic->clk)) {
+		SND_LOG_ERR("clk enable failed\n");
+		return -EINVAL;
+	} else {
+		dmic->clk_sta = SND_SUNXI_CLK_OPEN;
+	}
+
+	return 0;
+}
+
+static int sunxi_dmic_dai_hw_free(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
+{
+	struct sunxi_dmic *dmic = snd_soc_dai_get_drvdata(dai);
+
+	SND_LOG_DEBUG("\n");
+
+	/* prevent the closed clks from being closed again */
+	if (dmic->clk_sta == SND_SUNXI_CLK_OPEN) {
+		snd_dmic_clk_disable(dmic->clk);
+		dmic->clk_sta = SND_SUNXI_CLK_CLOSE;
+	}
 
 	return 0;
 }
@@ -279,7 +284,7 @@ static int sunxi_dmic_dai_trigger(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static const struct snd_soc_dai_ops sunxi_dmic_dai_ops = {
+static struct snd_soc_dai_ops sunxi_dmic_dai_ops = {
 	/* call by machine */
 	.set_pll	= sunxi_dmic_dai_set_pll,
 	/* call by asoc */
@@ -287,6 +292,7 @@ static const struct snd_soc_dai_ops sunxi_dmic_dai_ops = {
 	.hw_params	= sunxi_dmic_dai_hw_params,
 	.prepare	= sunxi_dmic_dai_prepare,
 	.trigger	= sunxi_dmic_dai_trigger,
+	.hw_free	= sunxi_dmic_dai_hw_free,
 	.shutdown	= sunxi_dmic_dai_shutdown,
 };
 
@@ -368,7 +374,6 @@ static int sunxi_dmic_dai_probe(struct snd_soc_dai *dai)
 
 static struct snd_soc_dai_driver sunxi_dmic_dai = {
 	.name = DRV_NAME,
-	.probe		= sunxi_dmic_dai_probe,
 	.capture = {
 		.stream_name	= "Capture",
 		.channels_min	= 1,
@@ -378,7 +383,6 @@ static struct snd_soc_dai_driver sunxi_dmic_dai = {
 		.formats	= SNDRV_PCM_FMTBIT_S16_LE
 				| SNDRV_PCM_FMTBIT_S24_LE
 	},
-	.ops = &sunxi_dmic_dai_ops,
 };
 
 /*******************************************************************************
@@ -420,14 +424,19 @@ static int sunxi_set_rx_sync_mode(struct snd_kcontrol *kcontrol,
 	struct sunxi_dmic_dts *dts = &dmic->dts;
 	struct regmap *regmap = dmic->mem.regmap;
 
+	if (dts->rx_sync_ctl == ucontrol->value.integer.value[0])
+		return 0;
+
 	switch (ucontrol->value.integer.value[0]) {
 	case 0:
 		dts->rx_sync_ctl = 0;
 		regmap_update_bits(regmap, SUNXI_DMIC_EN, 0x1 << RX_SYNC_EN, 0x0 << RX_SYNC_EN);
+		sunxi_rx_sync_shutdown(dts->rx_sync_domain, dts->rx_sync_id);
 		break;
 	case 1:
 		regmap_update_bits(regmap, SUNXI_DMIC_EN, 0x1 << RX_SYNC_EN, 0x1 << RX_SYNC_EN);
 		dts->rx_sync_ctl = 1;
+		sunxi_rx_sync_startup(dts->rx_sync_domain, dts->rx_sync_id);
 		break;
 	default:
 		return -EINVAL;
@@ -470,7 +479,7 @@ static int sunxi_dmic_component_probe(struct snd_soc_component *component)
 		ret = snd_soc_add_component_controls(component, sunxi_rx_sync_controls,
 						     ARRAY_SIZE(sunxi_rx_sync_controls));
 		if (ret)
-			SND_LOG_ERR("add rx_sync kcontrols failed\n");
+			SND_LOG_ERR_STD(E_DMIC_SWSYS_COMP_PROBE, "add rx_sync kcontrols failed\n");
 
 		dts->rx_sync_ctl = false;
 		dts->rx_sync_domain = RX_SYNC_SYS_DOMAIN;
@@ -508,7 +517,7 @@ static int sunxi_dmic_component_suspend(struct snd_soc_component *component)
 	SND_LOG_DEBUG("\n");
 
 	/* save reg value */
-	snd_sunxi_save_reg(regmap, sunxi_reg_labels);
+	snd_sunxi_save_reg(regmap, &sunxi_reg_group);
 
 	/* disable clk & regulator */
 	snd_dmic_clk_bus_disable(dmic->clk);
@@ -540,7 +549,7 @@ static int sunxi_dmic_component_resume(struct snd_soc_component *component)
 	sunxi_dmic_init(dmic);
 
 	/* resume reg value */
-	snd_sunxi_echo_reg(regmap, sunxi_reg_labels);
+	snd_sunxi_echo_reg(regmap, &sunxi_reg_group);
 
 	/* for clear RX fifo */
 	regmap_update_bits(regmap, SUNXI_DMIC_FIFO_CTR,
@@ -577,7 +586,7 @@ static int snd_sunxi_mem_init(struct platform_device *pdev, struct sunxi_dmic_me
 
 	ret = of_address_to_resource(np, 0, &mem->res);
 	if (ret) {
-		SND_LOG_ERR("parse device node resource failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_MEM_INIT, "parse device node resource failed\n");
 		ret = -EINVAL;
 		goto err_of_addr_to_resource;
 	}
@@ -585,7 +594,7 @@ static int snd_sunxi_mem_init(struct platform_device *pdev, struct sunxi_dmic_me
 	mem->memregion = devm_request_mem_region(&pdev->dev, mem->res.start,
 						 resource_size(&mem->res), DRV_NAME);
 	if (IS_ERR_OR_NULL(mem->memregion)) {
-		SND_LOG_ERR("memory region already claimed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_MEM_INIT, "memory region already claimed\n");
 		ret = -EBUSY;
 		goto err_devm_request_region;
 	}
@@ -593,14 +602,14 @@ static int snd_sunxi_mem_init(struct platform_device *pdev, struct sunxi_dmic_me
 	mem->membase = devm_ioremap(&pdev->dev, mem->memregion->start,
 				    resource_size(mem->memregion));
 	if (IS_ERR_OR_NULL(mem->membase)) {
-		SND_LOG_ERR("ioremap failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_MEM_INIT, "ioremap failed\n");
 		ret = -EBUSY;
 		goto err_devm_ioremap;
 	}
 
 	mem->regmap = devm_regmap_init_mmio(&pdev->dev, mem->membase, &g_regmap_config);
 	if (IS_ERR_OR_NULL(mem->regmap)) {
-		SND_LOG_ERR("regmap init failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_MEM_INIT, "regmap init failed\n");
 		ret = -EINVAL;
 		goto err_devm_regmap_init;
 	}
@@ -721,25 +730,25 @@ static int snd_sunxi_pin_init(struct platform_device *pdev, struct sunxi_dmic_pi
 
 	pin->pinctrl = devm_pinctrl_get(&pdev->dev);
 	if (IS_ERR_OR_NULL(pin->pinctrl)) {
-		SND_LOG_ERR("pinctrl get failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_PIN_INIT, "pinctrl get failed\n");
 		ret = -EINVAL;
 		return ret;
 	}
 	pin->pinstate = pinctrl_lookup_state(pin->pinctrl, PINCTRL_STATE_DEFAULT);
 	if (IS_ERR_OR_NULL(pin->pinstate)) {
-		SND_LOG_ERR("pinctrl default state get fail\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_PIN_INIT, "pinctrl default state get fail\n");
 		ret = -EINVAL;
 		goto err_loopup_pinstate;
 	}
 	pin->pinstate_sleep = pinctrl_lookup_state(pin->pinctrl, PINCTRL_STATE_SLEEP);
 	if (IS_ERR_OR_NULL(pin->pinstate_sleep)) {
-		SND_LOG_ERR("pinctrl sleep state get failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_PIN_INIT, "pinctrl sleep state get failed\n");
 		ret = -EINVAL;
 		goto err_loopup_pin_sleep;
 	}
 	ret = pinctrl_select_state(pin->pinctrl, pin->pinstate);
 	if (ret < 0) {
-		SND_LOG_ERR("dmic set pinctrl default state fail\n");
+		SND_LOG_ERR_STD(E_DMIC_SWDEP_PIN_INIT, "dmic set pinctrl default state fail\n");
 		ret = -EBUSY;
 		goto err_pinctrl_select_default;
 	}
@@ -766,6 +775,7 @@ static void snd_sunxi_dma_params_init(struct sunxi_dmic *dmic)
 	dmic->capture_dma_param.fifo_size = dts->capture_fifo_size;
 };
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 /* sysfs debug */
 static void snd_sunxi_dump_version(void *priv, char *buf, size_t *count)
 {
@@ -773,7 +783,7 @@ static void snd_sunxi_dump_version(void *priv, char *buf, size_t *count)
 	struct sunxi_dmic *dmic = (struct sunxi_dmic *)priv;
 
 	if (!dmic) {
-		SND_LOG_ERR("priv to dmic failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWARG_DUMP_VER, "priv to dmic failed\n");
 		return;
 	}
 	if (dmic->pdev)
@@ -805,13 +815,12 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 {
 	size_t count_tmp = 0;
 	struct sunxi_dmic *dmic = (struct sunxi_dmic *)priv;
-	int i = 0;
-	unsigned int reg_cnt;
+	unsigned int i = 0;
 	unsigned int output_reg_val;
 	struct regmap *regmap;
 
 	if (!dmic) {
-		SND_LOG_ERR("priv to dmic failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWARG_DUMP_SHOW, "priv to dmic failed\n");
 		return -1;
 	}
 	if (!dmic->show_reg_all)
@@ -820,12 +829,10 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 		dmic->show_reg_all = false;
 
 	regmap = dmic->mem.regmap;
-	reg_cnt = ARRAY_SIZE(sunxi_reg_labels);
-	while ((i < reg_cnt) && sunxi_reg_labels[i].name) {
+	for (i = 0; i < ARRAY_SIZE(sunxi_reg_labels); ++i) {
 		regmap_read(regmap, sunxi_reg_labels[i].address, &output_reg_val);
 		count_tmp += sprintf(buf + count_tmp, "[0x%03x]: 0x%8x\n",
 				     sunxi_reg_labels[i].address, output_reg_val);
-		i++;
 	}
 
 	*count = count_tmp;
@@ -843,7 +850,7 @@ static int snd_sunxi_dump_store(void *priv, const char *buf, size_t count)
 	if (count <= 1)	/* null or only "\n" */
 		return 0;
 	if (!dmic) {
-		SND_LOG_ERR("priv to dmic failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWARG_DUMP_STORE, "priv to dmic failed\n");
 		return -1;
 	}
 	regmap = dmic->mem.regmap;
@@ -870,9 +877,11 @@ static int snd_sunxi_dump_store(void *priv, const char *buf, size_t count)
 
 	return 0;
 }
+#endif
 
 static int sunxi_dmic_dev_probe(struct platform_device *pdev)
 {
+	struct sunxi_adapt_dai_ops_priv priv;
 	int ret;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = pdev->dev.of_node;
@@ -880,14 +889,16 @@ static int sunxi_dmic_dev_probe(struct platform_device *pdev)
 	struct sunxi_dmic_mem *mem;
 	struct sunxi_dmic_pinctl *pin;
 	struct sunxi_dmic_dts *dts;
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump;
+#endif
 
 	SND_LOG_DEBUG("\n");
 
 	/* sunxi dmic info */
 	dmic = devm_kzalloc(dev, sizeof(*dmic), GFP_KERNEL);
 	if (IS_ERR_OR_NULL(dmic)) {
-		SND_LOG_ERR("alloc sunxi_dmic failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWSYS_PLAT_PROBE, "alloc sunxi_dmic failed\n");
 		ret = -ENOMEM;
 		goto err_devm_kzalloc;
 	}
@@ -895,7 +906,9 @@ static int sunxi_dmic_dev_probe(struct platform_device *pdev)
 	mem = &dmic->mem;
 	pin = &dmic->pin;
 	dts = &dmic->dts;
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	dump = &dmic->dump;
+#endif
 	dmic->pdev = pdev;
 
 	ret = snd_sunxi_mem_init(pdev, mem);
@@ -917,7 +930,7 @@ static int sunxi_dmic_dev_probe(struct platform_device *pdev)
 		goto err_clk_bus_enable;
 	}
 
-	dmic->rglt = snd_sunxi_regulator_init(pdev);
+	dmic->rglt = snd_sunxi_regulator_init(dev);
 	if (!dmic->rglt) {
 		SND_LOG_ERR("rglt init failed\n");
 		ret = -EINVAL;
@@ -935,9 +948,13 @@ static int sunxi_dmic_dev_probe(struct platform_device *pdev)
 
 	snd_sunxi_dma_params_init(dmic);
 
+	priv.probe = sunxi_dmic_dai_probe;
+	priv.remove = NULL;
+	sunxi_adpt_set_dai_ops(&sunxi_dmic_dai, &sunxi_dmic_dai_ops, &priv);
+
 	ret = snd_soc_register_component(&pdev->dev, &sunxi_dmic_dev, &sunxi_dmic_dai, 1);
 	if (ret) {
-		SND_LOG_ERR("component register failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWSYS_PLAT_PROBE, "component register failed\n");
 		ret = -ENOMEM;
 		goto err_snd_soc_register_component;
 	}
@@ -949,6 +966,7 @@ static int sunxi_dmic_dev_probe(struct platform_device *pdev)
 		goto err_snd_sunxi_platform_register;
 	}
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	snprintf(dmic->module_name, 32, "%s", "DMIC");
 	dump->name = dmic->module_name;
 	dump->priv = dmic;
@@ -959,6 +977,7 @@ static int sunxi_dmic_dev_probe(struct platform_device *pdev)
 	ret = snd_sunxi_dump_register(dump);
 	if (ret)
 		SND_LOG_WARN("snd_sunxi_dump_register failed\n");
+#endif
 
 	SND_LOG_DEBUG("register dmic platform success\n");
 
@@ -990,10 +1009,15 @@ static int sunxi_dmic_dev_remove(struct platform_device *pdev)
 	struct sunxi_dmic_mem *mem = &dmic->mem;
 	struct sunxi_dmic_pinctl *pin = &dmic->pin;
 	struct sunxi_dmic_dts *dts = &dmic->dts;
+
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump = &dmic->dump;
+#endif
 
 	/* remove components */
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	snd_sunxi_dump_unregister(dump);
+#endif
 	if (dts->rx_sync_en)
 		sunxi_rx_sync_remove(dts->rx_sync_domain);
 
@@ -1037,7 +1061,7 @@ int __init sunxi_dmic_dev_init(void)
 
 	ret = platform_driver_register(&sunxi_dmic_driver);
 	if (ret != 0) {
-		SND_LOG_ERR("platform driver register failed\n");
+		SND_LOG_ERR_STD(E_DMIC_SWSYS_MOD_INIT, "platform driver register failed\n");
 		return -EINVAL;
 	}
 
@@ -1054,5 +1078,5 @@ module_exit(sunxi_dmic_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.5");
+MODULE_VERSION("1.0.10");
 MODULE_DESCRIPTION("sunxi soundcard platform of dmic");

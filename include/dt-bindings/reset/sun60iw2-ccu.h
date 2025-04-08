@@ -47,7 +47,7 @@
 #define RST_BUS_SMHC2		37
 #define RST_BUS_SMHC3		38
 #define RST_BUS_UFS_AXI		39
-#define RST_BUS_UF		40
+#define RST_BUS_UFS_AHB		40
 #define RST_BUS_UART0		41
 #define RST_BUS_UART1		42
 #define RST_BUS_UART2		43
@@ -85,20 +85,20 @@
 #define RST_BUS_I2SPCM1		75
 #define RST_BUS_I2SPCM2		76
 #define RST_BUS_I2SPCM3		77
-#define RST_BUS_SPDIF		78
-#define RST_BUS_DMIC		79
-#define RST_USB_0_PHY_RSTN	80
-#define RST_USB_0_DEVICE	81
-#define RST_USB_0_EHCI		82
-#define RST_USB_0_OHCI		83
-#define RST_USB_1_PHY_RSTN	84
-#define RST_USB_1_EHCI		85
-#define RST_USB_1_OHCI		86
-#define RST_USB_2		87
-#define RST_BUS_PCIE0		88
-#define RST_BUS_PCIE0_PWRUP	89
-#define RST_BUS_SERDES_NOPPU	90
-#define RST_BUS_SERDE		91
+#define RST_BUS_I2SPCM4		78
+#define RST_BUS_OWA		79
+#define RST_BUS_DMIC		80
+#define RST_USB_0_PHY_RSTN	81
+#define RST_USB_0_DEVICE	82
+#define RST_USB_0_EHCI		83
+#define RST_USB_0_OHCI		84
+#define RST_USB_1_PHY_RSTN	85
+#define RST_USB_1_EHCI		86
+#define RST_USB_1_OHCI		87
+#define RST_USB_2		88
+#define RST_BUS_PCIE0		89
+#define RST_BUS_PCIE0_PWRUP	90
+#define RST_BUS_SERDES		91
 #define RST_BUS_GMAC0_AXI	92
 #define RST_BUS_GMAC0		93
 #define RST_BUS_GMAC1_AXI	94
@@ -125,5 +125,7 @@
 #define RST_BUS_CSI		115
 #define RST_BUS_VIDEO_IN	116
 #define RST_BUS_APB2JTAG	117
+#define RST_BUS_UFS_PHY 	119
+#define RST_BUS_UFS_CORE	120
 
 #endif /* _DT_BINDINGS_RESET_SUN60IW2_H_ */

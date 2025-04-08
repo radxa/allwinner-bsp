@@ -62,9 +62,9 @@ M4DEFS_K := \
 
 # passing the BVNC value via init script is required
 # only in the case of a Guest OS running on a VZ setup
-ifneq ($(PVRSRV_VZ_NUM_OSID),)
- ifneq ($(PVRSRV_VZ_NUM_OSID), 0)
-  ifneq ($(PVRSRV_VZ_NUM_OSID), 1)
+ifneq ($(RGX_NUM_DRIVERS_SUPPORTED),)
+ ifneq ($(RGX_NUM_DRIVERS_SUPPORTED), 0)
+  ifneq ($(RGX_NUM_DRIVERS_SUPPORTED), 1)
    M4DEFS_K += -DRGX_BVNC=$(RGX_BVNC)
   endif
  endif
@@ -78,6 +78,16 @@ endif
 ifneq ($(HDMI_CONTROLLER),)
  $(eval $(call if-kernel-component,$(HDMI_CONTROLLER),\
   -DHDMI_CONTROLLER=$(HDMI_CONTROLLER)))
+endif
+
+ifneq ($(GPU_CONTROLLER),)
+ $(eval $(call if-kernel-component,$(GPU_CONTROLLER),\
+  -DGPU_CONTROLLER=$(GPU_CONTROLLER)))
+endif
+
+ifneq ($(GPU_UTIL),)
+ $(eval $(call if-kernel-component,$(GPU_UTIL),\
+  -DGPU_UTIL=$(GPU_UTIL)))
 endif
 
 ifneq ($(DMA_CONTROLLER),)
@@ -98,6 +108,13 @@ else ifeq ($(WINDOW_SYSTEM),wayland)
  M4DEFS += -DPVR_WESTON_DESTDIR=$(LWS_PREFIX)/bin
  M4DEFS += -DSUPPORT_WAYLAND=1
  M4DEFS += -DSUPPORT_XWAYLAND=$(SUPPORT_XWAYLAND)
+else ifeq ($(WINDOW_SYSTEM),tizen)
+ M4DEFS += -DPVR_TIZEN_BINDIR=$(LWS_PREFIX)/bin
+ M4DEFS += -DPVR_TIZEN_DLOG_LOGDIR=$(LWS_PREFIX)/var/log/dlog
+ M4DEFS += -DPVR_TIZEN_DLOG_RUNDIR=$(LWS_PREFIX)/var/run/dlog
+ M4DEFS += -DPVR_TIZEN_DLOG_USER=$(TIZEN_DLOG_USER)
+ M4DEFS += -DPVR_TIZEN_DLOG_GROUP=$(TIZEN_DLOG_GROUP)
+ M4DEFS += -DSUPPORT_TIZEN=1
 endif
 
 ifeq ($(DTB_OVERLAY),1)
@@ -163,7 +180,7 @@ endif
 
 INSTALL_UM_MODULES := \
  $(strip $(foreach _m,$(BUILT_UM),\
-  $(if $(filter $(doc_types) module_group,$($(_m)_type)),,\
+  $(if $(filter aidl $(doc_types) hidl module_group,$($(_m)_type)),,\
    $(if $(filter host_%,$($(_m)_arch)),,\
     $(if $($(_m)_install_path),$(_m),\
      $(warning WARNING: UM $(_m)_install_path not defined))))))

@@ -52,11 +52,58 @@ struct asoc_simple_data {
 	u32 convert_channels;
 };
 
+struct asoc_simple_ucfmt {
+	unsigned int fmt;
+
+	u32 data_late;
+	bool tx_lsb_first;
+	bool rx_lsb_first;
+};
+
 struct asoc_simple_jack {
 	struct snd_soc_jack jack;
 	struct snd_soc_jack_pin pin;
 	struct snd_soc_jack_gpio gpio;
 };
+
+/* note:
+ * soundcard-mach,cpu
+ *
+ * "mclk-fs"
+ * if not defined it or equal to 0, disable mclk.
+ *
+ * "mclk-fp" (if defined "mclk-fs")
+ * 1. if not defined "mclk-fp", mclk_freq = mclk-fs * sample_rate;
+ * 2. if defined "mclk-fp", it should carry 2 value, like: mclk-fp = <val1 val2>;
+ *    it means: mclk_freq(44.1k fp) = mclk-fs * val1;
+ *              mclk_freq(48k fp)   = mclk-fs * val2.
+ */
+
+/* note:
+ * soundcard-mach,codec
+ *
+ * "pllin-mode"
+ * 1. if not defined or 0, pllin = 24.576M * pllin-fs or pllin = 22.5792M * pllin-fs;
+ * 2. if defined 1, pllin = pll-fp * pllin-fs;
+ * 3. if defined 2, pllin = sample_rate * slots * slot_width = bclk.
+ *
+ * "pllout-mode"
+ * 1. if not defined or 0, pllout = 24.576M * pll-fs or 22.5792M * pll-fs;
+ * 2. if defined 1, pllout = pll-fp * pllout-fs;
+ * 3. if defined 2, pllout = sample_rate * slots * slot_width = bclk.
+ *
+ * "pll-fp" (if defined "pllin-mode" or "pllout-mode").
+ * "pllin-fs" Only works when "pllin-mode" is equal to 1.
+ * "pllout-fs" Only works when "pllout-mode" is equal to 1.
+ *
+ * eg.
+ * "fp * fs mode"
+ * pllin-mode = 0, pllin-fs = 1, pllout-mode = 0, pllout-fs = 1;
+ * "codec-fp * fs mode"
+ * pllin-mode = 1, pllin-fs = 1, pllout-mode = 1, pllout-fs = 1;
+ * "bclk mode"
+ * pllin-mode = 2, pllin-fs = 1, pllout-mode = 2, pllout-fs = 1.
+ */
 
 struct asoc_simple_priv {
 	struct snd_soc_card snd_card;
@@ -67,12 +114,16 @@ struct asoc_simple_priv {
 		struct snd_soc_dai_link_component *codecs; /* multi codec */
 		struct snd_soc_dai_link_component platforms;
 		struct asoc_simple_data adata;
+		struct snd_sunxi_dai_ucfmt dai_ucfmt;
 		struct snd_soc_codec_conf *codec_conf;
-		struct snd_sunxi_ucfmt *ucfmt;
 		unsigned int mclk_fp[2];
 		unsigned int mclk_fs;
 		unsigned int cpu_pll_fs;
-		unsigned int codec_pll_fs;
+		unsigned int codec_pll_fp[2];
+		unsigned int codec_pllin_mode;
+		unsigned int codec_pllin_fs;
+		unsigned int codec_pllout_mode;
+		unsigned int codec_pllout_fs;
 	} *dai_props;
 	struct asoc_simple_jack hp_jack;
 	struct asoc_simple_jack mic_jack;
@@ -109,6 +160,8 @@ int asoc_simple_parse_daifmt(struct device_node *node,
 			     struct device_node *codec,
 			     char *prefix,
 			     unsigned int *retfmt);
+int asoc_simple_parse_ucfmt(struct device_node *node, char *prefix,
+				struct asoc_simple_priv *priv);
 int asoc_simple_parse_tdm_slot(struct device_node *node,
 			       char *prefix,
 			       struct asoc_simple_dai *dais);

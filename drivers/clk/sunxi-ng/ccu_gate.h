@@ -18,6 +18,26 @@ struct ccu_gate {
 	struct ccu_common	common;
 };
 
+#define SUNXI_CCU_GATE_ASSOC_WITH_KEY(_struct, _name, _parent, _reg, _key_value,  \
+			_gate, _assoc_reg, _assoc_key_value, _assoc_val, _flags)   \
+	struct ccu_gate _struct = {					\
+		.enable	= _gate,					\
+		.common	= {						\
+			.reg		= _reg,				\
+			.key_reg        = _reg,				\
+			.key_value	= _key_value,			\
+			.assoc_reg	= _assoc_reg,			\
+			.assoc_val	= _assoc_val,			\
+			.assoc_key_value	= _assoc_key_value,	\
+			.hw.init	= CLK_HW_INIT(_name,		\
+						      _parent,		\
+						      &ccu_gate_ops,	\
+						      _flags),		\
+			.features	= CCU_FEATURE_GATE_DOUBLE_REG | \
+					  CCU_FEATURE_KEY_FIELD_MOD	\
+		}							\
+	}
+
 #define SUNXI_CCU_GATE_ASSOC(_struct, _name, _parent, _reg, _gate,	\
 			     _assoc_reg, _assoc_val, _flags)		\
 	struct ccu_gate _struct = {					\
@@ -64,12 +84,24 @@ struct ccu_gate {
 		}							\
 	}
 
+/* When key_reg is not equal to reg, using the SUNXI_CCU_GATE_WITH_WP_KEY macro */
+#define SUNXI_CCU_GATE_WITH_WP_KEY(_struct, _name, _parent, _reg,		\
+				_key_reg, _key_value, _gate, _flags)	\
+	_SUNXI_CCU_GATE_WITH_KEY(_struct, _name, _parent, _reg,		\
+				_key_reg, _key_value, _gate, _flags)	\
+
 #define SUNXI_CCU_GATE_WITH_KEY(_struct, _name, _parent, _reg,		\
 				_key_value, _gate, _flags)		\
+	_SUNXI_CCU_GATE_WITH_KEY(_struct, _name, _parent, _reg,		\
+				_reg, _key_value, _gate, _flags)		\
+
+#define _SUNXI_CCU_GATE_WITH_KEY(_struct, _name, _parent, _reg,		\
+				_key_reg, _key_value, _gate, _flags)	\
 	struct ccu_gate _struct = {					\
 		.enable	= _gate,					\
 		.common	= {						\
 			.reg		= _reg,				\
+			.key_reg	= _key_reg,			\
 			.key_value	= _key_value,			\
 			.features	= CCU_FEATURE_KEY_FIELD_MOD,	\
 			.hw.init	= CLK_HW_INIT(_name,		\
@@ -151,6 +183,10 @@ static inline struct ccu_gate *hw_to_ccu_gate(struct clk_hw *hw)
 	return container_of(common, struct ccu_gate, common);
 }
 
+void ccu_pll_output_helper_disable(struct ccu_common *common, u32 output);
+void ccu_pll_output_helper_enable(struct ccu_common *common, u32 output);
+void ccu_pll_gate_helper_disable(struct ccu_common *common, u32 gate, u32 output, u32 lock_en, u32 ldo_en);
+int ccu_pll_gate_helper_enable(struct ccu_common *common, u32 gate, u32 output, u32 lock, u32 lock_enable, u32 ldo_en);
 void ccu_gate_helper_disable(struct ccu_common *common, u32 gate);
 int ccu_gate_helper_enable(struct ccu_common *common, u32 gate);
 int ccu_gate_helper_is_enabled(struct ccu_common *common, u32 gate);

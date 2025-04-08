@@ -18,7 +18,7 @@ static struct de_scaler_dsc de350_scalers[] = {
 		.id = 0,
 		.type = DE_SCALER_TYPE_ASU,
 		.line_buffer_yuv = 4096,
-		.line_buffer_rgb = 2048,
+		.line_buffer_rgb = 4096, /* 2 line mode */
 		.line_buffer_yuv_ed = 2048,
 	},
 	{
@@ -219,7 +219,7 @@ static struct de_scaler_dsc de352_scalers[] = {
 		.id = 0,
 		.type = DE_SCALER_TYPE_ASU,
 		.line_buffer_yuv = 4096,
-		.line_buffer_rgb = 2048,
+		.line_buffer_rgb = 4096, /* 2 line mode */
 		.line_buffer_yuv_ed = 2048,
 	},
 	{

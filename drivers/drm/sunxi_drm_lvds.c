@@ -38,7 +38,8 @@
 #include "panel/panels.h"
 #define PHY_ENABLE 1
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW6)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW2) \
+	|| IS_ENABLED(CONFIG_ARCH_SUN65IW1) || IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 #define LVDS_DISPLL_CLK
 #endif
 struct lvds_data {
@@ -60,6 +61,7 @@ struct sunxi_drm_lvds {
 	struct reset_control *rst_bus;
 	struct clk *pclk;
 	unsigned long mode_flags;
+	unsigned long pclk_clk_rate;
 
 };
 static const struct lvds_data lvds0_data = {
@@ -129,8 +131,7 @@ static inline struct sunxi_drm_lvds *connector_to_sunxi_drm_lvds(struct drm_conn
 	return container_of(sdrm, struct sunxi_drm_lvds, sdrm);
 }
 
-static int sunxi_lvds_clk_config_enable(struct sunxi_drm_lvds *lvds,
-					const struct disp_lvds_para *para)
+static int sunxi_lvds_clk_config_enable(struct sunxi_drm_lvds *lvds)
 {
 	int ret = 0;
 
@@ -149,15 +150,31 @@ static int sunxi_lvds_clk_config_disable(struct sunxi_drm_lvds *lvds)
 {
 	int ret = 0;
 
-	if (lvds->pclk)
-		clk_disable_unprepare(lvds->pclk);
-
 	if (lvds->rst_bus)
 		ret = reset_control_assert(lvds->rst_bus);
 
 	return ret;
 }
 
+static int sunxi_lvds_displl_enable(struct sunxi_drm_lvds *lvds)
+{
+	if (lvds->pclk) {
+		clk_set_rate(lvds->pclk, lvds->pclk_clk_rate);
+		clk_prepare_enable(lvds->pclk);
+	}
+
+	return 0;
+}
+
+static int sunxi_lvds_displl_disable(struct sunxi_drm_lvds *lvds)
+{
+	if (lvds->pclk) {
+		clk_set_rate(lvds->pclk, 24000000);
+		clk_disable_unprepare(lvds->pclk);
+	}
+
+	return 0;
+}
 
 static int sunxi_lcd_pin_set_state(struct device *dev, char *name)
 {
@@ -203,7 +220,6 @@ void sunxi_drm_lvds_encoder_atomic_enable(struct drm_encoder *encoder,
 	struct sunxi_drm_lvds *lvds = encoder_to_sunxi_drm_lvds(encoder);
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(crtc_state);
 	struct disp_output_config disp_cfg;
-	unsigned long pclk_clk_rate;
 
 	drm_mode_to_sunxi_video_timings(&lvds->mode, &lvds->lvds_para.timings);
 
@@ -221,10 +237,12 @@ void sunxi_drm_lvds_encoder_atomic_enable(struct drm_encoder *encoder,
 #else
 	disp_cfg.displl_clk = false;
 #endif
+	if (lvds->lvds_data->id == 1)
+		disp_cfg.displl_clk = false;
 	sunxi_tcon_mode_init(lvds->sdrm.tcon_dev, &disp_cfg);
 
-	pclk_clk_rate = lvds->lvds_para.timings.pixel_clk * disp_cfg.tcon_lcd_div;
-	ret = sunxi_lvds_clk_config_enable(lvds, &lvds->lvds_para);
+	lvds->pclk_clk_rate = lvds->lvds_para.timings.pixel_clk * disp_cfg.tcon_lcd_div;
+	ret = sunxi_lvds_clk_config_enable(lvds);
 	if (ret) {
 		DRM_ERROR("lvds clk enable failed\n");
 		return;
@@ -246,16 +264,15 @@ void sunxi_drm_lvds_encoder_atomic_enable(struct drm_encoder *encoder,
 		if (lvds->phy0) {
 			phy_power_on(lvds->phy0);
 			phy_set_mode_ext(lvds->phy0, PHY_MODE_LVDS, PHY_ENABLE);
-			if (lvds->pclk) {
-				clk_set_rate(lvds->pclk, pclk_clk_rate);
-				clk_prepare_enable(lvds->pclk);
-			}
 		}
 		if (lvds->phy1) {
 			phy_power_on(lvds->phy1);
 			phy_set_mode_ext(lvds->phy1, PHY_MODE_LVDS, PHY_ENABLE);
 		}
 		drm_panel_prepare(lvds->sdrm.panel);
+
+		sunxi_lvds_displl_enable(lvds);
+
 		ret = sunxi_lvds_enable_output(lvds->sdrm.tcon_dev);
 		if (ret < 0)
 			DRM_DEV_INFO(lvds->dev, "failed to enable lvds ouput\n");
@@ -276,15 +293,15 @@ void sunxi_drm_lvds_encoder_atomic_disable(struct drm_encoder *encoder,
 	lvds->sdrm.panel->prepare_prev_first = false;
 #endif
 	drm_panel_disable(lvds->sdrm.panel);
+	sunxi_lvds_displl_disable(lvds);
 	drm_panel_unprepare(lvds->sdrm.panel);
 
+	sunxi_lvds_clk_config_disable(lvds);
 	if (lvds->phy0)
 		phy_power_off(lvds->phy0);
 
 	if (lvds->phy1)
 		phy_power_off(lvds->phy1);
-
-	sunxi_lvds_clk_config_disable(lvds);
 
 	sunxi_lcd_pin_set_state(lvds->dev, "sleep");
 	sunxi_lvds_disable_output(lvds->sdrm.tcon_dev);
@@ -317,6 +334,24 @@ static void sunxi_lvds_enable_vblank(bool enable, void *data)
 	sunxi_tcon_enable_vblank(lvds->sdrm.tcon_dev, enable);
 }
 
+static bool sunxi_lvds_is_support_backlight(void *data)
+{
+	struct sunxi_drm_lvds *lvds = (struct sunxi_drm_lvds *)data;
+	return panel_lvds_is_support_backlight(lvds->sdrm.panel);
+}
+
+static int sunxi_lvds_get_backlight_value(void *data)
+{
+	struct sunxi_drm_lvds *lvds = (struct sunxi_drm_lvds *)data;
+	return panel_lvds_get_backlight_value(lvds->sdrm.panel);
+}
+
+static void sunxi_lvds_set_backlight_value(void *data, int brightness)
+{
+	struct sunxi_drm_lvds *lvds = (struct sunxi_drm_lvds *)data;
+	panel_lvds_set_backlight_value(lvds->sdrm.panel, brightness);
+}
+
 int sunxi_drm_lvds_encoder_atomic_check(struct drm_encoder *encoder,
 				struct drm_crtc_state *crtc_state,
 				struct drm_connector_state *conn_state)
@@ -331,6 +366,9 @@ int sunxi_drm_lvds_encoder_atomic_check(struct drm_encoder *encoder,
 	scrtc_state->enable_vblank = sunxi_lvds_enable_vblank;
 	scrtc_state->is_sync_time_enough = sunxi_lvds_is_sync_time_enough;
 	scrtc_state->get_cur_line = sunxi_lvds_get_current_line;
+	scrtc_state->is_support_backlight = sunxi_lvds_is_support_backlight;
+	scrtc_state->get_backlight_value = sunxi_lvds_get_backlight_value;
+	scrtc_state->set_backlight_value = sunxi_lvds_set_backlight_value;
 	scrtc_state->check_status = sunxi_lvds_fifo_check;
 	scrtc_state->output_dev_data = lvds;
 
@@ -493,7 +531,7 @@ static int sunxi_drm_lvds_bind(struct device *dev, struct device *master, void *
 
 	tcon_lcd_dev = drm_lvds_of_get_tcon(lvds->dev);
 	if (tcon_lcd_dev == NULL) {
-		DRM_ERROR("tcon_lcd for dsi not found!\n");
+		DRM_ERROR("tcon_lcd for lvds not found!\n");
 		ret = -1;
 	}
 	tcon_id = sunxi_tcon_of_get_id(tcon_lcd_dev);

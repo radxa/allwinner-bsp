@@ -13,12 +13,13 @@
 #define RST_BUS_R_MBOX		3
 #define RST_BUS_R_UART1		4
 #define RST_BUS_R_UART0		5
-#define RST_BUS_R_TWI		6
+#define RST_BUS_R_TWI2		6
 #define RST_BUS_R_TWI1		7
 #define RST_BUS_R_TWI0		8
 #define RST_BUS_R_IRRX		9
 #define RST_BUS_RTC		10
-#define RST_BUS_R_CPUCFG	11
-#define RST_BUS_MODULE		12
+#define RST_BUS_RISCV_CFG	11
+#define RST_BUS_R_CPUCFG	12
+#define RST_BUS_MODULE		13
 
 #endif /* _DT_BINDINGS_RST_SUN60IW2_R_CCU_H_ */

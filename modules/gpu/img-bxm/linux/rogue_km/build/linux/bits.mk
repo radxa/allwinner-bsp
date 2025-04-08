@@ -83,6 +83,7 @@ help:
 	@echo 'Build targets'
 	@echo '  make, make build       Build all components of the build'
 	@echo '  make components        Build only the user-mode components'
+	@echo '  make config            Build only configuration files'
 	@echo '  make firmware          Build only firmware binaries'
 	@echo '  make kbuild            Build only the kernel-mode components'
 	@echo "  make docs              Build the build's supporting documentation"
@@ -118,7 +119,6 @@ $(info $(space)D=modules            dump module info)
 $(info $(space)D=config             dump all config options + type and origin)
 $(info $(space)D=freeze-config      prevent config changes)
 $(info $(space)D=config-changes     dump diffs when config changes)
-$(info $(space)D=nobuild            stop before running the main build)
 $(info Options can be combined: make D=freeze-config,config-changes)
 $(error D=help given)
 endif

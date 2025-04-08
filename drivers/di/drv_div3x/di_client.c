@@ -13,17 +13,19 @@
  * GNU General Public License for more details.
  */
 
-#include "di_debug.h"
+#include "../common/di_debug.h"
 #include "di_client.h"
 #include "di_dev.h"
 #include "di_driver.h"
-#include "di_utils.h"
+#include "../common/di_utils.h"
 #include "sunxi_di.h"
 #include <linux/kernel.h>
 #include <linux/slab.h>
 
 #define DI_TNR_BUF_ALIGN_LEN 16
 #define DI_MD_BUF_ALIGN_LEN 32
+
+static char mediaservice_name[64];
 
 static int di_client_alloc_mbuf(struct di_mapped_buf **mbuf, u32 size)
 {
@@ -63,7 +65,7 @@ static int di_client_setup_md_buf(struct di_client *c)
 	u32 h = c->video_size.height;
 	u32 size = h * w_stride;
 
-	//TODO check
+	/* TODO check */
 	if (c->mode == DI_MODE_TNR) {
 		size = c->video_size.width * c->video_size.height;
 		DI_DEBUG("%s [%dx%d] w_stride=%d w_stride*h=%d  w*h=%d size=%d", __func__,
@@ -173,13 +175,14 @@ int di_client_check_para(struct di_client *c, void *data)
 		&& (c->dit_mode.out_frame_mode == DI_DIT_OUT_2FRAME)
 		/* && (c->tnr_mode.mode != DI_TNR_MODE_INVALID)
 		&& (c->fmd_en.en != 0) */) {
-		DI_DEBUG("%s: this is 60hz mode\n", c->name);
 		c->mode = DI_MODE_60HZ;
 		c->md_en = true;
 		if (c->tnr_mode.mode)
 			c->tnr_en = true;
 		else
 			c->tnr_en = false;
+
+		DI_DEBUG("%s: this is 60hz mode %s\n", c->name, c->tnr_en ? "with tnr" : "without tnr");
 		c->vof_buf_en = true;
 		c->dma_di = c->in_fb0 = &c->fb_pool[0];
 		c->dma_di_nf = c->in_fb0_nf = &c->fb_pool[1];
@@ -194,13 +197,14 @@ int di_client_check_para(struct di_client *c, void *data)
 		&& (c->dit_mode.out_frame_mode == DI_DIT_OUT_1FRAME)
 		/* && (c->tnr_mode.mode != DI_TNR_MODE_INVALID)
 		&& (c->fmd_en.en != 0) */) {
-		DI_DEBUG("%s: this is 30hz mode\n", c->name);
 		c->mode = DI_MODE_30HZ;
 		c->md_en = true;
 		if (c->tnr_mode.mode)
 			c->tnr_en = true;
 		else
 			c->tnr_en = false;
+
+		DI_DEBUG("%s: this is 30hz mode %s\n", c->name, c->tnr_en ? "with tnr" : "without tnr");
 		c->vof_buf_en = false;
 		c->dma_p = c->in_fb0 = &c->fb_pool[0];
 		c->dma_p_nf = c->in_fb0_nf = &c->fb_pool[1];
@@ -303,13 +307,13 @@ int di_client_check_para(struct di_client *c, void *data)
 		&& (c->dit_mode.out_frame_mode == DI_DIT_OUT_2FRAME)
 		/* && (c->tnr_mode.mode != DI_TNR_MODE_INVALID)
 		&& (c->fmd_en.en != 0) */) {
-		DI_DEBUG("%s: this is 60hz mode\n", c->name);
 		c->mode = DI_MODE_60HZ;
 		c->md_en = true;
 		if (c->tnr_mode.mode)
 			c->tnr_en = true;
 		else
 			c->tnr_en = false;
+		DI_ERR("%s: this is 60hz mode %s\n", c->name, c->tnr_en ? "with tnr" : "without tnr");
 		c->vof_buf_en = true;
 		c->dma_di = c->in_fb0 = &c->fb_pool[0];
 		c->dma_p = c->in_fb1 = &c->fb_pool[1];
@@ -321,13 +325,13 @@ int di_client_check_para(struct di_client *c, void *data)
 		&& (c->dit_mode.out_frame_mode == DI_DIT_OUT_1FRAME)
 		/* && (c->tnr_mode.mode != DI_TNR_MODE_INVALID)
 		&& (c->fmd_en.en != 0) */) {
-		DI_DEBUG("%s: this is 30hz mode\n", c->name);
 		c->mode = DI_MODE_30HZ;
 		c->md_en = true;
 		if (c->tnr_mode.mode)
 			c->tnr_en = true;
 		else
 			c->tnr_en = false;
+		DI_DEBUG("%s: this is 30hz mode %s\n", c->name, c->tnr_en ? "with tnr" : "without tnr");
 		c->vof_buf_en = false;
 		c->dma_p = c->in_fb0 = &c->fb_pool[0];
 		c->dma_c = c->in_fb1 = &c->fb_pool[1];
@@ -606,6 +610,14 @@ int di_client_process_fb(struct di_client *c, void *data)
 	}
 	memcpy((void *)&c->fb_arg, fb_arg, sizeof(c->fb_arg));
 
+	if (c->tnr_en && c->tnr_pqpara.qptool_para.id == TNR_PQTOOL_ID
+	    && (c->mode == DI_MODE_TNR
+		|| c->mode == DI_MODE_30HZ
+		|| c->mode == DI_MODE_60HZ)) {
+		ret = di_drv_clients_set_tnrpara(c, &c->tnr_pqpara.qptool_para, 0);
+		if (ret != 0)
+			DI_ERR("%s, di_drv_clients_set_tnrpara process fail\n", __func__);
+	}
 	ret = di_client_get_fbs(c);
 
 	time = ktime_get();
@@ -787,6 +799,15 @@ int di_client_set_timeout(struct di_client *c, void *data)
 	return 0;
 }
 
+int di_client_set_mediaservice_id(struct di_client *c, void *data)
+{
+	memset(mediaservice_name, '\0', sizeof(mediaservice_name));
+	strcpy(mediaservice_name, c->name);
+	DI_DEBUG("di_client_set_mediaservice_id mediaservice_name=%s", mediaservice_name);
+
+	return 0;
+}
+
 void *di_client_create(const char *name)
 {
 	struct di_client *client;
@@ -822,6 +843,13 @@ void *di_client_create(const char *name)
 
 	client->dev_cdata = (uintptr_t)(
 		(char *)&client->dev_cdata + sizeof(client->dev_cdata));
+
+	if (strcmp(mediaservice_name, client->name)) {
+		memset(&client->tnr_pqpara, 0, sizeof(client->tnr_pqpara));
+	} else {
+		if (di_drv_get_global_tnr_pqpara(&client->tnr_pqpara))
+			DI_DEBUG("get global tnr pqpara fail");
+	}
 
 	if (di_drv_client_inc(client)) {
 		kfree(client);
@@ -881,26 +909,24 @@ int di_client_mem_release(struct di_client *c, void *data)
 }
 EXPORT_SYMBOL_GPL(di_client_mem_release);
 
-int di_client_get_tnrpara(__maybe_unused struct di_client *c, void *data)
+int di_client_get_tnrpara(struct di_client *c, void *data)
 {
-	struct tnr_module_param_t *para = (struct tnr_module_param_t *)data;
+	struct tnr_module_param_pqd *para = (struct tnr_module_param_pqd *)data;
 	int ret = -1;
 
-	ret = di_dev_get_tnrpara(para);
+	ret = di_dev_get_tnrpara(c, para);
 	if (ret != 0)
 		DI_ERR("%s, di_dev_get_tnrpara process fail\n", __func__);
 
 	return ret;
 }
 
-int di_client_set_tnrpara(__maybe_unused struct di_client *c, void *data)
+int di_client_set_tnrpara(struct di_client *c, void *data)
 {
-	struct tnr_module_param_t *para = (struct tnr_module_param_t *)data;
 	int ret = -1;
 
-	ret = di_dev_set_tnrpara(para);
-	if (ret != 0)
-		DI_ERR("%s, di_dev_set_tnrpara process fail\n", __func__);
+	/* need to update for all clients */
+	ret = di_drv_clients_set_tnrpara(c, (struct tnr_module_param_pqd *)data, 1);
 
 	return ret;
 }

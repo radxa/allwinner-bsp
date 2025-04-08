@@ -6,6 +6,26 @@
 
 menu "CODEC drivers"
 
+config SND_SOC_AC101
+	tristate "Allwinner AC101 CODEC"
+	depends on I2C
+	default n
+	help
+	  Enable support for the Allwinner AC101 CODEC.
+	  The device provides a I2S/TDM/PDM interface for audio data
+	  and a standard I2C interface for control data communication.
+	  Select this if your sound card has AC101.
+
+config SND_SOC_AC101B
+	tristate "Allwinner AC101B CODEC"
+	depends on I2C
+	default n
+	help
+	  Enable support for the Allwinner AC101B CODEC.
+	  The device provides a I2S/TDM/PDM interface for audio data
+	  and a standard I2C interface for control data communication.
+	  Select this if your sound card has AC101B.
+
 config SND_SOC_AC107
 	tristate "Allwinner AC107 CODEC"
 	depends on I2C

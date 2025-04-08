@@ -9,8 +9,6 @@
 #include <linux/io.h>
 #include <linux/version.h>
 #include <linux/slab.h>
-#include <sunxi-log.h>
-#include <sunxi-common.h>
 
 #include "ccu_gate.h"
 #include "ccu_nkmp.h"
@@ -107,7 +105,11 @@ static void ccu_nkmp_disable(struct clk_hw *hw)
 {
 	struct ccu_nkmp *nkmp = hw_to_ccu_nkmp(hw);
 
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	return ccu_pll_gate_helper_disable(&nkmp->common, nkmp->enable, nkmp->output, nkmp->lock_enable, nkmp->ldo_en);
+#else
 	return ccu_gate_helper_disable(&nkmp->common, nkmp->enable);
+#endif
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
@@ -135,7 +137,11 @@ static int ccu_nkmp_enable(struct clk_hw *hw)
 {
 	struct ccu_nkmp *nkmp = hw_to_ccu_nkmp(hw);
 
+#if IS_ENABLED(CONFIG_AW_STANDARD_CCU)
+	return ccu_pll_gate_helper_enable(&nkmp->common, nkmp->enable, nkmp->output, nkmp->lock, nkmp->lock_enable, nkmp->ldo_en);
+#else
 	return ccu_gate_helper_enable(&nkmp->common, nkmp->enable);
+#endif
 }
 
 static int ccu_nkmp_is_enabled(struct clk_hw *hw)
@@ -293,8 +299,11 @@ static int ccu_nkmp_set_rate(struct clk_hw *hw, unsigned long _rate,
 		}
 	}
 
-	if (nkmp->common.features & CCU_FEATURE_CLEAR_MOD)
-		ccu_helper_wait_for_clear(&nkmp->common, nkmp->common.clear);
+	if (nkmp->common.features & CCU_FEATURE_CLEAR_MOD && nkmp->common.clear) {
+		reg |= nkmp->common.clear;
+		writel(reg, nkmp->common.base + nkmp->common.reg);
+		WARN_ON(readl_relaxed_poll_timeout_atomic(nkmp->common.base + nkmp->common.reg, reg, !(reg & nkmp->common.clear), 100, 10000));
+	}
 
 	if (nkmp->p_reg) {
 		if (new_p < back_p)

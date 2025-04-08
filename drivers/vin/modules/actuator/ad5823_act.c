@@ -301,8 +301,12 @@ static struct cci_driver cci_act_drv = {
 	.name = SUNXI_ACT_NAME,
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int act_i2c_probe(struct i2c_client *client)
+#else
 static int act_i2c_probe(struct i2c_client *client,
-				const struct i2c_device_id *id)
+			const struct i2c_device_id *id)
+#endif
 {
 	cci_dev_probe_helper(&act_t.sdev, client, &act_subdev_ops,
 				&cci_act_drv);
@@ -313,10 +317,16 @@ static int act_i2c_probe(struct i2c_client *client,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 static int act_i2c_remove(struct i2c_client *client)
+#else
+static void act_i2c_remove(struct i2c_client *client)
+#endif
 {
 	cci_dev_remove_helper(client, &cci_act_drv);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	return 0;
+#endif
 }
 
 static struct i2c_driver act_i2c_driver = {

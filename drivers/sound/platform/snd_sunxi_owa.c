@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/regulator/consumer.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/of.h>
 #include <linux/clk.h>
 #include <linux/reset.h>
@@ -33,6 +34,7 @@
 #include <sound/dmaengine_pcm.h>
 
 #include "snd_sunxi_owa.h"
+#include "snd_sunxi_adapter.h"
 
 #define DRV_NAME	"sunxi-snd-plat-owa"
 
@@ -53,8 +55,8 @@ static struct audio_reg_label sunxi_reg_labels[] = {
 	REG_LABEL(SUNXI_OWA_TXCH_STA1),
 	REG_LABEL(SUNXI_OWA_RXCH_STA0),
 	REG_LABEL(SUNXI_OWA_RXCH_STA1),
-	REG_LABEL_END,
 };
+static struct audio_reg_group sunxi_reg_group = REG_GROUP(sunxi_reg_labels);
 
 static struct regmap_config sunxi_regmap_config = {
 	.reg_bits = 32,
@@ -97,41 +99,21 @@ static const struct sample_rate sample_rate_freq[] = {
 static int sunxi_owa_dai_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
 {
 	struct sunxi_owa *owa = snd_soc_dai_get_drvdata(dai);
-	const struct sunxi_owa_quirks *quirks = owa->quirks;
-	struct sunxi_owa_dts *dts = &owa->dts;
 
 	SND_LOG_DEBUG("\n");
 
-	if (snd_owa_clk_enable(owa->clk)) {
-		SND_LOG_ERR("clk enable failed\n");
-		return -EINVAL;
-	}
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		snd_soc_dai_set_dma_data(dai, substream, &owa->playback_dma_param);
-	} else {
+	else
 		snd_soc_dai_set_dma_data(dai, substream, &owa->capture_dma_param);
-		if (quirks->rx_sync_en && dts->rx_sync_en && dts->rx_sync_ctl)
-			sunxi_rx_sync_startup(dts->rx_sync_domain, dts->rx_sync_id);
-	}
 
 	return 0;
 }
 
 static void sunxi_owa_dai_shutdown(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
 {
-	struct sunxi_owa *owa = snd_soc_dai_get_drvdata(dai);
-	const struct sunxi_owa_quirks *quirks = owa->quirks;
-	struct sunxi_owa_dts *dts = &owa->dts;
-
-	SND_LOG_DEBUG("\n");
-
-	snd_owa_clk_disable(owa->clk);
-
-	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
-		if (quirks->rx_sync_en && dts->rx_sync_en && dts->rx_sync_ctl)
-			sunxi_rx_sync_shutdown(dts->rx_sync_domain, dts->rx_sync_id);
-	}
+	(void)substream;
+	(void)dai;
 }
 
 static void sunxi_owa_lock_confirm_work(struct work_struct *work)
@@ -324,7 +306,8 @@ static int sunxi_owa_dai_hw_params(struct snd_pcm_substream *substream,
 		rx_output_mode = 0;
 		break;
 	default:
-		SND_LOG_ERR("params_format[%d] error!\n", params_format(params));
+		SND_LOG_ERR_STD(E_OWA_SWARG_HW_PARAMS,
+				"params_format[%d] error!\n", params_format(params));
 		return -EINVAL;
 	}
 
@@ -378,7 +361,7 @@ static int sunxi_owa_dai_hw_params(struct snd_pcm_substream *substream,
 					   0xF << TXCHSTA1_MAXWORDLEN, 0xB << TXCHSTA1_MAXWORDLEN);
 			break;
 		default:
-			SND_LOG_ERR("unexpection error\n");
+			SND_LOG_ERR_STD(E_OWA_SWARG_HW_PARAMS, "unexpection error\n");
 			return -EINVAL;
 		}
 	} else {
@@ -410,9 +393,32 @@ static int sunxi_owa_dai_hw_params(struct snd_pcm_substream *substream,
 					   0xF << RXCHSTA1_MAXWORDLEN, 0xB << RXCHSTA1_MAXWORDLEN);
 			break;
 		default:
-			SND_LOG_ERR("unexpection error\n");
+			SND_LOG_ERR_STD(E_OWA_SWARG_HW_PARAMS, "unexpection error\n");
 			return -EINVAL;
 		}
+	}
+
+	/* enable clk after set clk rate */
+	if (snd_owa_clk_enable(owa->clk)) {
+		SND_LOG_ERR("clk enable failed\n");
+		return -EINVAL;
+	} else {
+		owa->clk_sta = SND_SUNXI_CLK_OPEN;
+	}
+
+	return 0;
+}
+
+static int sunxi_owa_dai_hw_free(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
+{
+	struct sunxi_owa *owa = snd_soc_dai_get_drvdata(dai);
+
+	SND_LOG_DEBUG("\n");
+
+	/* prevent the closed clks from being closed again */
+	if (owa->clk_sta == SND_SUNXI_CLK_OPEN) {
+		snd_owa_clk_disable(owa->clk);
+		owa->clk_sta = SND_SUNXI_CLK_CLOSE;
 	}
 
 	return 0;
@@ -539,14 +545,14 @@ static int sunxi_owa_dai_trigger(struct snd_pcm_substream *substream,
 		}
 	break;
 	default:
-		SND_LOG_ERR("unsupport cmd\n");
+		SND_LOG_ERR_STD(E_OWA_SWARG_TRIGGER, "unsupport cmd\n");
 		return -EINVAL;
 	}
 
 	return 0;
 }
 
-static const struct snd_soc_dai_ops sunxi_owa_dai_ops = {
+static struct snd_soc_dai_ops sunxi_owa_dai_ops = {
 	/* call by machine */
 	.set_pll	= sunxi_owa_dai_set_pll,	/* set pllclk */
 	.set_clkdiv	= sunxi_owa_dai_set_clkdiv,	/* set clk div */
@@ -555,6 +561,7 @@ static const struct snd_soc_dai_ops sunxi_owa_dai_ops = {
 	.hw_params	= sunxi_owa_dai_hw_params,	/* set hardware params */
 	.prepare	= sunxi_owa_dai_prepare,	/* clean irq and fifo */
 	.trigger	= sunxi_owa_dai_trigger,	/* set drq */
+	.hw_free	= sunxi_owa_dai_hw_free,	/* release hw resourse */
 	.shutdown	= sunxi_owa_dai_shutdown,
 };
 
@@ -606,8 +613,6 @@ static int sunxi_owa_dai_remove(struct snd_soc_dai *dai)
 
 static struct snd_soc_dai_driver sunxi_owa_dai = {
 	.name = DRV_NAME,
-	.probe		= sunxi_owa_dai_probe,
-	.remove		= sunxi_owa_dai_remove,
 	.playback = {
 		.stream_name	= "Playback",
 		.channels_min	= 1,
@@ -628,7 +633,6 @@ static struct snd_soc_dai_driver sunxi_owa_dai = {
 				| SNDRV_PCM_FMTBIT_S24_LE
 				| SNDRV_PCM_FMTBIT_S32_LE,
 	},
-	.ops = &sunxi_owa_dai_ops,
 };
 
 /*******************************************************************************
@@ -710,16 +714,21 @@ static int sunxi_set_rx_sync_mode(struct snd_kcontrol *kcontrol,
 	struct sunxi_owa_dts *dts = &owa->dts;
 	struct regmap *regmap = owa->mem.regmap;
 
+	if (dts->rx_sync_ctl == ucontrol->value.integer.value[0])
+		return 0;
+
 	switch (ucontrol->value.integer.value[0]) {
 	case 0:
 		dts->rx_sync_ctl = 0;
 		regmap_update_bits(regmap, SUNXI_OWA_FIFO_CTL,
 				   0x1 << OWA_RX_SYNC_EN, 0x0 << OWA_RX_SYNC_EN);
+		sunxi_rx_sync_shutdown(dts->rx_sync_domain, dts->rx_sync_id);
 		break;
 	case 1:
 		regmap_update_bits(regmap, SUNXI_OWA_FIFO_CTL,
 				   0x1 << OWA_RX_SYNC_EN, 0x1 << OWA_RX_SYNC_EN);
 		dts->rx_sync_ctl = 1;
+		sunxi_rx_sync_startup(dts->rx_sync_domain, dts->rx_sync_id);
 		break;
 	default:
 		return -EINVAL;
@@ -1002,7 +1011,7 @@ static int sunxi_owa_component_probe(struct snd_soc_component *component)
 		ret = snd_soc_add_component_controls(component, sunxi_tx_hub_controls,
 						     ARRAY_SIZE(sunxi_tx_hub_controls));
 		if (ret)
-			SND_LOG_ERR("add tx_hub kcontrols failed\n");
+			SND_LOG_ERR_STD(E_OWA_SWSYS_COMP_PROBE, "add tx_hub kcontrols failed\n");
 	}
 
 	/* component kcontrols -> rx_sync */
@@ -1010,7 +1019,7 @@ static int sunxi_owa_component_probe(struct snd_soc_component *component)
 		ret = snd_soc_add_component_controls(component, sunxi_rx_sync_controls,
 						     ARRAY_SIZE(sunxi_rx_sync_controls));
 		if (ret)
-			SND_LOG_ERR("add rx_sync kcontrols failed\n");
+			SND_LOG_ERR_STD(E_OWA_SWSYS_COMP_PROBE, "add rx_sync kcontrols failed\n");
 
 		dts->rx_sync_ctl = false;
 		dts->rx_sync_domain = RX_SYNC_SYS_DOMAIN;
@@ -1032,14 +1041,14 @@ static int sunxi_owa_component_probe(struct snd_soc_component *component)
 		ret = snd_soc_add_component_controls(component, sunxi_loopback_controls,
 						     ARRAY_SIZE(sunxi_loopback_controls));
 		if (ret)
-			SND_LOG_ERR("add loopback kcontrols failed\n");
+			SND_LOG_ERR_STD(E_OWA_SWSYS_COMP_PROBE, "add loopback kcontrols failed\n");
 	}
 
 	/* component kcontrols -> tx_raw */
 	ret = snd_soc_add_component_controls(component, sunxi_owa_tx_raw_controls,
 					     ARRAY_SIZE(sunxi_owa_tx_raw_controls));
 	if (ret)
-		SND_LOG_ERR("add tx_raw kcontrols failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWSYS_COMP_PROBE, "add tx_raw kcontrols failed\n");
 
 	/* component kcontrols -> rx_raw */
 	ret = sunxi_add_rx_raw_controls(component);
@@ -1050,7 +1059,7 @@ static int sunxi_owa_component_probe(struct snd_soc_component *component)
 	ret = snd_soc_add_component_controls(component, sunxi_debug_controls,
 					     ARRAY_SIZE(sunxi_debug_controls));
 	if (ret)
-		SND_LOG_ERR("add debug kcontrols failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWSYS_COMP_PROBE, "add debug kcontrols failed\n");
 
 	return 0;
 }
@@ -1075,9 +1084,10 @@ static int sunxi_owa_component_suspend(struct snd_soc_component *component)
 
 	SND_LOG_DEBUG("\n");
 
-	snd_sunxi_save_reg(regmap, sunxi_reg_labels);
+	snd_sunxi_save_reg(regmap, &sunxi_reg_group);
 
-	pinctrl_select_state(pin->pinctrl, pin->pinstate_sleep);
+	if (pin->pinctrl_used)
+		pinctrl_select_state(pin->pinctrl, pin->pinstate_sleep);
 	regmap_update_bits(regmap, SUNXI_OWA_CTL, 1 << CTL_GEN_EN, 0 << CTL_GEN_EN);
 	snd_owa_clk_bus_disable(owa->clk);
 	snd_sunxi_regulator_disable(owa->rglt);
@@ -1106,10 +1116,11 @@ static int sunxi_owa_component_resume(struct snd_soc_component *component)
 	}
 
 	regmap_update_bits(regmap, SUNXI_OWA_CTL, 1 << CTL_GEN_EN, 1 << CTL_GEN_EN);
-	pinctrl_select_state(pin->pinctrl, pin->pinstate);
+	if (pin->pinctrl_used)
+		pinctrl_select_state(pin->pinctrl, pin->pinstate);
 
 	sunxi_owa_init(owa);
-	snd_sunxi_echo_reg(regmap, sunxi_reg_labels);
+	snd_sunxi_echo_reg(regmap, &sunxi_reg_group);
 
 	return 0;
 }
@@ -1138,7 +1149,7 @@ static int snd_sunxi_mem_init(struct platform_device *pdev, struct sunxi_owa_mem
 
 	ret = of_address_to_resource(np, 0, &mem->res);
 	if (ret) {
-		SND_LOG_ERR("parse device node resource failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_MEM_INIT, "parse device node resource failed\n");
 		ret = -EINVAL;
 		goto err_of_addr_to_resource;
 	}
@@ -1146,7 +1157,7 @@ static int snd_sunxi_mem_init(struct platform_device *pdev, struct sunxi_owa_mem
 	mem->memregion = devm_request_mem_region(&pdev->dev, mem->res.start,
 						 resource_size(&mem->res), DRV_NAME);
 	if (IS_ERR_OR_NULL(mem->memregion)) {
-		SND_LOG_ERR("memory region already claimed\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_MEM_INIT, "memory region already claimed\n");
 		ret = -EBUSY;
 		goto err_devm_request_region;
 	}
@@ -1154,14 +1165,14 @@ static int snd_sunxi_mem_init(struct platform_device *pdev, struct sunxi_owa_mem
 	mem->membase = devm_ioremap(&pdev->dev, mem->memregion->start,
 				    resource_size(mem->memregion));
 	if (IS_ERR_OR_NULL(mem->membase)) {
-		SND_LOG_ERR("ioremap failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_MEM_INIT, "ioremap failed\n");
 		ret = -EBUSY;
 		goto err_devm_ioremap;
 	}
 
 	mem->regmap = devm_regmap_init_mmio(&pdev->dev, mem->membase, &sunxi_regmap_config);
 	if (IS_ERR_OR_NULL(mem->regmap)) {
-		SND_LOG_ERR("regmap init failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_MEM_INIT, "regmap init failed\n");
 		ret = -EINVAL;
 		goto err_devm_regmap_init;
 	}
@@ -1272,25 +1283,25 @@ static int snd_sunxi_pin_init(struct platform_device *pdev, struct sunxi_owa_pin
 
 	pin->pinctrl = devm_pinctrl_get(&pdev->dev);
 	if (IS_ERR_OR_NULL(pin->pinctrl)) {
-		SND_LOG_ERR("pinctrl get failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_PIN_INIT, "pinctrl get failed\n");
 		ret = -EINVAL;
 		return ret;
 	}
 	pin->pinstate = pinctrl_lookup_state(pin->pinctrl, PINCTRL_STATE_DEFAULT);
 	if (IS_ERR_OR_NULL(pin->pinstate)) {
-		SND_LOG_ERR("pinctrl default state get fail\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_PIN_INIT, "pinctrl default state get fail\n");
 		ret = -EINVAL;
 		goto err_loopup_pinstate;
 	}
 	pin->pinstate_sleep = pinctrl_lookup_state(pin->pinctrl, PINCTRL_STATE_SLEEP);
 	if (IS_ERR_OR_NULL(pin->pinstate_sleep)) {
-		SND_LOG_ERR("pinctrl sleep state get failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_PIN_INIT, "pinctrl sleep state get failed\n");
 		ret = -EINVAL;
 		goto err_loopup_pin_sleep;
 	}
 	ret = pinctrl_select_state(pin->pinctrl, pin->pinstate);
 	if (ret < 0) {
-		SND_LOG_ERR("owa set pinctrl default state fail\n");
+		SND_LOG_ERR_STD(E_OWA_SWDEP_PIN_INIT, "owa set pinctrl default state fail\n");
 		ret = -EBUSY;
 		goto err_pinctrl_select_default;
 	}
@@ -1340,10 +1351,11 @@ static int snd_sunxi_owa_irq_init(struct platform_device *pdev, struct sunxi_owa
 
 static void snd_sunxi_owa_irq_exit(struct sunxi_owa_irq *owa_irq)
 {
+	struct sunxi_owa *owa = container_of(owa_irq, struct sunxi_owa, owa_irq);
 	SND_LOG_DEBUG("\n");
 
 	if (owa_irq->id) {
-		free_irq(owa_irq->id, NULL);
+		free_irq(owa_irq->id, owa);
 		cancel_delayed_work(&owa_irq->lock_confirm_work);
 	}
 }
@@ -1368,6 +1380,7 @@ static void snd_sunxi_dma_params_init(struct sunxi_owa *owa)
 	owa->capture_dma_param.fifo_size = dts->capture_fifo_size;
 };
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 /* sysfs debug */
 static void snd_sunxi_dump_version(void *priv, char *buf, size_t *count)
 {
@@ -1375,7 +1388,7 @@ static void snd_sunxi_dump_version(void *priv, char *buf, size_t *count)
 	struct sunxi_owa *owa = (struct sunxi_owa *)priv;
 
 	if (!owa) {
-		SND_LOG_ERR("priv to owa failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWARG_DUMP_VER, "priv to owa failed\n");
 		return;
 	}
 	if (owa->pdev)
@@ -1407,13 +1420,12 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 {
 	size_t count_tmp = 0;
 	struct sunxi_owa *owa = (struct sunxi_owa *)priv;
-	int i = 0;
-	unsigned int reg_cnt;
+	unsigned int i = 0;
 	unsigned int output_reg_val;
 	struct regmap *regmap;
 
 	if (!owa) {
-		SND_LOG_ERR("priv to owa failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWARG_DUMP_SHOW, "priv to owa failed\n");
 		return -1;
 	}
 	if (!owa->show_reg_all)
@@ -1422,12 +1434,10 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 		owa->show_reg_all = false;
 
 	regmap = owa->mem.regmap;
-	reg_cnt = ARRAY_SIZE(sunxi_reg_labels);
-	while ((i < reg_cnt) && sunxi_reg_labels[i].name) {
+	for (i = 0; i < ARRAY_SIZE(sunxi_reg_labels); ++i) {
 		regmap_read(regmap, sunxi_reg_labels[i].address, &output_reg_val);
 		count_tmp += sprintf(buf + count_tmp, "[0x%03x]: 0x%8x\n",
 				     sunxi_reg_labels[i].address, output_reg_val);
-		i++;
 	}
 
 	*count = count_tmp;
@@ -1445,7 +1455,7 @@ static int snd_sunxi_dump_store(void *priv, const char *buf, size_t count)
 	if (count <= 1)	/* null or only "\n" */
 		return 0;
 	if (!owa) {
-		SND_LOG_ERR("priv to owa failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWARG_DUMP_STORE, "priv to owa failed\n");
 		return -1;
 	}
 	regmap = owa->mem.regmap;
@@ -1472,9 +1482,11 @@ static int snd_sunxi_dump_store(void *priv, const char *buf, size_t count)
 
 	return 0;
 }
+#endif
 
 static int sunxi_owa_dev_probe(struct platform_device *pdev)
 {
+	struct sunxi_adapt_dai_ops_priv priv;
 	int ret;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = pdev->dev.of_node;
@@ -1482,7 +1494,9 @@ static int sunxi_owa_dev_probe(struct platform_device *pdev)
 	struct sunxi_owa_mem *mem;
 	struct sunxi_owa_pinctl *pin;
 	struct sunxi_owa_dts *dts;
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump;
+#endif
 	const struct sunxi_owa_quirks *quirks;
 
 	SND_LOG_DEBUG("\n");
@@ -1490,7 +1504,7 @@ static int sunxi_owa_dev_probe(struct platform_device *pdev)
 	/* sunxi owa info */
 	owa = devm_kzalloc(dev, sizeof(*owa), GFP_KERNEL);
 	if (!owa) {
-		SND_LOG_ERR("can't allocate sunxi owa memory\n");
+		SND_LOG_ERR_STD(E_OWA_SWSYS_PLAT_PROBE, "can't allocate sunxi owa memory\n");
 		ret = -ENOMEM;
 		goto err_devm_kzalloc;
 	}
@@ -1498,7 +1512,9 @@ static int sunxi_owa_dev_probe(struct platform_device *pdev)
 	mem = &owa->mem;
 	pin = &owa->pin;
 	dts = &owa->dts;
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	dump = &owa->dump;
+#endif
 	owa->pdev = pdev;
 
 	ret = snd_sunxi_mem_init(pdev, mem);
@@ -1522,7 +1538,7 @@ static int sunxi_owa_dev_probe(struct platform_device *pdev)
 		goto err_clk_bus_enable;
 	}
 
-	owa->rglt = snd_sunxi_regulator_init(pdev);
+	owa->rglt = snd_sunxi_regulator_init(dev);
 	if (!owa->rglt) {
 		SND_LOG_ERR("rglt init failed\n");
 		ret = -EINVAL;
@@ -1542,16 +1558,20 @@ static int sunxi_owa_dev_probe(struct platform_device *pdev)
 
 	quirks = of_device_get_match_data(&pdev->dev);
 	if (quirks == NULL) {
-		SND_LOG_ERR("quirks get failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWSYS_PLAT_PROBE, "quirks get failed\n");
 		return -ENODEV;
 	}
 	owa->quirks = quirks;
+
+	priv.probe = sunxi_owa_dai_probe;
+	priv.remove = sunxi_owa_dai_remove;
+	sunxi_adpt_set_dai_ops(&sunxi_owa_dai, &sunxi_owa_dai_ops, &priv);
 
 	ret = snd_soc_register_component(&pdev->dev,
 					 &sunxi_owa_component,
 					 &sunxi_owa_dai, 1);
 	if (ret) {
-		SND_LOG_ERR("component register failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWSYS_PLAT_PROBE, "component register failed\n");
 		ret = -ENOMEM;
 		goto err_snd_soc_register_component;
 	}
@@ -1567,6 +1587,7 @@ static int sunxi_owa_dev_probe(struct platform_device *pdev)
 	if (ret)
 		SND_LOG_WARN("irq init failed\n");
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	snprintf(owa->module_name, 32, "%s", "OWA");
 	dump->name = owa->module_name;
 	dump->priv = owa;
@@ -1577,6 +1598,7 @@ static int sunxi_owa_dev_probe(struct platform_device *pdev)
 	ret = snd_sunxi_dump_register(dump);
 	if (ret)
 		SND_LOG_WARN("snd_sunxi_dump_register failed\n");
+#endif
 
 	SND_LOG_DEBUG("register owa platform success\n");
 
@@ -1607,11 +1629,15 @@ static int sunxi_owa_dev_remove(struct platform_device *pdev)
 	struct sunxi_owa_mem *mem = &owa->mem;
 	struct sunxi_owa_pinctl *pin = &owa->pin;
 	struct sunxi_owa_dts *dts = &owa->dts;
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump = &owa->dump;
+#endif
 	struct sunxi_owa_irq *owa_irq = &owa->owa_irq;
 
 	/* remove components */
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	snd_sunxi_dump_unregister(dump);
+#endif
 	if (dts->rx_sync_en) {
 		sunxi_rx_sync_remove(dts->rx_sync_domain);
 	}
@@ -1689,7 +1715,7 @@ int __init sunxi_owa_dev_init(void)
 
 	ret = platform_driver_register(&sunxi_owa_driver);
 	if (ret != 0) {
-		SND_LOG_ERR("platform driver register failed\n");
+		SND_LOG_ERR_STD(E_OWA_SWSYS_MOD_INIT, "platform driver register failed\n");
 		return -EINVAL;
 	}
 
@@ -1706,5 +1732,5 @@ module_exit(sunxi_owa_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.6");
+MODULE_VERSION("1.0.11");
 MODULE_DESCRIPTION("sunxi soundcard platform of owa");

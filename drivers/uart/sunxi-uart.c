@@ -1207,8 +1207,10 @@ static void sw_uart_set_termios(struct uart_port *port, struct ktermios *termios
 	dlh = quot >> 8;
 	SERIAL_DBG(port->dev, "set baudrate %d, quot %d\n", baud, quot);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 154))
 	if (uart_console(port))
 		console_lock();
+#endif
 
 	spin_lock_irqsave(&port->lock, flags);
 	uart_update_timeout(port, termios->c_cflag, baud);
@@ -1304,8 +1306,10 @@ static void sw_uart_set_termios(struct uart_port *port, struct ktermios *termios
 
 	spin_unlock_irqrestore(&port->lock, flags);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 154))
 	if (uart_console(port))
 		console_unlock();
+#endif
 
 	/* Don't rewrite B0 */
 	if (tty_termios_baud_rate(termios))

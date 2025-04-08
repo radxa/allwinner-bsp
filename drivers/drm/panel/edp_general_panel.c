@@ -39,7 +39,40 @@ struct general_panel {
 	struct gpio_desc *enable_gpio[GPIO_MAX];
 	struct gpio_desc *reset_gpio;
 	enum drm_panel_orientation orientation;
+	unsigned int power_delay_ms;
+	unsigned int disable_delay_ms;
 };
+
+bool general_panel_edp_is_support_backlight(struct drm_panel *panel)
+{
+	return panel->backlight;
+}
+EXPORT_SYMBOL(general_panel_edp_is_support_backlight);
+
+int general_panel_edp_get_backlight_value(struct drm_panel *panel)
+{
+	if (panel->backlight)
+		return backlight_get_brightness(panel->backlight);
+
+	return 0;
+}
+EXPORT_SYMBOL(general_panel_edp_get_backlight_value);
+
+void general_panel_edp_set_backlight_value(struct drm_panel *panel, int brightness)
+{
+	if (!panel->backlight || backlight_is_blank(panel->backlight) || brightness <= 0)
+		return ;
+
+	// TODO: support backlight mapping
+	panel->backlight->props.brightness = brightness;
+	backlight_update_status(panel->backlight);
+}
+EXPORT_SYMBOL(general_panel_edp_set_backlight_value);
+
+static void general_panel_sleep(int msec)
+{
+	mdelay(msec);
+}
 
 static inline struct general_panel *to_general_panel(struct drm_panel *panel)
 {
@@ -62,6 +95,7 @@ static int general_panel_unprepare(struct drm_panel *panel)
 			msleep(10);
 		}
 	}
+	general_panel_sleep(edp_panel->disable_delay_ms);
 
 	return 0;
 }
@@ -80,7 +114,6 @@ static int general_panel_prepare(struct drm_panel *panel)
 					i, err);
 				return err;
 			}
-			msleep(10);
 		}
 	}
 
@@ -88,6 +121,7 @@ static int general_panel_prepare(struct drm_panel *panel)
 		if (edp_panel->enable_gpio[i])
 			gpiod_set_value_cansleep(edp_panel->enable_gpio[i], 1);
 	}
+	general_panel_sleep(edp_panel->power_delay_ms);
 
 	return 0;
 }
@@ -205,11 +239,17 @@ static int general_panel_probe(struct platform_device *pdev)
 		}
 	}
 
+	if (of_property_read_u32(edp_panel->dev->of_node, "power-delay-ms", &edp_panel->power_delay_ms) < 0)
+		edp_panel->power_delay_ms = 10;
+
+	if (of_property_read_u32(edp_panel->dev->of_node, "disable-delay-ms", &edp_panel->disable_delay_ms) < 0)
+		edp_panel->disable_delay_ms = 10;
+
 	/* Get GPIOs and backlight controller. */
 	for (i = 0; i < GPIO_MAX; i++) {
 		gpio_name = kasprintf(GFP_KERNEL, "enable%d", i);
 		edp_panel->enable_gpio[i] =
-			devm_gpiod_get_optional(edp_panel->dev, gpio_name, GPIOD_OUT_LOW);
+			devm_gpiod_get_optional(edp_panel->dev, gpio_name, GPIOD_OUT_HIGH);
 		if (IS_ERR(edp_panel->enable_gpio[i])) {
 			ret = PTR_ERR(edp_panel->enable_gpio[i]);
 			dev_err(edp_panel->dev, "failed to request %s GPIO: %d\n", gpio_name,

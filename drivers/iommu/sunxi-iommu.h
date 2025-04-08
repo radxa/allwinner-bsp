@@ -15,6 +15,10 @@
 #include <linux/version.h>
 #include "sunxi-iommu-pgtable.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+//iommu core dont call detach callback any more
+#define DETACH_OP_DEPRECATED
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 //iommu domain have seperate ops
 #define SEPERATE_DOMAIN_API
@@ -54,6 +58,7 @@ struct dump_region {
 	u32 type;
 	dma_addr_t phys, iova;
 };
+struct sunxi_iommu_dev;
 
 
 int sunxi_iova_test_write(dma_addr_t iova, u32 val);
@@ -63,6 +68,10 @@ void sunxi_set_prefetch_mode(void);
 int sunxi_iommu_check_cmd(struct device *dev, void *data);
 u32 sunxi_iommu_dump_rsv_list(struct list_head *rsv_list, ssize_t len,
 			      char *buf, size_t buf_len, bool for_sysfs_show);
+int iova_show_on_irq(void);
+void sunxi_iommu_register_vendorhook(void);
+void sunxi_iommu_init_debugfs(struct sunxi_iommu_dev *sunxi_iommu);
+void sunxi_iommu_release_debugfs(void);
 
 #if IS_ENABLED(CONFIG_AW_IOMMU_IOVA_TRACE)
 struct sunxi_iommu_iova_info {
@@ -72,4 +81,5 @@ struct sunxi_iommu_iova_info {
 	time64_t timestamp;
 	struct sunxi_iommu_iova_info *next;
 };
+
 #endif

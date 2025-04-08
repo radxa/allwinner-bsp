@@ -343,7 +343,7 @@ static int pdp_gem_prime_mmap(struct dma_buf *dma_buf,
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
 static void *pdp_gem_prime_vmap(struct dma_buf *dma_buf)
 #else
-static int pdp_gem_prime_vmap(struct dma_buf *dma_buf, struct dma_buf_map *map)
+static int pdp_gem_prime_vmap(struct dma_buf *dma_buf, struct iosys_map *map)
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0) */
 {
 	struct drm_gem_object *obj = dma_buf->priv;
@@ -367,7 +367,7 @@ static int pdp_gem_prime_vmap(struct dma_buf *dma_buf, struct dma_buf_map *map)
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0))
 	if (ret == 0)
-		dma_buf_map_set_vaddr_iomem(map, vaddr);
+		iosys_map_set_vaddr_iomem(map, vaddr);
 	return ret;
 #else
 	return (void __force *) vaddr;
@@ -377,7 +377,7 @@ static int pdp_gem_prime_vmap(struct dma_buf *dma_buf, struct dma_buf_map *map)
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
 static void pdp_gem_prime_vunmap(struct dma_buf *dma_buf, void *vaddr)
 #else
-static void pdp_gem_prime_vunmap(struct dma_buf *dma_buf, struct dma_buf_map *map)
+static void pdp_gem_prime_vunmap(struct dma_buf *dma_buf, struct iosys_map *map)
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0) */
 {
 	struct drm_gem_object *obj = dma_buf->priv;
@@ -390,7 +390,7 @@ static void pdp_gem_prime_vunmap(struct dma_buf *dma_buf, struct dma_buf_map *ma
 	iounmap((void __iomem *)vaddr);
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0))
-	dma_buf_map_clear(map);
+	iosys_map_clear(map);
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0) */
 
 	mutex_unlock(&obj->dev->struct_mutex);
@@ -453,7 +453,6 @@ struct dma_buf *pdp_gem_prime_export(
 				     int flags)
 {
 	struct pdp_gem_object *pdp_obj = to_pdp_obj(obj);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
 	DEFINE_DMA_BUF_EXPORT_INFO(export_info);
 
 	export_info.ops = &pdp_gem_prime_dmabuf_ops;
@@ -465,15 +464,7 @@ struct dma_buf *pdp_gem_prime_export(
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
 	return drm_gem_dmabuf_export(obj->dev, &export_info);
 #else
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
 	return drm_gem_dmabuf_export(dev, &export_info);
-#else
-	return dma_buf_export(&export_info);
-#endif
-#endif
-#else
-	return dma_buf_export(obj, &pdp_gem_prime_dmabuf_ops, obj->size,
-			      flags, pdp_obj->resv);
 #endif
 }
 
@@ -612,7 +603,7 @@ pdp_gem_init_platform(struct drm_device *dev,
 		return false;
 	}
 
-	pvr_err = PhysHeapAcquireByUsage(PHYS_HEAP_USAGE_DISPLAY,
+	pvr_err = PhysHeapAcquireByID(PVRSRV_PHYS_HEAP_DISPLAY,
 					 gem_priv->pvr_dev_node,
 					 &gem_priv->pvr_phys_heap);
 	if (pvr_err != PVRSRV_OK) {

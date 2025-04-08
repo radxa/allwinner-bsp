@@ -81,3 +81,9 @@ the PVR Services kernel driver files will live. If set$(comma) the PVR_LOADER an
 PVR_SYSTEM related files found in this directory will be used instead of_\
 the local copies._\
 ))
+
+# Kernel OOM might be triggered if the MTK display driver can't allocate
+# enough memory for a surface. To avoid this happening when running dEQP,
+# limit the maximum swapchain image extent.
+$(eval $(call TunableUserConfigC,VULKAN_WSI_SWAPCHAIN_MAX_WIDTH,4096))
+$(eval $(call TunableUserConfigC,VULKAN_WSI_SWAPCHAIN_MAX_HEIGHT,4096))

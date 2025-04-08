@@ -21,6 +21,7 @@
 #include <linux/regmap.h>
 #include <linux/mfd/syscon.h>
 #include <dt-bindings/power/a523-power.h>
+#include <dt-bindings/power/sun60iw2-power.h>
 
 struct sunxi_domain_info {
 	u32 domain_id;
@@ -41,6 +42,7 @@ struct sunxi_pmu_info {
 	u32 logic_power_switch1_delay_offset;
 	u32 off2on_delay_offset;
 	u32 num_domains;
+	bool has_rst_clk;
 	const struct sunxi_domain_info *domain_info;
 };
 
@@ -430,12 +432,13 @@ static int sunxi_pm_domain_probe(struct platform_device *pdev)
 		sunxi_debug(dev, "no power domains defined\n");
 		goto err_out;
 	}
-
+	if (pmu_info->has_rst_clk) {
 	pmu->reset = devm_reset_control_get(dev, "pck_rst");
 	if (IS_ERR(pmu->reset)) {
 		error = PTR_ERR(pmu->reset);
 		sunxi_err(dev, "failed to get reset control: %ld\n", PTR_ERR(pmu->reset));
 		goto err_out;
+		}
 	}
 
 	pmu->clk = devm_clk_get(dev, "pck");
@@ -491,7 +494,7 @@ static int sunxi_pm_domain_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct sunxi_domain_info pck600_pm_domains[] = {
+static const struct sunxi_domain_info a523_pck600_pm_domains[] = {
 	[A523_PCK_VE] = DOMAIN(A523_PCK_VE,  0xffffff, 0xffff,  0x8080808,  0x808,  0x8,  0xf),
 	[A523_PCK_GPU] = DOMAIN(A523_PCK_GPU,  0xffffff, 0xffff,  0x8080808,  0x808,  0x8,  0xf),
 	[A523_PCK_VI] = DOMAIN(A523_PCK_VI, 0xffffff, 0xffff, 0x8080808,  0x808,  0x8,  0xf),
@@ -502,7 +505,7 @@ static const struct sunxi_domain_info pck600_pm_domains[] = {
 	[A523_PCK_PCIE] = DOMAIN(A523_PCK_PCIE, 0xffffff, 0xffff, 0x8080808,  0x808,  0x8,  0xf),
 };
 
-static const struct sunxi_pmu_info pck600_pmu = {
+static const struct sunxi_pmu_info a523_pck600_pmu = {
 	.pwr_offset = 0x0,
 	.status_offset = 0x8,
 	.device_ctrl0_delay_offset = 0x170,
@@ -510,14 +513,44 @@ static const struct sunxi_pmu_info pck600_pmu = {
 	.logic_power_switch0_delay_offset = 0xc00,
 	.logic_power_switch1_delay_offset = 0xc04,
 	.off2on_delay_offset = 0xc10,
-	.num_domains = ARRAY_SIZE(pck600_pm_domains),
-	.domain_info = pck600_pm_domains,
+	.num_domains = ARRAY_SIZE(a523_pck600_pm_domains),
+	.domain_info = a523_pck600_pm_domains,
+	.has_rst_clk = true,
 };
 
+static const struct sunxi_domain_info sun60iw2_pck600_pm_domains[] = {
+	[SUN60IW2_PCK_VI] = DOMAIN(SUN60IW2_PCK_VI,  0x1f1f1f, 0x1f1f,  0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_DE_SYS] = DOMAIN(SUN60IW2_PCK_DE_SYS,  0x1f1f1f, 0x1f1f,  0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_VE_DEC] = DOMAIN(SUN60IW2_PCK_VE_DEC, 0x1f1f1f, 0x1f1f, 0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_VE_ENC] = DOMAIN(SUN60IW2_PCK_VE_ENC, 0x1f1f1f, 0x1f1f, 0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_NPU] = DOMAIN(SUN60IW2_PCK_NPU, 0x1f1f1f, 0x1f1f, 0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_GPU_TOP] = DOMAIN(SUN60IW2_PCK_GPU_TOP,  0x1f1f1f, 0x1f1f,  0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_GPU_CORE] = DOMAIN(SUN60IW2_PCK_GPU_CORE,  0x1f1f1f, 0x1f1f,  0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_PCIE] = DOMAIN(SUN60IW2_PCK_PCIE, 0x1f1f1f, 0x1f1f, 0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_USB2] = DOMAIN(SUN60IW2_PCK_USB2, 0x1f1f1f, 0x1f1f, 0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_VO] = DOMAIN(SUN60IW2_PCK_VO, 0x1f1f1f, 0x1f1f, 0x8080808,  0x808,  0x8,  0xf),
+	[SUN60IW2_PCK_VO1] = DOMAIN(SUN60IW2_PCK_VO1, 0x1f1f1f, 0x1f1f, 0x8080808,  0x808,  0x8,  0xf),
+};
+static const struct sunxi_pmu_info sun60iw2_pck600_pmu = {
+	.pwr_offset = 0x0,
+	.status_offset = 0x8,
+	.device_ctrl0_delay_offset = 0x170,
+	.device_ctrl1_delay_offset = 0x174,
+	.logic_power_switch0_delay_offset = 0xc00,
+	.logic_power_switch1_delay_offset = 0xc04,
+	.off2on_delay_offset = 0xc10,
+	.num_domains = ARRAY_SIZE(sun60iw2_pck600_pm_domains),
+	.domain_info = sun60iw2_pck600_pm_domains,
+	.has_rst_clk = false,
+};
 static const struct of_device_id sunxi_pm_domain_dt_match[] = {
 	{
 		.compatible = "allwinner,a523-pck-600",
-		.data = (void *)&pck600_pmu,
+		.data = (void *)&a523_pck600_pmu,
+	},
+	{
+		.compatible = "allwinner,sun60iw2-pck-600",
+		.data = (void *)&sun60iw2_pck600_pmu,
 	},
 	{ /* sentinel */ },
 };

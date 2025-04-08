@@ -18,16 +18,8 @@
  * Margarita Olaya Cabrera <magi@slimlogic.co.uk>
  */
 
-#include <linux/err.h>
-#include <linux/init.h>
-#include <linux/module.h>
-#include <linux/of.h>
-#include <linux/of_device.h>
-#include <linux/platform_device.h>
-#include <linux/regmap.h>
-#include <power/bmu-ext.h>
-#include <linux/regulator/driver.h>
-#include <linux/regulator/of_regulator.h>
+#include "sunxi-power-regulator.h"
+#include "bmu-ext.h"
 
 static int regulator_axp519_is_enabled_regmap(struct regulator_dev *rdev)
 {
@@ -55,7 +47,7 @@ static int regulator_axp519_enable_regmap(struct regulator_dev *rdev)
 	if (ret)
 		return ret;
 
-	return ret;
+	return 0;
 }
 
 static int regulator_axp519_disable_regmap(struct regulator_dev *rdev)
@@ -70,7 +62,7 @@ static int regulator_axp519_disable_regmap(struct regulator_dev *rdev)
 	if (ret)
 		return ret;
 
-	return ret;
+	return 0;
 }
 
 static struct regulator_ops bmu_ext_drivvbus_ops = {

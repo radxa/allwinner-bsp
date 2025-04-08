@@ -322,7 +322,7 @@ struct sunxi_iommu_dev {
 struct sunxi_iommu_domain {
 	unsigned int *pgtable;		/* first page directory, size is 16KB */
 	u32 *sg_buffer;
-	struct mutex  dt_lock;	/* lock for modifying page table @ pgtable */
+	struct spinlock  dt_lock;	/* lock for modifying page table @ pgtable */
 	struct dma_iommu_mapping *mapping;
 	struct iommu_domain domain;
 	/* struct iova_domain iovad; */
@@ -688,6 +688,7 @@ static int sunxi_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	struct sunxi_iommu_domain *sunxi_domain;
 	size_t iova_start, iova_end, s_iova_start;
 	int ret;
+	unsigned long flags;
 
 	sunxi_domain = container_of(domain, struct sunxi_iommu_domain, domain);
 	WARN_ON(sunxi_domain->pgtable == NULL);
@@ -695,18 +696,18 @@ static int sunxi_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	iova_end = SPAGE_ALIGN(iova + size);
 	s_iova_start = iova_start;
 
-	mutex_lock(&sunxi_domain->dt_lock);
+	spin_lock_irqsave(&sunxi_domain->dt_lock, flags);;
 	ret = sunxi_pgtable_prepare_l1_tables(sunxi_domain->pgtable, iova_start,
 					      iova_end, prot);
 	if (ret) {
-		mutex_unlock(&sunxi_domain->dt_lock);
+		spin_unlock_irqrestore(&sunxi_domain->dt_lock, flags);;
 		return -ENOMEM;
 	}
 
 	iova_start = s_iova_start;
 	sunxi_pgtable_prepare_l2_tables(sunxi_domain->pgtable,
 					iova_start, iova_end, paddr, prot);
-	mutex_unlock(&sunxi_domain->dt_lock);
+	spin_unlock_irqrestore(&sunxi_domain->dt_lock, flags);;
 
 	return 0;
 }
@@ -718,6 +719,7 @@ static size_t sunxi_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	const struct sunxi_iommu_plat_data *plat_data;
 	size_t iova_start, iova_end;
 	u32 iova_tail_size;
+	unsigned long flags;
 
 	sunxi_domain = container_of(domain, struct sunxi_iommu_domain, domain);
 	plat_data = global_iommu_dev->plat_data;
@@ -730,7 +732,7 @@ static size_t sunxi_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	if (gather->end < iova_end)
 		gather->end = iova_end;
 
-	mutex_lock(&sunxi_domain->dt_lock);
+	spin_lock_irqsave(&sunxi_domain->dt_lock, flags);;
 	/* Invalid TLB and PTW */
 	if (plat_data->version >= IOMMU_VERSION_V12)
 		sunxi_tlb_invalid(iova_start, iova_end);
@@ -745,7 +747,7 @@ static size_t sunxi_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 			sunxi_ptw_cache_invalid(iova_start, 0);
 		iova_start += iova_tail_size;
 	}
-	mutex_unlock(&sunxi_domain->dt_lock);
+	spin_unlock_irqrestore(&sunxi_domain->dt_lock, flags);;
 
 	return size;
 }
@@ -756,10 +758,11 @@ static void sunxi_iommu_iotlb_sync_map(struct iommu_domain *domain,
 {
 	struct sunxi_iommu_domain *sunxi_domain =
 		container_of(domain, struct sunxi_iommu_domain, domain);
+	unsigned long flags;
 
-	mutex_lock(&sunxi_domain->dt_lock);
+	spin_lock_irqsave(&sunxi_domain->dt_lock, flags);;
 	sunxi_zap_tlb(iova, size);
-	mutex_unlock(&sunxi_domain->dt_lock);
+	spin_unlock_irqrestore(&sunxi_domain->dt_lock, flags);;
 
 	return;
 }
@@ -772,13 +775,14 @@ static void sunxi_iommu_iotlb_sync(struct iommu_domain *domain,
 		container_of(domain, struct sunxi_iommu_domain, domain);
 	struct sunxi_iommu_dev *iommu = global_iommu_dev;
 	const struct sunxi_iommu_plat_data *plat_data = iommu->plat_data;
+	unsigned long flags;
 
 	if (plat_data->version >= IOMMU_VERSION_V14)
 		return ;
 
-	mutex_lock(&sunxi_domain->dt_lock);
+	spin_lock_irqsave(&sunxi_domain->dt_lock, flags);;
 	sunxi_zap_tlb(iotlb_gather->start, iotlb_gather->end -iotlb_gather->start);
-	mutex_unlock(&sunxi_domain->dt_lock);
+	spin_unlock_irqrestore(&sunxi_domain->dt_lock, flags);;
 
 	return;
 }
@@ -789,11 +793,12 @@ static phys_addr_t sunxi_iommu_iova_to_phys(struct iommu_domain *domain,
 	struct sunxi_iommu_domain *sunxi_domain =
 		container_of(domain, struct sunxi_iommu_domain, domain);
 	phys_addr_t ret = 0;
+	unsigned long flags;
 
 	WARN_ON(sunxi_domain->pgtable == NULL);
-	mutex_lock(&sunxi_domain->dt_lock);
+	spin_lock_irqsave(&sunxi_domain->dt_lock, flags);;
 	ret = sunxi_pgtable_iova_to_phys(sunxi_domain->pgtable, iova);
-	mutex_unlock(&sunxi_domain->dt_lock);
+	spin_unlock_irqrestore(&sunxi_domain->dt_lock, flags);;
 
 	return ret;
 }
@@ -838,7 +843,7 @@ static struct iommu_domain *sunxi_iommu_domain_alloc(unsigned type)
 	sunxi_domain->domain.geometry.aperture_start = 0;
 	sunxi_domain->domain.geometry.aperture_end = (1ULL << 34)-1;
 	sunxi_domain->domain.geometry.force_aperture = true;
-	mutex_init(&sunxi_domain->dt_lock);
+	spin_lock_init(&sunxi_domain->dt_lock);
 	global_iommu_domain = &sunxi_domain->domain;
 
 	if (!iommu_hw_init_flag) {
@@ -864,11 +869,12 @@ static void sunxi_iommu_domain_free(struct iommu_domain *domain)
 {
 	struct sunxi_iommu_domain *sunxi_domain =
 		container_of(domain, struct sunxi_iommu_domain, domain);
+	unsigned long flags;
 
-	mutex_lock(&sunxi_domain->dt_lock);
+	spin_lock_irqsave(&sunxi_domain->dt_lock, flags);;
 	sunxi_pgtable_clear(sunxi_domain->pgtable);
 	sunxi_tlb_flush(global_iommu_dev);
-	mutex_unlock(&sunxi_domain->dt_lock);
+	spin_unlock_irqrestore(&sunxi_domain->dt_lock, flags);;
 	sunxi_pgtable_free(sunxi_domain->pgtable);
 	sunxi_domain->pgtable = NULL;
 	free_pages((unsigned long)sunxi_domain->sg_buffer,
@@ -886,11 +892,13 @@ static int sunxi_iommu_attach_dev(struct iommu_domain *domain,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)
 static void sunxi_iommu_detach_dev(struct iommu_domain *domain,
 				   struct device *dev)
 {
 	return;
 }
+#endif
 
 static void sunxi_iommu_probe_device_finalize(struct device *dev)
 {
@@ -1017,6 +1025,7 @@ void sunxi_set_debug_mode(void)
 	sunxi_iommu_write(iommu,
 			IOMMU_VA_CONFIG_REG, 0x80000000);
 }
+EXPORT_SYMBOL(sunxi_set_debug_mode);
 
 void sunxi_set_prefetch_mode(void)
 {
@@ -1025,6 +1034,7 @@ void sunxi_set_prefetch_mode(void)
 	sunxi_iommu_write(iommu,
 			IOMMU_VA_CONFIG_REG, 0x00000000);
 }
+EXPORT_SYMBOL(sunxi_set_prefetch_mode);
 
 int sunxi_iova_test_write(dma_addr_t iova, u32 val)
 {
@@ -1045,6 +1055,7 @@ int sunxi_iova_test_write(dma_addr_t iova, u32 val)
 			"write VA address request timed out\n");
 	return retval;
 }
+EXPORT_SYMBOL(sunxi_iova_test_write);
 
 unsigned long sunxi_iova_test_read(dma_addr_t iova)
 {
@@ -1071,6 +1082,7 @@ unsigned long sunxi_iova_test_read(dma_addr_t iova)
 out:
 	return retval;
 }
+EXPORT_SYMBOL(sunxi_iova_test_read);
 
 static int sunxi_iova_invalid_helper(unsigned long iova)
 {
@@ -1591,7 +1603,9 @@ static void sunxi_iommu_get_resv_regions(struct device *dev,
 #ifdef SEPERATE_DOMAIN_API
 static const struct iommu_domain_ops sunxi_iommu_domain_ops = {
 	.attach_dev	= sunxi_iommu_attach_dev,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)
 	.detach_dev	= sunxi_iommu_detach_dev,
+#endif
 	.map		= sunxi_iommu_map,
 	.unmap		= sunxi_iommu_unmap,
 	.iotlb_sync_map = sunxi_iommu_iotlb_sync_map,
@@ -1890,6 +1904,6 @@ static void __exit sunxi_iommu_exit(void)
 subsys_initcall(sunxi_iommu_init);
 module_exit(sunxi_iommu_exit);
 
-MODULE_LICENSE("GPL v3");
+MODULE_LICENSE("GPL v2");
 MODULE_VERSION("1.0.0");
 MODULE_AUTHOR("panzhijian<panzhijian@allwinnertech.com>");

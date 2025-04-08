@@ -45,6 +45,9 @@ enum {
 struct de_scaler_handle {
 	struct module_create_info cinfo;
 	unsigned int linebuff_share_ids;
+	unsigned int linebuff_yuv;
+	unsigned int linebuff_rgb;
+	unsigned int linebuff_yuv_ed;
 	bool is_asu;
 	unsigned int block_num;
 	struct de_reg_block **block;

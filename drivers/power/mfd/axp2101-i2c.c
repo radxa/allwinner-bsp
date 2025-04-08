@@ -17,18 +17,15 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/acpi.h>
-#include <linux/err.h>
-#include <linux/i2c.h>
-#include <linux/module.h>
-#include <power/axp2101.h>
-#include <linux/of.h>
-#include <linux/regmap.h>
-#include <linux/slab.h>
-#include <linux/version.h>
+#include "sunxi-power-mfd.h"
+#include "axp2101.h"
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 static int axp20x_i2c_probe(struct i2c_client *i2c,
 			    const struct i2c_device_id *id)
+#else
+static int axp20x_i2c_probe(struct i2c_client *i2c)
+#endif
 {
 	struct axp20x_dev *axp20x;
 	int ret;
@@ -92,6 +89,7 @@ static const struct of_device_id axp20x_i2c_of_match[] = {
 	{ .compatible = "x-powers,axp2202", .data = (void *)AXP2202_ID },
 	{ .compatible = "x-powers,axp806", .data = (void *)AXP806_ID },
 	{ .compatible = "x-powers,axp8191", .data = (void *)AXP8191_ID },
+	{ .compatible = "x-powers,axp515", .data = (void *)AXP515_ID },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, axp20x_i2c_of_match);

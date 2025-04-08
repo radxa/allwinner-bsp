@@ -45,14 +45,14 @@ sunxi_i2s_clk_t *snd_i2s_clk_init(struct platform_device *pdev)
 
 	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
 	if (!clk) {
-		SND_LOG_ERR("can't allocate sunxi_i2s_clk memory\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_INIT, "can't allocate sunxi_i2s_clk memory\n");
 		return NULL;
 	}
 
 	/* get rst clk */
 	clk->clk_rst = devm_reset_control_get(&pdev->dev, NULL);
 	if (IS_ERR_OR_NULL(clk->clk_rst)) {
-		SND_LOG_ERR("clk rst get failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_INIT, "clk rst get failed\n");
 		ret =  PTR_ERR(clk->clk_rst);
 		goto err_get_clk_rst;
 	}
@@ -60,7 +60,7 @@ sunxi_i2s_clk_t *snd_i2s_clk_init(struct platform_device *pdev)
 	/* get bus clk */
 	clk->clk_bus = of_clk_get_by_name(np, "clk_bus_i2s");
 	if (IS_ERR_OR_NULL(clk->clk_bus)) {
-		SND_LOG_ERR("clk bus get failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_INIT, "clk bus get failed\n");
 		ret = PTR_ERR(clk->clk_bus);
 		goto err_get_clk_bus;
 	}
@@ -68,19 +68,19 @@ sunxi_i2s_clk_t *snd_i2s_clk_init(struct platform_device *pdev)
 	/* get parent clk */
 	clk->clk_pll_audio0_4x = of_clk_get_by_name(np, "clk_pll_audio0_4x");
 	if (IS_ERR_OR_NULL(clk->clk_pll_audio0_4x)) {
-		SND_LOG_ERR("clk_pll_audio0_4x get failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_INIT, "clk_pll_audio0_4x get failed\n");
 		ret = PTR_ERR(clk->clk_pll_audio0_4x);
 		goto err_get_clk_pll_audio0_4x;
 	}
 	clk->clk_pll_audio1_div2 = of_clk_get_by_name(np, "clk_pll_audio1_div2");
 	if (IS_ERR_OR_NULL(clk->clk_pll_audio1_div2)) {
-		SND_LOG_ERR("clk_pll_audio1_div2 get failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_INIT, "clk_pll_audio1_div2 get failed\n");
 		ret = PTR_ERR(clk->clk_pll_audio1_div2);
 		goto err_get_clk_pll_audio1_div2;
 	}
 	clk->clk_pll_audio1_div5 = of_clk_get_by_name(np, "clk_pll_audio1_div5");
 	if (IS_ERR_OR_NULL(clk->clk_pll_audio1_div5)) {
-		SND_LOG_ERR("clk_pll_audio1_div5 get failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_INIT, "clk_pll_audio1_div5 get failed\n");
 		ret = PTR_ERR(clk->clk_pll_audio1_div5);
 		goto err_get_clk_pll_audio1_div5;
 	}
@@ -88,7 +88,7 @@ sunxi_i2s_clk_t *snd_i2s_clk_init(struct platform_device *pdev)
 	/* get i2s clk */
 	clk->clk_i2s = of_clk_get_by_name(np, "clk_i2s");
 	if (IS_ERR_OR_NULL(clk->clk_i2s)) {
-		SND_LOG_ERR("clk i2s get failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_INIT, "clk i2s get failed\n");
 		ret = PTR_ERR(clk->clk_i2s);
 		goto err_get_clk_i2s;
 	}
@@ -132,13 +132,13 @@ int snd_i2s_clk_bus_enable(void *clk_orig)
 	SND_LOG_DEBUG("\n");
 
 	if (reset_control_deassert(clk->clk_rst)) {
-		SND_LOG_ERR("clk_rst deassert failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_EN, "clk_rst deassert failed\n");
 		ret = -EINVAL;
 		goto err_deassert_rst;
 	}
 
 	if (clk_prepare_enable(clk->clk_bus)) {
-		SND_LOG_ERR("clk_bus enable failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_EN, "clk_bus enable failed\n");
 		ret = -EINVAL;
 		goto err_enable_clk_bus;
 	}
@@ -159,23 +159,23 @@ int snd_i2s_clk_enable(void *clk_orig)
 	SND_LOG_DEBUG("\n");
 
 	if (clk_prepare_enable(clk->clk_pll_audio0_4x)) {
-		SND_LOG_ERR("clk_pll_audio0_4x enable failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_EN, "clk_pll_audio0_4x enable failed\n");
 		ret = -EINVAL;
 		goto err_enable_clk_pll_audio0_4x;
 	}
 	if (clk_prepare_enable(clk->clk_pll_audio1_div2)) {
-		SND_LOG_ERR("clk_pll_audio1_div2 enable failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_EN, "clk_pll_audio1_div2 enable failed\n");
 		ret = -EINVAL;
 		goto err_enable_clk_pll_audio1_div2;
 	}
 	if (clk_prepare_enable(clk->clk_pll_audio1_div5)) {
-		SND_LOG_ERR("clk_pll_audio1_div5 enable failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_EN, "clk_pll_audio1_div5 enable failed\n");
 		ret = -EINVAL;
 		goto err_enable_clk_pll_audio1_div5;
 	}
 
 	if (clk_prepare_enable(clk->clk_i2s)) {
-		SND_LOG_ERR("clk_i2s enable failed\n");
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_EN, "clk_i2s enable failed\n");
 		ret = -EINVAL;
 		goto err_enable_clk_i2s;
 	}
@@ -221,24 +221,25 @@ int snd_i2s_clk_rate(void *clk_orig, unsigned int freq_in, unsigned int freq_out
 	SND_LOG_DEBUG("\n");
 
 	if (freq_in % 24576000 == 0) {
-		/* If you want to use clk_pll_audio0_4x, must set it 1083801600Hz */
+		/* If you want to use clk_pll_audio0_4x, must set it 196608000Hz */
 		if (clk_set_parent(clk->clk_i2s, clk->clk_pll_audio0_4x)) {
-			SND_LOG_ERR("set i2s parent clk failed\n");
+			SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_SET, "set i2s parent clk failed\n");
 			return -EINVAL;
 		}
-		if (clk_set_rate(clk->clk_pll_audio0_4x, 1083801600)) {
-			SND_LOG_ERR("set clk_pll_audio0_4x rate failed\n");
+		if (clk_set_rate(clk->clk_pll_audio0_4x, 196608000)) {
+			SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_SET,
+					"set clk_pll_audio0_4x rate failed\n");
 			return -EINVAL;
 		}
 	} else {
 		if (clk_set_parent(clk->clk_i2s, clk->clk_pll_audio1_div5)) {
-			SND_LOG_ERR("set i2s parent clk failed\n");
+			SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_SET, "set i2s parent clk failed\n");
 			return -EINVAL;
 		}
 	}
 
 	if (clk_set_rate(clk->clk_i2s, freq_out)) {
-		SND_LOG_ERR("freq : %u module clk unsupport\n", freq_out);
+		SND_LOG_ERR_STD(E_I2S_SWDEP_CLK_SET, "freq : %u module clk unsupport\n", freq_out);
 		return -EINVAL;
 	}
 

@@ -61,6 +61,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <linux/slab.h>
 
+#include "lock.h"
+
 /* ***************************************************************************
  * Server-side bridge entry points
  */
@@ -106,9 +108,7 @@ PVRSRVBridgeDCDevicesEnumerate(IMG_UINT32 ui32DispatchTableEntry,
 
 	IMG_UINT32 ui32NextOffset = 0;
 	IMG_BYTE *pArrayArgsBuffer = NULL;
-#if !defined(INTEGRITY_OS)
 	IMG_BOOL bHaveEnoughSpace = IMG_FALSE;
-#endif
 
 	IMG_UINT32 ui32BufferSize = 0;
 	IMG_UINT64 ui64BufferSize =
@@ -132,7 +132,6 @@ PVRSRVBridgeDCDevicesEnumerate(IMG_UINT32 ui32DispatchTableEntry,
 
 	if (ui32BufferSize != 0)
 	{
-#if !defined(INTEGRITY_OS)
 		/* Try to use remainder of input buffer for copies if possible, word-aligned for safety. */
 		IMG_UINT32 ui32InBufferOffset =
 		    PVR_ALIGN(sizeof(*psDCDevicesEnumerateIN), sizeof(unsigned long));
@@ -148,7 +147,6 @@ PVRSRVBridgeDCDevicesEnumerate(IMG_UINT32 ui32DispatchTableEntry,
 			pArrayArgsBuffer = &pInputBuffer[ui32InBufferOffset];
 		}
 		else
-#endif
 		{
 			pArrayArgsBuffer = OSAllocMemNoStats(ui32BufferSize);
 
@@ -202,11 +200,7 @@ DCDevicesEnumerate_exit:
 		PVR_ASSERT(ui32BufferSize == ui32NextOffset);
 #endif /* PVRSRV_NEED_PVR_ASSERT */
 
-#if defined(INTEGRITY_OS)
-	if (pArrayArgsBuffer)
-#else
 	if (!bHaveEnoughSpace && pArrayArgsBuffer)
-#endif
 		OSFreeMemNoStats(pArrayArgsBuffer);
 
 	return 0;
@@ -424,9 +418,7 @@ PVRSRVBridgeDCPanelQuery(IMG_UINT32 ui32DispatchTableEntry,
 
 	IMG_UINT32 ui32NextOffset = 0;
 	IMG_BYTE *pArrayArgsBuffer = NULL;
-#if !defined(INTEGRITY_OS)
 	IMG_BOOL bHaveEnoughSpace = IMG_FALSE;
-#endif
 
 	IMG_UINT32 ui32BufferSize = 0;
 	IMG_UINT64 ui64BufferSize =
@@ -450,7 +442,6 @@ PVRSRVBridgeDCPanelQuery(IMG_UINT32 ui32DispatchTableEntry,
 
 	if (ui32BufferSize != 0)
 	{
-#if !defined(INTEGRITY_OS)
 		/* Try to use remainder of input buffer for copies if possible, word-aligned for safety. */
 		IMG_UINT32 ui32InBufferOffset =
 		    PVR_ALIGN(sizeof(*psDCPanelQueryIN), sizeof(unsigned long));
@@ -466,7 +457,6 @@ PVRSRVBridgeDCPanelQuery(IMG_UINT32 ui32DispatchTableEntry,
 			pArrayArgsBuffer = &pInputBuffer[ui32InBufferOffset];
 		}
 		else
-#endif
 		{
 			pArrayArgsBuffer = OSAllocMemNoStats(ui32BufferSize);
 
@@ -546,11 +536,7 @@ DCPanelQuery_exit:
 		PVR_ASSERT(ui32BufferSize == ui32NextOffset);
 #endif /* PVRSRV_NEED_PVR_ASSERT */
 
-#if defined(INTEGRITY_OS)
-	if (pArrayArgsBuffer)
-#else
 	if (!bHaveEnoughSpace && pArrayArgsBuffer)
-#endif
 		OSFreeMemNoStats(pArrayArgsBuffer);
 
 	return 0;
@@ -576,9 +562,7 @@ PVRSRVBridgeDCFormatQuery(IMG_UINT32 ui32DispatchTableEntry,
 
 	IMG_UINT32 ui32NextOffset = 0;
 	IMG_BYTE *pArrayArgsBuffer = NULL;
-#if !defined(INTEGRITY_OS)
 	IMG_BOOL bHaveEnoughSpace = IMG_FALSE;
-#endif
 
 	IMG_UINT32 ui32BufferSize = 0;
 	IMG_UINT64 ui64BufferSize =
@@ -603,7 +587,6 @@ PVRSRVBridgeDCFormatQuery(IMG_UINT32 ui32DispatchTableEntry,
 
 	if (ui32BufferSize != 0)
 	{
-#if !defined(INTEGRITY_OS)
 		/* Try to use remainder of input buffer for copies if possible, word-aligned for safety. */
 		IMG_UINT32 ui32InBufferOffset =
 		    PVR_ALIGN(sizeof(*psDCFormatQueryIN), sizeof(unsigned long));
@@ -619,7 +602,6 @@ PVRSRVBridgeDCFormatQuery(IMG_UINT32 ui32DispatchTableEntry,
 			pArrayArgsBuffer = &pInputBuffer[ui32InBufferOffset];
 		}
 		else
-#endif
 		{
 			pArrayArgsBuffer = OSAllocMemNoStats(ui32BufferSize);
 
@@ -717,11 +699,7 @@ DCFormatQuery_exit:
 		PVR_ASSERT(ui32BufferSize == ui32NextOffset);
 #endif /* PVRSRV_NEED_PVR_ASSERT */
 
-#if defined(INTEGRITY_OS)
-	if (pArrayArgsBuffer)
-#else
 	if (!bHaveEnoughSpace && pArrayArgsBuffer)
-#endif
 		OSFreeMemNoStats(pArrayArgsBuffer);
 
 	return 0;
@@ -747,9 +725,7 @@ PVRSRVBridgeDCDimQuery(IMG_UINT32 ui32DispatchTableEntry,
 
 	IMG_UINT32 ui32NextOffset = 0;
 	IMG_BYTE *pArrayArgsBuffer = NULL;
-#if !defined(INTEGRITY_OS)
 	IMG_BOOL bHaveEnoughSpace = IMG_FALSE;
-#endif
 
 	IMG_UINT32 ui32BufferSize = 0;
 	IMG_UINT64 ui64BufferSize =
@@ -774,7 +750,6 @@ PVRSRVBridgeDCDimQuery(IMG_UINT32 ui32DispatchTableEntry,
 
 	if (ui32BufferSize != 0)
 	{
-#if !defined(INTEGRITY_OS)
 		/* Try to use remainder of input buffer for copies if possible, word-aligned for safety. */
 		IMG_UINT32 ui32InBufferOffset =
 		    PVR_ALIGN(sizeof(*psDCDimQueryIN), sizeof(unsigned long));
@@ -790,7 +765,6 @@ PVRSRVBridgeDCDimQuery(IMG_UINT32 ui32DispatchTableEntry,
 			pArrayArgsBuffer = &pInputBuffer[ui32InBufferOffset];
 		}
 		else
-#endif
 		{
 			pArrayArgsBuffer = OSAllocMemNoStats(ui32BufferSize);
 
@@ -886,11 +860,7 @@ DCDimQuery_exit:
 		PVR_ASSERT(ui32BufferSize == ui32NextOffset);
 #endif /* PVRSRV_NEED_PVR_ASSERT */
 
-#if defined(INTEGRITY_OS)
-	if (pArrayArgsBuffer)
-#else
 	if (!bHaveEnoughSpace && pArrayArgsBuffer)
-#endif
 		OSFreeMemNoStats(pArrayArgsBuffer);
 
 	return 0;
@@ -1296,9 +1266,7 @@ PVRSRVBridgeDCDisplayContextConfigureCheck(IMG_UINT32 ui32DispatchTableEntry,
 
 	IMG_UINT32 ui32NextOffset = 0;
 	IMG_BYTE *pArrayArgsBuffer = NULL;
-#if !defined(INTEGRITY_OS)
 	IMG_BOOL bHaveEnoughSpace = IMG_FALSE;
-#endif
 
 	IMG_UINT32 ui32BufferSize = 0;
 	IMG_UINT64 ui64BufferSize =
@@ -1325,7 +1293,6 @@ PVRSRVBridgeDCDisplayContextConfigureCheck(IMG_UINT32 ui32DispatchTableEntry,
 
 	if (ui32BufferSize != 0)
 	{
-#if !defined(INTEGRITY_OS)
 		/* Try to use remainder of input buffer for copies if possible, word-aligned for safety. */
 		IMG_UINT32 ui32InBufferOffset =
 		    PVR_ALIGN(sizeof(*psDCDisplayContextConfigureCheckIN), sizeof(unsigned long));
@@ -1342,7 +1309,6 @@ PVRSRVBridgeDCDisplayContextConfigureCheck(IMG_UINT32 ui32DispatchTableEntry,
 			pArrayArgsBuffer = &pInputBuffer[ui32InBufferOffset];
 		}
 		else
-#endif
 		{
 			pArrayArgsBuffer = OSAllocMemNoStats(ui32BufferSize);
 
@@ -1486,11 +1452,7 @@ DCDisplayContextConfigureCheck_exit:
 		PVR_ASSERT(ui32BufferSize == ui32NextOffset);
 #endif /* PVRSRV_NEED_PVR_ASSERT */
 
-#if defined(INTEGRITY_OS)
-	if (pArrayArgsBuffer)
-#else
 	if (!bHaveEnoughSpace && pArrayArgsBuffer)
-#endif
 		OSFreeMemNoStats(pArrayArgsBuffer);
 
 	return 0;
@@ -1659,9 +1621,7 @@ PVRSRVBridgeDCBufferImport(IMG_UINT32 ui32DispatchTableEntry,
 
 	IMG_UINT32 ui32NextOffset = 0;
 	IMG_BYTE *pArrayArgsBuffer = NULL;
-#if !defined(INTEGRITY_OS)
 	IMG_BOOL bHaveEnoughSpace = IMG_FALSE;
-#endif
 
 	IMG_UINT32 ui32BufferSize = 0;
 	IMG_UINT64 ui64BufferSize =
@@ -1684,7 +1644,6 @@ PVRSRVBridgeDCBufferImport(IMG_UINT32 ui32DispatchTableEntry,
 
 	if (ui32BufferSize != 0)
 	{
-#if !defined(INTEGRITY_OS)
 		/* Try to use remainder of input buffer for copies if possible, word-aligned for safety. */
 		IMG_UINT32 ui32InBufferOffset =
 		    PVR_ALIGN(sizeof(*psDCBufferImportIN), sizeof(unsigned long));
@@ -1700,7 +1659,6 @@ PVRSRVBridgeDCBufferImport(IMG_UINT32 ui32DispatchTableEntry,
 			pArrayArgsBuffer = &pInputBuffer[ui32InBufferOffset];
 		}
 		else
-#endif
 		{
 			pArrayArgsBuffer = OSAllocMemNoStats(ui32BufferSize);
 
@@ -1846,11 +1804,7 @@ DCBufferImport_exit:
 		PVR_ASSERT(ui32BufferSize == ui32NextOffset);
 #endif /* PVRSRV_NEED_PVR_ASSERT */
 
-#if defined(INTEGRITY_OS)
-	if (pArrayArgsBuffer)
-#else
 	if (!bHaveEnoughSpace && pArrayArgsBuffer)
-#endif
 		OSFreeMemNoStats(pArrayArgsBuffer);
 
 	return 0;
@@ -2197,9 +2151,7 @@ PVRSRVBridgeDCDisplayContextConfigure2(IMG_UINT32 ui32DispatchTableEntry,
 
 	IMG_UINT32 ui32NextOffset = 0;
 	IMG_BYTE *pArrayArgsBuffer = NULL;
-#if !defined(INTEGRITY_OS)
 	IMG_BOOL bHaveEnoughSpace = IMG_FALSE;
-#endif
 
 	IMG_UINT32 ui32BufferSize = 0;
 	IMG_UINT64 ui64BufferSize =
@@ -2224,7 +2176,6 @@ PVRSRVBridgeDCDisplayContextConfigure2(IMG_UINT32 ui32DispatchTableEntry,
 
 	if (ui32BufferSize != 0)
 	{
-#if !defined(INTEGRITY_OS)
 		/* Try to use remainder of input buffer for copies if possible, word-aligned for safety. */
 		IMG_UINT32 ui32InBufferOffset =
 		    PVR_ALIGN(sizeof(*psDCDisplayContextConfigure2IN), sizeof(unsigned long));
@@ -2241,7 +2192,6 @@ PVRSRVBridgeDCDisplayContextConfigure2(IMG_UINT32 ui32DispatchTableEntry,
 			pArrayArgsBuffer = &pInputBuffer[ui32InBufferOffset];
 		}
 		else
-#endif
 		{
 			pArrayArgsBuffer = OSAllocMemNoStats(ui32BufferSize);
 
@@ -2389,11 +2339,7 @@ DCDisplayContextConfigure2_exit:
 		PVR_ASSERT(ui32BufferSize == ui32NextOffset);
 #endif /* PVRSRV_NEED_PVR_ASSERT */
 
-#if defined(INTEGRITY_OS)
-	if (pArrayArgsBuffer)
-#else
 	if (!bHaveEnoughSpace && pArrayArgsBuffer)
-#endif
 		OSFreeMemNoStats(pArrayArgsBuffer);
 
 	return 0;
@@ -2403,6 +2349,8 @@ DCDisplayContextConfigure2_exit:
  * Server bridge dispatch related glue
  */
 
+static POS_LOCK pDCBridgeLock;
+
 PVRSRV_ERROR InitDCBridge(void);
 void DeinitDCBridge(void);
 
@@ -2411,84 +2359,136 @@ void DeinitDCBridge(void);
  */
 PVRSRV_ERROR InitDCBridge(void)
 {
+	PVR_LOG_RETURN_IF_ERROR(OSLockCreate(&pDCBridgeLock), "OSLockCreate");
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDEVICESQUERYCOUNT,
-			      PVRSRVBridgeDCDevicesQueryCount, NULL);
+			      PVRSRVBridgeDCDevicesQueryCount, pDCBridgeLock, 0,
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDEVICESQUERYCOUNT));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDEVICESENUMERATE,
-			      PVRSRVBridgeDCDevicesEnumerate, NULL);
+			      PVRSRVBridgeDCDevicesEnumerate, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDEVICESENUMERATE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDEVICESENUMERATE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDEVICEACQUIRE,
-			      PVRSRVBridgeDCDeviceAcquire, NULL);
+			      PVRSRVBridgeDCDeviceAcquire, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDEVICEACQUIRE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDEVICEACQUIRE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDEVICERELEASE,
-			      PVRSRVBridgeDCDeviceRelease, NULL);
+			      PVRSRVBridgeDCDeviceRelease, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDEVICERELEASE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDEVICERELEASE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCGETINFO, PVRSRVBridgeDCGetInfo,
-			      NULL);
+			      pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCGETINFO),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCGETINFO));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCPANELQUERYCOUNT,
-			      PVRSRVBridgeDCPanelQueryCount, NULL);
+			      PVRSRVBridgeDCPanelQueryCount, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCPANELQUERYCOUNT),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCPANELQUERYCOUNT));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCPANELQUERY,
-			      PVRSRVBridgeDCPanelQuery, NULL);
+			      PVRSRVBridgeDCPanelQuery, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCPANELQUERY),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCPANELQUERY));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCFORMATQUERY,
-			      PVRSRVBridgeDCFormatQuery, NULL);
+			      PVRSRVBridgeDCFormatQuery, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCFORMATQUERY),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCFORMATQUERY));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDIMQUERY, PVRSRVBridgeDCDimQuery,
-			      NULL);
+			      pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDIMQUERY),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDIMQUERY));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCSETBLANK, PVRSRVBridgeDCSetBlank,
-			      NULL);
+			      pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCSETBLANK),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCSETBLANK));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCSETVSYNCREPORTING,
-			      PVRSRVBridgeDCSetVSyncReporting, NULL);
+			      PVRSRVBridgeDCSetVSyncReporting, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCSETVSYNCREPORTING),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCSETVSYNCREPORTING));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCLASTVSYNCQUERY,
-			      PVRSRVBridgeDCLastVSyncQuery, NULL);
+			      PVRSRVBridgeDCLastVSyncQuery, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCLASTVSYNCQUERY),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCLASTVSYNCQUERY));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCSYSTEMBUFFERACQUIRE,
-			      PVRSRVBridgeDCSystemBufferAcquire, NULL);
+			      PVRSRVBridgeDCSystemBufferAcquire, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCSYSTEMBUFFERACQUIRE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCSYSTEMBUFFERACQUIRE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCSYSTEMBUFFERRELEASE,
-			      PVRSRVBridgeDCSystemBufferRelease, NULL);
+			      PVRSRVBridgeDCSystemBufferRelease, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCSYSTEMBUFFERRELEASE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCSYSTEMBUFFERRELEASE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDISPLAYCONTEXTCREATE,
-			      PVRSRVBridgeDCDisplayContextCreate, NULL);
+			      PVRSRVBridgeDCDisplayContextCreate, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDISPLAYCONTEXTCREATE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDISPLAYCONTEXTCREATE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDISPLAYCONTEXTCONFIGURECHECK,
-			      PVRSRVBridgeDCDisplayContextConfigureCheck, NULL);
+			      PVRSRVBridgeDCDisplayContextConfigureCheck, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDISPLAYCONTEXTCONFIGURECHECK),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDISPLAYCONTEXTCONFIGURECHECK));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDISPLAYCONTEXTDESTROY,
-			      PVRSRVBridgeDCDisplayContextDestroy, NULL);
+			      PVRSRVBridgeDCDisplayContextDestroy, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDISPLAYCONTEXTDESTROY),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDISPLAYCONTEXTDESTROY));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERALLOC,
-			      PVRSRVBridgeDCBufferAlloc, NULL);
+			      PVRSRVBridgeDCBufferAlloc, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERALLOC),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERALLOC));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERIMPORT,
-			      PVRSRVBridgeDCBufferImport, NULL);
+			      PVRSRVBridgeDCBufferImport, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERIMPORT),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERIMPORT));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERFREE,
-			      PVRSRVBridgeDCBufferFree, NULL);
+			      PVRSRVBridgeDCBufferFree, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERFREE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERFREE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERUNIMPORT,
-			      PVRSRVBridgeDCBufferUnimport, NULL);
+			      PVRSRVBridgeDCBufferUnimport, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERUNIMPORT),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERUNIMPORT));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERPIN,
-			      PVRSRVBridgeDCBufferPin, NULL);
+			      PVRSRVBridgeDCBufferPin, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERPIN),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERPIN));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERUNPIN,
-			      PVRSRVBridgeDCBufferUnpin, NULL);
+			      PVRSRVBridgeDCBufferUnpin, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERUNPIN),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERUNPIN));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERACQUIRE,
-			      PVRSRVBridgeDCBufferAcquire, NULL);
+			      PVRSRVBridgeDCBufferAcquire, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERACQUIRE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERACQUIRE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCBUFFERRELEASE,
-			      PVRSRVBridgeDCBufferRelease, NULL);
+			      PVRSRVBridgeDCBufferRelease, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCBUFFERRELEASE),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCBUFFERRELEASE));
 
 	SetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDISPLAYCONTEXTCONFIGURE2,
-			      PVRSRVBridgeDCDisplayContextConfigure2, NULL);
+			      PVRSRVBridgeDCDisplayContextConfigure2, pDCBridgeLock,
+			      sizeof(PVRSRV_BRIDGE_IN_DCDISPLAYCONTEXTCONFIGURE2),
+			      sizeof(PVRSRV_BRIDGE_OUT_DCDISPLAYCONTEXTCONFIGURE2));
 
 	return PVRSRV_OK;
 }
@@ -2498,6 +2498,7 @@ PVRSRV_ERROR InitDCBridge(void)
  */
 void DeinitDCBridge(void)
 {
+	OSLockDestroy(pDCBridgeLock);
 
 	UnsetDispatchTableEntry(PVRSRV_BRIDGE_DC, PVRSRV_BRIDGE_DC_DCDEVICESQUERYCOUNT);
 

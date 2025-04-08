@@ -241,18 +241,16 @@ void pdp_apollo_mode_set(struct device *dev, void __iomem *pdp_reg,
 		 vt, vbps, vas, vtbs, vfps, vbbs);
 #endif
 
-#if 0
-	/* I don't really know what this is doing but it was in the Android
-	 * implementation (not in the Linux one). Seems not to be necessary
-	 * though!
-	 */
-	if (pdp_rreg32(pdp_reg, TCF_RGBPDP_PVR_TCF_RGBPDP_STRCTRL)
-		!= 0x0000C010) {
-		/* Buffer request threshold */
-		pdp_wreg32(pdp_reg, TCF_RGBPDP_PVR_TCF_RGBPDP_STRCTRL,
-				   0x00001C10);
-	}
-#endif
+/*
+ * This gets set in dc_pdp_common.c, but hasn't been necessary here.
+ *
+ * if (pdp_rreg32(pdp_reg, TCF_RGBPDP_PVR_TCF_RGBPDP_STRCTRL)
+ *     != 0x0000C010) {
+ * // Buffer request threshold
+ * pdp_wreg32(pdp_reg, TCF_RGBPDP_PVR_TCF_RGBPDP_STRCTRL,
+ *            0x00001C10);
+ * }
+ */
 
 	/* Border colour */
 	value = pdp_rreg32(pdp_reg, TCF_RGBPDP_PVR_TCF_RGBPDP_BORDCOL);
@@ -317,13 +315,12 @@ void pdp_apollo_mode_set(struct device *dev, void __iomem *pdp_reg,
 	/* Set up polarities of sync/blank */
 	value = REG_VALUE_SET(0, 0x1, BLNKPOL_SHIFT, BLNKPOL_MASK);
 
-	/*
-	 * Enable this if you want vblnk1. You also need to change to vblnk1
-	 * in the interrupt handler.
-	 */
-#if 0
-	value = REG_VALUE_SET(value, 0x1, FIELDPOL_SHIFT, FIELDPOL_MASK);
-#endif
+/*
+ * Enable this if you want vblnk1. You also need to change to vblnk1
+ * in the interrupt handler.
+ *
+ * value = REG_VALUE_SET(value, 0x1, FIELDPOL_SHIFT, FIELDPOL_MASK);
+ */
 	if (nhsync)
 		value = REG_VALUE_SET(value, 0x1, HSPOL_SHIFT, HSPOL_MASK);
 	if (nvsync)

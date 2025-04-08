@@ -58,8 +58,7 @@ void sunxi_mmc_rescan_card(unsigned id)
 	}
 
 	if (sunxi_hosts[id] == NULL) {
-		SM_ERR(mmc_dev(sunxi_hosts[id]->mmc),
-			"%s:can't find the host\n", __func__);
+		pr_err("%s:can't find the host:%u\n", __func__, id);
 		return;
 	}
 

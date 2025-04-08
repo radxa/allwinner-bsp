@@ -6,6 +6,8 @@ config PANEL_DSI_GENERAL
 	select VIDEOMODE_HELPERS
 	select BACKLIGHT_CLASS_DEVICE
 	select BACKLIGHT_PWM
+	select DRM_DISPLAY_DP_HELPER
+	select DRM_DISPLAY_HELPER
 	default n
 	help
 		If you want to support general dsi panel, select it.

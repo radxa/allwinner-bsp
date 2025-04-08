@@ -17,10 +17,12 @@
 #include <linux/pm_opp.h>
 #include <linux/slab.h>
 #include <sunxi-sid.h>
+#include <linux/cpu.h>
+#include <linux/clk.h>
 
 #define PVALUE_OFFSET   0x20
 #define ICPU_OFFSET     0x28
-#define MAX_NAME_LEN      8
+#define MAX_NAME_LEN      12
 #define MAX_VF_VER_LEN    8
 
 #define SUN50IW9_ICPU_MASK     GENMASK(9, 0)
@@ -49,16 +51,26 @@ struct cpufreq_soc_data {
 	bool has_nvmem_extend_bin;
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 static ssize_t dvfs_code_show(struct class *class, struct class_attribute *attr,
 			 char *buf)
+#else
+static ssize_t dvfs_code_show(const struct class *class, const struct class_attribute *attr,
+			 char *buf)
+#endif
 {
 	return sprintf(buf, "0x%04x\n", ver_data.dvfs_code);
 }
 
 static CLASS_ATTR_RO(dvfs_code);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 static ssize_t vf_version_show(struct class *class, struct class_attribute *attr,
 			 char *buf)
+#else
+static ssize_t vf_version_show(const struct class *class, const struct class_attribute *attr,
+			 char *buf)
+#endif
 {
 	return snprintf(buf, MAX_VF_VER_LEN + 1, "%s\n", ver_data.vf_ver);
 }
@@ -604,6 +616,83 @@ static struct cpufreq_soc_data sun55iw3_soc_data = {
 	.nvmem_xlate = sun55iw3_nvmem_xlate,
 };
 
+#define SUN55IW6_DVFS_EFUSE_OFF     (0x20)
+static void sun55iw6_nvmem_xlate(u32 *versions, char *name)
+{
+	u32 bak_dvfs, dvfs, combi;
+	u32 index = 0x0100;
+
+	sunxi_get_module_param_from_sid(&dvfs, SUN55IW6_DVFS_EFUSE_OFF, 4);
+	bak_dvfs = (dvfs >> 24) & 0xff;
+	if (bak_dvfs)
+		combi = bak_dvfs;
+	else
+		combi = (dvfs >> 16) & 0xff;
+
+	match_vf_table(combi, &index);
+
+	sunxi_set_vf_index(index);
+	snprintf(name, MAX_NAME_LEN, "vf%04x", index);
+	ver_data.dvfs_code = (u16)((dvfs >> 4) & 0xffff);
+	get_vf_table_version();
+	sunxi_debug(NULL, "dvfs: %s, 0x%x, %s\n", ver_data.vf_ver, ver_data.dvfs_code, name);
+}
+
+static struct cpufreq_soc_data sun55iw6_soc_data = {
+	.nvmem_xlate = sun55iw6_nvmem_xlate,
+};
+
+u32 determine_dcxo_clk_source(void)
+{
+	struct clk *dcxo_rate;
+	u32 clock_rate;
+	dcxo_rate = clk_get(NULL, "dcxo");
+	if (IS_ERR(dcxo_rate)) {
+		sunxi_err(NULL, "failed to get dcxo clock source\n");
+		return 0;
+	}
+
+	clock_rate = clk_get_rate(dcxo_rate);
+	clk_put(dcxo_rate);
+	if (!clock_rate) {
+		sunxi_err(NULL, "failed to get cpu clock rate\n");
+		return 0;
+	}
+
+	return clock_rate;
+}
+EXPORT_SYMBOL_GPL(determine_dcxo_clk_source);
+
+#define DCXO_CLK_26M     (26000000)
+static void sun60iw2_nvmem_xlate(u32 *versions, char *name)
+{
+	u32 dvfs;
+	u32 index = 0x0000;
+	u32 clock_rate;
+
+	if (sunxi_get_soc_dvfs(&dvfs))
+		sunxi_err(NULL, "failed to get soc dvfs, use default vf table\n");
+
+	match_vf_table(dvfs, &index);
+
+	sunxi_set_vf_index(index);
+
+	/* Determine whether to use 26m or 24m */
+	clock_rate = determine_dcxo_clk_source();
+	if (clock_rate == DCXO_CLK_26M)
+		snprintf(name, MAX_NAME_LEN, "26m-vf%04x", index);
+	else
+		snprintf(name, MAX_NAME_LEN, "vf%04x", index);
+
+	ver_data.dvfs_code = (u16)(dvfs & 0xffff);
+	get_vf_table_version();
+	sunxi_debug(NULL, "dvfs: %s, 0x%x, %s\n", ver_data.vf_ver, ver_data.dvfs_code, name);
+}
+
+static struct cpufreq_soc_data sun60iw2_soc_data = {
+	.nvmem_xlate = sun60iw2_nvmem_xlate,
+};
+
 static const char sun8iw21_ic_index_list[][32] = {
 	{"allwinner,qg3101"},
 	{"allwinner,v851s"},
@@ -739,6 +828,7 @@ static int sun50i_cpufreq_get_efuse(const struct cpufreq_soc_data *soc_data,
 	return 0;
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 static int sun50i_cpufreq_nvmem_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *match;
@@ -846,6 +936,104 @@ static int sun50i_cpufreq_nvmem_remove(struct platform_device *pdev)
 
 	return 0;
 }
+#else
+static int sun50i_cpufreq_nvmem_probe(struct platform_device *pdev)
+{
+	const struct of_device_id *match;
+	int *opp_tokens;
+	unsigned int cpu;
+	int ret;
+
+	opp_tokens = kcalloc(num_possible_cpus(), sizeof(*opp_tokens),
+			     GFP_KERNEL);
+	if (!opp_tokens)
+		return -ENOMEM;
+
+	match = dev_get_platdata(&pdev->dev);
+	if (!match) {
+		kfree(opp_tokens);
+		return -EINVAL;
+	}
+
+	ret = sun50i_cpufreq_get_efuse(match->data,
+				       &ver_data.version, ver_data.name);
+	if (ret) {
+		kfree(opp_tokens);
+		return ret;
+	}
+
+	for_each_possible_cpu(cpu) {
+		struct device *cpu_dev = get_cpu_device(cpu);
+
+		if (!cpu_dev) {
+			ret = -ENODEV;
+			goto free_opp;
+		}
+
+		if (strlen(ver_data.name)) {
+			opp_tokens[cpu] = dev_pm_opp_set_prop_name(cpu_dev,
+								   ver_data.name);
+			if (opp_tokens[cpu] < 0) {
+				ret = opp_tokens[cpu];
+				sunxi_err(NULL, "Failed to set prop name\n");
+				goto free_opp;
+			}
+		}
+
+		if (ver_data.version) {
+			opp_tokens[cpu] = dev_pm_opp_set_supported_hw(cpu_dev,
+							  &ver_data.version, 1);
+			if (opp_tokens[cpu] < 0) {
+				ret = opp_tokens[cpu];
+				sunxi_err(NULL, "Failed to set hw\n");
+				goto free_opp;
+			}
+		}
+	}
+
+	ret = class_register(&cpufreq_class);
+	if (ret) {
+		sunxi_err(NULL, "failed to cpufreq class register, ret = %d\n", ret);
+		goto free_opp;;
+	}
+
+	cpufreq_dt_pdev = platform_device_register_simple("cpufreq-dt", -1,
+							  NULL, 0);
+	if (!IS_ERR(cpufreq_dt_pdev)) {
+		platform_set_drvdata(pdev, opp_tokens);
+		return 0;
+	}
+
+	ret = PTR_ERR(cpufreq_dt_pdev);
+	sunxi_err(NULL, "Failed to register platform device\n");
+
+free_opp:
+	for_each_possible_cpu(cpu)
+		dev_pm_opp_put_prop_name(opp_tokens[cpu]);
+	kfree(opp_tokens);
+
+	return ret;
+}
+
+static int sun50i_cpufreq_nvmem_remove(struct platform_device *pdev)
+{
+	int *opp_tokens = platform_get_drvdata(pdev);
+	unsigned int cpu;
+
+	platform_device_unregister(cpufreq_dt_pdev);
+
+	for_each_possible_cpu(cpu) {
+		if (strlen(ver_data.name))
+			dev_pm_opp_put_prop_name(opp_tokens[cpu]);
+
+		if (ver_data.version)
+			dev_pm_opp_put_prop_name(opp_tokens[cpu]);
+	}
+	kfree(opp_tokens);
+
+	return 0;
+}
+#endif
 
 static struct platform_driver sun50i_cpufreq_driver = {
 	.probe = sun50i_cpufreq_nvmem_probe,
@@ -862,6 +1050,8 @@ static const struct of_device_id sun50i_cpufreq_match_list[] = {
 	{ .compatible = "arm,sun20iw1p1", .data = &sun20iw1_soc_data, },
 	{ .compatible = "arm,sun55iw3p1", .data = &sun55iw3_soc_data, },
 	{.compatible = "arm,sun8iw21p1", .data = &sun8iw21_soc_data,},
+	{.compatible = "arm,sun55iw6p1", .data = &sun55iw6_soc_data,},
+	{.compatible = "arm,sun60iw2p1", .data = &sun60iw2_soc_data,},
 	{}
 };
 

@@ -72,10 +72,11 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "pvr_bridge_k.h"
 #include "pvr_uaccess.h"
 #include "osdi_impl.h"
+#include "kernel_compatibility.h"
 
 #define _DRIVER_THREAD_ENTER() \
 	do { \
-		PVRSRV_ERROR eLocalError = PVRSRVDriverThreadEnter(); \
+		PVRSRV_ERROR eLocalError = PVRSRVDriverThreadEnter(NULL); \
 		if (eLocalError != PVRSRV_OK) \
 		{ \
 			PVR_DPF((PVR_DBG_ERROR, "%s: PVRSRVDriverThreadEnter failed: %s", \
@@ -85,7 +86,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 	} while (0)
 
 #define _DRIVER_THREAD_EXIT() \
-	PVRSRVDriverThreadExit()
+	PVRSRVDriverThreadExit(NULL)
 
 #define PVR_DEBUGFS_PVR_DPF_LEVEL PVR_DBG_ERROR
 
@@ -121,14 +122,7 @@ static void _WriteData(void *pvNativeHandle, const void *pvData,
 static void _VPrintf(void *pvNativeHandle, const IMG_CHAR *pszFmt,
                      va_list pArgs)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
 	seq_vprintf(pvNativeHandle, pszFmt, pArgs);
-#else
-	IMG_CHAR szBuffer[PVR_MAX_DEBUG_MESSAGE_LEN];
-
-	vsnprintf(szBuffer, PVR_MAX_DEBUG_MESSAGE_LEN, pszFmt, pArgs);
-	seq_printf(pvNativeHandle, "%s", szBuffer);
-#endif
 }
 
 static void _Puts(void *pvNativeHandle, const IMG_CHAR *pszStr)
@@ -139,11 +133,7 @@ static void _Puts(void *pvNativeHandle, const IMG_CHAR *pszStr)
 static IMG_BOOL _HasOverflowed(void *pvNativeHandle)
 {
 	struct seq_file *psSeqFile = pvNativeHandle;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
 	return seq_has_overflowed(psSeqFile);
-#else
-	return psSeqFile->count == psSeqFile->size;
-#endif
 }
 
 static OSDI_IMPL_ENTRY_CB _g_sEntryCallbacks = {
@@ -206,7 +196,7 @@ static struct seq_operations _g_sSeqOps = {
 
 static int _Open(struct inode *psINode, struct file *psFile)
 {
-	DFS_FILE *psDFSFile = PDE_DATA(psINode);
+	DFS_FILE *psDFSFile = pde_data(psINode);
 	int iRes;
 
 	PVR_LOG_RETURN_IF_FALSE(psDFSFile != NULL, "psDFSFile is NULL", -EIO);
@@ -253,7 +243,7 @@ return_:
 
 static int _Close(struct inode *psINode, struct file *psFile)
 {
-	DFS_FILE *psDFSFile = PDE_DATA(psINode);
+	DFS_FILE *psDFSFile = pde_data(psINode);
 	DFS_ENTRY *psEntry;
 	int iRes;
 
@@ -293,7 +283,7 @@ static int _Close(struct inode *psINode, struct file *psFile)
 static ssize_t _Read(struct file *psFile, char __user *pcBuffer,
                      size_t uiCount, loff_t *puiPos)
 {
-	DFS_FILE *psDFSFile = PDE_DATA(psFile->f_path.dentry->d_inode);
+	DFS_FILE *psDFSFile = pde_data(psFile->f_path.dentry->d_inode);
 	ssize_t iRes = -1;
 
 	_DRIVER_THREAD_ENTER();
@@ -344,7 +334,7 @@ return_:
 
 static loff_t _LSeek(struct file *psFile, loff_t iOffset, int iOrigin)
 {
-	DFS_FILE *psDFSFile = PDE_DATA(psFile->f_path.dentry->d_inode);
+	DFS_FILE *psDFSFile = pde_data(psFile->f_path.dentry->d_inode);
 	loff_t iRes = -1;
 
 	_DRIVER_THREAD_ENTER();
@@ -406,7 +396,7 @@ static ssize_t _Write(struct file *psFile, const char __user *pszBuffer,
                       size_t uiCount, loff_t *puiPos)
 {
 	struct inode *psINode = psFile->f_path.dentry->d_inode;
-	DFS_FILE *psDFSFile = PDE_DATA(psINode);
+	DFS_FILE *psDFSFile = pde_data(psINode);
 	DI_ITERATOR_CB *psIter = &psDFSFile->sEntry.sIterCb;
 	IMG_CHAR *pcLocalBuffer;
 	IMG_UINT64 ui64Count;
@@ -418,12 +408,12 @@ static ssize_t _Write(struct file *psFile, const char __user *pszBuffer,
 	PVR_LOG_RETURN_IF_FALSE(psIter->pfnWrite != NULL, "pfnWrite is NULL",
 	                        -EIO);
 
+	_DRIVER_THREAD_ENTER();
+
 	/* Make sure we allocate the smallest amount of needed memory*/
 	ui64Count = psIter->ui32WriteLenMax;
 	PVR_LOG_GOTO_IF_FALSE(uiCount <= ui64Count, "uiCount too long", return_);
 	ui64Count = MIN(uiCount+1, ui64Count);
-
-	_DRIVER_THREAD_ENTER();
 
 	/* allocate buffer with one additional byte for NUL character */
 	pcLocalBuffer = OSAllocMem(ui64Count);

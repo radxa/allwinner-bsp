@@ -30,8 +30,8 @@ s32 de_deband_set_outinfo(struct de_deband_handle *hdl, enum de_color_space cs,
 bool de_deband_is_enabled(struct de_deband_handle *hdl);
 struct de_deband_handle *de_deband_create(struct module_create_info *info);
 s32 de_deband_set_size(struct de_deband_handle *hdl, u32 width, u32 height);
-s32 de_deband_set_window(struct de_deband_handle *hdl,
-		      u32 win_enable, u32 x, u32 y, u32 w, u32 h);
+s32 de_deband_set_demo_mode(struct de_deband_handle *hdl, bool enable);
+s32 de_deband_set_window(struct de_deband_handle *hdl, u32 x, u32 y, u32 w, u32 h);
 s32 de_deband_enable(struct de_deband_handle *hdl, u32 en);
 s32 de_deband_dump_state(struct drm_printer *p, struct de_deband_handle *hdl);
 int de_deband_pq_proc(struct de_deband_handle *hdl, deband_module_param_t *para);

@@ -30,6 +30,7 @@
 MODULE_AUTHOR("lcs");
 MODULE_DESCRIPTION("A low-level driver for gc05a2 sensors");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0.0");
 
 #define MCLK              (24*1000*1000)
 #define V4L2_IDENT_SENSOR 0x05A2
@@ -47,7 +48,7 @@ MODULE_LICENSE("GPL");
 
 #define SENSOR_NUM	0x2
 #define SENSOR_NAME "gc05a2_mipi"
-#define SENSOR_NAME_2 "gc05a2_mipi_b"
+#define SENSOR_NAME_2 "gc05a2_mipi_2"
 
 /* SENSOR MIRROR FLIP INFO */
 #define GC05A2_MIRROR_NORMAL    1
@@ -897,7 +898,7 @@ static int sensor_power(struct v4l2_subdev *sd, int on)
 		cci_lock(sd);
 		vin_gpio_set_status(sd, PWDN, 1);
 		vin_gpio_set_status(sd, RESET, 1);
-		vin_set_pmu_vol(sd, DVDD, VDD_1200MV);
+		//vin_set_pmu_vol(sd, DVDD, VDD_1200MV);
 		usleep_range(100, 120);
 
 		vin_gpio_write(sd, PWDN, CSI_GPIO_LOW);
@@ -1017,8 +1018,6 @@ static int sensor_init(struct v4l2_subdev *sd, u32 val)
 	info->height = 1944;
 	info->hflip = 0;
 	info->vflip = 0;
-	info->exp = 0;
-	info->gain = 0;
 
 	info->tpf.numerator = 1;
 	info->tpf.denominator = 30; /* 30fps */
@@ -1133,7 +1132,11 @@ static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 				struct v4l2_mbus_config *cfg)
 {
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	cfg->bus.mipi_csi2.num_data_lanes = 0 | V4L2_MBUS_CSI2_2_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#else
 	cfg->flags = 0 | V4L2_MBUS_CSI2_2_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#endif
 
 	return 0;
 }
@@ -1174,6 +1177,7 @@ static int sensor_reg_init(struct sensor_info *info)
 	struct v4l2_subdev *sd = &info->sd;
 	struct sensor_format_struct *sensor_fmt = info->fmt;
 	struct sensor_win_size *wsize = info->current_wins;
+	struct sensor_exp_gain exp_gain;
 
 	ret = sensor_write_array(sd, sensor_default_regs,
 				ARRAY_SIZE(sensor_default_regs));
@@ -1193,6 +1197,13 @@ static int sensor_reg_init(struct sensor_info *info)
 	info->width = wsize->width;
 	info->height = wsize->height;
 	gc05a2_sensor_vts = wsize->vts;
+	exp_gain.exp_val = info->exp;
+	exp_gain.gain_val = info->gain;
+	if (exp_gain.exp_val == 0 || exp_gain.gain_val == 0) {
+		exp_gain.exp_val = 16000;
+		exp_gain.gain_val = 256;
+	}
+	sensor_s_exp_gain(sd, &exp_gain);
 	return 0;
 }
 
@@ -1286,8 +1297,12 @@ static int sensor_init_controls(struct v4l2_subdev *sd, const struct v4l2_ctrl_o
 }
 
 static int sensor_dev_id;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int sensor_probe(struct i2c_client *client)
+#else
 static int sensor_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	struct v4l2_subdev *sd;
 	struct sensor_info *info;
@@ -1322,13 +1337,15 @@ static int sensor_probe(struct i2c_client *client,
 	info->combo_mode = CMB_TERMINAL_RES | CMB_PHYA_OFFSET3 | MIPI_NORMAL_MODE;
 	info->stream_seq = MIPI_BEFORE_SENSOR;
 	info->af_first_flag = 1;
-	info->exp = 0;
-	info->gain = 0;
 
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 static int sensor_remove(struct i2c_client *client)
+#else
+static void sensor_remove(struct i2c_client *client)
+#endif
 {
 	struct v4l2_subdev *sd;
 	int i;
@@ -1344,7 +1361,10 @@ static int sensor_remove(struct i2c_client *client)
 	}
 
 	kfree(to_state(sd));
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id sensor_id[] = {

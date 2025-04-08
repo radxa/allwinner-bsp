@@ -189,9 +189,21 @@ struct di_demo_crop_arg {
 };
 
 #define TNR_REG_COUNT		(28)
-struct tnr_module_param_t {
-	s32 id; /* 23 */
+#define TNR_PQTOOL_ID		(23)
+
+struct tnr_module_param_pqd {
+	s32 id; /* TNR_PQTOOL_ID */
 	u32 value[TNR_REG_COUNT];
+};
+
+struct tnr_module_param_t {
+	struct tnr_module_param_pqd qptool_para;
+
+	/* DI use */
+	u32 democrop_left;
+	u32 democrop_top;
+	u32 democrop_right;
+	u32 democrop_bottom;
 };
 
 #define DI_IOC_MAGIC 'D'
@@ -214,8 +226,11 @@ struct tnr_module_param_t {
 #define DI_IOC_MEM_REQUEST    DI_IOWR(0x10, struct di_mem_arg)
 #define DI_IOC_MEM_RELEASE    DI_IOWR(0x11, struct di_mem_arg)
 #define DI_IOC_SET_DEMO_CROP  DI_IOW(0x12, struct di_demo_crop_arg)
-#define DI_IOC_GET_TNRPARA    DI_IOR(0x13, struct tnr_module_param_t)
-#define DI_IOC_SET_TNRPARA    DI_IOW(0x14, struct tnr_module_param_t)
+#define DI_IOC_SET_MEDIAID    DI_IO(0x15)
+
+/* used for PQTool */
+#define DI_IOC_GET_TNRPARA    DI_IOR(0x13, struct tnr_module_param_pqd)
+#define DI_IOC_SET_TNRPARA    DI_IOW(0x14, struct tnr_module_param_pqd)
 
 extern unsigned int di_device_get_debug_mode(void);
 

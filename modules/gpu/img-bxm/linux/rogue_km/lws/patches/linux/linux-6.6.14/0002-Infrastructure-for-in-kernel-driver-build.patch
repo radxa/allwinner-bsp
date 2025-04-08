@@ -1,0 +1,151 @@
+From c94355bb5b58599ef3e317618ab034eaaac2792b Mon Sep 17 00:00:00 2001
+From: Ravi Kiri <ravi.kiri@imgtec.com>
+Date: Mon, 27 Feb 2023 14:42:26 +0000
+Subject: [PATCH 2/5] Infrastructure for in-kernel driver build
+
+This patch has following changes:
+ - Adds IMG rogue kernel driver infrastructure for in-kernel build. The
+   user will have to use copy-to-kernel.sh script found in the rogue_km
+   package to copy the IMG rogue source files to the kernel.
+
+ - Adds rogue_in_tree_fragment.config to be used with defconfig as an
+   example of how DDK should be built in-tree.
+---
+ .../x86/configs/rogue_in_tree_fragment.config |  4 ++
+ drivers/gpu/drm/Kconfig                       |  2 +
+ drivers/gpu/drm/Makefile                      |  1 +
+ drivers/gpu/drm/img-rogue/Kconfig             | 40 +++++++++++++++++++
+ drivers/gpu/drm/img-rogue/Makefile            | 18 +++++++++
+ drivers/gpu/drm/img-rogue/apollo/Makefile     |  2 +
+ drivers/gpu/drm/img-rogue/pdp/Makefile        |  2 +
+ 7 files changed, 69 insertions(+)
+ create mode 100644 arch/x86/configs/rogue_in_tree_fragment.config
+ create mode 100644 drivers/gpu/drm/img-rogue/Kconfig
+ create mode 100644 drivers/gpu/drm/img-rogue/Makefile
+ create mode 100644 drivers/gpu/drm/img-rogue/apollo/Makefile
+ create mode 100644 drivers/gpu/drm/img-rogue/pdp/Makefile
+
+diff --git a/arch/x86/configs/rogue_in_tree_fragment.config b/arch/x86/configs/rogue_in_tree_fragment.config
+new file mode 100644
+index 000000000000..7ff77af964e9
+--- /dev/null
++++ b/arch/x86/configs/rogue_in_tree_fragment.config
+@@ -0,0 +1,4 @@
++CONFIG_DRM_POWERVR_ROGUE=m
++CONFIG_DRM_POWERVR_ROGUE_DEBUG=y
++CONFIG_DRM_POWERVR_PDP=m
++CONFIG_DRM_POWERVR_APOLLO=m
+diff --git a/drivers/gpu/drm/Kconfig b/drivers/gpu/drm/Kconfig
+index 3caa020391c7..4eb7272d8d54 100644
+--- a/drivers/gpu/drm/Kconfig
++++ b/drivers/gpu/drm/Kconfig
+@@ -387,6 +387,8 @@ source "drivers/gpu/drm/solomon/Kconfig"
+ 
+ source "drivers/gpu/drm/sprd/Kconfig"
+ 
++source "drivers/gpu/drm/img-rogue/Kconfig"
++
+ config DRM_HYPERV
+ 	tristate "DRM Support for Hyper-V synthetic video device"
+ 	depends on DRM && PCI && MMU && HYPERV
+diff --git a/drivers/gpu/drm/Makefile b/drivers/gpu/drm/Makefile
+index 215e78e79125..d9568a943f56 100644
+--- a/drivers/gpu/drm/Makefile
++++ b/drivers/gpu/drm/Makefile
+@@ -174,6 +174,7 @@ obj-y 			+= imx/
+ obj-$(CONFIG_DRM_INGENIC) += ingenic/
+ obj-$(CONFIG_DRM_LOGICVC) += logicvc/
+ obj-$(CONFIG_DRM_MEDIATEK) += mediatek/
++obj-$(CONFIG_DRM_POWERVR_ROGUE) += img-rogue/
+ obj-$(CONFIG_DRM_MESON)	+= meson/
+ obj-y			+= i2c/
+ obj-y			+= panel/
+diff --git a/drivers/gpu/drm/img-rogue/Kconfig b/drivers/gpu/drm/img-rogue/Kconfig
+new file mode 100644
+index 000000000000..4353b970f591
+--- /dev/null
++++ b/drivers/gpu/drm/img-rogue/Kconfig
+@@ -0,0 +1,40 @@
++config DRM_POWERVR_ROGUE
++	tristate "PowerVR Rogue"
++	depends on HAS_IOMEM
++	depends on DRM
++	select DRM_KMS_HELPER
++	select DRM_POWERVR_APOLLO
++	select PM_DEVFREQ
++	select DEVFREQ_GOV_SIMPLE_ONDEMAND
++	select PM_OPP
++	select DEVFREQ_THERMAL
++	select SYNC_FILE
++	select VMAP_PFN
++	help
++	  Driver for PowerVR Rogue graphics hardware.
++
++	  Say Y here if your SoC contains a PowerVR Rogue GPU. For more
++	  information, see <http://www.imgtec.com/powervr/>.
++
++config DRM_POWERVR_ROGUE_DEBUG
++	bool "Enable PowerVR Rogue debug features"
++	depends on DRM_POWERVR_ROGUE
++	default n
++	help
++	  Add additional debug features to the PowerVR Rogue driver.
++	  To build a matching userspace, enable the following build options:
++	  BUILD=debug SUPPORT_PAGE_FAULT_DEBUG=1 PVRSRV_ENABLE_GPU_MEMORY_INFO=1
++
++config DRM_POWERVR_PDP
++	tristate "DRM Support for PowerVR PDP for Testchip"
++	depends on DRM
++	select DRM_KMS_HELPER
++	select DRM_POWERVR_APOLLO
++	help
++	  Choose this option if you have a PowerVR Apollo-based testchip.
++	  Containing a PDP.
++
++config DRM_POWERVR_APOLLO
++	tristate "PowerVR Apollo test chip support"
++	depends on X86
++	default n
+diff --git a/drivers/gpu/drm/img-rogue/Makefile b/drivers/gpu/drm/img-rogue/Makefile
+new file mode 100644
+index 000000000000..231f8e4a2223
+--- /dev/null
++++ b/drivers/gpu/drm/img-rogue/Makefile
+@@ -0,0 +1,18 @@
++-include $(srctree)/$(src)/config_kernel.mk
++
++obj-$(CONFIG_DRM_POWERVR_ROGUE) += pvrsrvkm.o
++
++subdir-ccflags-y := \
++ -I$(srctree)/$(src) \
++ -include config_kernel.h
++
++ccflags-y += \
++ -I$(srctree)/$(src)/apollo \
++ -I$(srctree)/$(src)/km \
++ -I$(srctree)/$(src)/system \
++ -D__linux__
++
++-include $(srctree)/$(src)/pvrsrvkm.mk
++
++obj-$(CONFIG_DRM_POWERVR_PDP) += pdp/
++obj-$(CONFIG_DRM_POWERVR_APOLLO) += apollo/
+diff --git a/drivers/gpu/drm/img-rogue/apollo/Makefile b/drivers/gpu/drm/img-rogue/apollo/Makefile
+new file mode 100644
+index 000000000000..8c27f0d286b6
+--- /dev/null
++++ b/drivers/gpu/drm/img-rogue/apollo/Makefile
+@@ -0,0 +1,2 @@
++obj-$(CONFIG_DRM_POWERVR_APOLLO) += apollo.o
++-include $(srctree)/$(src)/apollo.mk
+diff --git a/drivers/gpu/drm/img-rogue/pdp/Makefile b/drivers/gpu/drm/img-rogue/pdp/Makefile
+new file mode 100644
+index 000000000000..b09727edf9b6
+--- /dev/null
++++ b/drivers/gpu/drm/img-rogue/pdp/Makefile
+@@ -0,0 +1,2 @@
++obj-$(CONFIG_DRM_POWERVR_PDP) += drm_pdp.o
++-include $(srctree)/$(src)/drm_pdp.mk
+-- 
+2.43.2
+

@@ -170,11 +170,13 @@ struct sunxi_dmic {
 	struct platform_device *pdev;
 
 	struct sunxi_dmic_mem mem;
-	struct sunxi_dmic_clk_t *clk;
+	sunxi_dmic_clk_t *clk;
 	struct snd_sunxi_rglt *rglt;
 	struct sunxi_dmic_pinctl pin;
 	struct sunxi_dmic_dts dts;
 	struct sunxi_dma_params capture_dma_param;
+
+	enum SND_SUNXI_CLK_STATUS clk_sta;
 
 	/* debug */
 	char module_name[32];

@@ -17,7 +17,7 @@
 #ifndef _G2D_ROTATE_H
 #define _G2D_ROTATE_H
 #include <linux/types.h>
-#include <sunxi-g2d.h>
+#include <uapi/linux/sunxi-g2d.h>
 
 __s32 g2d_rotate_set_para(g2d_image_enh *src, g2d_image_enh *dst, __u32 flag);
 __s32 g2d_lbc_rot_set_para(g2d_lbc_rot *para);

@@ -53,6 +53,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "allocmem.h"
 #include <linux/atomic.h>
+#include <linux/version.h>
 
 #define OSLockCreateNoStats(phLock) ({ \
 	PVRSRV_ERROR e = PVRSRV_ERROR_OUT_OF_MEMORY; \
@@ -90,7 +91,7 @@ typedef unsigned long OS_SPINLOCK_FLAGS;
 #define OSAtomicWrite(pCounter, i)	atomic_set(pCounter, i)
 
 /* The following atomic operations, in addition to being SMP-safe, also
-   imply a memory barrier around the operation  */
+   imply a memory barrier around the operation */
 #define OSAtomicIncrement(pCounter) atomic_inc_return(pCounter)
 #define OSAtomicDecrement(pCounter) atomic_dec_return(pCounter)
 #define OSAtomicCompareExchange(pCounter, oldv, newv) atomic_cmpxchg(pCounter,oldv,newv)
@@ -114,7 +115,11 @@ static inline IMG_INT OSAtomicOr(ATOMIC_T *pCounter, IMG_INT iVal)
 }
 
 #define OSAtomicAdd(pCounter, incr) atomic_add_return(incr,pCounter)
-#define OSAtomicAddUnless(pCounter, incr, test) atomic_add_unless(pCounter, (incr), (test))
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
+#define OSAtomicAddUnless(pCounter, incr, test) atomic_fetch_add_unless(pCounter, (incr), (test))
+#else
+#define OSAtomicAddUnless(pCounter, incr, test) __atomic_add_unless(pCounter,incr,test)
+#endif
 
 #define OSAtomicSubtract(pCounter, incr) atomic_add_return(-(incr),pCounter)
 #define OSAtomicSubtractUnless(pCounter, incr, test) OSAtomicAddUnless(pCounter, -(incr), (test))
@@ -136,7 +141,7 @@ static inline IMG_INT OSAtomicOr(ATOMIC_T *pCounter, IMG_INT iVal)
  */ /**************************************************************************/
 IMG_INTERNAL
 PVRSRV_ERROR OSLockCreate(POS_LOCK *phLock);
-#if defined(INTEGRITY_OS)
+#if defined(INTEGRITY_OS) || defined(__QNXNTO__)
 #define OSLockCreateNoStats OSLockCreate
 #endif
 
@@ -149,7 +154,7 @@ PVRSRV_ERROR OSLockCreate(POS_LOCK *phLock);
 IMG_INTERNAL
 void OSLockDestroy(POS_LOCK hLock);
 
-#if defined(INTEGRITY_OS)
+#if defined(INTEGRITY_OS) || defined(__QNXNTO__)
 #define OSLockDestroyNoStats OSLockDestroy
 #endif
 /**************************************************************************/ /*!
@@ -280,7 +285,7 @@ IMG_INTERNAL
 void OSAtomicWrite(ATOMIC_T *pCounter, IMG_INT32 v);
 
 /* For the following atomic operations, in addition to being SMP-safe,
-   should also  have a memory barrier around each operation  */
+   should also  have a memory barrier around each operation */
 /*************************************************************************/ /*!
 @Function       OSAtomicIncrement
 @Description    Increment the value of a variable atomically.
@@ -428,4 +433,4 @@ typedef unsigned long OS_SPINLOCK_FLAGS;
 #endif /* defined(__linux__) */
 #endif /* defined(__linux__) && defined(__KERNEL__) */
 
-#endif	/* LOCK_H */
+#endif /* LOCK_H */

@@ -562,7 +562,7 @@ clk_set_retry:
 	}
 	mmc_writel(host, REG_CLKCR, rval);
 
-#ifndef CONFIG_ARCH_SUN20IW5
+#ifndef CONFIG_ARCH_SUN300IW1
 	rval = mmc_readl(host, REG_DRV_DL);
 	if (ios->clock > 400 * 1000) {
 		rval |= (1 << 7);

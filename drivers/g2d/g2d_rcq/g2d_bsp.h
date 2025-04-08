@@ -52,7 +52,7 @@
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
 #include <linux/string.h>
-#include <sunxi-g2d.h>
+#include <uapi/linux/sunxi-g2d.h>
 #include <linux/dma-buf.h>
 #include <linux/reset.h>
 

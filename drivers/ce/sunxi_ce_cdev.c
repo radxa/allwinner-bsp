@@ -30,6 +30,7 @@
 #include <linux/dmapool.h>
 
 #include "sunxi_ce_cdev.h"
+#include "v5/sunxi_ce_reg.h"
 
 #include <linux/of.h>
 #include <linux/of_irq.h>
@@ -60,6 +61,10 @@ void ce_reset(void)
 	SS_ENTER();
 	reset_control_assert(ce_cdev->reset);
 	reset_control_deassert(ce_cdev->reset);
+#ifdef CE_DBL_ENT_SRC_EN
+	/* TRNG double entropy should be enabled when ce is enabled */
+	ss_trng_dbl_ent_en();
+#endif
 }
 
 #if IS_ENABLED(CONFIG_AW_HWRNG_DRIVER)
@@ -97,7 +102,7 @@ static int sunxi_ce_res_request(sunxi_ce_cdev_t *p_cdev)
 		return ret;
 	}
 
-#ifdef CONFIG_OF
+#if IS_ENABLED(CONFIG_OF)
 	p_cdev->base_addr = of_iomap(pnode, SS_RES_INDEX);
 	if (p_cdev->base_addr == NULL) {
 		SS_ERR("Unable to remap IO\n");
@@ -154,8 +159,7 @@ static int sunxi_ce_hw_init(sunxi_ce_cdev_t *p_cdev)
 	/* get src clk reg */
 	p_cdev->pclk = of_clk_get_by_name(p_cdev->pnode, "clk_src");
 	if (IS_ERR_OR_NULL(p_cdev->pclk)) {
-		SS_ERR("Unable to get src clock\n");
-		return PTR_ERR(p_cdev->pclk);
+		pr_warn("Unable to get src clock\n");
 	}
 
 	/* get ce clk reg */
@@ -175,8 +179,7 @@ static int sunxi_ce_hw_init(sunxi_ce_cdev_t *p_cdev)
 	/* get mbus ce reg */
 	p_cdev->mbus_clk = of_clk_get_by_name(p_cdev->pnode, "mbus_ce");
 	if (IS_ERR_OR_NULL(p_cdev->mbus_clk)) {
-		SS_ERR("Fail to get bus clk\n");
-		return PTR_ERR(p_cdev->mbus_clk);
+		pr_warn("Fail to get bus clk\n");
 	}
 
 	/* get ce sys clk reg */
@@ -189,7 +192,7 @@ static int sunxi_ce_hw_init(sunxi_ce_cdev_t *p_cdev)
 	if (of_property_read_u32(p_cdev->pnode, "clock-frequency", &gen_clkrate)) {
 
 		SS_ERR("Unable to get clock-frequency.\n");
-		return -EINVAL;
+		/* return -EINVAL; */
 	}
 	SS_DBG("The clk freq: %d\n", gen_clkrate);
 #endif
@@ -205,8 +208,10 @@ static int sunxi_ce_hw_init(sunxi_ce_cdev_t *p_cdev)
 		return -EBUSY;
 	}
 
-	SS_DBG("SS mclk %luMHz, p_cdev->pclk %luMHz\n", clk_get_rate(p_cdev->ce_clk)/1000000,
-			clk_get_rate(p_cdev->pclk)/1000000);
+	if (!IS_ERR_OR_NULL(p_cdev->pclk)) {
+		SS_DBG("SS mclk %luMHz, p_cdev->pclk %luMHz\n", clk_get_rate(p_cdev->ce_clk)/1000000,
+				clk_get_rate(p_cdev->pclk)/1000000);
+	}
 
 	/* enable ce gating */
 	if (clk_prepare_enable(p_cdev->bus_clk)) {
@@ -221,9 +226,11 @@ static int sunxi_ce_hw_init(sunxi_ce_cdev_t *p_cdev)
 	}
 
 	/* enable ce mbus_clock */
-	if (clk_prepare_enable(p_cdev->mbus_clk)) {
-		SS_ERR("Couldn't enable ce mbus clock\n");
-		return -EBUSY;
+	if (!IS_ERR_OR_NULL(p_cdev->mbus_clk)) {
+		if (clk_prepare_enable(p_cdev->mbus_clk)) {
+			SS_ERR("Couldn't enable ce mbus clock\n");
+			return -EBUSY;
+		}
 	}
 
 	/* enable ce sys clk */
@@ -233,6 +240,11 @@ static int sunxi_ce_hw_init(sunxi_ce_cdev_t *p_cdev)
 	}
 
 	sunxi_ce_res_request(p_cdev);
+
+#ifdef CE_DBL_ENT_SRC_EN
+	/* TRNG double entropy should be enabled when ce is enabled */
+	ss_trng_dbl_ent_en();
+#endif
 
 	return 0;
 }
@@ -344,10 +356,10 @@ static void sunxi_ce_channel_free(int id)
 static int ce_release_resources(void *req_ctx, ulong cmd)
 {
 	crypto_aes_req_ctx_t *aes_req_ctx = (crypto_aes_req_ctx_t *)req_ctx;
-#ifdef SS_SUPPORT_CE_V5
-	crypto_rsa_req_ctx_t *rsa_req_ctx = (crypto_rsa_req_ctx_t *)req_ctx;
 	crypto_hash_req_ctx_t *hash_req_ctx = (crypto_hash_req_ctx_t *)req_ctx;
 	crypto_rng_req_ctx_t *rng_req_ctx = (crypto_rng_req_ctx_t *)req_ctx;
+#ifdef SS_SUPPORT_CE_V5
+	crypto_rsa_req_ctx_t *rsa_req_ctx = (crypto_rsa_req_ctx_t *)req_ctx;
 	crypto_ecc_req_ctx_t *ecc_req_ctx = (crypto_ecc_req_ctx_t *)req_ctx;
 #endif
 	switch (cmd) {
@@ -484,10 +496,10 @@ static int ioctl_aes_crypto(unsigned int cmd, unsigned long arg)
 		ce_release_resources((void *)aes_req_ctx, CE_IOC_AES_CRYPTO);
 		return ret;
 	}
-	usr_key_addr = (phys_addr_t)aes_req_ctx->key_buffer;
-	usr_dst_addr = (phys_addr_t)aes_req_ctx->dst_buffer;
+	usr_key_addr = (phys_addr_t)(uintptr_t)aes_req_ctx->key_buffer;
+	usr_dst_addr = (phys_addr_t)(uintptr_t)aes_req_ctx->dst_buffer;
 	SS_DBG("usr_key_addr = 0x%px usr_dst_addr = 0x%px\n",
-			(void *)usr_key_addr, (void *)usr_dst_addr);
+			(void *)(uintptr_t)usr_key_addr, (void *)(uintptr_t)usr_dst_addr);
 	ret = sunxi_copy_from_user(&aes_req_ctx->key_buffer, aes_req_ctx->key_length);
 	if (ret) {
 		SS_ERR("key_buffer copy_from_user fail\n");
@@ -506,6 +518,7 @@ static int ioctl_aes_crypto(unsigned int cmd, unsigned long arg)
 	if (aes_req_ctx->ion_flag) {
 		SS_DBG("src_phy = 0x%lx, dst_phy = 0x%lx\n", aes_req_ctx->src_phy, aes_req_ctx->dst_phy);
 	} else {
+		SS_DBG("aes do copy\n");
 		ret = sunxi_copy_from_user(&aes_req_ctx->src_buffer, aes_req_ctx->src_length);
 		if (ret) {
 			SS_ERR("src_buffer copy_from_user fail\n");
@@ -531,7 +544,7 @@ static int ioctl_aes_crypto(unsigned int cmd, unsigned long arg)
 
 	if (aes_req_ctx->ion_flag) {
 	} else {
-		ret = copy_to_user((u8 *)usr_dst_addr, aes_req_ctx->dst_buffer, aes_req_ctx->dst_length);
+		ret = copy_to_user((u8 *)(uintptr_t)usr_dst_addr, aes_req_ctx->dst_buffer, aes_req_ctx->dst_length);
 		if (ret) {
 			SS_ERR(" dst_buffer copy_from_user fail\n");
 			ce_release_resources((void *)aes_req_ctx, CE_IOC_AES_CRYPTO);
@@ -719,7 +732,7 @@ static int ioctl_hash_crypto(unsigned int cmd, unsigned long arg)
 		ce_release_resources((void *)hash_req_ctx, CE_IOC_HASH_CRYPTO);
 		return ret;
 	}
-	usr_dst_addr = (phys_addr_t)hash_req_ctx->dst_buffer;
+	usr_dst_addr = (phys_addr_t)(uintptr_t)hash_req_ctx->dst_buffer;
 	ret = sunxi_copy_from_user(&hash_req_ctx->dst_buffer,
 				   hash_req_ctx->dst_length);
 	if (ret) {
@@ -769,7 +782,7 @@ static int ioctl_hash_crypto(unsigned int cmd, unsigned long arg)
 		return ret;
 	}
 
-	ret = copy_to_user((u8 *)usr_dst_addr, hash_req_ctx->dst_buffer,
+	ret = copy_to_user((u8 *)(uintptr_t)usr_dst_addr, hash_req_ctx->dst_buffer,
 			   hash_req_ctx->dst_length);
 	if (ret) {
 		SS_ERR(" dst_buffer copy_from_user fail\n");
@@ -811,10 +824,10 @@ static int ioctl_rng_crypto(unsigned int cmd, unsigned long arg)
 		return ret;
 	}
 
-	usr_key_addr = (phys_addr_t)rng_req_ctx->key_buffer;
-	usr_dst_addr = (phys_addr_t)rng_req_ctx->dst_buffer;
+	usr_key_addr = (phys_addr_t)(uintptr_t)rng_req_ctx->key_buffer;
+	usr_dst_addr = (phys_addr_t)(uintptr_t)rng_req_ctx->dst_buffer;
 	SS_DBG("usr_key_addr = 0x%px usr_dst_addr = 0x%px\n",
-			(void *)usr_key_addr, (void *)usr_dst_addr);
+			(void *)(uintptr_t)usr_key_addr, (void *)(uintptr_t)usr_dst_addr);
 
 	ret = sunxi_copy_from_user(&rng_req_ctx->key_buffer, rng_req_ctx->key_length);
 	if (ret) {
@@ -839,7 +852,7 @@ static int ioctl_rng_crypto(unsigned int cmd, unsigned long arg)
 		return ret;
 	}
 
-	ret = copy_to_user((u8 *)usr_dst_addr, rng_req_ctx->dst_buffer, rng_req_ctx->dst_length);
+	ret = copy_to_user((u8 *)(uintptr_t)usr_dst_addr, rng_req_ctx->dst_buffer, rng_req_ctx->dst_length);
 	if (ret) {
 		SS_ERR(" dst_buffer copy_from_user fail\n");
 		ce_release_resources((void *)rng_req_ctx, CE_IOC_RNG_CRYPTO);
@@ -1003,15 +1016,16 @@ static int sunxi_ce_setup_cdev(void)
 	ce_cdev->pdevice = device_create(ce_cdev->pclass, NULL, ce_cdev->devid, NULL,
 						SUNXI_SS_DEV_NAME);
 
+#if defined(SS_SUPPORT_CE_V5)
 	/* init task_pool */
 	ce_cdev->task_pool = dma_pool_create("task_pool", ce_cdev->pdevice,
 			sizeof(struct ce_task_desc), 4, 0);
 	if (ce_cdev->task_pool == NULL)
 		return -ENOMEM;
-
+#endif
 #ifdef CONFIG_OF
 	ce_cdev->pdevice->dma_mask = &sunxi_ss_dma_mask;
-	ce_cdev->pdevice->coherent_dma_mask = DMA_BIT_MASK(32);
+	ce_cdev->pdevice->coherent_dma_mask = DMA_BIT_MASK(64);
 #endif
 	memcpy(ce_cdev->dev_name, SUNXI_SS_DEV_NAME, 3);
 
@@ -1027,16 +1041,17 @@ err0:
 
 static int sunxi_ce_exit_cdev(void)
 {
+	if (ce_cdev->task_pool)
+		dma_pool_destroy(ce_cdev->task_pool);
+
 	device_destroy(ce_cdev->pclass, ce_cdev->devid);
 	class_destroy(ce_cdev->pclass);
 
 	unregister_chrdev_region(ce_cdev->devid, 1);
 
 	cdev_del(ce_cdev->pcdev);
-	kfree(ce_cdev);
 
-	if (ce_cdev->task_pool)
-		dma_pool_destroy(ce_cdev->task_pool);
+	kfree(ce_cdev);
 
 	return 0;
 }
@@ -1055,18 +1070,26 @@ static int __init sunxi_ce_module_init(void)
 	ret = sunxi_ce_hw_init(ce_cdev);
 	if (ret < 0) {
 		SS_ERR("sunxi_ce_hw_init failed, return %d\n", ret);
-		return ret;
+		goto err0;
 	}
 
 #if IS_ENABLED(CONFIG_AW_HWRNG_DRIVER)
 	ret = sunxi_register_hwrng(ce_cdev);
 	if (ret < 0) {
 		SS_ERR("sunxi_register_hwrng failed, return %d\n", ret);
-		return ret;
+		goto err1;
 	}
 #endif
 
 	spin_lock_init(&ce_cdev->lock);
+	return ret;
+
+#if IS_ENABLED(CONFIG_AW_HWRNG_DRIVER)
+err1:
+	sunxi_ce_hw_exit();
+#endif
+err0:
+	sunxi_ce_exit_cdev();
 
 	return ret;
 }
@@ -1082,7 +1105,7 @@ module_init(sunxi_ce_module_init);
 module_exit(sunxi_ce_module_exit);
 
 MODULE_AUTHOR("mintow");
-MODULE_VERSION("1.1.0");
+MODULE_VERSION("1.1.6");
 MODULE_DESCRIPTION("SUNXI CE Controller Driver");
 MODULE_ALIAS("platform:"SUNXI_SS_DEV_NAME);
 MODULE_LICENSE("GPL");

@@ -28,8 +28,10 @@ struct de_sharp_handle {
 bool de_sharp_is_enabled(struct de_sharp_handle *hdl);
 struct de_sharp_handle *de_sharp_create(struct module_create_info *info);
 s32 de_sharp_set_size(struct de_sharp_handle *hdl, u32 width, u32 height);
+
+s32 de_sharp_set_demo_mode(struct de_sharp_handle *hdl, bool enable);
 s32 de_sharp_set_window(struct de_sharp_handle *hdl,
-		      u32 win_enable, u32 x, u32 y, u32 w, u32 h);
+		      u32 x, u32 y, u32 w, u32 h);
 s32 de_sharp_enable(struct de_sharp_handle *hdl, u32 en);
 void de_sharp_update_regs(struct de_sharp_handle *hdl);
 s32 de_sharp_dump_state(struct drm_printer *p, struct de_sharp_handle *hdl);

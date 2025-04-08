@@ -31,19 +31,22 @@
 #include <linux/ioctl.h>
 #include <linux/cdev.h>
 #include <linux/delay.h>
-
+#include <asm/uaccess.h>
+#include <linux/dma-mapping.h>
 /* support file operation */
 #include <linux/fs.h>
-#include <linux/uaccess.h>
 
 #include <asm/cacheflush.h>
 #include <asm/smp_plat.h>
 
-#include "sunxi_nsi.h"
+#include "sunxi-nsi.h"
 #include "sunxi_npd.h"
 
 static struct class *npd_class;
-
+static uint32_t PMU_STEP_VALUE;
+static uint32_t PMU_REG_STEP_VALUE;
+static unsigned long npd_num_value = 1;
+dma_addr_t dma_handle;
 /* support power manager API */
 #if IS_ENABLED(CONFIG_PM)
 static int sunxi_npd_suspend(struct device *dev)
@@ -136,19 +139,18 @@ static void sunxi_sample_period_set(uint32_t cycle)
 static void sunxi_sample_num_set(void)
 {
 	uint32_t val;
-
 	val = readl(sunxi_npd.base_addr + NPD_NUM_REG);
 	/* hardware will auto mult 16 */
-	val = 0x01;
+	val = npd_num_value;
 	writel(val, sunxi_npd.base_addr + NPD_NUM_REG);
-
 }
 
 static void sunxi_ddr_addr_set(void)
 {
 	uint32_t val;
 
-	val = virt_to_phys(sunxi_npd.ddr_addr);
+	/* val = virt_to_phys(sunxi_npd.ddr_addr); */
+	val = (uint32_t)dma_handle;
 	writel((val >> 2), sunxi_npd.base_addr + DDR_BASE_REG);
 
 }
@@ -160,6 +162,18 @@ static void sunxi_npd_enable(void)
 	val = 0x1;
 	writel(val, sunxi_npd.base_addr + NPD_EN_REG);
 
+}
+
+/*
+ * note: PMU_STEP_VALUE and PMU_REG_STEP_VALUE flow NDP spec
+ */
+static void sunxi_npd_read_pmu_step(void)
+{
+	PMU_STEP_VALUE = readl(sunxi_npd.base_addr + PMU_STEP_REG);
+	PMU_REG_STEP_VALUE = readl(sunxi_npd.base_addr + PMUREG_STEP_REG);
+
+	/* PMU_STEP_VALUE is word, mult 4 trans to byte */
+	PMU_STEP_VALUE = PMU_STEP_VALUE * 4;
 }
 
 static void sunxi_npd_init(void)
@@ -180,41 +194,53 @@ static void sunxi_npd_init(void)
 	sunxi_ddr_addr_set();
 	/* npd assert */
 	sunxi_npd_enable();
+	/* read pmu reg */
+	sunxi_npd_read_pmu_step();
 }
 
 static ssize_t npd_bandwidth_simple_show(struct device *dev,
 					 struct device_attribute *da, char *buf)
 {
-	unsigned long bread, bwrite, bandrw[PMU_MAX];
-	unsigned int i, total = 0;
+	unsigned long bread, bwrite, bandrw[PMU_MAX], total = 0;
+	unsigned int i, j;
 	unsigned int len = 0;
 	unsigned long flags = 0;
 	char bwbuf[16];
 	uint32_t ret;
+	static unsigned char npd_read_cnt = 1;
+
+	ret = readl(sunxi_npd.base_addr + NPD_EN_REG);
+	if (ret != 0) {
+		printk("npd sample not finished. %u \n", npd_read_cnt);
+	}
+
+	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
+
+	/* PMU_REG_STEP_VALUE: 0x40 ,PMU_STEP_VALUE: 0x180 */
+	for (j = 0; j < 16; j++) {
+		for (i = 0; i < PMU_MAX; i++) {
+			bread = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 2) + (4 * j) + (i * PMU_STEP_VALUE));
+			bwrite = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 3) + (4 * j) + (i * PMU_STEP_VALUE));
+			bandrw[i] = bread + bwrite;
+			total += bandrw[i];
+		}
+
+		for (i = 0; i < PMU_MAX; i++) {
+			len += sprintf(bwbuf, "%lu  ", bandrw[i]);
+			strcat(buf, bwbuf);
+		}
+
+		len += sprintf(bwbuf, "%lu  ", total);
+		strcat(buf, bwbuf);
+		total = 0;
+	}
+
+	spin_unlock_irqrestore(&sunxi_npd.bwlock, flags);
+	npd_read_cnt = npd_read_cnt + 1;
 
 	ret = readl(sunxi_npd.base_addr + NPD_EN_REG);
 	if (ret == 0)
 		sunxi_npd_init();
-
-	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
-
-
-	for (i = 0; i < PMU_MAX; i++) {
-		bread = readl(sunxi_npd.ddr_addr + (0x40 * 2) + (i * 0x180));
-		bwrite = readl(sunxi_npd.ddr_addr + (0x40 * 3) + (i * 0x180));
-		bandrw[i] = bread + bwrite;
-		total += bandrw[i];
-	}
-
-	for (i = 0; i < PMU_MAX; i++) {
-		len += sprintf(bwbuf, "%lu  ", bandrw[i] / 1024);
-		strcat(buf, bwbuf);
-	}
-
-	len += sprintf(bwbuf, "%u\n", total / 1024);
-	strcat(buf, bwbuf);
-
-	spin_unlock_irqrestore(&sunxi_npd.bwlock, flags);
 
 	return len;
 }
@@ -236,7 +262,7 @@ static ssize_t npd_read_bandwidth_show(struct device *dev,
 	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
 
 	for (i = 0; i < PMU_MAX; i++) {
-		bread = readl(sunxi_npd.ddr_addr + (0x40 * 2) + (i * 0x180));
+		bread = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 2) + (i * PMU_STEP_VALUE));
 		bandr[i] = bread;
 		total += bandr[i];
 	}
@@ -271,7 +297,7 @@ static ssize_t npd_write_bandwidth_show(struct device *dev,
 	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
 
 	for (i = 0; i < PMU_MAX; i++) {
-		bwrite = readl(sunxi_npd.ddr_addr + (0x40 * 3) + (i * 0x180));
+		bwrite = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 3) + (i * PMU_STEP_VALUE));
 		bandw[i] = bwrite;
 		total += bandw[i];
 	}
@@ -307,7 +333,7 @@ static ssize_t npd_write_delay_show(struct device *dev,
 	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
 
 	for (i = 0; i < PMU_MAX; i++) {
-		dwrite = readl(sunxi_npd.ddr_addr + (0x40 * 5) + (i * 0x180));
+		dwrite = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 5) + (i * PMU_STEP_VALUE));
 		drecord[i] = dwrite;
 		total += drecord[i];
 	}
@@ -343,7 +369,7 @@ static ssize_t npd_read_delay_show(struct device *dev,
 	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
 
 	for (i = 0; i < PMU_MAX; i++) {
-		dread = readl(sunxi_npd.ddr_addr + (0x40 * 4) + (i * 0x180));
+		dread = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 4) + (i * PMU_STEP_VALUE));
 		drecord[i] = dread;
 		total += drecord[i];
 	}
@@ -379,8 +405,8 @@ static ssize_t npd_write_inst_num_show(struct device *dev,
 	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
 
 	for (i = 0; i < PMU_MAX; i++) {
-		wlatency = readl(sunxi_npd.ddr_addr + (0x40 * 5) + (i * 0x180));
-		nwrite = readl(sunxi_npd.ddr_addr + (0x40 * 1) + (i * 0x180));
+		wlatency = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 5) + (i * PMU_STEP_VALUE));
+		nwrite = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 1) + (i * PMU_STEP_VALUE));
 		nrecord[i] = wlatency / nwrite;
 		total += nrecord[i];
 	}
@@ -418,8 +444,8 @@ static ssize_t npd_read_inst_num_show(struct device *dev,
 	spin_lock_irqsave(&sunxi_npd.bwlock, flags);
 
 	for (i = 0; i < PMU_MAX; i++) {
-		rlatency = readl(sunxi_npd.ddr_addr + (0x40 * 4) + (i * 0x180));
-		nread = readl(sunxi_npd.ddr_addr + (0x40 * 0) + (i * 0x180));
+		rlatency = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 4) + (i * PMU_STEP_VALUE));
+		nread = readl(sunxi_npd.ddr_addr + (PMU_REG_STEP_VALUE * 0) + (i * PMU_STEP_VALUE));
 		nrecord[i] = rlatency / nread;
 		total += nrecord[i];
 	}
@@ -481,7 +507,6 @@ ssize_t npd_period_store(struct device *dev,
 	printk("period: %lu, cycle: %lu", period, cycle);
 
 	sunxi_sample_period_set(cycle);
-
 	return count;
 }
 
@@ -575,6 +600,40 @@ err:
 
 */
 
+static ssize_t npd_num_write(struct device *dev, struct device_attribute *attr,
+			 const char *buf, size_t count)
+{
+	int ret = 0;
+	unsigned long npd_num_temp;
+
+	ret = kstrtoul(buf, 10, &npd_num_temp);
+
+	if (ret < 0) {
+		printk("kstrtoul error.\n");
+		return count;
+	}
+	npd_num_value = npd_num_temp;
+	sunxi_sample_num_set();
+
+	/* here init npd sample */
+	sunxi_npd_init();
+	printk("input npd_num_value %lu\n", npd_num_value);
+	return count;
+}
+
+static ssize_t npd_num_read(struct device *dev,
+			       struct device_attribute *da, char *buf)
+{
+	int len;
+	char databuf[32];
+
+	len = sprintf(databuf, "%u\n", readl(sunxi_npd.base_addr + NPD_NUM_REG));
+
+	strcat(buf, databuf);
+
+	return len;
+}
+
 static struct device_attribute dev_attr_npd_bandwidth =
 	__ATTR(npd_bandwidth, 0444, npd_bandwidth_simple_show, NULL);
 
@@ -605,6 +664,8 @@ static struct device_attribute dev_attr_npd_read_bandwidth =
 static struct device_attribute dev_attr_npd_write_bandwidth =
 	__ATTR(wbandwidth, 0444, npd_write_bandwidth_show, NULL);
 
+static struct device_attribute dev_attr_npd_num_write =
+	__ATTR(npd_num, 0644, npd_num_read, npd_num_write);
 
 /* static struct device_attribute dev_attr_npd_to_ternminal = */
 	/* __ATTR(copy, 0444, npd_to_terminal_show, NULL); */
@@ -621,7 +682,7 @@ static struct attribute *npd_attributes[] = {
 	&dev_attr_npd_write_instnum.attr,
 	&dev_attr_npd_read_bandwidth.attr,
 	&dev_attr_npd_write_bandwidth.attr,
-
+	&dev_attr_npd_num_write.attr,
 	/* &dev_attr_npd_to_ternminal.attr, */
 
 	NULL,
@@ -657,8 +718,9 @@ static int npd_probe(struct platform_device *pdev)
 
 	sunxi_npd.base_addr = ioremap(NPD_BASE_ADDR, 4);
 
-	ddr_addr = kmalloc(MEM_SIZE, GFP_KERNEL);
-	memset(ddr_addr, 0, MEM_SIZE);
+	/* ddr_addr = kmalloc(MEM_SIZE, GFP_KERNEL); */
+	ddr_addr = dma_alloc_coherent(dev, MEM_SIZE, &dma_handle, GFP_KERNEL);
+	/* memset(ddr_addr, 0, MEM_SIZE); */
 	sunxi_npd.ddr_addr = ddr_addr;
 
 	ahb_clk = devm_clk_get(&pdev->dev, "ahb");
@@ -686,7 +748,6 @@ static int npd_probe(struct platform_device *pdev)
 	}
 
 	sunxi_npd.ahb_clk = ahb_clk;
-	sunxi_npd.ahb_rate = AHB_RATE;
 
 	spin_lock_init(&sunxi_npd.bwlock);
 

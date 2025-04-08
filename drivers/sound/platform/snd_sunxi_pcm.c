@@ -19,8 +19,8 @@
 #include <sound/soc.h>
 #include <sound/dmaengine_pcm.h>
 
+#include "snd_sunxi_adapter.h"
 #include "snd_sunxi_pcm.h"
-#include "snd_sunxi_common.h"
 
 #define SUNXI_DMAENGINE_PCM_DRV_NAME	"sunxi_dmaengine_pcm"
 
@@ -102,28 +102,6 @@ union word {
 	} bits;
 	unsigned int wval;
 } wordformat;
-
-struct sunxi_pcm {
-	/* for hdmi audio */
-	enum HDMI_FORMAT hdmi_fmt;
-
-	/* runtime->buffer_size shuled *2 when pcm data is raw data */
-	snd_pcm_uframes_t buffer_size;
-	snd_pcm_uframes_t period_size;
-
-	/* when buffer_size and period_size *2 is true */
-	bool change_size_flag;
-
-	/* DMA area */
-	unsigned char *raw_dma_area;
-	dma_addr_t raw_dma_addr;
-	dma_addr_t pcm_dma_addr;
-};
-
-static struct sunxi_pcm g_pcm = {
-	.hdmi_fmt = HDMI_FMT_PCM,
-	.change_size_flag = false,
-};
 
 /* sunxi_transfer_format_61937_to_60958
  * ISO61937 to ISO60958, for HDMIAUDIO
@@ -245,297 +223,8 @@ static snd_pcm_uframes_t snd_dmaengine_pcm_pointer_raw(struct snd_pcm_substream 
 	return bytes_to_frames(runtime, pos);
 }
 
-int sunxi_pcm_open(struct snd_soc_component *component, struct snd_pcm_substream *substream)
-{
-	int ret = 0;
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct device *dev = component->dev;
-	struct sunxi_dma_params *dma_params = NULL;
-	struct dma_chan *chan;
-
-	SND_LOG_DEBUG("\n");
-
-	/* Set HW params now that initialization is complete */
-	dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd), substream);
-	sunxi_pcm_hardware.buffer_bytes_max = dma_params->cma_kbytes * SUNXI_AUDIO_CMA_BLOCK_BYTES;
-	sunxi_pcm_hardware.period_bytes_max = sunxi_pcm_hardware.buffer_bytes_max / 2;
-	sunxi_pcm_hardware.fifo_size	    = dma_params->fifo_size;
-	snd_soc_set_runtime_hwparams(substream, &sunxi_pcm_hardware);
-	ret = snd_pcm_hw_constraint_integer(substream->runtime, SNDRV_PCM_HW_PARAM_PERIODS);
-	if (ret < 0) {
-		SND_LOG_ERR("constraint_integer failed, err %d\n", ret);
-		return ret;
-	}
-
-	chan = dma_request_chan(dev, dmaengine_pcm_dma_channel_names[substream->stream]);
-	if (IS_ERR(chan)) {
-		SND_LOG_ERR("DMA channels request %s failed, err -> %d.\n",
-			    dmaengine_pcm_dma_channel_names[substream->stream],
-			    IS_ERR(chan));
-		return -EINVAL;
-	}
-
-	ret = snd_dmaengine_pcm_open(substream, chan);
-	if (ret < 0) {
-		SND_LOG_ERR("dmaengine pcm open failed with err %d\n", ret);
-		return ret;
-	}
-
-	return 0;
-}
-
-int sunxi_pcm_close(struct snd_soc_component *component, struct snd_pcm_substream *substream)
-{
-	SND_LOG_DEBUG("\n");
-
-	return snd_dmaengine_pcm_close_release_chan(substream);
-}
-
-int sunxi_pcm_ioctl(struct snd_soc_component *component,
-		    struct snd_pcm_substream *substream,
-		    unsigned int cmd, void *arg)
-{
-	SND_LOG_DEBUG("cmd -> %u\n", cmd);
-
-	return snd_pcm_lib_ioctl(substream, cmd, arg);
-}
-
-int sunxi_pcm_hw_params(struct snd_soc_component *component,
-			struct snd_pcm_substream *substream,
-			struct snd_pcm_hw_params *params)
-{
-	struct sunxi_dma_params *dma_params;
-	struct dma_slave_config slave_config;
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct device *dev = rtd->dev;
-	struct dma_chan *chan;
-	int ret;
-
-	SND_LOG_DEBUG("\n");
-
-	g_pcm.hdmi_fmt = snd_sunxi_hdmi_get_fmt();
-
-	SND_LOG_DEBUG("PCM data format -> %d\n", g_pcm.hdmi_fmt);
-
-	chan = snd_dmaengine_pcm_get_chan(substream);
-	if (chan == NULL) {
-		SND_LOG_ERR("dma pcm get chan failed! chan is NULL\n");
-		return -EINVAL;
-	}
-
-	dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd), substream);
-
-	ret = snd_hwparams_to_dma_slave_config(substream, params, &slave_config);
-	if (ret) {
-		SND_LOG_ERR("hw params config failed, err %d\n", ret);
-		return ret;
-	}
-
-	slave_config.dst_maxburst = dma_params->dst_maxburst;
-	slave_config.src_maxburst = dma_params->src_maxburst;
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		slave_config.dst_addr =	dma_params->dma_addr;
-		slave_config.src_addr_width = slave_config.dst_addr_width;
-	} else {
-		slave_config.src_addr =	dma_params->dma_addr;
-		slave_config.dst_addr_width = slave_config.src_addr_width;
-	}
-
-	if (g_pcm.hdmi_fmt > HDMI_FMT_PCM) {
-		slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-		slave_config.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-
-		if (!dev->dma_mask)
-			dev->dma_mask = &sunxi_pcm_mask;
-		if (!dev->coherent_dma_mask)
-			dev->coherent_dma_mask = 0xffffffff;
-
-		g_pcm.raw_dma_area = dma_alloc_coherent(dev, (params_buffer_bytes(params) * 2),
-							&(g_pcm.raw_dma_addr), GFP_KERNEL);
-		if (g_pcm.raw_dma_area == NULL) {
-			SND_LOG_ERR("pcm rawdata mode get mem failed\n");
-			return -ENOMEM;
-		}
-		g_pcm.pcm_dma_addr = substream->dma_buffer.addr;
-		substream->dma_buffer.addr = (dma_addr_t)(g_pcm.raw_dma_addr);
-	}
-
-	ret = dmaengine_slave_config(chan, &slave_config);
-	if (ret < 0) {
-		SND_LOG_ERR("dma slave config failed, err %d\n", ret);
-		return ret;
-	}
-
-	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
-
-	return 0;
-}
-
-int sunxi_pcm_hw_free(struct snd_soc_component *component, struct snd_pcm_substream *substream)
-{
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct device *dev = rtd->dev;
-
-	SND_LOG_DEBUG("\n");
-
-	if (snd_pcm_lib_buffer_bytes(substream) && (g_pcm.hdmi_fmt > HDMI_FMT_PCM)) {
-		dma_free_coherent(dev, (snd_pcm_lib_buffer_bytes(substream) * 2),
-				  g_pcm.raw_dma_area, g_pcm.raw_dma_addr);
-		substream->dma_buffer.addr = g_pcm.pcm_dma_addr;
-		g_pcm.raw_dma_area = NULL;
-	}
-
-	snd_pcm_set_runtime_buffer(substream, NULL);
-
-	return 0;
-}
-
-int sunxi_pcm_prepare(struct snd_soc_component *component,
-		      struct snd_pcm_substream *substream)
-{
-	struct snd_pcm_runtime *runtime = substream->runtime;
-
-	if (g_pcm.hdmi_fmt > HDMI_FMT_PCM) {
-		if (g_pcm.change_size_flag) {
-			runtime->buffer_size = g_pcm.buffer_size;
-			runtime->period_size = g_pcm.period_size;
-		} else {
-			g_pcm.change_size_flag = true;
-			runtime->buffer_size *= 2;
-			runtime->period_size *= 2;
-			g_pcm.buffer_size = runtime->buffer_size;
-			g_pcm.period_size = runtime->period_size;
-		}
-	} else {
-		if (g_pcm.change_size_flag) {
-			g_pcm.change_size_flag = false;
-			runtime->buffer_size = g_pcm.buffer_size / 2;
-			runtime->period_size = g_pcm.period_size / 2;
-		}
-	}
-
-	return 0;
-}
-
-int sunxi_pcm_trigger(struct snd_soc_component *component,
-		      struct snd_pcm_substream *substream,
-		      int cmd)
-{
-	struct snd_pcm_runtime *runtime = substream->runtime;
-
-	SND_LOG_DEBUG("cmd -> %d\n", cmd);
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		switch (cmd) {
-		case SNDRV_PCM_TRIGGER_START:
-		case SNDRV_PCM_TRIGGER_RESUME:
-		case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_START);
-			if (g_pcm.hdmi_fmt > HDMI_FMT_PCM) {
-				if (g_pcm.change_size_flag) {
-					g_pcm.change_size_flag = false;
-					runtime->buffer_size = g_pcm.buffer_size / 2;
-					runtime->period_size = g_pcm.period_size / 2;
-				}
-			}
-		break;
-		case SNDRV_PCM_TRIGGER_SUSPEND:
-		case SNDRV_PCM_TRIGGER_STOP:
-		case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
-			if (g_pcm.hdmi_fmt > HDMI_FMT_PCM) {
-				if (g_pcm.change_size_flag) {
-					g_pcm.change_size_flag = false;
-					runtime->buffer_size = g_pcm.buffer_size / 2;
-					runtime->period_size = g_pcm.period_size / 2;
-				}
-			}
-		break;
-		default:
-			SND_LOG_ERR("unsupport trigger -> %d\n", cmd);
-			return -1;
-		break;
-		}
-	} else {
-		switch (cmd) {
-		case SNDRV_PCM_TRIGGER_START:
-		case SNDRV_PCM_TRIGGER_RESUME:
-		case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_START);
-		break;
-		case SNDRV_PCM_TRIGGER_SUSPEND:
-		case SNDRV_PCM_TRIGGER_STOP:
-		case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
-		break;
-		default:
-			SND_LOG_ERR("unsupport trigger -> %d\n", cmd);
-			return -1;
-		break;
-		}
-	}
-
-	return 0;
-}
-
-snd_pcm_uframes_t sunxi_pcm_pointer(struct snd_soc_component *component,
-				    struct snd_pcm_substream *substream)
-{
-	if (g_pcm.hdmi_fmt > HDMI_FMT_PCM)
-		return snd_dmaengine_pcm_pointer_raw(substream);
-	else
-		return snd_dmaengine_pcm_pointer(substream);
-}
-
-int sunxi_pcm_mmap(struct snd_soc_component *component,
-		   struct snd_pcm_substream *substream,
-		   struct vm_area_struct *vma)
-{
-	SND_LOG_DEBUG("\n");
-
-	if (substream->runtime == NULL) {
-		SND_LOG_ERR("substream->runtime is null\n");
-		return -EFAULT;
-	}
-
-	return dma_mmap_wc(substream->pcm->card->dev, vma,
-			   substream->runtime->dma_area,
-			   substream->runtime->dma_addr,
-			   substream->runtime->dma_bytes);
-}
-
-int sunxi_pcm_copy(struct snd_soc_component *component,
-		   struct snd_pcm_substream *substream, int channel,
-		   unsigned long hwoff, void __user *buf,
-		   unsigned long bytes)
-{
-	int ret = 0;
-	char *hwbuf;
-	struct snd_pcm_runtime *runtime = substream->runtime;
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		hwbuf = runtime->dma_area + hwoff;
-		if (copy_from_user(hwbuf, buf, bytes))
-			return -EFAULT;
-
-		if (g_pcm.hdmi_fmt > HDMI_FMT_PCM) {
-			char *hdmihw_area = g_pcm.raw_dma_area + 2 * hwoff;
-			snd_sunxi_transfer_format_61937_to_60958(
-				(int *)hdmihw_area, (short *)hwbuf,
-				bytes, runtime->rate, g_pcm.hdmi_fmt);
-		}
-
-	} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
-		hwbuf = runtime->dma_area + hwoff;
-		if (copy_to_user(buf, hwbuf, bytes))
-			return -EFAULT;
-	}
-
-	return ret;
-}
-
-static int sunxi_pcm_preallocate_dma_buffer(struct snd_pcm *pcm, int stream, size_t buffer_bytes_max)
+static int sunxi_pcm_preallocate_dma_buffer(struct snd_pcm *pcm, int stream,
+					    size_t buffer_bytes_max)
 {
 	struct snd_dma_buffer *buf = NULL;
 	struct snd_pcm_str *streams = NULL;
@@ -600,19 +289,33 @@ static void sunxi_pcm_free_dma_buffer(struct snd_pcm *pcm, int stream)
 	buf->area = NULL;
 }
 
+int sunxi_pcm_probe(struct snd_soc_component *component)
+{
+	(void)component;
+
+	SND_LOG_DEBUG("\n");
+
+	return 0;
+}
+
+void sunxi_pcm_remove(struct snd_soc_component *component)
+{
+	(void)component;
+
+	SND_LOG_DEBUG("\n");
+}
+
 int sunxi_pcm_construct(struct snd_soc_component *component, struct snd_soc_pcm_runtime *rtd)
 {
 	int ret;
-
 	struct snd_pcm *pcm = rtd->pcm;
 	struct snd_card *card = rtd->card->snd_card;
 	struct snd_soc_dai_link *dai_link = rtd->dai_link;
+	size_t cma_bytes_play = SUNXI_AUDIO_CMA_BLOCK_BYTES;
+	size_t cma_bytes_cap  = SUNXI_AUDIO_CMA_BLOCK_BYTES;
 
-	struct snd_soc_dai *cpu_dai = sunxi_adpt_rtd_cpu_dai(rtd);
-	struct sunxi_dma_params *capture_dma_data  = cpu_dai->capture_dma_data;
-	struct sunxi_dma_params *playback_dma_data = cpu_dai->playback_dma_data;
-	size_t capture_cma_bytes  = SUNXI_AUDIO_CMA_BLOCK_BYTES;
-	size_t playback_cma_bytes = SUNXI_AUDIO_CMA_BLOCK_BYTES;
+	struct sunxi_dma_params *dma_params_play = NULL;
+	struct sunxi_dma_params *dma_params_cap = NULL;
 
 	SND_LOG_DEBUG("\n");
 
@@ -621,45 +324,70 @@ int sunxi_pcm_construct(struct snd_soc_component *component, struct snd_soc_pcm_
 	if (!card->dev->coherent_dma_mask)
 		card->dev->coherent_dma_mask = 0xffffffff;
 
-	if (!IS_ERR_OR_NULL(capture_dma_data))
-		capture_cma_bytes *= capture_dma_data->cma_kbytes;
-	if (!IS_ERR_OR_NULL(playback_dma_data))
-		playback_cma_bytes *= playback_dma_data->cma_kbytes;
+	dma_params_play = sunxi_adpt_dai_dma_data_get(sunxi_adpt_rtd_cpu_dai(rtd),
+						      SNDRV_PCM_STREAM_PLAYBACK);
 
-	if (dai_link->capture_only) {
-		ret = sunxi_pcm_preallocate_dma_buffer(pcm,
-				SNDRV_PCM_STREAM_CAPTURE, capture_cma_bytes);
-		if (ret) {
-			SND_LOG_ERR("pcm new capture failed, err=%d\n", ret);
-			return ret;
+	dma_params_cap = sunxi_adpt_dai_dma_data_get(sunxi_adpt_rtd_cpu_dai(rtd),
+						     SNDRV_PCM_STREAM_CAPTURE);
+
+	if (dai_link->playback_only) {
+		if (!IS_ERR_OR_NULL(dma_params_play)) {
+			cma_bytes_play *= dma_params_play->cma_kbytes;
+			if (dma_params_play->dma_buf_mode == 1) {
+				ret = sunxi_pcm_preallocate_dma_buffer(pcm,
+							SNDRV_PCM_STREAM_PLAYBACK, cma_bytes_play);
+				if (ret) {
+					SND_LOG_ERR("pcm new playback failed, err=%d\n", ret);
+					return ret;
+				}
+			}
+		} else {
+			SND_LOG_ERR("playback DMA params is NULL!\n");
+			return -ENODEV;
 		}
-	} else if (dai_link->playback_only) {
-		ret = sunxi_pcm_preallocate_dma_buffer(pcm,
-				SNDRV_PCM_STREAM_PLAYBACK, playback_cma_bytes);
-		if (ret) {
-			SND_LOG_ERR("pcm new playback failed, err=%d\n", ret);
-			return ret;
+	} else if (dai_link->capture_only) {
+		if (!IS_ERR_OR_NULL(dma_params_cap)) {
+			cma_bytes_cap *= dma_params_cap->cma_kbytes;
+			if (dma_params_cap->dma_buf_mode == 1) {
+				ret = sunxi_pcm_preallocate_dma_buffer(pcm,
+							SNDRV_PCM_STREAM_CAPTURE, cma_bytes_cap);
+				if (ret) {
+					SND_LOG_ERR("pcm new capture failed, err=%d\n", ret);
+					return ret;
+				}
+			}
+		} else {
+			SND_LOG_ERR("capture DMA params is NULL!\n");
+			return -ENODEV;
 		}
 	} else {
-		ret = sunxi_pcm_preallocate_dma_buffer(pcm,
-				SNDRV_PCM_STREAM_CAPTURE, capture_cma_bytes);
-		if (ret) {
-			SND_LOG_ERR("pcm new capture failed, err=%d\n", ret);
-			goto err_pcm_prealloc_capture_buffer;
-		}
-		ret = sunxi_pcm_preallocate_dma_buffer(pcm,
-				SNDRV_PCM_STREAM_PLAYBACK, playback_cma_bytes);
-		if (ret) {
-			SND_LOG_ERR("pcm new playback failed, err=%d\n", ret);
-			goto err_pcm_prealloc_playback_buffer;
+		if (!IS_ERR_OR_NULL(dma_params_play) && !IS_ERR_OR_NULL(dma_params_cap)) {
+			cma_bytes_play *= dma_params_play->cma_kbytes;
+			cma_bytes_cap *= dma_params_cap->cma_kbytes;
+
+			ret = sunxi_pcm_preallocate_dma_buffer(pcm,
+						SNDRV_PCM_STREAM_PLAYBACK, cma_bytes_play);
+			if (ret) {
+				SND_LOG_ERR("pcm new playback failed, err=%d\n", ret);
+				goto err_pcm_prealloc_playback_buffer;
+			}
+			ret = sunxi_pcm_preallocate_dma_buffer(pcm,
+						SNDRV_PCM_STREAM_CAPTURE, cma_bytes_cap);
+			if (ret) {
+				SND_LOG_ERR("pcm new capture failed, err=%d\n", ret);
+				goto err_pcm_prealloc_capture_buffer;
+			}
+		} else {
+			SND_LOG_ERR("playback or capture DMA params is NULL!\n");
+			return -ENODEV;
 		}
 	}
 
 	return 0;
 
-err_pcm_prealloc_playback_buffer:
-	sunxi_pcm_free_dma_buffer(pcm, SNDRV_PCM_STREAM_CAPTURE);
 err_pcm_prealloc_capture_buffer:
+	sunxi_pcm_free_dma_buffer(pcm, SNDRV_PCM_STREAM_PLAYBACK);
+err_pcm_prealloc_playback_buffer:
 	return ret;
 }
 
@@ -667,8 +395,359 @@ void sunxi_pcm_destruct(struct snd_soc_component *component, struct snd_pcm *pcm
 {
 	SND_LOG_DEBUG("\n");
 
-	sunxi_pcm_free_dma_buffer(pcm, stream);
+	for (stream = 0; stream < SNDRV_PCM_STREAM_LAST; stream++) {
+		sunxi_pcm_free_dma_buffer(pcm, stream);
+	}
+}
 
+int sunxi_pcm_open(struct snd_soc_component *component, struct snd_pcm_substream *substream)
+{
+	int ret = 0;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_pcm *pcm = rtd->pcm;
+	struct snd_card *card = rtd->card->snd_card;
+	struct device *dev = component->dev;
+	struct sunxi_dma_params *dma_params = NULL;
+	struct dma_chan *chan;
+	size_t cma_bytes  = SUNXI_AUDIO_CMA_BLOCK_BYTES;
+
+	SND_LOG_DEBUG("\n");
+
+	if (!card->dev->dma_mask)
+		card->dev->dma_mask = &sunxi_pcm_mask;
+	if (!card->dev->coherent_dma_mask)
+		card->dev->coherent_dma_mask = 0xffffffff;
+
+	dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd), substream);
+	if (!IS_ERR_OR_NULL(dma_params)) {
+		cma_bytes *= dma_params->cma_kbytes;
+		if (dma_params->dma_buf_mode == 0) {
+			ret = sunxi_pcm_preallocate_dma_buffer(pcm, substream->stream, cma_bytes);
+			if (ret) {
+				SND_LOG_ERR("%d pcm new failed, err=%d\n", substream->stream, ret);
+				return ret;
+			}
+		}
+	} else {
+		SND_LOG_ERR("DMA params is NULL!\n");
+		return -ENODEV;
+	}
+
+	/* Set HW params now that initialization is complete */
+	sunxi_pcm_hardware.buffer_bytes_max = dma_params->cma_kbytes * SUNXI_AUDIO_CMA_BLOCK_BYTES;
+	sunxi_pcm_hardware.period_bytes_max = sunxi_pcm_hardware.buffer_bytes_max / 2;
+	sunxi_pcm_hardware.fifo_size	    = dma_params->fifo_size;
+	snd_soc_set_runtime_hwparams(substream, &sunxi_pcm_hardware);
+	ret = snd_pcm_hw_constraint_integer(substream->runtime, SNDRV_PCM_HW_PARAM_PERIODS);
+	if (ret < 0) {
+		SND_LOG_ERR("constraint_integer failed, err %d\n", ret);
+		goto err_pcm_prealloc_buffer;
+	}
+
+	chan = dma_request_chan(dev, dmaengine_pcm_dma_channel_names[substream->stream]);
+	if (IS_ERR(chan)) {
+		SND_LOG_ERR("DMA channels request %s failed, err -> %d.\n",
+			    dmaengine_pcm_dma_channel_names[substream->stream],
+			    IS_ERR(chan));
+		goto err_pcm_prealloc_buffer;
+	}
+
+	ret = snd_dmaengine_pcm_open(substream, chan);
+	if (ret < 0) {
+		SND_LOG_ERR("dmaengine pcm open failed with err %d\n", ret);
+		goto err_pcm_prealloc_buffer;
+	}
+
+	/* In soc_pcm_open, set pin default state for each component, but in soc_pcm_close
+	 * set pin sleep state for the component which active is 0. Thost caused
+	 * playback selient or capture nodata if playback and capture at the same time.
+	 */
+	sunxi_adpt_runtime_action(component, 1);
+
+	return 0;
+
+err_pcm_prealloc_buffer:
+	sunxi_pcm_free_dma_buffer(pcm, substream->stream);
+	return -1;
+}
+
+int sunxi_pcm_close(struct snd_soc_component *component, struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_pcm *pcm = rtd->pcm;
+	struct sunxi_dma_params *dma_params = NULL;
+
+	SND_LOG_DEBUG("\n");
+
+	dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd), substream);
+
+	snd_dmaengine_pcm_close_release_chan(substream);
+
+	if (!IS_ERR_OR_NULL(dma_params)) {
+		if (dma_params->dma_buf_mode == 0)
+			sunxi_pcm_free_dma_buffer(pcm, substream->stream);
+	} else {
+		SND_LOG_ERR("DMA params is NULL!\n");
+	}
+
+	sunxi_adpt_runtime_action(component, -1);
+
+	return 0;
+}
+
+int sunxi_pcm_ioctl(struct snd_soc_component *component,
+		    struct snd_pcm_substream *substream,
+		    unsigned int cmd, void *arg)
+{
+	SND_LOG_DEBUG("cmd -> %u\n", cmd);
+
+	return snd_pcm_lib_ioctl(substream, cmd, arg);
+}
+
+int sunxi_pcm_hw_params(struct snd_soc_component *component,
+			struct snd_pcm_substream *substream,
+			struct snd_pcm_hw_params *params)
+{
+	struct sunxi_dma_params *dma_params;
+	struct dma_slave_config slave_config;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct device *dev = rtd->dev;
+	struct dma_chan *chan;
+	int ret;
+
+	SND_LOG_DEBUG("\n");
+
+	chan = snd_dmaengine_pcm_get_chan(substream);
+	if (chan == NULL) {
+		SND_LOG_ERR("dma pcm get chan failed! chan is NULL\n");
+		return -EINVAL;
+	}
+
+	dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd), substream);
+
+	ret = snd_hwparams_to_dma_slave_config(substream, params, &slave_config);
+	if (ret) {
+		SND_LOG_ERR("hw params config failed, err %d\n", ret);
+		return ret;
+	}
+
+	slave_config.dst_maxburst = dma_params->dst_maxburst;
+	slave_config.src_maxburst = dma_params->src_maxburst;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		slave_config.dst_addr =	dma_params->dma_addr;
+		slave_config.src_addr_width = slave_config.dst_addr_width;
+	} else {
+		slave_config.src_addr =	dma_params->dma_addr;
+		slave_config.dst_addr_width = slave_config.src_addr_width;
+	}
+
+	if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
+		slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+		slave_config.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+
+		if (!dev->dma_mask)
+			dev->dma_mask = &sunxi_pcm_mask;
+		if (!dev->coherent_dma_mask)
+			dev->coherent_dma_mask = 0xffffffff;
+
+		dma_params->raw_dma_area = dma_alloc_coherent(dev,
+							      (params_buffer_bytes(params) * 2),
+							      &(dma_params->raw_dma_addr),
+							      GFP_KERNEL);
+		if (dma_params->raw_dma_area == NULL) {
+			SND_LOG_ERR("pcm rawdata mode get mem failed\n");
+			return -ENOMEM;
+		}
+		dma_params->pcm_dma_addr = substream->dma_buffer.addr;
+		substream->dma_buffer.addr = (dma_addr_t)(dma_params->raw_dma_addr);
+	}
+
+	ret = dmaengine_slave_config(chan, &slave_config);
+	if (ret < 0) {
+		SND_LOG_ERR("dma slave config failed, err %d\n", ret);
+		return ret;
+	}
+
+	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
+
+	return 0;
+}
+
+int sunxi_pcm_hw_free(struct snd_soc_component *component, struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct device *dev = rtd->dev;
+	struct sunxi_dma_params *dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd),
+								       substream);
+
+	SND_LOG_DEBUG("\n");
+	if (snd_pcm_lib_buffer_bytes(substream) && dma_params->hdmi_fmt > HDMI_FMT_PCM) {
+		dma_free_coherent(dev, (snd_pcm_lib_buffer_bytes(substream) * 2),
+				  dma_params->raw_dma_area, dma_params->raw_dma_addr);
+		substream->dma_buffer.addr = dma_params->pcm_dma_addr;
+		dma_params->raw_dma_area = NULL;
+	}
+
+	snd_pcm_set_runtime_buffer(substream, NULL);
+
+	return 0;
+}
+
+int sunxi_pcm_prepare(struct snd_soc_component *component,
+		      struct snd_pcm_substream *substream)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct sunxi_dma_params *dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd),
+								       substream);
+
+	if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
+		if (dma_params->change_size_flag) {
+			runtime->buffer_size = dma_params->buffer_size;
+			runtime->period_size = dma_params->period_size;
+		} else {
+			dma_params->change_size_flag = true;
+			runtime->buffer_size *= 2;
+			runtime->period_size *= 2;
+			dma_params->buffer_size = runtime->buffer_size;
+			dma_params->period_size = runtime->period_size;
+		}
+	} else {
+		if (dma_params->change_size_flag) {
+			dma_params->change_size_flag = false;
+			runtime->buffer_size = dma_params->buffer_size / 2;
+			runtime->period_size = dma_params->period_size / 2;
+		}
+	}
+
+	return 0;
+}
+
+int sunxi_pcm_trigger(struct snd_soc_component *component,
+		      struct snd_pcm_substream *substream,
+		      int cmd)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct sunxi_dma_params *dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd),
+								       substream);
+
+	SND_LOG_DEBUG("cmd -> %d\n", cmd);
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		switch (cmd) {
+		case SNDRV_PCM_TRIGGER_START:
+		case SNDRV_PCM_TRIGGER_RESUME:
+		case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_START);
+			if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
+				if (dma_params->change_size_flag) {
+					dma_params->change_size_flag = false;
+					runtime->buffer_size = dma_params->buffer_size / 2;
+					runtime->period_size = dma_params->period_size / 2;
+				}
+			}
+		break;
+		case SNDRV_PCM_TRIGGER_SUSPEND:
+		case SNDRV_PCM_TRIGGER_STOP:
+		case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
+			if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
+				if (dma_params->change_size_flag) {
+					dma_params->change_size_flag = false;
+					runtime->buffer_size = dma_params->buffer_size / 2;
+					runtime->period_size = dma_params->period_size / 2;
+				}
+			}
+		break;
+		default:
+			SND_LOG_ERR("unsupport trigger -> %d\n", cmd);
+			return -1;
+		break;
+		}
+	} else {
+		switch (cmd) {
+		case SNDRV_PCM_TRIGGER_START:
+		case SNDRV_PCM_TRIGGER_RESUME:
+		case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_START);
+		break;
+		case SNDRV_PCM_TRIGGER_SUSPEND:
+		case SNDRV_PCM_TRIGGER_STOP:
+		case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+			snd_dmaengine_pcm_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
+		break;
+		default:
+			SND_LOG_ERR("unsupport trigger -> %d\n", cmd);
+			return -1;
+		break;
+		}
+	}
+
+	return 0;
+}
+
+snd_pcm_uframes_t sunxi_pcm_pointer(struct snd_soc_component *component,
+				    struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct sunxi_dma_params *dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd),
+								       substream);
+
+	if (dma_params->hdmi_fmt > HDMI_FMT_PCM)
+		return snd_dmaengine_pcm_pointer_raw(substream);
+	else
+		return snd_dmaengine_pcm_pointer(substream);
+}
+
+int sunxi_pcm_mmap(struct snd_soc_component *component,
+		   struct snd_pcm_substream *substream,
+		   struct vm_area_struct *vma)
+{
+	SND_LOG_DEBUG("\n");
+
+	if (substream->runtime == NULL) {
+		SND_LOG_ERR("substream->runtime is null\n");
+		return -EFAULT;
+	}
+
+	return dma_mmap_wc(substream->pcm->card->dev, vma,
+			   substream->runtime->dma_area,
+			   substream->runtime->dma_addr,
+			   substream->runtime->dma_bytes);
+}
+
+int sunxi_pcm_copy(struct snd_soc_component *component,
+		   struct snd_pcm_substream *substream, int channel,
+		   unsigned long hwoff, void __user *buf, unsigned long bytes)
+{
+	int ret = 0;
+	char *hwbuf;
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct sunxi_dma_params *dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd),
+								       substream);
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		hwbuf = runtime->dma_area + hwoff;
+		if (copy_from_user(hwbuf, buf, bytes))
+			return -EFAULT;
+
+		if (dma_params->hdmi_fmt > HDMI_FMT_PCM) {
+			char *hdmihw_area = dma_params->raw_dma_area + 2 * hwoff;
+			snd_sunxi_transfer_format_61937_to_60958(
+				(int *)hdmihw_area, (short *)hwbuf,
+				bytes, runtime->rate, dma_params->hdmi_fmt);
+		}
+
+	} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+		hwbuf = runtime->dma_area + hwoff;
+		if (copy_to_user(buf, hwbuf, bytes))
+			return -EFAULT;
+	}
+
+	return ret;
 }
 
 int snd_sunxi_dma_platform_register(struct device *dev)

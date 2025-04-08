@@ -14,7 +14,7 @@
  */
 
 #include "include.h"
-#include <sunxi-g2d.h>
+#include <uapi/linux/sunxi-g2d.h>
 
 #define ALIGN_16B(x) (((x) + (15)) & ~(15))
 

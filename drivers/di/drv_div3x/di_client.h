@@ -17,7 +17,7 @@
 #define _DI_CLIENT_H_
 
 #include "sunxi_di.h"
-#include "di_utils.h"
+#include "../common/di_utils.h"
 
 #include <linux/types.h>
 #include <linux/cdev.h>
@@ -138,7 +138,7 @@ struct di_client {
 	u64 progressive_detected_counts;
 	u64 lastest_progressive_detected_frame;
 	u64 progressive_detected_first_frame;
-
+	struct tnr_module_param_t tnr_pqpara;
 	/* dev_cdata must be at last!!! */
 	uintptr_t dev_cdata;
 };
@@ -201,6 +201,7 @@ struct di_client {
 	u64 progressive_detected_counts;
 	u64 lastest_progressive_detected_frame;
 	u64 progressive_detected_first_frame;
+	struct tnr_module_param_t tnr_pqpara;
 
 	/* dev_cdata must be at last!!! */
 	uintptr_t dev_cdata;
@@ -226,5 +227,6 @@ int di_client_set_fmd_enable(struct di_client *c, void *data);
 int di_client_process_fb(struct di_client *c, void *data);
 int di_client_get_tnrpara(struct di_client *c, void *data);
 int di_client_set_tnrpara(struct di_client *c, void *data);
+int di_client_set_mediaservice_id(struct di_client *c, void *data);
 
 #endif /* ifndef _DI_CLIENT_H_ */

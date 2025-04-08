@@ -21,151 +21,280 @@
  /* Notice: It's video engine driver API, Don't modify it in user space. */
 #ifndef _CEDAR_VE_H_
 #define _CEDAR_VE_H_
+#include <sunxi-log.h>
+#include <asm/io.h>
 #include <linux/types.h>
+#include <linux/cdev.h>
+#include <linux/wait.h>
+#include <linux/semaphore.h>
+#include <uapi/linux/cedar_ve_uapi.h>
+#include <asm/uaccess.h>
+#include "ve_mem_list.h"
 
-enum IOCTL_CMD {
-	IOCTL_UNKOWN = 0x100,
-	IOCTL_GET_ENV_INFO,
-	IOCTL_WAIT_VE_DE,
-	IOCTL_WAIT_VE_EN,
-	IOCTL_RESET_VE,
-	IOCTL_ENABLE_VE,
-	IOCTL_DISABLE_VE,
-	IOCTL_SET_VE_FREQ,
+#if IS_ENABLED(CONFIG_AW_LOG_VERBOSE)
+#define VE_LOGK(fmt, arg...) pr_info(fmt, ## arg)
+#define VE_LOGV(fmt, arg...)
+#define VE_LOGD(fmt, arg...) sunxi_debug(NULL, fmt, ## arg)
+#define VE_LOGI(fmt, arg...) sunxi_info(NULL,  fmt, ## arg)
+#define VE_LOGW(fmt, arg...) sunxi_warn(NULL,  fmt, ## arg)
+#define VE_LOGE(fmt, arg...) sunxi_err(NULL,   fmt, ## arg)
+#else
+#define VE_LOGK(fmt, arg...) pr_info(fmt, ##arg)
+#define VE_LOGV(fmt, arg...)
+#define VE_LOGD(fmt, arg...) sunxi_debug(NULL, "%d %s(): "fmt, __LINE__, __func__, ## arg)
+#define VE_LOGI(fmt, arg...) sunxi_info(NULL,  "%d %s(): "fmt, __LINE__, __func__, ## arg)
+#define VE_LOGW(fmt, arg...) sunxi_warn(NULL,  "%d %s(): "fmt, __LINE__, __func__, ## arg)
+#define VE_LOGE(fmt, arg...) sunxi_err(NULL,   "%d %s(): "fmt, __LINE__, __func__, ## arg)
+#endif
 
-	IOCTL_CONFIG_AVS2 = 0x200,
-	IOCTL_GETVALUE_AVS2,
-	IOCTL_PAUSE_AVS2,
-	IOCTL_START_AVS2,
-	IOCTL_RESET_AVS2,
-	IOCTL_ADJUST_AVS2,
-	IOCTL_ENGINE_REQ,
-	IOCTL_ENGINE_REL,
-	IOCTL_ENGINE_CHECK_DELAY,
-	IOCTL_GET_IC_VER,
-	IOCTL_ADJUST_AVS2_ABS,
-	IOCTL_FLUSH_CACHE,
-	IOCTL_SET_REFCOUNT,
-	IOCTL_FLUSH_CACHE_ALL,
-	IOCTL_TEST_VERSION,
+#define MAX_VE_DEBUG_INFO_NUM	(16)
 
-	IOCTL_GET_LOCK = 0x310,
-	IOCTL_RELEASE_LOCK,
+#define VE_LOCK_VDEC		0x01
+#define VE_LOCK_VENC		0x02
+#define VE_LOCK_JDEC		0x04
+#define VE_LOCK_00_REG		0x08
+#define VE_LOCK_04_REG		0x10
+#define VE_LOCK_ERR		0x80
+#define VE_LOCK_PROC_INFO	0x1000
 
-	IOCTL_SET_VOL = 0x400,
+typedef void ve_dbgfs_t;
 
-	IOCTL_WAIT_JPEG_DEC = 0x500,
-	/* for get the ve ref_count for ipc to delete the semphore */
-	IOCTL_GET_REFCOUNT,
-
-	/* for iommu */
-	IOCTL_GET_IOMMU_ADDR,
-	IOCTL_FREE_IOMMU_ADDR,
-
-	/* map/unmap dma buffer to get/free phyaddr by dma fd */
-	/* get/free iommu addr will not use since kernel 5.4  */
-	IOCTL_MAP_DMA_BUF,
-	IOCTL_UNMAP_DMA_BUF,
-
-	/* for fush cache range since kernel 5.4 */
-	IOCTL_FLUSH_CACHE_RANGE,
-
-	/* for debug */
-	IOCTL_SET_PROC_INFO,
-	IOCTL_STOP_PROC_INFO,
-	IOCTL_COPY_PROC_INFO,
-
-	IOCTL_SET_DRAM_HIGH_CHANNAL = 0x600,
-
-	/* debug for decoder and encoder */
-	IOCTL_PROC_INFO_COPY = 0x610,
-	IOCTL_PROC_INFO_STOP,
-
-	IOCTL_POWER_SETUP = 0x700,
-	IOCTL_POWER_SHUTDOWN,
-
-	IOCTL_GET_VE_DEFAULT_FREQ = 0x710, /* MHz */
-	IOCTL_UPDATE_CASE_LOAD_PARAM = 0x711,
+enum VE_MODULE {
+	/* ve normal: use to scene1 or scene2
+	 * scene1. enc&dec share iummu (when dual iommu must be use with VE_MODULE_1);
+	 * scene2. dec independ iommu (when dual iommu must be use with VE_MODULE_1);
+	 */
+	VE_MODULE_NORMAL = 0,
+	/* ve 1: cooperate VE_MODULE_NORMAL to enable second iommu when dual iommu. */
+	VE_MODULE_1,
+	/* ve 2: enc independ iommu. */
+	VE_MODULE_2,
 };
 
-#define VE_LOCK_VDEC        0x01
-#define VE_LOCK_VENC        0x02
-#define VE_LOCK_JDEC        0x04
-#define VE_LOCK_00_REG      0x08
-#define VE_LOCK_04_REG      0x10
-#define VE_LOCK_ERR         0x80
-
-#define VE_LOCK_PROC_INFO   0x1000
-
-struct cedarv_env_infomation {
-	unsigned int phymem_start;
-	int  phymem_total_size;
-	uint64_t  address_macc;
+struct debug_head_info {
+	unsigned int pid;
+	unsigned int tid;
+	unsigned int length;
 };
 
-struct dma_buf_param {
-	int				fd;       /* [in] */
-	unsigned int	phy_addr; /* [out] */
+struct ve_debug_info {
+	struct debug_head_info head_info;
+	char *data;
 };
 
-struct cache_range {
-	uint64_t	start;
-	uint64_t	end;
+struct iomap_para {
+	volatile char *regs_ve;
+	volatile char *regs_sys_cfg;
+	resource_size_t ve_reg_start;
+	volatile char *regs_csi0;
+	volatile char *regs_csi1;
+};
+
+enum VE_MODE {
+	VE_MODE_NULL = -1,
+	VE_MODE_ENCPP = 0,
+	VE_MODE_ENC,
+	VE_MODE_DE,
+	VE_MODE_VCUENC,
+	VE_MODE_VCUDEC,
+	VE_MODE_CNT,
 };
 
 struct ve_dvfs_info {
-	unsigned int	dvfs_index;
-	unsigned int	voltage; /* mv */
-	unsigned int    ve_freq; /* MHz */
+	unsigned int dvfs_index;
+	unsigned int voltage; /* mv */
+	unsigned int ve_freq; /* MHz */
 };
 
-#define SUN55IW3_CHIP_ID_A523M (0x5200)
-
-#define SUN55IW3_DVFS_VE_VF0   (0x00)
-#define SUN55IW3_DVFS_VE_VF1   (0x01)
-#define SUN55IW3_DVFS_VE_VF2   (0x02)
-#define SUN55IW3_DVFS_VE_VF2_1 (0x12)
-#define SUN55IW3_DVFS_VE_VF3   (0x04)
-#define SUN55IW3_DVFS_VE_VF3_1 (0x14)
-#define SUN55IW3_DVFS_VE_VF4   (0x05)
-#define SUN55IW3_DVFS_VE_VF5   (0x06)
-
-struct ve_dvfs_info ve_dvfs_sun55iw3[] = {
-	/*      dvfs-index      vol-mv  freq-MHz */
-	{0x00,                      0,   498}, /* default */
-	{SUN55IW3_DVFS_VE_VF0,    900,   498}, /* VF0 */
-	{SUN55IW3_DVFS_VE_VF1,    920,   520}, /* VF1 */
-	{SUN55IW3_DVFS_VE_VF2,    920,   520}, /* VF2 */
-	{SUN55IW3_DVFS_VE_VF2_1,  920,   520}, /* VF2_1 */
-	{SUN55IW3_DVFS_VE_VF3,	  920,   520}, /* VF3 */
-	{SUN55IW3_DVFS_VE_VF3_1,  920,   520}, /* VF3_1 */
-	{SUN55IW3_DVFS_VE_VF4,	  920,   576}, /* VF4 */
-	{SUN55IW3_DVFS_VE_VF5,	  920,   432}, /* VF5 */
+struct ve_dvfs_attr {
+	unsigned int default_freq;
+	unsigned int dvfs_array_num;
+	struct ve_dvfs_info *dvfs_array;
 };
 
-enum VE_CODEC_FORMAT {
-
-	VE_FORMAT_UNKNOW         = 0,
-	VE_DECODER_FORMAT_MIN    = 1,
-	VE_DECODER_FORMAT_H264,
-	VE_DECODER_FORMAT_H265,
-	VE_DECODER_FORMAT_VP9,
-	VE_DECODER_FORMAT_OTHER,
-	VE_DECODER_FORMAT_MAX = 0x100,
-
-	VE_ENCODER_FORMAT_MIN  = 0x101,
-	VE_ENCODER_FORMAT_H264,
-	VE_ENCODER_FORMAT_H265,
-	VE_ENCODER_FORMAT_JPEG,
+struct ve_case_load_info {
+	struct ve_case_load_param load_param;
+	int is_used;
+	u32 process_channel_id;
 };
 
-struct ve_case_load_param {
-	int width;
-	int height;
-	int frame_rate;
-	int codec_format;
-	int is_remove_cur_param;
-	int thread_channel_id;
+struct ve_performat_info {
+	unsigned int codec_formmat;
+	unsigned int level_performance;
+	unsigned int start_pixels;
+	unsigned int end_pixels;
+	unsigned int ve_freq;
 };
+
+struct cedar_ve_quirks {
+	enum VE_MODULE ve_mod;
+	char *class_name;
+	char *dev_name;
+
+	void *priv;	/* struct cedar_dev */
+};
+
+struct cedar_dev {
+	/* device */
+	dev_t ve_dev;
+	struct cdev cdev;		/* char device struct */
+	struct device *dev;		/* ptr to class device struct */
+	struct class *class;		/* class for auto create device node */
+	struct device *plat_dev;	/* ptr to class device struct */
+	const struct cedar_ve_quirks *quirks;
+
+	struct semaphore sem;		/* mutual exclusion semaphore */
+	spinlock_t lock;
+	wait_queue_head_t wq;		/* wait queue for poll ops */
+
+	struct iomap_para iomap_addrs;	/* io remap addrs */
+
+	u32 irq;			/* cedar video engine irq number */
+	u32 de_irq_flag;		/* flag of video decoder engine irq generated */
+	u32 de_irq_value;		/* value of video decoder engine irq */
+	u32 en_irq_flag;		/* flag of video encoder engine irq generated */
+	u32 en_irq_value;		/* value of video encoder engine irq */
+	u32 irq_has_enable;
+	int ref_count;
+	int last_min_freq;
+
+	u32 jpeg_irq_flag;		/* flag of video jpeg dec irq generated */
+	u32 jpeg_irq_value;		/* value of video jpeg dec  irq */
+
+	struct mutex lock_vdec;
+	struct mutex lock_jdec;
+	struct mutex lock_venc;
+	struct mutex lock_00_reg;
+	struct mutex lock_04_reg;
+	struct aw_mem_list_head list;	/* buffer list */
+	struct mutex lock_mem;
+	unsigned char bMemDevAttachFlag;
+	struct ve_debug_info debug_info[MAX_VE_DEBUG_INFO_NUM];
+	int debug_info_cur_index;
+	struct mutex lock_debug_info;
+
+	/* clk */
+	struct reset_control *reset;
+	struct clk *ve_clk;
+#if IS_ENABLED(CONFIG_ARCH_SUN50IW12P1)
+	struct reset_control *reset_ve;
+	struct clk *bus_ve3_clk;
+	struct clk *bus_ve_clk;
+	struct clk *mbus_ve3_clk;
+#else
+	struct clk *mbus_clk;
+	struct clk *bus_clk;
+#if IS_ENABLED(CONFIG_ARCH_SUN300IW1P1)
+	struct clk *sbus_clk;
+	struct clk *hbus_clk;
+	struct clk *pll_clk;
+#endif
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	/* enable : dereset->ahb_gate->mbus_gate->mbus_clk->bus_clk->ve_clk
+	 * disable: ve_clk->bus_clk->mbus_clk->mbus_gate->ahb_gate->reset
+	 * setrate: {disable}ve_clk->bus_clk->mbus_clk->mbus_gate->ahb_gate->
+	 *          set ve_clk rate ->
+	 *          {enable }ahb_gate->mbus_gate->mbus_clk->bus_clk->ve_clk
+	 */
+	struct clk *pll_ve;
+	struct clk *ahb_gate;
+	struct clk *mbus_gate;
+#endif
+#endif
+	int clk_status;
+	/* clk end */
+
+	/* dvfs */
+	struct ve_dvfs_attr dvfs_attr;
+	unsigned int case_load_channels;
+	struct ve_case_load_info *load_infos;
+	unsigned int performat_max_freq;
+	unsigned int performat_num;
+	struct ve_performat_info *performat_infos;
+
+	struct dentry *dvfs_root;
+
+	struct regulator *regulator;
+	int voltage;			/* mv */
+
+	int user_setting_ve_freq;	/* MHz */
+	int ve_freq_setup_by_dts_config;
+	/* dvfs ned */
+
+	int bInitEndFlag;
+
+	enum VE_MODE ve_mode;
+	u32 vcuenc_irq_flag;			/* flag of vcu of encoder engine irq generated */
+	u32 vcudec_irq_flag;
+	u32 vcuenc_csi_irq_flag;
+	u32 irq_cnt;
+
+	u32 ve_top_reg_offset;
+
+	u32 process_channel_id_cnt;
+	wait_queue_head_t wait_ve;
+	struct regulator *regu;
+	ve_dbgfs_t *dbgfs;
+};
+
+struct ve_info { /* each object will bind a new file handler */
+	struct cedar_dev *cedar_devp;
+
+	unsigned int set_vol_flag;
+
+	struct mutex lock_flag_io;
+	u32 lock_flags; /* if flags is 0, means unlock status */
+	u32 process_channel_id;
+};
+
+static inline long data_to_kernel(void *dst, void *src, unsigned int size, unsigned int from_kernel)
+{
+	if (from_kernel) {
+		memcpy(dst, src, size);
+	} else {
+		if (copy_from_user(dst, (void __user *)src, size)) {
+			VE_LOGW("IOCTL_GET_VE_DEFAULT_FREQ copy_from_user fail\n");
+			return -EFAULT;
+		}
+	}
+	return 0;
+}
+
+static inline long data_to_other(void *dst, void *src, unsigned int size, unsigned int from_kernel)
+{
+	if (from_kernel) {
+		memcpy(dst, src, size);
+	} else {
+		if (copy_to_user((void __user *)dst, src, size)) {
+			VE_LOGE("ve get iommu copy_to_user error\n");
+			return -EFAULT;
+		}
+	}
+	return 0;
+}
+
+/*** for rt media only begain ***/
+void *rt_cedardev_open(const char *dev_name);	/* e.g. "cedar_dev", "cedar_dev_ve2" */
+void *rt_cedardev_mmap(void *info_handle);
+int rt_cedardev_release(void *info_handle);
+int rt_cedardev_ioctl(void *info_handle, unsigned int cmd, unsigned long arg);
+/*** for rt media only end    ***/
+
+/*** pltform code new struct definition begain ***/
+int resource_iomap_init(struct device_node *node, struct iomap_para *iomap_addrs);
+void ve_irq_work(struct cedar_dev *cedar_devp);
+int ve_dvfs_get_attr(struct cedar_dev *cedar_devp);
+int ioctl_flush_cache_range(unsigned long arg, uint8_t user, struct cedar_dev *cedar_devp);
+int ioctl_get_csi_online_related_info(unsigned long arg, uint8_t from_kernel, struct cedar_dev *cedar_devp);
+
+/* debug */
+ve_dbgfs_t *ve_debug_register_driver(struct cedar_dev *cedar_devp);
+void ve_debug_unregister_driver(ve_dbgfs_t *dbgfs);
+void ve_debug_open(ve_dbgfs_t *dbgfs, struct ve_info *vi);
+void ve_debug_release(ve_dbgfs_t *dbgfs, struct ve_info *vi);
+int ioctl_set_proc_info(ve_dbgfs_t *dbgfs, unsigned long arg, struct ve_info *vi);
+int ioctl_copy_proc_info(ve_dbgfs_t *dbgfs, unsigned long arg, struct ve_info *vi);
+int ioctl_stop_proc_info(ve_dbgfs_t *dbgfs, unsigned long arg, struct ve_info *vi);
+/*** pltform code new struct definition end    ***/
 
 #endif

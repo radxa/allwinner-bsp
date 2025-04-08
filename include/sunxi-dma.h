@@ -24,6 +24,7 @@ typedef void (*sunxi_dma_timeout_callback)(void *param);
 struct sunxi_dma_desc {
 	bool is_bmode;
 	bool is_timeout;
+	bool byte_per_pkg;
 	unsigned timeout_steps; /* the steps is the time for channel timer,the max is 511,1 step = 20.48us */
 	unsigned timeout_fun; /* the fun is used to set the timout interrupt peding fun,0x01 is pause,0x10 is end,0x11 is next descrp */
 	sunxi_dma_timeout_callback callback;

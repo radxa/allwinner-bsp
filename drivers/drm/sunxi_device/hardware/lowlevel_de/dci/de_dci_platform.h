@@ -10,8 +10,8 @@
  * warranty of any kind, whether express or implied.
  */
 
-#ifndef _DE_SNR_PLATFORM_H_
-#define _DE_SNR_PLATFORM_H_
+#ifndef _DE_DCI_PLATFORM_H_
+#define _DE_DCI_PLATFORM_H_
 
 #include "de_base.h"
 

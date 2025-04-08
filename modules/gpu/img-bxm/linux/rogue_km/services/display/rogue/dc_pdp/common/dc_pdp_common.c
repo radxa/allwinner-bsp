@@ -512,7 +512,7 @@ static void FlipConfigQueueProcess(DCPDP_FLIP_CONTEXT *psContext, IMG_BOOL bFlip
 					psContext->hConfigDataToRetire = psFlipConfig->hConfigData;
 
 					/* Reset the flip config data */
-					psFlipConfig->hConfigData	= 0;
+					psFlipConfig->hConfigData	= NULL;
 					psFlipConfig->psBuffer		= NULL;
 					psFlipConfig->ui32DisplayPeriod	= 0;
 					psFlipConfig->eStatus		= DCPDP_FLIP_CONFIG_INACTIVE;
@@ -1014,7 +1014,7 @@ static PVRSRV_ERROR DCPDPBufferAlloc(IMG_HANDLE hDisplayContext,
 	}
 
 	/* Make sure we get a buffer with the size that we're expecting (this should be page aligned) */
-	DC_ASSERT((IMG_UINT32)DC_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height, DC_OSGetPageSize()) <= psDeviceData->ui32BufferSize);
+	DC_ASSERT((IMG_UINT32)PVR_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height, DC_OSGetPageSize()) <= psDeviceData->ui32BufferSize);
 
 	*puiLog2PageSize	= DC_OSGetPageShift();
 	*pui32PageCount		= psBuffer->ui32SizeInPages;
@@ -1330,7 +1330,7 @@ static PVRSRV_ERROR InitSystemBuffer(DCPDP_DEVICE *psDeviceData)
 	}
 
 	/* Make sure we get a buffer with the size that we're expecting (this should be page aligned) */
-	DC_ASSERT((IMG_UINT32) DC_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height,
+	DC_ASSERT((IMG_UINT32) PVR_ALIGN(psBuffer->ui32ByteStride * psBuffer->ui32Height,
 	          DC_OSGetPageSize()) <= psDeviceData->ui32BufferSize);
 
 	/* Initialise the system buffer to a nice gradient. */
@@ -1369,40 +1369,14 @@ static void DeInitSystemBuffer(DCPDP_DEVICE *psDeviceData)
 static void GTFCalcFromRefresh(IMG_UINT32 ui32Width, IMG_UINT32 ui32Height,
 			       IMG_UINT32 ui32VRefresh, DCPDP_TIMING_DATA *psTimingData)
 {
-	double fVtFreq, fHzFreq;
-	double fFieldPeriod, fHzPeriod, fVtFreqEst, fDutyCycle, fClockFreq;
+	double fVtFreq, fVtFreqEst;
+	double fFieldPeriod, fHzPeriod, fDutyCycle, fClockFreq;
 	double fGTF_Mdash, fGTF_Cdash;
 	unsigned long ulVTotal, ulHTotal;
-	unsigned long ulVSyncBP, ulVBP;
-	unsigned long ulHSyncWidth, ulHFrontPorch, ulHBlank;
-	unsigned long ulVSyncMin;
+	unsigned long ulVSyncBP, ulHSyncWidth;
+	unsigned long ulHFrontPorch, ulHBlank;
 
 	DC_OSFloatingPointBegin();
-
-	if ((ui32Width * 3UL) == (ui32Height * 4UL))
-	{
-		ulVSyncMin = 4;
-	}
-	else if ((ui32Width * 9UL) == (ui32Height * 16UL))
-	{
-		ulVSyncMin = 5;
-	}
-	else if ((ui32Width * 10UL) == (ui32Height * 16UL))
-	{
-		ulVSyncMin = 6;
-	}
-	else if ((ui32Width * 4UL) == (ui32Height * 5UL))
-	{
-		ulVSyncMin = 7;
-	}
-	else if ((ui32Width * 9UL) == (ui32Height * 15UL))
-	{
-		ulVSyncMin = 7;
-	}
-	else
-	{
-		ulVSyncMin = GTF_VSYNC_WIDTH;
-	}
 
 	fGTF_Mdash = (fGTF_K * fGTF_M) / 256.0;
 	fGTF_Cdash = (((fGTF_C - fGTF_J) * fGTF_K) / 256) + fGTF_J;
@@ -1428,7 +1402,6 @@ static void GTFCalcFromRefresh(IMG_UINT32 ui32Width, IMG_UINT32 ui32Height,
 
 	ulVSyncBP = (unsigned long)(fGTF_MIN_VSYNCBP / fHzPeriod);
 
-	ulVBP = ulVSyncBP - ulVSyncMin;
 	ulVTotal = ui32Height + ulVSyncBP + GTF_MIN_PORCH;
 
 	/* Estimate Vt frequency (in Hz) */
@@ -1450,7 +1423,6 @@ static void GTFCalcFromRefresh(IMG_UINT32 ui32Width, IMG_UINT32 ui32Height,
 	/* Find HTotal & pixel clock(MHz) & Hz Frequency (KHz) */
 	ulHTotal = ui32Width + ulHBlank;
 	fClockFreq = (double)ulHTotal / fHzPeriod;
-	fHzFreq = 1000.0f / fHzPeriod;
 
 	ulHSyncWidth = (unsigned long)(((ulHTotal * fGTF_HSYNC_MARGIN) / (100.0 * fGTF_CELL_GRAN)) + 0.5);
 	ulHSyncWidth *= GTF_CELL_GRAN;
@@ -1507,7 +1479,7 @@ PVRSRV_ERROR DCPDPInit(DCPDP_DEVICE_PRIV *psDevicePriv,
 
 	DC_OSSetDrvName(DRVNAME);
 
-	/* Request 0th device node as this module only supports systems with 1 GPU device  */
+	/* Request 0th device node as this module only supports systems with 1 GPU device */
 	psDevNode = psPVRServicesFuncs->pfnGetDeviceInstance(0);
 	PVR_RETURN_IF_INVALID_PARAM(psDevNode != NULL);
 
@@ -1525,9 +1497,9 @@ PVRSRV_ERROR DCPDPInit(DCPDP_DEVICE_PRIV *psDevicePriv,
 	/* Services manages the card memory so we need to acquire the Local Memory heap and display controller
 	   heap (which is a carve out of the card memory) so we can allocate our own buffers.
 	 */
-	eError = psDeviceData->psPVRServicesFuncs->pfnPhysHeapAcquireByUsage((1 << psDevNode->psDevConfig->eDefaultHeap),
-																		 psDevNode,
-																		 &psLMAPhysHeap);
+	eError = psDeviceData->psPVRServicesFuncs->pfnPhysHeapAcquireByID(PVRSRV_PHYS_HEAP_DEFAULT,
+																		psDevNode,
+																		&psLMAPhysHeap);
 	if (eError != PVRSRV_OK)
 	{
 		DC_OSDebugPrintf(DBGLVL_ERROR, " - %s: Failed to acquire Local memory heap (%s)\n",
@@ -1557,9 +1529,9 @@ PVRSRV_ERROR DCPDPInit(DCPDP_DEVICE_PRIV *psDevicePriv,
 	DC_OSDebugPrintf(DBGLVL_DEBUG, " LMA Phys Heap Base: 0x%pX\n",
 	                 psDeviceData->sLMACPUPhysBaseAddr.uiAddr);
 
-	eError = psDeviceData->psPVRServicesFuncs->pfnPhysHeapAcquireByUsage(PHYS_HEAP_USAGE_DISPLAY,
-																		 psDevNode,
-																		 &psDeviceData->psPhysHeap);
+	eError = psDeviceData->psPVRServicesFuncs->pfnPhysHeapAcquireByID(PVRSRV_PHYS_HEAP_DISPLAY,
+																		psDevNode,
+																		&psDeviceData->psPhysHeap);
 	if (eError != PVRSRV_OK)
 	{
 		DC_OSDebugPrintf(DBGLVL_ERROR, " - %s: Failed to acquire heap (%s)\n",
@@ -1677,7 +1649,7 @@ PVRSRV_ERROR DCPDPInit(DCPDP_DEVICE_PRIV *psDevicePriv,
 #endif /* defined(DCPDP_DYNAMIC_GTF_TIMING) */
 
 	/* Setup simple buffer allocator */
-	psDeviceData->ui32BufferSize = (IMG_UINT32)DC_ALIGN(psDeviceData->pasTimingData[psDeviceData->uiTimingDataSize - 1].ui32HDisplay *
+	psDeviceData->ui32BufferSize = (IMG_UINT32)PVR_ALIGN(psDeviceData->pasTimingData[psDeviceData->uiTimingDataSize - 1].ui32HDisplay *
 							    psDeviceData->pasTimingData[psDeviceData->uiTimingDataSize - 1].ui32VDisplay *
 							    DCPDP_PIXEL_FORMAT_BPP,
 							    DC_OSGetPageSize());

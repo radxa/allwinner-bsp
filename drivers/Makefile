@@ -18,6 +18,7 @@ obj-y += aw_trace/
 
 # Storage
 obj-y += mmc/
+obj-y += ufs/
 obj-y += mtd/
 obj-y += redeposit/
 

@@ -258,62 +258,62 @@ static bool di_client_workmode_is_change(struct di_client *c,
 
 static void di_dump_fb_arg(struct di_process_fb_arg *arg)
 {
-	DI_INFO("is_interlace:%u field_prder:%u\n", arg->is_interlace, arg->field_order);
-	DI_INFO("SIZE:(%ux%u) format:%u\n", arg->size.width, arg->size.height, arg->pixel_format);
-	DI_INFO("DIMODE:%u output_mode:%u\n", arg->di_mode, arg->output_mode);
-	DI_INFO("tnr:mode:%u level:%u\n", arg->tnr_mode.mode, arg->tnr_mode.level);
+	DI_DEBUG("is_interlace:%u field_prder:%u\n", arg->is_interlace, arg->field_order);
+	DI_DEBUG("SIZE:(%ux%u) format:%u\n", arg->size.width, arg->size.height, arg->pixel_format);
+	DI_DEBUG("DIMODE:%u output_mode:%u\n", arg->di_mode, arg->output_mode);
+	DI_DEBUG("tnr:mode:%u level:%u\n", arg->tnr_mode.mode, arg->tnr_mode.level);
 
-	DI_INFO("\ninFB0:\n");
+	DI_DEBUG("\ninFB0:\n");
 	if (arg->in_fb0.dma_buf_fd > 0) {
-		DI_INFO("dmafd:%d offset[%llu, %llu, %llu]\n",
+		DI_DEBUG("dmafd:%d offset[%llu, %llu, %llu]\n",
 			arg->in_fb0.dma_buf_fd,
 			arg->in_fb0.buf.offset.y_offset,
 			arg->in_fb0.buf.offset.cb_offset,
 			arg->in_fb0.buf.offset.cr_offset);
 	} else {
-		DI_INFO("addr[%llu, %llu, %llu]\n",
+		DI_DEBUG("addr[%llu, %llu, %llu]\n",
 			arg->in_fb0.buf.addr.y_addr,
 			arg->in_fb0.buf.addr.cb_addr,
 			arg->in_fb0.buf.addr.cr_addr);
 	}
 
-	DI_INFO("\ninFB1:\n");
+	DI_DEBUG("\ninFB1:\n");
 	if (arg->in_fb1.dma_buf_fd > 0) {
-		DI_INFO("dmafd:%d offset[%llu, %llu, %llu]\n",
+		DI_DEBUG("dmafd:%d offset[%llu, %llu, %llu]\n",
 			arg->in_fb1.dma_buf_fd,
 			arg->in_fb1.buf.offset.y_offset,
 			arg->in_fb1.buf.offset.cb_offset,
 			arg->in_fb1.buf.offset.cr_offset);
 	} else {
-		DI_INFO("addr[%llu, %llu, %llu]\n",
+		DI_DEBUG("addr[%llu, %llu, %llu]\n",
 			arg->in_fb1.buf.addr.y_addr,
 			arg->in_fb1.buf.addr.cb_addr,
 			arg->in_fb1.buf.addr.cr_addr);
 	}
 
-	DI_INFO("\noutFB0:\n");
+	DI_DEBUG("\noutFB0:\n");
 	if (arg->out_fb0.dma_buf_fd > 0) {
-		DI_INFO("dmafd:%d offset[%llu, %llu, %llu]\n",
+		DI_DEBUG("dmafd:%d offset[%llu, %llu, %llu]\n",
 			arg->out_fb0.dma_buf_fd,
 			arg->out_fb0.buf.offset.y_offset,
 			arg->out_fb0.buf.offset.cb_offset,
 			arg->out_fb0.buf.offset.cr_offset);
 	} else {
-		DI_INFO("addr[%llu, %llu, %llu]\n",
+		DI_DEBUG("addr[%llu, %llu, %llu]\n",
 			arg->out_fb0.buf.addr.y_addr,
 			arg->out_fb0.buf.addr.cb_addr,
 			arg->out_fb0.buf.addr.cr_addr);
 	}
 
-	DI_INFO("\noutFB1:\n");
+	DI_DEBUG("\noutFB1:\n");
 	if (arg->out_fb1.dma_buf_fd > 0) {
-		DI_INFO("dmafd:%d offset[%llu, %llu, %llu]\n",
+		DI_DEBUG("dmafd:%d offset[%llu, %llu, %llu]\n",
 			arg->out_fb1.dma_buf_fd,
 			arg->out_fb1.buf.offset.y_offset,
 			arg->out_fb1.buf.offset.cb_offset,
 			arg->out_fb1.buf.offset.cr_offset);
 	} else {
-		DI_INFO("addr[%llu, %llu, %llu]\n",
+		DI_DEBUG("addr[%llu, %llu, %llu]\n",
 			arg->out_fb1.buf.addr.y_addr,
 			arg->out_fb1.buf.addr.cb_addr,
 			arg->out_fb1.buf.addr.cr_addr);

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -277,6 +277,7 @@ void csic_dma_int_get_status(unsigned int sel, struct dma_int_status *status)
 	status->frm_lost = (reg_val & FRM_LOST_INT_PD_MASK) >> FRM_LOST_INT_PD;
 	status->lbc_hb = (reg_val & LBC_HB_INT_PD_MASK) >> LBC_HB_INT_PD;
 }
+
 void csic_dma_int_clear_status(unsigned int sel, enum dma_int_sel interrupt)
 {
 	vin_reg_writel(csic_dma_base[sel] + CSIC_DMA_INT_STA_REG_OFF, interrupt);

@@ -79,7 +79,7 @@ PvzClientMapDevPhysHeap(PVRSRV_DEVICE_CONFIG *psDevConfig)
 	PVRSRV_ERROR eError;
 	IMG_DEV_PHYADDR sDevPAddr;
 	VMM_PVZ_CONNECTION *psVmmPvz;
-	PHYS_HEAP *psFwPhysHeap = psDevConfig->psDevNode->apsPhysHeap[PVRSRV_PHYS_HEAP_FW_MAIN];
+	PHYS_HEAP *psFwPhysHeap = psDevConfig->psDevNode->apsPhysHeap[FIRST_PHYSHEAP_MAPPED_TO_FW_MAIN_DEVMEM];
 
 	eError = PhysHeapGetDevPAddr(psFwPhysHeap, &sDevPAddr);
 

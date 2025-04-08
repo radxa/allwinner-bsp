@@ -107,32 +107,33 @@ ifneq ($(SUPPORT_NEUTRINO_PLATFORM),1)
 endif
 
 ifneq ($(SYSROOT),)
+ ifeq (${MODULE_ARCH_TAG},armhf)
+  MULTIARCH_DIR := arm-linux-gnueabihf
+ else ifeq (${MODULE_ARCH_TAG},i686)
+  MULTIARCH_DIR := i386-linux-gnu
+ else
+  MULTIARCH_DIR := ${MODULE_ARCH_TAG}-linux-gnu
+ endif
+ # Restrict pkg-config to looking only in the SYSROOT
+ #
+ # Sort paths based on priority. Local paths should always appear first to
+ # ensure that user built packages override the system versions. Driver paths
+ # should appear last to ensure shim libraries (if present) get priority.
+ PKG_CONFIG_LIBDIR := ${SYSROOT}/usr/local/lib/${MULTIARCH_DIR}/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/opt/img/lws/lib/${MULTIARCH_DIR}/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/local/lib/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/local/share/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib/${MULTIARCH_DIR}/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib64/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/share/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib64/driver/pkgconfig
+ PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib/driver/pkgconfig
+
  ifneq ($(SYSROOT),/)
-  ifeq (${MODULE_ARCH_TAG},armhf)
-   MULTIARCH_DIR := arm-linux-gnueabihf
-  else ifeq (${MODULE_ARCH_TAG},i686)
-   MULTIARCH_DIR := i386-linux-gnu
-  else
-   MULTIARCH_DIR := ${MODULE_ARCH_TAG}-linux-gnu
-  endif
-
-  # Restrict pkg-config to looking only in the SYSROOT
-  #
-  # Sort paths based on priority. Local paths should always appear first to
-  # ensure that user built packages override the system versions. Driver paths
-  # should appear last to ensure shim libraries (if present) get priority.
-  PKG_CONFIG_LIBDIR := ${SYSROOT}/usr/local/lib/${MULTIARCH_DIR}/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/local/lib/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/local/share/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib/${MULTIARCH_DIR}/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib64/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/share/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib64/driver/pkgconfig
-  PKG_CONFIG_LIBDIR := $(PKG_CONFIG_LIBDIR):${SYSROOT}/usr/lib/driver/pkgconfig
-
   # SYSROOT doesn't always do the right thing. So explicitly add necessary
   # paths to the link path
+  MODULE_LDFLAGS += -Xlinker -rpath-link=${SYSROOT}/opt/img/lws/lib/${MULTIARCH_DIR}
   MODULE_LDFLAGS += -Xlinker -rpath-link=${SYSROOT}/usr/local/lib/${MULTIARCH_DIR}
   MODULE_LDFLAGS += -Xlinker -rpath-link=${SYSROOT}/lib/${MULTIARCH_DIR}
   MODULE_LDFLAGS += -Xlinker -rpath-link=${SYSROOT}/usr/lib/
@@ -140,10 +141,21 @@ ifneq ($(SYSROOT),)
  endif
 endif
 
-ifneq ($(MODULE_ARCH_TAG),)
- MODULE_LIBRARY_DIR_FLAGS := $(subst _LLVM_ARCH_,$(MODULE_ARCH_TAG),$(MODULE_LIBRARY_DIR_FLAGS))
- MODULE_INCLUDE_FLAGS     := $(subst _LLVM_ARCH_,$(MODULE_ARCH_TAG),$(MODULE_INCLUDE_FLAGS))
+ifeq ($(PVR_NO_LLVM_ARCH_SUBST),1)
+ ifeq ($(MODULE_ARCH),$(TARGET_PRIMARY_ARCH))
+  MODULE_FLAGS_TAG := target
+ else
+  MODULE_FLAGS_TAG := native
+ endif
+else
+ ifneq ($(MODULE_ARCH_TAG),)
+  MODULE_FLAGS_TAG := $(MODULE_ARCH_TAG)
+ else
+  MODULE_FLAGS_TAG :=
+ endif
+endif
 
- MODULE_LIBRARY_DIR_FLAGS := $(subst _NNVM_ARCH_,$(MODULE_ARCH_TAG),$(MODULE_LIBRARY_DIR_FLAGS))
- MODULE_INCLUDE_FLAGS     := $(subst _NNVM_ARCH_,$(MODULE_ARCH_TAG),$(MODULE_INCLUDE_FLAGS))
+ifneq ($(MODULE_FLAGS_TAG),)
+ MODULE_LIBRARY_DIR_FLAGS := $(subst _LLVM_ARCH_,$(MODULE_FLAGS_TAG),$(MODULE_LIBRARY_DIR_FLAGS))
+ MODULE_INCLUDE_FLAGS     := $(subst _LLVM_ARCH_,$(MODULE_FLAGS_TAG),$(MODULE_INCLUDE_FLAGS))
 endif

@@ -31,6 +31,13 @@ s32 tcon_lcd_rgb_src_sel(u32 src)
 	return 0;
 }
 
+void tcon_lcd_dsc_src_sel(void)
+{
+	tcon_top[0]->dsc_top_ctrl.bits.dsc_slice_sel = 1;
+	tcon_top[0]->dsc_top_ctrl.bits.dsc_enable = 1;
+
+	tcon_top[0]->dsc_int_reg.bits.dwc_dsc_err_int_en = 1;
+}
 /**
  * @name       dsi_src_sel(for sun50iw3 soc)
  * @brief      select the video source of dsi module
@@ -120,7 +127,7 @@ s32 tcon1_edp_clk_enable(u32 sel, u32 en)
 	if (sel >= TCON_DEVICE_MAX)
 		return -1;
 
-#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2)) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 		tcon_top[(sel > 2) ? 1 : 0]->tcon_tv_setup.bits.tv1_clk_src = en;
 		tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.tv1_clk_gate = en;
 #else
@@ -150,7 +157,7 @@ s32 tcon_top_hdmi_set_gate(u32 sel, u32 en)
 	if (sel >= TCON_DEVICE_MAX)
 		return -1;
 
-#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2)) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 	tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.sun60i_bits.tv0_clk_gate  = en;
 	tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.sun60i_bits.tv0_hdmi_gate = en;
 #else
@@ -171,7 +178,7 @@ s32 tcon_top_hdmi_set_gate(u32 sel, u32 en)
 
 s32 tcon_top_hdmi_set_clk_src(u32 sel, u32 src)
 {
-#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2)) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
 	tcon_top[sel > 2 ? 1 : 0]->tcon_tv_setup.sun60i_bits.tv0_hdmiphy_ccu_sel = src;
 #endif
 	return 0;
@@ -204,6 +211,9 @@ s32 tcon_lcd_dsi_clk_enable(u32 sel, u32 en)
  */
 s32 tcon_de_attach(u32 tcon_index, u32 de_index)
 {
+	/* FIXME:: there is no mux in tcon after sun50iw10 */
+	return 0;
+
 	if (de_index == 0) {
 #if defined(CONFIG_ARCH_SUN50IW6)
 		tcon_top[0]->tcon_de_perh.bits.de_port0_perh =
@@ -280,4 +290,3 @@ uintptr_t tcon_top_get_reg_base(u32 sel)
 {
 	return (uintptr_t) tcon_top[sel];
 }
-

@@ -31,6 +31,8 @@ struct de_tfbd_cfg {
 
 int de_tfbd_apply_lay(struct de_tfbd_handle *handle, struct display_channel_state *state, struct de_tfbd_cfg *cfg, bool *is_enable);
 struct de_tfbd_handle *de_tfbd_create(struct module_create_info *info);
+bool de_tfbd_should_enable(struct de_tfbd_handle *handle, struct display_channel_state *state);
 bool de_tfbd_format_mod_supported(struct de_tfbd_handle *hdl, u32 format, u64 modifier);
+void de_dump_tfbd_state(struct drm_printer *p, struct de_tfbd_handle *handle, const struct display_channel_state *state);
 
 #endif /* #ifndef _DE_TFBD_H_ */

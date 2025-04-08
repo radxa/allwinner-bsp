@@ -62,9 +62,9 @@ struct sunxi_ahub {
 	unsigned int mclk_freq;
 	unsigned int lrck_freq;
 	unsigned int bclk_freq;
-
-	/* for hdmi audio */
-	enum HDMI_FORMAT hdmi_fmt;
+	unsigned int data_late;
+	bool tx_lsb_first;
+	bool rx_lsb_first;
 };
 
 #endif /* __SND_SUNXI_AHUB_H */

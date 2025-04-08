@@ -34,6 +34,7 @@ MODULE_LICENSE("GPL");
 #define MCLK              (24*1000*1000)
 #define V4L2_IDENT_SENSOR 0x8856
 int ov8856_sensor_vts;
+static int frame_length = 2482;
 
 /*
  * Our nominal (default) frame rate.
@@ -45,7 +46,10 @@ int ov8856_sensor_vts;
  * The ov8856 sits on i2c with ID 0x6c
  */
 #define I2C_ADDR 0x20
-#define SENSOR_NAME "ov8856_mipi_4lane"
+
+#define SENSOR_NUM	0x2
+#define SENSOR_NAME "ov8856_mipi"
+#define SENSOR_NAME_2 "ov8856_mipi_2"
 
 struct cfg_array {		/* coming later */
 	struct regval_list *regs;
@@ -234,7 +238,7 @@ static struct regval_list sensor_default_regs[] = {
 	{0x5b03, 0xcf},
 	{0x5b05, 0x6c},
 	{0x5e00, 0x00},
-	{0x0100, 0x01},
+	//{0x0100, 0x01},
 };
 
 /*
@@ -467,22 +471,16 @@ static int sensor_g_exp(struct v4l2_subdev *sd, __s32 *value)
 
 static int sensor_s_exp(struct v4l2_subdev *sd, unsigned int exp_val)
 {
-	// unsigned char explow, expmid, exphigh;
 	struct sensor_info *info = to_state(sd);
 
 	if (exp_val > 0xfffff)
 		exp_val = 0xfffff;
 
-	/*
-	exphigh = (unsigned char)((0x0f0000 & exp_val) >> 16);
-	expmid = (unsigned char)((0x00ff00 & exp_val) >> 8);
-	explow = (unsigned char)((0x0000ff & exp_val));
+	sensor_write(sd, 0x3502, (exp_val & 0xff));
+	sensor_write(sd, 0x3501, (exp_val >> 8) & 0xff);
+	sensor_write(sd, 0x3500, (exp_val >> 16) & 0xff);
 
-	sensor_write(sd, 0x3208, 0x00);
-	sensor_write(sd, 0x3502, explow);
-	sensor_write(sd, 0x3501, expmid);
-	sensor_write(sd, 0x3500, exphigh);
-	*/
+	sensor_dbg("sensor_set_exp = %d\n", exp_val);
 
 	info->exp = exp_val;
 	return 0;
@@ -500,58 +498,28 @@ static int sensor_g_gain(struct v4l2_subdev *sd, __s32 *value)
 static int sensor_s_gain(struct v4l2_subdev *sd, int gain_val)
 {
 	struct sensor_info *info = to_state(sd);
-	//unsigned char gainlow = 0;
-	//unsigned char gainhigh = 0;
 
 	if (gain_val < 1 * 16)
 		gain_val = 16;
-	if (gain_val > 64 * 16 - 1)
-		gain_val = 64 * 16 - 1;
-	sensor_dbg("sensor_set_gain = %d\n", gain_val);
+	if (gain_val > 15 * 16)
+		gain_val = 15 * 16;
 
-	/*
-	gain_val *= 8;
+	gain_val = gain_val * 8;
+	sensor_write(sd, 0x3509, (gain_val & 0xff));
+	sensor_write(sd, 0x3508, ((gain_val >> 8) & 0x7));
+	sensor_dbg("sensor_set_gain = %d\n", gain_val / 8);
 
-	if (gain_val < 2 * 16 * 8) {
-		gainhigh = 0;
-		gainlow = gain_val;
-	} else if (2 * 16 * 8 <= gain_val && gain_val < 4 * 16 * 8) {
-		gainhigh = 1;
-		gainlow = gain_val / 2 - 8;
-	} else if (4 * 16 * 8 <= gain_val && gain_val < 8 * 16 * 8) {
-		gainhigh = 3;
-		gainlow = gain_val / 4 - 12;
-	} else {
-		gainhigh = 7;
-		gainlow = gain_val / 8 - 8;
-	}
-
-	sensor_write(sd, 0x3509, gainlow);
-	sensor_write(sd, 0x3508, gainhigh);
-	sensor_write(sd, 0x3208, 0x10);
-	sensor_write(sd, 0x3208, 0xa0);
-	*/
-
-	info->gain = gain_val;
-
+	info->gain = gain_val / 8;
 	return 0;
 }
 
 static int sensor_s_exp_gain(struct v4l2_subdev *sd,
 			     struct sensor_exp_gain *exp_gain)
 {
-	int exp_val, gain_val, frame_length, shutter;
-	unsigned char explow = 0, expmid = 0, exphigh = 0;
-	unsigned char gainlow = 0, gainhigh = 0;
-	//struct sensor_info *info = to_state(sd);
+	int exp_val, gain_val, shutter;
 
 	exp_val = exp_gain->exp_val;
 	gain_val = exp_gain->gain_val;
-
-	/*
-	sensor_s_exp(sd, exp_gain->exp_val);
-	sensor_s_gain(sd, exp_gain->gain_val);
-	*/
 
 	if (gain_val < 1 * 16)
 		gain_val = 16;
@@ -561,13 +529,6 @@ static int sensor_s_exp_gain(struct v4l2_subdev *sd,
 	if (exp_val > 0xfffff)
 		exp_val = 0xfffff;
 
-	gain_val *= 8;
-	gainlow = (unsigned char)(gain_val & 0xff);
-	gainhigh = (unsigned char)((gain_val >> 8) & 0x7);
-	exphigh = (unsigned char)((0x0f0000 & exp_val) >> 16);
-	expmid = (unsigned char)((0x00ff00 & exp_val) >> 8);
-	explow = (unsigned char)((0x0000ff & exp_val));
-
 	shutter = exp_val / 16;
 	if (shutter > ov8856_sensor_vts - 4)
 		frame_length = shutter + 4;
@@ -575,21 +536,13 @@ static int sensor_s_exp_gain(struct v4l2_subdev *sd,
 		frame_length = ov8856_sensor_vts;
 
 	sensor_write(sd, 0x3208, 0x00);
-
-	//sensor_write(sd, 0x380f, (frame_length & 0xff));
-	//sensor_write(sd, 0x380e, (frame_length >> 8));
-
-	sensor_write(sd, 0x3509, gainlow);
-	sensor_write(sd, 0x3508, gainhigh);
-
-	sensor_write(sd, 0x3502, explow);
-	sensor_write(sd, 0x3501, expmid);
-	sensor_write(sd, 0x3500, exphigh);
+	sensor_write(sd, 0x380f, (frame_length & 0xff));
+	sensor_write(sd, 0x380e, (frame_length >> 8));
+	sensor_s_exp(sd, exp_val);
+	sensor_s_gain(sd, gain_val);
 	sensor_write(sd, 0x3208, 0x10);
 	sensor_write(sd, 0x3208, 0xa0);
 
-	//info->exp = exp_val;
-	//info->gain = gain_val;
 	return 0;
 }
 static int sensor_s_sw_stby(struct v4l2_subdev *sd, int on_off)
@@ -736,7 +689,7 @@ static int sensor_init(struct v4l2_subdev *sd, u32 val)
 	ret = sensor_detect(sd);
 	if (ret) {
 		sensor_err("chip found is not an target chip.\n");
-		//return ret;
+		return ret;
 	}
 
 	info->focus_status = 0;
@@ -745,7 +698,6 @@ static int sensor_init(struct v4l2_subdev *sd, u32 val)
 	info->height = QUXGA_HEIGHT;
 	info->hflip = 0;
 	info->vflip = 0;
-	info->gain = 0;
 
 	info->tpf.numerator = 1;
 	info->tpf.denominator = 30;	/* 30fps */
@@ -780,6 +732,15 @@ static long sensor_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 	case VIDIOC_VIN_SENSOR_CFG_REQ:
 		sensor_cfg_req(sd, (struct sensor_config *)arg);
 		break;
+	case VIDIOC_VIN_ACT_INIT:
+		ret = actuator_init(sd, (struct actuator_para *)arg);
+		break;
+	case VIDIOC_VIN_ACT_SET_CODE:
+		ret = actuator_set_code(sd, (struct actuator_ctrl *)arg);
+		break;
+	case VIDIOC_VIN_FLASH_EN:
+		ret = flash_en(sd, (struct flash_para *)arg);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -805,26 +766,45 @@ static struct sensor_format_struct sensor_formats[] = {
  */
 
 static struct sensor_win_size sensor_win_sizes[] = {
-	/* quxga: 3264*2448 */
 	{
-	 .width = QUXGA_WIDTH,
-	 .height = QUXGA_HEIGHT,
+	 .width = 3264,
+	 .height = 2448,
 	 .hoffset = 0,
 	 .voffset = 0,
 	 .hts = 1932,
-	 .vts = 1242,
+	 .vts = 2482,
 	 .pclk = 144 * 1000 * 1000,
 	 .mipi_bps = 720 * 1000 * 1000,
 	 .fps_fixed = 30,
 	 .bin_factor = 1,
 	 .intg_min = 16,
-	 .intg_max = (1242 - 4) << 4,
+	 .intg_max = (2482 - 4) << 4,
 	 .gain_min = 1 << 4,
 	 .gain_max = 15 << 4,
 	 .regs = sensor_default_regs,
 	 .regs_size = ARRAY_SIZE(sensor_default_regs),
 	 .set_size = NULL,
 	 },
+
+	// {
+	// .width = 2592,
+	// .height = 1944,
+	// .hoffset = 336,
+	// .voffset = 252,
+	// .hts = 1932,
+	// .vts = 2482,
+	// .pclk = 144 * 1000 * 1000,
+	// .mipi_bps = 720 * 1000 * 1000,
+	// .fps_fixed = 30,
+	// .bin_factor = 1,
+	// .intg_min = 16,
+	// .intg_max = (2482 - 4) << 4,
+	// .gain_min = 1 << 4,
+	// .gain_max = 15 << 4,
+	// .regs = sensor_default_regs,
+	// .regs_size = ARRAY_SIZE(sensor_default_regs),
+	// .set_size = NULL,
+	// },
 
 	// {
 	// .width = 1640,
@@ -854,7 +834,11 @@ static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 				struct v4l2_mbus_config *cfg)
 {
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	cfg->bus.mipi_csi2.num_data_lanes = 0 | V4L2_MBUS_CSI2_4_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#else
 	cfg->flags = 0 | V4L2_MBUS_CSI2_4_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#endif
 
 	return 0;
 }
@@ -916,9 +900,18 @@ static int sensor_reg_init(struct sensor_info *info)
 	info->width = wsize->width;
 	info->height = wsize->height;
 	ov8856_sensor_vts = wsize->vts;
-	info->exp = 0;
-	info->gain = 0;
 
+	sensor_write(sd, 0x3208, 0x00);
+	sensor_write(sd, 0x380f, (frame_length & 0xff));
+	sensor_write(sd, 0x380e, (frame_length >> 8));
+	sensor_write(sd, 0x3502, (info->exp & 0xff));
+	sensor_write(sd, 0x3501, (info->exp >> 8) & 0xff);
+	sensor_write(sd, 0x3500, (info->exp >> 16) & 0xff);
+	sensor_write(sd, 0x3509, (info->gain & 0xff));
+	sensor_write(sd, 0x3508, ((info->gain >> 8) & 0x7));
+	sensor_write(sd, 0x3208, 0x10);
+	sensor_write(sd, 0x3208, 0xa0);
+	sensor_write(sd, 0x0100, 0x01);
 	sensor_print("s_fmt = %x, width = %d, height = %d\n",
 		      sensor_fmt->mbus_code, wsize->width, wsize->height);
 	return 0;
@@ -977,12 +970,17 @@ static const struct v4l2_subdev_ops sensor_ops = {
 };
 
 /* ----------------------------------------------------------------------- */
-static struct cci_driver cci_drv = {
-	.name = SENSOR_NAME,
-	.addr_width = CCI_BITS_16,
-	.data_width = CCI_BITS_8,
+static struct cci_driver cci_drv[] = {
+	{
+		.name = SENSOR_NAME,
+		.addr_width = CCI_BITS_16,
+		.data_width = CCI_BITS_8,
+	}, {
+		.name = SENSOR_NAME_2,
+		.addr_width = CCI_BITS_16,
+		.data_width = CCI_BITS_8,
+	}
 };
-
 
 static int sensor_init_controls(struct v4l2_subdev *sd,
 				const struct v4l2_ctrl_ops *ops)
@@ -997,9 +995,11 @@ static int sensor_init_controls(struct v4l2_subdev *sd,
 	v4l2_ctrl_new_std(handler, ops, V4L2_CID_GAIN, 1 * 16, 16 * 16, 1, 16);
 	ctrl = v4l2_ctrl_new_std(handler, ops, V4L2_CID_EXPOSURE,
 				 3 * 16, 65536 * 16, 1, 3 * 16);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
+
 	if (ctrl)
 		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
-
 	if (handler->error) {
 		ret = handler->error;
 		v4l2_ctrl_handler_free(handler);
@@ -1009,16 +1009,33 @@ static int sensor_init_controls(struct v4l2_subdev *sd,
 
 	return ret;
 }
+
+static int sensor_dev_id;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static int sensor_probe(struct i2c_client *client)
+#else
 static int sensor_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#endif
 {
 	struct v4l2_subdev *sd;
 	struct sensor_info *info;
+	int i;
+
 	info = kzalloc(sizeof(struct sensor_info), GFP_KERNEL);
 	if (info == NULL)
 		return -ENOMEM;
 	sd = &info->sd;
-	cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv);
+
+	if (client) {
+		for (i = 0; i < SENSOR_NUM; i++) {
+			if (!strcmp(cci_drv[i].name, client->name))
+				break;
+		}
+		cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv[i]);
+	} else {
+		cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv[sensor_dev_id++]);
+	}
 	sensor_init_controls(sd, &sensor_ctrl_ops);
 
 	mutex_init(&info->lock);
@@ -1028,18 +1045,37 @@ static int sensor_probe(struct i2c_client *client,
 	info->fmt_num = N_FMTS;
 	info->win_size_num = N_WIN_SIZES;
 	info->sensor_field = V4L2_FIELD_NONE;
+	info->combo_mode = CMB_TERMINAL_RES | CMB_PHYA_OFFSET2 | MIPI_NORMAL_MODE;
+	info->stream_seq = MIPI_BEFORE_SENSOR;
 	info->af_first_flag = 1;
-	info->exp = 0;
-	info->gain = 0;
+	info->exp = 16 * 2466;
+	info->gain = 16 * 3;
 
 	return 0;
 }
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 static int sensor_remove(struct i2c_client *client)
+#else
+static void sensor_remove(struct i2c_client *client)
+#endif
 {
 	struct v4l2_subdev *sd;
-	sd = cci_dev_remove_helper(client, &cci_drv);
+	int i;
+
+	if (client) {
+		for (i = 0; i < SENSOR_NUM; i++) {
+			if (!strcmp(cci_drv[i].name, client->name))
+				break;
+		}
+		sd = cci_dev_remove_helper(client, &cci_drv[i]);
+	} else {
+		sd = cci_dev_remove_helper(client, &cci_drv[sensor_dev_id++]);
+	}
+
 	kfree(to_state(sd));
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id sensor_id[] = {
@@ -1047,25 +1083,53 @@ static const struct i2c_device_id sensor_id[] = {
 	{}
 };
 
-MODULE_DEVICE_TABLE(i2c, sensor_id);
-
-static struct i2c_driver sensor_driver = {
-	.driver = {
-		   .owner = THIS_MODULE,
-		   .name = SENSOR_NAME,
-		   },
-	.probe = sensor_probe,
-	.remove = sensor_remove,
-	.id_table = sensor_id,
+static const struct i2c_device_id sensor_id_2[] = {
+	{SENSOR_NAME_2, 0},
+	{}
 };
+
+MODULE_DEVICE_TABLE(i2c, sensor_id);
+MODULE_DEVICE_TABLE(i2c, sensor_id_2);
+
+static struct i2c_driver sensor_driver[] = {
+	{
+		.driver = {
+			   .owner = THIS_MODULE,
+			   .name = SENSOR_NAME,
+			   },
+		.probe = sensor_probe,
+		.remove = sensor_remove,
+		.id_table = sensor_id,
+	}, {
+		.driver = {
+			   .owner = THIS_MODULE,
+			   .name = SENSOR_NAME_2,
+			   },
+		.probe = sensor_probe,
+		.remove = sensor_remove,
+		.id_table = sensor_id_2,
+	},
+};
+
 static __init int init_sensor(void)
 {
-	return cci_dev_init_helper(&sensor_driver);
+	int i, ret = 0;
+
+	sensor_dev_id = 0;
+
+	for (i = 0; i < SENSOR_NUM; i++)
+		ret = cci_dev_init_helper(&sensor_driver[i]);
+	return ret;
 }
 
 static __exit void exit_sensor(void)
 {
-	cci_dev_exit_helper(&sensor_driver);
+	int i;
+
+	sensor_dev_id = 0;
+
+	for (i = 0; i < SENSOR_NUM; i++)
+		cci_dev_exit_helper(&sensor_driver[i]);
 }
 
 VIN_INIT_DRIVERS(init_sensor);

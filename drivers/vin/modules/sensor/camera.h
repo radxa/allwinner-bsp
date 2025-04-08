@@ -141,6 +141,7 @@ struct sensor_info {
 	unsigned int sensor_field;
 	unsigned int combo_mode;
 	unsigned int time_hs;
+	unsigned int deskew;
 	unsigned int isp_wdr_mode;
 	unsigned int magic_num;
 	unsigned int lane_num;

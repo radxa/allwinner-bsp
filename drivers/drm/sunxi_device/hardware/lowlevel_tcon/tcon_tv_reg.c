@@ -113,12 +113,10 @@ s32 tcon_tv_close(struct sunxi_tcon_tv *tcon)
 s32 tcon_tv_cfg(struct sunxi_tcon_tv *tcon, struct disp_video_timings *timing)
 {
 	u32 start_delay;
-#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
-	if (timing->vic == 39) {
-		tcon->reg->tcon_tv_basic1.bits.vic39 = 0x1;
-		tcon->reg->tcon_tv_basic1.bits.vt = timing->ver_total_time;
-	} else
-		tcon->reg->tcon_tv_basic1.bits.vt = (timing->ver_total_time * 2);
+#if (IS_ENABLED(CONFIG_ARCH_SUN60IW2)) || IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+	tcon->reg->tcon_tv_basic1.bits.vic39 = timing->vic == 39 ? 0x1 : 0x0;
+	tcon->reg->tcon_tv_basic1.bits.vt    = timing->b_interlace ?
+			timing->ver_total_time : timing->ver_total_time * 2;
 #else
 	tcon->reg->tcon_tv_basic0.bits.x = timing->x_res - 1;
 	tcon->reg->tcon_tv_basic0.bits.y =
@@ -579,5 +577,3 @@ void tcon_tv_enable_vblank(struct sunxi_tcon_tv *tcon, bool enable)
 	else
 		tcon_tv_irq_disable(tcon, LCD_IRQ_TCON1_VBLK);
 }
-
-

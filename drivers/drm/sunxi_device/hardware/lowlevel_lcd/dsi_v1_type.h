@@ -349,6 +349,14 @@ union dsi_burst_drq_reg_t {
 	} bits;
 };
 
+union dsi_debug_reg_t {
+	u32 dwval;
+	struct {
+		u32 res1:31;
+		u32 dsi_fifo_under_flow:1;
+	} bits;
+};
+
 union dsi_cmd_ctl_reg_t {
 	u32 dwval;
 	struct {
@@ -489,7 +497,9 @@ struct dsi_lcd_reg {
 	/* 0xf0 - 0x1fc */
 	union dsi_burst_line_reg_t dsi_burst_line;
 	union dsi_burst_drq_reg_t dsi_burst_drq;
-	union dsi_reservd_reg_t dsi_reg0f0[10];
+	union dsi_reservd_reg_t dsi_reg0f0_0;
+	union dsi_debug_reg_t dsi_fifo_debug;
+	union dsi_reservd_reg_t dsi_reg0f0[8];
 	union dsi_basic_inst0_reg_t dsi_inst_func1[7];
 	union dsi_reservd_reg_t dsi_reg0f01;
 	union dsi_basic_inst11_reg_t dsi_inst_loop_sel1;

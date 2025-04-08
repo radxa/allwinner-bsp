@@ -19,10 +19,13 @@
 #include "snr/de_snr.h"
 #include "sharp/de_sharp.h"
 #include "dci/de_dci.h"
+#include "dlc/de_dlc.h"
+#include "gamma/de_gamma.h"
 #include "fcm/de_fcm.h"
 
 struct de_frontend_handle {
 	struct module_create_info cinfo;
+	struct de_chn_mod_support mod;
 	bool routine_job;
 	unsigned int block_num;
 	struct de_reg_block **block;
@@ -52,6 +55,10 @@ struct de_frontend_apply_cfg {
 	struct de_frontend_output_cfg de_out_cfg;
 };
 
+struct de_frontend_feedback{
+	bool snr_en;
+};
+
 void de_frontend_update_regs(struct de_frontend_handle *hdl);
 
 void de_frontend_init(struct de_frontend_handle *hdl);
@@ -62,7 +69,7 @@ void de_frontend_process_late(struct de_frontend_handle *hdl);
 s32 de_frontend_dump_state(struct drm_printer *p, struct de_frontend_handle *hdl);
 
 struct de_frontend_handle *de_frontend_create(struct module_create_info *cinfo);
-bool de_frontend_apply_snr(struct de_frontend_handle *hdl, struct display_channel_state *state, unsigned int ovl_w, unsigned int ovl_h);
 int de_frontend_get_pqd_config(struct de_frontend_handle *hdl, struct display_channel_state *cstate);
+s32 de_frontend_get_after_check_config(struct de_frontend_handle *hdl, struct display_channel_state *cstate, struct de_frontend_feedback *feedback_data);
 
 #endif

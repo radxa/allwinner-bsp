@@ -10,6 +10,7 @@
 * warranty of any kind, whether express or implied.
 */
 #include <linux/version.h>
+#include <linux/dma-direction.h>
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_gem_cma_helper.h>
@@ -24,6 +25,7 @@
 #include "de_csc_table.h"
 #include "de_wb_type.h"
 #include "de_wb.h"
+#include "sunxi_drm_gem.h"
 
 #define LINE_BUF_LEN			(2048)
 #define LOCFRACBIT			(18)
@@ -112,6 +114,7 @@ static s32 de_wb_set_base_para(struct de_wb_handle *handle, unsigned int in_w, u
 	struct de_wb_private *priv = handle->private;
 	struct wb_reg *reg = get_wb_reg(priv);
 	struct wb_reg *hw_reg = get_wb_hw_reg(priv);
+	struct sunxi_gem_object *sgem_obj;
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
 	struct drm_gem_cma_object *gem;
 #else
@@ -150,43 +153,59 @@ static s32 de_wb_set_base_para(struct de_wb_handle *handle, unsigned int in_w, u
 	if (gem) {
 		out_addr[0] = (unsigned long)(gem->paddr) + out_fb->offsets[0];
 		pitch[0] = out_fb->pitches[0];
+		// change sunxi_gem_object 's direction, ensure cache coherence
+		// for data that might be read from ddr by cpu
+		sgem_obj = to_sunxi_gem_obj(gem);
+		sgem_obj->dir = DMA_FROM_DEVICE;
 	}
 
+	gem = drm_fb_cma_get_gem_obj(out_fb, 1);
+	if (gem) {
+		out_addr[1] = (u64)(gem->paddr) + out_fb->offsets[1];
+		pitch[1] = out_fb->pitches[1];
+		// change sunxi_gem_object 's direction, ensure cache coherence
+		// for data that might be read from ddr by cpu
+		sgem_obj = to_sunxi_gem_obj(gem);
+		sgem_obj->dir = DMA_FROM_DEVICE;
+	}
+
+	gem = drm_fb_cma_get_gem_obj(out_fb, 2);
+	if (gem) {
+		out_addr[2] = (u64)(gem->paddr) + out_fb->offsets[2];
+		// change sunxi_gem_object 's direction, ensure cache coherence
+		// for data that might be read from ddr by cpu
+		sgem_obj = to_sunxi_gem_obj(gem);
+		sgem_obj->dir = DMA_FROM_DEVICE;
+	}
 #else
 	gem = drm_fb_dma_get_gem_obj(out_fb, 0);
 	if (gem) {
 		out_addr[0] = (unsigned long)(gem->dma_addr) + out_fb->offsets[0];
 		pitch[0] = out_fb->pitches[0];
+		// change sunxi_gem_object 's direction, ensure cache coherence
+		// for data that might be read from ddr by cpu
+		sgem_obj = to_sunxi_gem_obj(gem);
+		sgem_obj->dir = DMA_FROM_DEVICE;
 	}
-#endif
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
-	gem = drm_fb_cma_get_gem_obj(out_fb, 1);
-	if (gem) {
-		out_addr[1] = (u64)(gem->paddr) + out_fb->offsets[1];
-		pitch[1] = out_fb->pitches[1];
-	}
-#else
 	gem = drm_fb_dma_get_gem_obj(out_fb, 1);
 	if (gem) {
 		out_addr[1] = (u64)(gem->dma_addr) + out_fb->offsets[1];
 		pitch[1] = out_fb->pitches[1];
+		// change sunxi_gem_object 's direction, ensure cache coherence
+		// for data that might be read from ddr by cpu
+		sgem_obj = to_sunxi_gem_obj(gem);
+		sgem_obj->dir = DMA_FROM_DEVICE;
 	}
 
-#endif
-
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
-	gem = drm_fb_cma_get_gem_obj(out_fb, 2);
-	if (gem) {
-		out_addr[2] = (u64)(gem->paddr) + out_fb->offsets[2];
-	}
-
-#else
 	gem = drm_fb_dma_get_gem_obj(out_fb, 2);
 	if (gem) {
 		out_addr[2] = (u64)(gem->dma_addr) + out_fb->offsets[2];
+		// change sunxi_gem_object 's direction, ensure cache coherence
+		// for data that might be read from ddr by cpu
+		sgem_obj = to_sunxi_gem_obj(gem);
+		sgem_obj->dir = DMA_FROM_DEVICE;
 	}
-
 #endif
 
 	switch (out_fmt) {

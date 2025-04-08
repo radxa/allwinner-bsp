@@ -485,11 +485,6 @@ static ssize_t sunxi_dwmac_calibrate_store(struct device *dev,
 		return -EINVAL;
 	}
 
-	if (phydev->speed < SPEED_1000) {
-		sunxi_err(chip->dev, "Speed %s no need calibrate\n", phy_speed_to_str(phydev->speed));
-		return -EINVAL;
-	}
-
 	cali = devm_kzalloc(dev, sizeof(*cali), GFP_KERNEL);
 	if (!cali)
 		return -ENOMEM;
@@ -795,11 +790,6 @@ static ssize_t sunxi_dwmac_mii_read_show(struct device *dev,
 	struct stmmac_priv *priv = netdev_priv(ndev);
 	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
 
-	if (!netif_running(ndev)) {
-		sunxi_err(dev, "Eth is not running\n");
-		return 0;
-	}
-
 	chip->mii_reg.value = mdiobus_read(priv->mii, chip->mii_reg.addr, chip->mii_reg.reg);
 	return sprintf(buf, "ADDR[0x%02x]:REG[0x%02x] = 0x%04x\n",
 				chip->mii_reg.addr, chip->mii_reg.reg, chip->mii_reg.value);
@@ -816,11 +806,6 @@ static ssize_t sunxi_dwmac_mii_read_store(struct device *dev,
 	char *ptr;
 
 	ptr = (char *)buf;
-
-	if (!netif_running(ndev)) {
-		sunxi_err(dev, "Eth is not running\n");
-		return count;
-	}
 
 	ret = sunxi_dwmac_parse_read_str(ptr, &addr, &reg);
 	if (ret)
@@ -839,11 +824,6 @@ static ssize_t sunxi_dwmac_mii_write_show(struct device *dev,
 	struct stmmac_priv *priv = netdev_priv(ndev);
 	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
 	u16 bef_val, aft_val;
-
-	if (!netif_running(ndev)) {
-		sunxi_err(dev, "Eth is not running\n");
-		return 0;
-	}
 
 	bef_val = mdiobus_read(priv->mii, chip->mii_reg.addr, chip->mii_reg.reg);
 	mdiobus_write(priv->mii, chip->mii_reg.addr, chip->mii_reg.reg, chip->mii_reg.value);
@@ -865,11 +845,6 @@ static ssize_t sunxi_dwmac_mii_write_store(struct device *dev,
 	char *ptr;
 
 	ptr = (char *)buf;
-
-	if (!netif_running(ndev)) {
-		sunxi_err(dev, "Eth is not running\n");
-		return count;
-	}
 
 	ret = sunxi_dwmac_parse_write_str(ptr, &addr, &reg, &val);
 	if (ret)

@@ -12,6 +12,7 @@
  * published by the Free Software Foundation.
  */
 #include "../../../utility/vin_log.h"
+#include "../../../utility/vin_io.h"
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -41,6 +42,8 @@ MODULE_VERSION("1.0.0");
 
 #define SENSOR_NAME "lt7911d_mipi"
 
+static char dev_info[128] = "s:0-w:0-h:0-fps:0-r:0"; //state-width-height-fps-rate
+module_param_string(dev_info, dev_info, sizeof(dev_info), S_IRUGO | S_IWUSR);
 static const struct v4l2_dv_timings_cap lt7911d_timings_cap = {
 	.type = V4L2_DV_BT_656_1120,
 	.reserved = { 0 },
@@ -753,9 +756,10 @@ static struct device_attribute  detect_dev_attrs = {
 
 static void sensor_uevent_notifiy(struct v4l2_subdev *sd, int w, int h, int fps, int status)
 {
-	char state[16], width[16], height[16], frame[16];
-	char *envp[6] = {
+	char state[16], width[16], height[16], frame[16], audio_sampling_rate[32];
+	char *envp[7] = {
 		"SYSTEM=DPIN",
+		NULL,
 		NULL,
 		NULL,
 		NULL,
@@ -765,10 +769,14 @@ static void sensor_uevent_notifiy(struct v4l2_subdev *sd, int w, int h, int fps,
 	snprintf(width, sizeof(width), "WIDTH=%d", w);
 	snprintf(height, sizeof(height), "HEIGHT=%d", h);
 	snprintf(frame, sizeof(frame), "FPS=%d", fps);
+	snprintf(audio_sampling_rate, sizeof(audio_sampling_rate), "RATE=%d", 48000);
 	envp[1] = width;
 	envp[2] = height;
 	envp[3] = frame;
 	envp[4] = state;
+	envp[5] = audio_sampling_rate;
+	snprintf(dev_info, sizeof(dev_info), "s:%d-w:%d-h:%d-fps:%d-r:%d", status, w, h, fps, 48000);
+	kobject_uevent_env(&sd->dev->kobj, KOBJ_CHANGE, envp);
 	kobject_uevent_env(&sd->dev->kobj, KOBJ_CHANGE, envp);
 }
 
@@ -850,11 +858,6 @@ static void sensor_det_work(struct work_struct *work)
 			usleep_range(700000, 700100);
 		}
 
-		if (gpio_is_valid(sensor_indet->usbsw_gpio.gpio)) {
-			gpio_direction_output(sensor_indet->usbsw_gpio.gpio, 0);
-			sensor_print("%s switch to Type-C usb\n", sd->name);
-		}
-
 		sensor_indet->sensor_detect_flag = 0;
 		memset(&info->timings, 0, sizeof(struct v4l2_dv_timings));
 	} else {
@@ -902,10 +905,6 @@ static void sensor_det_work(struct work_struct *work)
 							fps_calc(&timings.bt), 1);
 			sensor_print("%s send hotplug dp in to user\n", sd->name);
 #endif
-			if (gpio_is_valid(sensor_indet->usbsw_gpio.gpio)) {
-				gpio_direction_output(sensor_indet->usbsw_gpio.gpio, 1);
-				sensor_print("%s switch to DP-IN usb\n", sd->name);
-			}
 		}
 		if (changes) {
 			sensor_ev_fmt.id = 0;
@@ -945,25 +944,12 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 	char *hotplug_gpio_name = "hotplug_gpios";
 	char *power_gpio_name = "power_gpios";
 	char *reset_gpio_name = "reset_gpios";
-	char *usbsw_gpio_name = "usbsw_gpios";
+	volatile void __iomem *sys_gpio_base;
 
 	np = of_find_node_by_name(NULL, node_name);
 	if (np == NULL) {
 		sensor_err("can not find the %s node\n", node_name);
 		return -EINVAL;
-	}
-
-	sensor_indet->usbsw_gpio.gpio = of_get_named_gpio_flags(np, usbsw_gpio_name, 0, &gc);
-	sensor_dbg("get form %s gpio is %d\n", usbsw_gpio_name, sensor_indet->usbsw_gpio.gpio);
-	if (!gpio_is_valid(sensor_indet->usbsw_gpio.gpio)) {
-		sensor_err("fetch %s from device_tree failed\n", usbsw_gpio_name);
-		/* return -ENODEV; */
-	} else {
-		ret = gpio_request(sensor_indet->usbsw_gpio.gpio, NULL);
-		if (ret < 0) {
-			sensor_err("request %s fail!\n", usbsw_gpio_name);
-			return -1;
-		}
 	}
 
 	/* power on sensor to detect hotplug*/
@@ -1022,7 +1008,6 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 			sensor_err("request %s fail!\n", hotplug_gpio_name);
 			return -1;
 		}
-		gpio_direction_input(sensor_indet->hotplug_det_gpio.gpio);
 
 		sensor_indet->hotplug_det_irq = gpio_to_irq(sensor_indet->hotplug_det_gpio.gpio);
 		if (sensor_indet->hotplug_det_irq <= 0) {
@@ -1032,6 +1017,10 @@ static int sensor_det_init(struct v4l2_subdev *sd)
 		ret = request_irq(sensor_indet->hotplug_det_irq, sensor_det_irq_func,
 				IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
 				"sensor_detect", sd);
+		// configure plugin_det_gpio(PH6) as pull_down, only for debug.
+		// 0b00: Pull_up/down disable, 0b01: Pull up, 0b10: Pull down, 0b11: Reserverd
+		sys_gpio_base = ioremap(0x02000000, 0x800);
+		vin_reg_clr_set(sys_gpio_base + 0x430, 0b11 << 12, 0b10 << 12);
 	}
 
 	INIT_DELAYED_WORK(&sensor_indet->sensor_work, sensor_det_work);
@@ -1060,9 +1049,6 @@ static void sensor_det_exit(struct v4l2_subdev *sd)
 
 	if (gpio_is_valid(sensor_indet->power_gpio.gpio))
 		gpio_free(sensor_indet->power_gpio.gpio);
-
-	if (gpio_is_valid(sensor_indet->usbsw_gpio.gpio))
-		gpio_free(sensor_indet->usbsw_gpio.gpio);
 }
 
 #if IS_ENABLED(CONFIG_PM_SLEEP)

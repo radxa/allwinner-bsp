@@ -2,7 +2,8 @@
 #ifndef _AXP22X_H_
 #define _AXP22X_H_
 
-#include "linux/types.h"
+#include "sunxi-power-supply.h"
+#include "axp2101.h"
 
 /* reg AXP22X_STATUS */
 #define AXP22X_STATUS_AC_PRESENT	BIT(7)

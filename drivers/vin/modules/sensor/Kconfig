@@ -245,4 +245,24 @@ config SENSOR_TC358743XBG
 	tristate "use tc358743xbg driver"
 	default n
 
+config SENSOR_RM84_SERDES
+	tristate "use rm84 serdes driver"
+	default n
+
+config SENSOR_THINE244_SERDES
+	tristate "use thine244 serdes driver"
+	default n
+
+config SENSOR_MAX96724_SERDES
+	tristate "use max96724 serdes driver"
+	default n
+
+config SENSOR_TD104
+	tristate "use td104 sensor driver"
+	default n
+
+config SENSOR_RK628F
+	tristate "use rk628f driver"
+	default n
+
 endmenu

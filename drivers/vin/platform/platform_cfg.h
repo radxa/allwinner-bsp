@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  * Copyright (c) 2007-2017 Allwinnertech Co., Ltd.
@@ -152,6 +152,7 @@ struct mbus_framefmt_res {
 	u8 res_combo_mode;
 	u8 res_wdr_mode;
 	u8 res_time_hs;
+	u8 res_deskew;
 	u8 res_lp_mode;
 	u8 fps;
 	u8 pclk_dly;

@@ -67,6 +67,7 @@ struct v4l2_win_coordinate {
 #define V4L2_FLASH_LED_MODE_RED_EYE		(V4L2_FLASH_LED_MODE_TORCH + 2)
 
 struct v4l2_win_setting {
+	__s32 metering_mode;
 	struct v4l2_win_coordinate coor;
 };
 
@@ -148,6 +149,19 @@ typedef union {
 	} bits;
 } IMAGE_FLAG_t;
 
+typedef struct isp_to_user_params {
+	IMAGE_FLAG_t image_para;
+} isp_to_user_params_t;
+
+typedef struct user_to_isp_params {
+	IMAGE_FLAG_t image_para;
+} user_to_isp_params_t;
+
+typedef struct isp_image_params {
+	isp_to_user_params_t isp_image_params;
+	user_to_isp_params_t user_image_params;
+} isp_image_params_t;
+
 enum user_v4l2_colorspace {
 #if USE_v4l2_COLORSPACE_SAMPLE	// v4l2_colorspace sample
 	/*
@@ -206,6 +220,9 @@ enum user_v4l2_colorspace {
 	V4L2_COLORSPACE_DCI_P3        = 12,
 #endif
 	V4L2_COLORSPACE_REC709_PART_RANGE = 31,
+	V4L2_COLORSPACE_BT2020_PART_RANGE = 32,
+	V4L2_COLORSPACE_BT601 = 33,
+	V4L2_COLORSPACE_BT601_PART_RANGE = 34,
 };
 
 #define  V4L2_CID_HOR_VISUAL_ANGLE	(V4L2_CID_USER_SUNXI_CAMERA_BASE + 7)
@@ -464,8 +481,8 @@ struct enc_MovingLevelInfo {
 };
 
 struct enc_VencVe2IspParam {
-//	int d2d_level; //[1,1024], 256 means 1X
-//	int d3d_level; //[1,1024], 256 means 1X
+	int d2d_level; /* [1,1024], 256 means 1X */
+	int d3d_level; /* [1,1024], 256 means 1X */
 	struct enc_MovingLevelInfo mMovingLevelInfo;
 };
 
@@ -482,8 +499,118 @@ struct isp_ae_roi_attr {
 	struct isp_h3a_coor_win coor;
 };
 
+#define FASTBOOT_AE_FACE_MAX_NUM 8
+#define FASTBOOT_AE_FACE_WIN_WEIGHT_LENGTH 16
+#define FASTBOOT_AE_FACE_POS_WEIGHT_LENGTH 64
+struct fastboot_ae_face_cfg {
+	struct isp_h3a_coor_win face_ae_coor[FASTBOOT_AE_FACE_MAX_NUM];
+	unsigned char enable;
+	unsigned char vaild_face_cnt;
+	short face_ae_tolerance;
+	short face_ae_speed;
+	short face_ae_target;
+	short face_ae_delay_cnt;
+	unsigned short face_up_percent;
+	unsigned short face_down_percent;
+	unsigned short ae_face_block_num_thrd;
+	unsigned short ae_face_block_weight;
+	unsigned short ae_over_face_max_exp_control;
+	unsigned short ae_face_win_weight[FASTBOOT_AE_FACE_WIN_WEIGHT_LENGTH];
+	int ae_face_pos_weight[FASTBOOT_AE_FACE_POS_WEIGHT_LENGTH];
+};
+
+typedef enum _switch_choice_type {
+	SWITCH_A = 0,
+	SWITCH_B = 1,
+	SWITCH_MAX,
+} switch_choice_type;
+
+typedef enum _switch_ctrl_type {
+	GET_SWITCH = 0,
+	SET_SWITCH = 1,
+	CTRL_MAX,
+} switch_ctrl_type;
+
+struct sensor_mipi_switch_entity {
+	switch_ctrl_type switch_ctrl;
+	unsigned int mipi_switch_status;
+	unsigned int comp_ratio;
+	unsigned int exp_comp;
+	unsigned int gain_comp;
+	unsigned int drop_frame_num;
+	unsigned long long time_stamp;
+};
+
+typedef enum {
+	/*isp_ctrl*/
+	ISP_CTRL_MODULE_EN = 0,
+	ISP_CTRL_DIGITAL_GAIN,
+	ISP_CTRL_PLTMWDR_STR,
+	ISP_CTRL_DN_STR,
+	ISP_CTRL_3DN_STR,
+	ISP_CTRL_HIGH_LIGHT,
+	ISP_CTRL_BACK_LIGHT,
+	ISP_CTRL_WB_MGAIN,
+	ISP_CTRL_AGAIN_DGAIN,
+	ISP_CTRL_COLOR_EFFECT,
+	ISP_CTRL_AE_ROI,
+	ISP_CTRL_AF_METERING,
+	ISP_CTRL_COLOR_TEMP,
+	ISP_CTRL_EV_IDX,
+	ISP_CTRL_MAX_EV_IDX,
+	ISP_CTRL_PLTM_HARDWARE_STR,
+	ISP_CTRL_ISO_LUM_IDX,
+	ISP_CTRL_COLOR_SPACE,
+	ISP_CTRL_VENC2ISP_PARAM,
+	ISP_CTRL_NPU_NR_PARAM,
+	ISP_CTRL_TOTAL_GAIN,
+	ISP_CTRL_AE_EV_LV,
+	ISP_CTRL_AE_EV_LV_ADJ,
+	ISP_CTRL_AE_WEIGHT_LUM,
+	ISP_CTRL_AE_LOCK,
+	ISP_CTRL_AE_FACE_CFG,
+	ISP_CTRL_MIPI_SWITCH,
+	ISP_CTRL_SET_AE_TARGER,
+	ISP_CTRL_SET_AE_WEIGHT,
+	ISP_CTRL_AE_TABLE,
+	ISP_CTRL_AE_STATS,
+	ISP_CTRL_IR_STATUS,
+	ISP_CTRL_IR_AWB_GAIN,
+	ISP_CTRL_READ_BIN_PARAM,
+	ISP_CTRL_AE_ROI_TARGET,
+	ISP_CTRL_AI_ISP,
+	ISP_CTRL_AE_EV_IDX_STATUS,
+} hw_isp_ctrl_cfg_ids;
+
+struct ae_table {
+	unsigned int min_exp;
+	unsigned int max_exp;
+	unsigned int min_gain;
+	unsigned int max_gain;
+	unsigned int min_iris;
+	unsigned int max_iris;
+};
+
+struct ae_table_info {
+	struct ae_table ae_tbl[10];
+	int length;
+	int ev_step;
+	int shutter_shift;
+};
+
+typedef enum {
+	/*tunning_ctrl*/
+	ISP_CTRL_GET_SENSOR_CFG = 0,
+	ISP_CTRL_RPBUF_INIT,
+	ISP_CTRL_RPBUF_RELEASE,
+	ISP_CTRL_GET_ISP_PARAM,
+	ISP_CTRL_SET_ISP_PARAM,
+	ISP_CTRL_GET_LOG,
+	ISP_CTRL_GET_3A_STAT,
+} hw_tunning_ctrl_ids;
+
 struct isp_cfg_attr_data {
-	unsigned short cfg_id;
+	unsigned short cfg_id; //hw_isp_ctrl_cfg_ids
 	unsigned short update_flag;
 	int ev_digital_gain;
 	int pltmwdr_level;
@@ -497,12 +624,30 @@ struct isp_cfg_attr_data {
 	int ae_ev_lv_adj;
 	int ae_lock;
 	int awb_color_temp;
+	int ae_weight_lum;
 	struct isp_ir_awb_gain awb_ir_gain;
 	struct ae_table_info *ae_table;
 	char path[100];
 	struct isp_ae_roi_attr ae_roi_area;
 	unsigned char ae_stat_avg[432];
 	struct enc_VencVe2IspParam VencVe2IspParam;
+	struct fastboot_ae_face_cfg ae_face_info;
+	struct sensor_mipi_switch_entity mipi_switch_info;
+	int ae_ev_idx_status;
+};
+
+struct tunning_sensor_cfg {
+	unsigned char isp_id;
+	unsigned short sensor_width;
+	unsigned short sensor_height;
+	unsigned short act_fps;
+	unsigned char wdr;
+};
+
+struct tunning_ctl_data {
+	unsigned short cfg_id; //hw_tunning_ctrl_ids
+	char path[100];
+	struct tunning_sensor_cfg sensor_cfg;
 };
 
 #define VIDIOC_ISP_AE_STAT_REQ \
@@ -561,7 +706,10 @@ struct isp_cfg_attr_data {
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 27, struct bk_buffer_align)
 #define VIDIOC_SET_BK_SET_WSTRIDE \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 28, unsigned char)
-
+#define VIDIOC_SET_TDM_DROP_FRAME \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 29, unsigned int)
+#define VIDIOC_SET_TDM_RXBUF_CNT \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 30, unsigned int)
 /*
  * Events
  *
@@ -573,6 +721,7 @@ struct isp_cfg_attr_data {
 #define V4L2_EVENT_VIN_H3A		(V4L2_EVENT_VIN_CLASS | 0x1)
 #define V4L2_EVENT_VIN_HDR		(V4L2_EVENT_VIN_CLASS | 0x2)
 #define V4L2_EVENT_VIN_ISP_OFF		(V4L2_EVENT_VIN_CLASS | 0x3)
+#define V4L2_EVENT_VIN_TDM		(V4L2_EVENT_VIN_CLASS | 0x4)
 
 struct vin_isp_h3a_config {
 	__u32 buf_size;
@@ -624,6 +773,39 @@ struct vin_vsync_event_data {
 #define VIDIOC_VIN_ISP_STAT_EN \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 33, unsigned int)
 
+#define VIDIOC_GET_ISP_SEI_INFO \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 34, struct isp_sei_info)
+
+struct isp_tdm_map_cfg {
+	unsigned char en;
+	void *vir_addr;
+	unsigned int size;
+	unsigned char mmap_buf_id;
+};
+
+struct vin_isp_tdm_event_status {
+	__u8 dev_id;
+	void *iommu_buf;
+	__u32 buf_size;
+	__u8 buf_id;
+	__u32 head_len;
+	__u32 fill_len;
+};
+
+struct vin_isp_tdm_data {
+	void __user *buf;
+	__u32 buf_size;
+	__u8 req_buf_id;
+};
+
+#define VIDIOC_VIN_TDM_MAP \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 40, struct isp_tdm_map_cfg)
+#define VIDIOC_VIN_TDM_DQBUF \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 41, struct vin_isp_tdm_event_status)
+#define VIDIOC_VIN_TDM_REQ_DATA \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 42, struct vin_isp_tdm_data)
+#define VIDIOC_VIN_TDM_SEND_DATA \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 43, struct vin_isp_tdm_data)
 /*
 * large image dma merge mode
 *
@@ -694,6 +876,25 @@ struct isp_table_reg_map {
 	unsigned int size;
 };
 
+struct isp_debug_info {
+	int exp_val;
+	int gain_val;
+	unsigned int lum_idx;
+	unsigned int awb_color_temp;
+	unsigned int awb_rgain;
+	unsigned int awb_bgain;
+	int contrast_level;
+	int brightness_level;
+	int sharpness_level;
+	int saturation_level;
+	int tdf_level;
+	int denoise_level;
+	int pltmwdr_level;
+	int sensor_temper;
+	char libs_version[64];
+	char isp_cfg_version[128];
+};
+
 struct actuator_ctrl {
 	unsigned int code;
 };
@@ -707,10 +908,53 @@ struct flash_para {
 	enum v4l2_flash_led_mode mode;
 };
 
+struct msc_para {
+	unsigned char data[4096];
+};
+
 struct ir_switch {
 	int ir_on;
 	int ir_flash_on;
 	int ir_hold;
+};
+
+/* VIN ioctl */
+enum set_bit_width {
+	BX_TO_CLOSE = 0,
+	B10_TO_B8 = 1,
+	B8_TO_B10 = 2,
+};
+
+enum vi_dma_stitch_mode_t {
+	DMA_STITCH_NONE = 0,
+	DMA_STITCH_2IN1_LINNER,
+	DMA_STITCH_HORIZONTAL,
+	DMA_STITCH_VERTICAL,
+	DMA_STITCH_MODE_MAX,
+};
+
+struct dma_overlay_para {
+	unsigned char dma_overlay_en;
+	unsigned int overlay_width;
+	unsigned int overlay_height;
+	unsigned int length;
+	unsigned char *overlay_data;
+};
+
+struct  dma_merge_scaler_cfg{
+	unsigned char scaler_en;
+	struct v4l2_rect sensorA_scaler_cfg;
+	struct v4l2_rect sensorB_scaler_cfg;
+};
+
+enum sensor_mode_t {
+	SENSOR_MULTI_FRAME = 0,
+	SENSOR_ONE_FRAME,
+};
+
+struct sensor_lowpw_cfg {
+	char lowpw_en;
+	enum sensor_mode_t frame_mode;
 };
 
 /*
@@ -747,12 +991,37 @@ struct ir_switch {
 
 #define VIDIOC_VIN_GET_SENSOR_CODE \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 73, int)
+#define VIDIOC_VIN_GET_SENSOR_OTP_INFO \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 74, struct msc_para)
+#define VIDIOC_VIN_SET_SENSOR_OTP_INFO \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 75, unsigned long long)
+#define VIDIOC_VIN_ISP_SYNC_DEBUG_INFO \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 76, struct isp_debug_info)
+#define VIDIOC_VIN_SENSOR_GET_FPS \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 77, struct sensor_fps)
 #define VIDIOC_VIN_SENSOR_GET_FLIP \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 78, struct sensor_flip)
-
+#define VIDIOC_VIN_SENSOR_MIPI_SWITCH \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 79, struct sensor_mipi_switch_entity)
 #define VIDIOC_VIN_FIRST_PTN_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 81, struct vin_pattern_config)
 #define VIDIOC_VIN_NEXT_PTN_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 82, struct vin_pattern_config)
+#define VIDIOC_VIN_SET_LDCI_MODE \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 83, unsigned int)
+#define VIDIOC_VIN_SET_DMA_OVERLAY \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 102, struct dma_overlay_para)
+#define VIDIOC_VIN_SET_SCALER_CFG \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 103, struct v4l2_rect)
+#define VIDIOC_VIN_SET_SCALER_RESOLUTION \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 104, struct dma_merge_scaler_cfg)
+#define VIDIOC_VIN_LOWPW_EN \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 105, struct sensor_lowpw_cfg)
+#define VIDIOC_VIN_GET_MIPI_CLK_DLY \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 106, unsigned int)
+#define VIDIOC_VIN_SET_MIPI_CLK_DLY \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 107, unsigned int)
+#define VIDIOC_VIN_GET_MIPI_CLK_ERROR \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 108, unsigned int)
 
 #endif /* _SUNXI_CAMERA_H_ */

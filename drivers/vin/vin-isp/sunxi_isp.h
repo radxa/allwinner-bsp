@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  *
@@ -23,11 +23,11 @@
 #include "../vin-video/vin_core.h"
 #if IS_ENABLED(CONFIG_ARCH_SUN8IW16P1)
 #include "isp520/isp520_reg_cfg.h"
-#elif defined CONFIG_ARCH_SUN8IW19P1
+#elif IS_ENABLED(CONFIG_ARCH_SUN8IW19P1)
 #include "isp521/isp521_reg_cfg.h"
-#elif defined CONFIG_ARCH_SUN50IW10
+#elif IS_ENABLED(CONFIG_ARCH_SUN50IW10)
 #include "isp522/isp522_reg_cfg.h"
-#elif defined CONFIG_ARCH_SUN55IW3 || defined CONFIG_ARCH_SUN55IW6 || defined CONFIG_ARCH_SUN60IW1 || defined CONFIG_ARCH_SUN60IW2
+#elif IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN55IW6) || IS_ENABLED(CONFIG_ARCH_SUN60IW1) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 #include "isp600/isp600_reg_cfg.h"
 #else
 #include "isp500/isp500_reg_cfg.h"
@@ -136,6 +136,7 @@ struct isp_dev {
 	char save_get_flag;
 	bool load_select; /*load_select = 0 select load_para[0], load_select = 1 select load_para[1]*/
 	bool d3d_rec_reset;
+	unsigned int d3d_lbc_ratio;
 #endif
 	struct isp_size err_size;
 	struct isp_size save_size;
@@ -174,6 +175,14 @@ struct isp_dev {
 	char load_shadow[ISP_LOAD_DRAM_SIZE*3];
 #else
 	char load_shadow[ISP_LOAD_DRAM_SIZE];
+#endif
+#if defined ISP_600
+	char nr_msc_load_save[ISP_MSC_NR_TBL_SIZE];
+	char ae_stat_save[ISP_AE_REG_SIZE];
+	char af_stat_save[ISP_AF_REG_SIZE];
+	char awb_stat_save[ISP_AWB_REG_SIZE];
+	char hist_stat_save[ISP_HIST_REG_SIZE];
+	char init_done_flag;
 #endif
 	bool first_init_server;
 	bool isp_server_reset;

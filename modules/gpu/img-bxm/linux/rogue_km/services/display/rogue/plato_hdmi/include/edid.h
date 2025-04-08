@@ -183,7 +183,7 @@ typedef struct _DTD_RAW
 
 } DTD_RAW;
 
-typedef union _ESTABILISHED_TIMING_I
+typedef union _ESTABLISHED_TIMING_I
 {
     IMG_UINT8 value;
     struct {
@@ -196,7 +196,7 @@ typedef union _ESTABILISHED_TIMING_I
         IMG_UINT8 _720x400_88Hz : 1;
         IMG_UINT8 _720x400_70Hz : 1;
     } fields;
-}ESTABILISHED_TIMING_I;
+}ESTABLISHED_TIMING_I;
 
 typedef union _STANDARD_TIMING
 {

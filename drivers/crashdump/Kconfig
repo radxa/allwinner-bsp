@@ -4,7 +4,7 @@ menu "CRASHDUMP Drivers"
 
 menuconfig AW_CRASHDUMP
 	tristate "Allwinner Crash Dump Support"
-	depends on ARCH_SUN8I || ARCH_SUN50I || ARCH_SUN55I
+	depends on ARCH_SUN8I || ARCH_SUN50I || ARCH_SUN55I || ARCH_SUN60I || ARCH_SUN65I
 	depends on AW_BSP
 	default n
 	help

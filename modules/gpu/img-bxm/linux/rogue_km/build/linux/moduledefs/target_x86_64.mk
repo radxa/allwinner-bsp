@@ -62,7 +62,9 @@ ifneq ($(SUPPORT_ANDROID_PLATFORM),)
 MODULE_EXE_LDFLAGS := \
  -Bdynamic -nostdlib -Wl,-dynamic-linker,/system/bin/linker64
 
-MODULE_LIBGCC := -Wl,--version-script,$(MAKE_TOP)/common/libgcc.lds $(LIBGCC)
+ifneq ($(LIBGCC),)
+ MODULE_LIBGCC := -Wl,--version-script,$(MAKE_TOP)/common/libgcc.lds $(LIBGCC)
+endif
 
 ifeq ($(NDK_ROOT),)
 
@@ -74,10 +76,6 @@ _lib := lib64
 SYSTEM_LIBRARY_LIBC  := $(strip $(call path-to-system-library,$(_lib),c))
 SYSTEM_LIBRARY_LIBM  := $(strip $(call path-to-system-library,$(_lib),m))
 SYSTEM_LIBRARY_LIBDL := $(strip $(call path-to-system-library,$(_lib),dl))
-
-ifeq ($(USE_LLD),1)
- MODULE_LDFLAGS += -fuse-ld=lld
-endif
 
 MODULE_EXE_LDFLAGS += $(SYSTEM_LIBRARY_LIBC)
 
@@ -107,6 +105,17 @@ MODULE_SYSTEM_LIBRARY_DIR_FLAGS := \
  -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/$(_apex-vndk)/lib64 \
  -Xlinker -rpath-link=$(TARGET_ROOT)/product/$(TARGET_DEVICE)/$(_apex-vndk)/lib64
 
+# Oreo-mr1 library paths
+ifeq ($(filter-out 27,$(API_LEVEL)),)
+MODULE_SYSTEM_LIBRARY_DIR_FLAGS += \
+ -L$(OUT_DIR)/soong/ndk/platforms/android-$(API_LEVEL)/arch-x86_64/usr/lib64 \
+ -Xlinker -rpath-link=$(OUT_DIR)/soong/ndk/platforms/android-$(API_LEVEL)/arch-x86_64/usr/lib64 \
+ -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk \
+ -Xlinker -rpath-link=$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk \
+ -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk-sp \
+ -Xlinker -rpath-link=$(TARGET_ROOT)/product/$(TARGET_DEVICE)/system/lib64/vndk-sp
+endif
+
 # Vendor libraries are required for gralloc, hwcomposer, and proprietary HIDL HALs.
 MODULE_VENDOR_LIBRARY_DIR_FLAGS := \
  -L$(TARGET_ROOT)/product/$(TARGET_DEVICE)/vendor/lib64 \
@@ -127,8 +136,10 @@ MODULE_LIBRARY_FLAGS_SUBST += \
  perfetto_client_experimental:$(_obj)/STATIC_LIBRARIES/libperfetto_client_experimental_intermediates/libperfetto_client_experimental.a \
  protobuf-cpp-lite:$(_obj)/STATIC_LIBRARIES/libprotobuf-cpp-lite_intermediates/libprotobuf-cpp-lite.a \
  perfetto_trace_protos:$(_obj)/STATIC_LIBRARIES/perfetto_trace_protos_intermediates/perfetto_trace_protos.a \
- clang_rt:$(__clang_bindir)../lib64/clang/$(__clang_version)/lib/linux/libclang_rt.builtins-x86_64-android.a \
- dmabufinfo:$(_obj)/STATIC_LIBRARIES/libdmabufinfo_intermediates/libdmabufinfo.a
+ c++_static:$(__clang_bindir)../android_libc++/platform/x86_64/lib/libc++_static.a \
+ clang_rt:$(lib_clang_dir)/lib/linux/libclang_rt.builtins-x86_64-android.a \
+ dmabufinfo:$(_obj)/STATIC_LIBRARIES/libdmabufinfo_intermediates/libdmabufinfo.a \
+ aidlcommonsupport:$(_obj)/STATIC_LIBRARIES/libaidlcommonsupport_intermediates/libaidlcommonsupport.a
 
 # Unittests dependent on libRScpp_static.a
 ifneq (,$(findstring $(THIS_MODULE),$(PVR_UNITTESTS_DEP_LIBRSCPP)))

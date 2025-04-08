@@ -2,62 +2,43 @@
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 #define pr_fmt(x) KBUILD_MODNAME ": " x "\n"
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/init.h>
-#include "linux/irq.h"
-#include <linux/slab.h>
-#include <linux/interrupt.h>
-#include <linux/device.h>
-#include <linux/mutex.h>
-#include <linux/param.h>
-#include <linux/jiffies.h>
-#include <linux/platform_device.h>
-#include <linux/power_supply.h>
-#include <linux/fs.h>
-#include <linux/kernel.h>
-#include <linux/ktime.h>
-#include <linux/of.h>
-#include <linux/timekeeping.h>
-#include <linux/types.h>
-#include <linux/string.h>
-#include <asm/irq.h>
-#include <linux/cdev.h>
-#include <linux/delay.h>
-#include <linux/pm_runtime.h>
-#include <linux/kthread.h>
-#include <linux/freezer.h>
-#include <linux/err.h>
-#include <linux/of_gpio.h>
-#include <linux/gpio.h>
-#include <linux/extcon.h>
-#include <linux/extcon-provider.h>
-#include <linux/err.h>
-#include <linux/notifier.h>
-#include <power/bmu-ext.h>
 #include "eta6973_charger.h"
-#include <linux/pm_wakeirq.h>
+
+#define DIVIDE_BY_60(n) (((n) / 60) * 60)
 
 struct eta6973_power {
-	char                      	*name;
-	struct device             	*dev;
-	struct regmap             	*regmap;
-	struct power_supply       	*charger_supply;
-	struct bmu_ext_config_info  dts_info;
-	struct delayed_work         charger_supply_mon;
-	unsigned int 				reg_val_08_old;
-	unsigned int 				reg_val_09_old;
-	unsigned int 				reg_val_0a_old;
-	int						  	charger_type;
-	int 						gpio_int_n;
-	int							qc_nce_gpio;
-	int 						gpio_int_n_irq;
-	int 						vbus_set_limit;
-	int 						vbus_set_vol_limit;
-	int 						charge_set_limit;
-	int 						battery_exist;
+	char				*name;
+	struct device			*dev;
+	struct regmap			*regmap;
+	struct power_supply		*charger_supply;
+	struct bmu_ext_config_info	dts_info;
+	struct delayed_work		charger_supply_mon;
+	unsigned int 			reg_val_08_old;
+	unsigned int 			reg_val_09_old;
+	unsigned int 			reg_val_0a_old;
+	int				charger_type;
+	int 				gpio_int_n;
+	int 				gpio_int_n_irq;
+	int 				vbus_set_limit;
+	int 				vbus_set_vol_limit;
+	int 				battery_exist;
 
-	atomic_t set_current_limit_max;
+	bool				bat_supply_exist;
+	bool				bat_supply_probe_finish;
+	struct delayed_work		bat_supply_det;
+	struct power_supply		*bat_supply;
+	struct device_node		*bat_supply_np;
+
+	struct delayed_work		bat_qc_temp_process;
+	struct wakeup_source		*bat_qc_temp_ws;
+
+	atomic_t			charge_over_time;
+	atomic_t			pmu_jetia_status;
+	atomic_t			pmu_limit_status;
+	atomic_t 			set_current_limit_max;
+
+	atomic_t 			charge_set_limit;
+	atomic_t 			charge_control_lim;
 };
 
 static enum power_supply_property eta6973_charger_props[] = {
@@ -72,6 +53,161 @@ static enum power_supply_property eta6973_charger_props[] = {
 	POWER_SUPPLY_PROP_CALIBRATE,
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
 };
+
+static void eta6973_power_init_late(struct eta6973_power *charger_power);
+static int eta6973_battery_power_get(struct eta6973_power *charger_power);
+static void eta6973_temp_process_monitor(struct work_struct *work);
+
+static int _eta6973_battery_para_get(struct eta6973_power *charger_power, enum power_supply_property psp, const char *name, int paras)
+{
+	union power_supply_propval val;
+	int _paras = -1;
+
+	if (name != NULL) {
+		of_property_read_u32(charger_power->bat_supply_np, name, &_paras);
+	}
+
+	if (_paras < 0) {
+		val.intval = paras;
+	} else {
+		val.intval = _paras;
+	}
+
+	_paras = psp;
+
+	if (_paras > -1) {
+		power_supply_get_property(charger_power->bat_supply, psp, &val);
+	}
+
+	return val.intval;
+}
+
+static int eta6973_battery_para_get(struct eta6973_power *charger_power)
+{
+	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
+	union power_supply_propval val;
+	static int check_count = 1;
+
+	if (eta6973_battery_power_get(charger_power)) {
+		bmp_dts_info->pmu_bat_temp_enable = 0;
+		return -1;
+	}
+
+	if (check_count == 2)
+		return 0;
+
+	/* get ntc paras */
+	if (!charger_power->battery_exist) {
+		bmp_dts_info->pmu_bat_temp_enable = 0;
+	} else {
+		bmp_dts_info->pmu_bat_temp_enable = _eta6973_battery_para_get(charger_power, -1, "pmu_bat_temp_enable", 0);
+		if (bmp_dts_info->pmu_bat_temp_enable) {
+			bmp_dts_info->pmu_bat_charge_ltf = _eta6973_battery_para_get(charger_power, POWER_SUPPLY_PROP_TEMP, "pmu_bat_charge_ltf", -200000);
+			bmp_dts_info->pmu_bat_charge_htf = _eta6973_battery_para_get(charger_power, POWER_SUPPLY_PROP_TEMP, "pmu_bat_charge_htf", 200000);
+			of_property_read_u32(charger_power->bat_supply_np, "pmu_jetia_en", &bmp_dts_info->pmu_jetia_en);
+			if (bmp_dts_info->pmu_jetia_en) {
+				bmp_dts_info->pmu_jetia_cool = _eta6973_battery_para_get(charger_power, POWER_SUPPLY_PROP_TEMP, "pmu_jetia_cool", -200000);
+				bmp_dts_info->pmu_jetia_warm = _eta6973_battery_para_get(charger_power, POWER_SUPPLY_PROP_TEMP, "pmu_jetia_warm", 200000);
+			}
+		}
+	}
+
+	/* get ichg limit paras */
+	bmp_dts_info->pmu_runtime_chgcur = DIVIDE_BY_60(_eta6973_battery_para_get(charger_power, -1, "pmu_runtime_chgcur", bmp_dts_info->pmu_runtime_chgcur));
+	bmp_dts_info->pmu_suspend_chgcur = DIVIDE_BY_60(_eta6973_battery_para_get(charger_power, -1, "pmu_suspend_chgcur", bmp_dts_info->pmu_suspend_chgcur));
+	bmp_dts_info->pmu_shutdown_chgcur = DIVIDE_BY_60(_eta6973_battery_para_get(charger_power, -1, "pmu_shutdown_chgcur", bmp_dts_info->pmu_shutdown_chgcur));
+
+	/* get charger voltage limit */
+	bmp_dts_info->pmu_init_chgvol = _eta6973_battery_para_get(charger_power, -1, "pmu_init_chgvol", bmp_dts_info->pmu_init_chgvol);
+	if (bmp_dts_info->pmu_init_chgvol > ETA6973_VTERM_MAX)
+		bmp_dts_info->pmu_init_chgvol = ETA6973_VTERM_MAX;
+	if (bmp_dts_info->pmu_init_chgvol < ETA6973_VTERM_MIN)
+		bmp_dts_info->pmu_init_chgvol = ETA6973_VTERM_MIN;
+
+	PMIC_INFO("pmu_bat_temp_enable:%d\n", bmp_dts_info->pmu_bat_temp_enable);
+	PMIC_INFO("pmu_bat_charge_ltf:%d\n", bmp_dts_info->pmu_bat_charge_ltf);
+	PMIC_INFO("pmu_bat_charge_htf:%d\n", bmp_dts_info->pmu_bat_charge_htf);
+	PMIC_INFO("pmu_jetia_cool:%d\n", bmp_dts_info->pmu_jetia_cool);
+	PMIC_INFO("pmu_jetia_warm:%d\n", bmp_dts_info->pmu_jetia_warm);
+	PMIC_INFO("pmu_runtime_chgcur:%d\n", bmp_dts_info->pmu_runtime_chgcur);
+	PMIC_INFO("pmu_suspend_chgcur:%d\n", bmp_dts_info->pmu_suspend_chgcur);
+	PMIC_INFO("pmu_shutdown_chgcur:%d\n", bmp_dts_info->pmu_shutdown_chgcur);
+	PMIC_INFO("pmu_init_chgvol:%d\n", bmp_dts_info->pmu_init_chgvol);
+
+	val.intval = 1;
+	power_supply_set_property(charger_power->bat_supply, POWER_SUPPLY_PROP_CALIBRATE, &val);
+
+	check_count = 2;
+	return 0;
+}
+
+static void _eta6973_battery_power_check(struct work_struct *work)
+{
+	struct eta6973_power *charger_power =
+		container_of(work, typeof(*charger_power), bat_supply_det.work);
+
+	if (!(charger_power->bat_supply) || (IS_ERR(charger_power->bat_supply))) {
+		charger_power->bat_supply =  NULL;
+		charger_power->bat_supply_np =  NULL;
+		charger_power->bat_supply_exist = false;
+	}
+
+	eta6973_battery_para_get(charger_power);
+	eta6973_power_init_late(charger_power);
+
+	if (charger_power->dts_info.pmu_bat_temp_enable) {
+		charger_power->bat_qc_temp_ws = wakeup_source_register(charger_power->dev, "bat_qc_temp_proce");
+		INIT_DELAYED_WORK(&charger_power->bat_qc_temp_process, eta6973_temp_process_monitor);
+		schedule_delayed_work(&charger_power->bat_qc_temp_process, msecs_to_jiffies(5 * 1000));
+	}
+
+	PMIC_INFO("bmu-ext:chip init late finish\n");
+	power_supply_changed(charger_power->charger_supply);
+}
+
+static int eta6973_battery_power_get(struct eta6973_power *charger_power)
+{
+	struct device_node *np = NULL;
+	static int check_count = 1;
+	int ret = 0;
+
+	if (charger_power->bat_supply_exist)
+		return ret;
+
+	if (check_count == 2)
+		return -1;
+
+	charger_power->bat_supply_exist = false;
+	charger_power->bat_supply_probe_finish = false;
+
+	if (of_find_property(charger_power->dev->of_node, "det_battery_supply", NULL)) {
+		np = of_parse_phandle(charger_power->dev->of_node, "det_battery_supply", 0);
+		if (!of_device_is_available(np)) {
+			charger_power->bat_supply =  NULL;
+			charger_power->bat_supply_np =  NULL;
+			ret = -1;
+		} else {
+			charger_power->bat_supply = devm_power_supply_get_by_phandle(charger_power->dev,
+							"det_battery_supply");
+			charger_power->bat_supply_np = of_parse_phandle(charger_power->dev->of_node, "det_battery_supply", 0);
+			if (!(charger_power->bat_supply) || (IS_ERR(charger_power->bat_supply))) {
+				INIT_DELAYED_WORK(&charger_power->bat_supply_det, _eta6973_battery_power_check);
+				charger_power->bat_supply_exist = true;
+				return -1;
+			}
+		}
+	} else {
+			charger_power->bat_supply =  NULL;
+			charger_power->bat_supply_np =  NULL;
+			ret = -1;
+	}
+
+	if (!ret)
+		charger_power->bat_supply_exist = true;
+
+	check_count = 2;
+	return ret;
+}
 
 static int eta6973_charger_input_limit(struct eta6973_power *charger_power, int mA)
 {
@@ -292,6 +428,43 @@ static int eta6973_set_ichg_limit(struct regmap *regmap, int mA)
 	return 0;
 }
 
+static int eta6973_ichg_limit_ext(struct eta6973_power *charger_power, int new_cur)
+{
+	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
+	bool limit_status = false, jetia_status = false;
+	int old_cur, charge_lim, set_cur, jetia_cur;
+
+	if (!charger_power->bat_supply_probe_finish) {
+		return 0;
+	}
+
+	limit_status = atomic_read(&charger_power->pmu_limit_status);
+	jetia_status = atomic_read(&charger_power->pmu_jetia_status);
+	old_cur = atomic_read(&charger_power->charge_set_limit);
+	jetia_cur = bmp_dts_info->pmu_runtime_chgcur / 2;
+
+	if (new_cur == 0 || old_cur == new_cur)
+		return old_cur;
+
+	if (limit_status) {
+		charge_lim = atomic_read(&charger_power->charge_control_lim);
+		if (jetia_status && (charge_lim > jetia_cur)) {
+			set_cur = jetia_cur;
+		} else {
+			set_cur = charge_lim;
+		}
+	} else {
+		if (jetia_status) {
+			set_cur = jetia_cur;
+		} else {
+			set_cur = new_cur;
+		}
+	}
+	atomic_set(&charger_power->charge_set_limit, set_cur);
+	eta6973_set_ichg_limit(charger_power->regmap, set_cur);
+	return set_cur;
+}
+
 static int eta6973_get_time_to_full(struct power_supply *ps,
 				   union power_supply_propval *val)
 {
@@ -405,6 +578,7 @@ static int eta6973_charger_get_property(struct power_supply *psy,
 				       union power_supply_propval *val)
 {
 	struct eta6973_power *charger_power = power_supply_get_drvdata(psy);
+	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
 	int ret = 0;
 
 	switch (psp) {
@@ -418,7 +592,21 @@ static int eta6973_charger_get_property(struct power_supply *psy,
 		val->strval = ETA6973_MANUFACTURER;
 		break;
 	case POWER_SUPPLY_PROP_STATUS:
+		if (!charger_power->battery_exist) {
+			val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
+			break;
+		}
 		ret = eta6973_get_bat_status(psy, val);
+		break;
+	case POWER_SUPPLY_PROP_HEALTH:
+		if (!charger_power->battery_exist) {
+			val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
+			break;
+		}
+		if (atomic_read(&charger_power->charge_over_time))
+			val->intval = POWER_SUPPLY_HEALTH_DEAD;
+		else
+			val->intval = POWER_SUPPLY_HEALTH_GOOD;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		ret = eta6973_get_ovp_vol(psy, val);
@@ -436,7 +624,21 @@ static int eta6973_charger_get_property(struct power_supply *psy,
 		val->intval = charger_power->battery_exist;
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
-		ret = eta6973_get_ichg_limit(psy, val);
+		if (charger_power->bat_supply_exist && (val->intval > 0)) {
+			if (!charger_power->bat_supply_probe_finish) {
+				val->intval = DIVIDE_BY_60(val->intval);
+				break;
+			}
+		}
+		if (atomic_read(&charger_power->pmu_jetia_status)) {
+			if (!atomic_read(&charger_power->pmu_limit_status)) {
+				val->intval = bmp_dts_info->pmu_runtime_chgcur;
+			} else {
+				val->intval = atomic_read(&charger_power->charge_control_lim);
+			}
+		} else {
+			ret = eta6973_get_ichg_limit(psy, val);
+		}
 		break;
 	default:
 		break;
@@ -450,6 +652,7 @@ static int eta6973_charger_set_property(struct power_supply *psy,
 				const union power_supply_propval *val)
 {
 	struct eta6973_power *charger_power = power_supply_get_drvdata(psy);
+	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
 	struct regmap *regmap = charger_power->regmap;
 	unsigned int reg_val;
 	int ret = 0, qc_cur;
@@ -506,8 +709,31 @@ static int eta6973_charger_set_property(struct power_supply *psy,
 		ret = eta6973_set_bat_status(regmap, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
-		ret = eta6973_set_ichg_limit(regmap, val->intval);
-		charger_power->charge_set_limit = val->intval;
+		qc_cur = atomic_read(&charger_power->charge_set_limit);
+
+		if (val->intval < bmp_dts_info->pmu_runtime_chgcur) {
+			atomic_set(&charger_power->charge_control_lim, val->intval);
+			atomic_set(&charger_power->pmu_limit_status, true);
+		} else {
+			atomic_set(&charger_power->pmu_limit_status, false);
+		}
+		eta6973_ichg_limit_ext(charger_power, val->intval);
+		break;
+	case POWER_SUPPLY_PROP_TEMP:
+		if (charger_power->bat_supply_exist) {
+			if (val->intval == 1) {
+				schedule_delayed_work(&charger_power->bat_qc_temp_process, 0);
+			}
+		}
+		break;
+	case POWER_SUPPLY_PROP_CALIBRATE:
+		if (charger_power->bat_supply_exist) {
+			if ((val->intval == 1) && !charger_power->bat_supply_probe_finish) {
+				charger_power->bat_supply_probe_finish = true;
+				schedule_delayed_work(&charger_power->bat_supply_det, 0);
+				break;
+			}
+		}
 		break;
 	default:
 		ret = -EINVAL;
@@ -538,6 +764,12 @@ static int eta6973_power_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_STATUS:
 		ret = 0;
 		break;
+	case POWER_SUPPLY_PROP_TEMP:
+		ret = 0;
+		break;
+	case POWER_SUPPLY_PROP_CALIBRATE:
+		ret = 0;
+		break;
 	default:
 		ret = -EINVAL;
 	}
@@ -554,6 +786,11 @@ static void eta6973_irq_vbus_stat(struct eta6973_power *charger_power)
 
 	reg_val = (reg_val & ETA6973_REG08_VBUS_STAT_MASK) >> ETA6973_REG08_VBUS_STAT_SHIFT;
 	PMIC_INFO("%s:%d ETA6973_REG_08:%d\n", __func__, __LINE__, reg_val);
+
+	if (!charger_power->battery_exist) {
+		eta6973_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbad_input_cur);
+		return;
+	}
 
 	if (charger_power->charger_type == 1) {
 		switch (reg_val) {
@@ -576,9 +813,7 @@ static void eta6973_irq_vbus_stat(struct eta6973_power *charger_power)
 		}
 	}
 
-	if (!charger_power->battery_exist) {
-		eta6973_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbad_input_cur);
-	} else if (atomic_read(&charger_power->set_current_limit_max)) {
+	if (atomic_read(&charger_power->set_current_limit_max)) {
 		atomic_set(&charger_power->set_current_limit_max, 0);
 		eta6973_set_iin_limit(charger_power, charger_power->vbus_set_limit);
 	}
@@ -594,11 +829,15 @@ static void eta6973_irq_vbus_gd(struct eta6973_power *charger_power)
 	regmap_read(regmap, ETA6973_REG_0A, &reg_val);
 	PMIC_INFO("%s:%d ETA6973_REG_0A:0x%x\n", __func__, __LINE__, reg_val);
 
+	if (!charger_power->battery_exist) {
+		return;
+	}
+
 	if (!(reg_val & ETA6973_REG0A_VBUS_GD_MASK)) {
 		atomic_set(&charger_power->set_current_limit_max, 0);
 		charger_power->vbus_set_limit = charger_power->dts_info.pmu_usbpc_input_cur;
 		charger_power->vbus_set_vol_limit = charger_power->dts_info.pmu_usbpc_input_vol;
-		eta6973_set_ovp_vol(charger_power->regmap, charger_power->dts_info.pmu_usbad_input_vol);
+		eta6973_set_ovp_vol(charger_power->regmap, charger_power->vbus_set_vol_limit);
 		eta6973_set_iin_limit(charger_power, charger_power->vbus_set_limit);
 	}
 }
@@ -609,6 +848,14 @@ static void eta6973_irq_fault(struct eta6973_power *charger_power, unsigned int 
 	unsigned int reg_val;
 
 	regmap_read(regmap, ETA6973_REG_09, &reg_val);
+	if (reg_val & (ETA6973_REG09_FAULT_CHRG_TIMER << ETA6973_REG09_FAULT_CHRG_SHIFT)) {
+		if (!atomic_read(&charger_power->charge_over_time))
+			atomic_set(&charger_power->charge_over_time, true);
+	} else {
+		if (atomic_read(&charger_power->charge_over_time))
+			atomic_set(&charger_power->charge_over_time, false);
+	}
+
 	PMIC_INFO("%s:%d ETA_FAULT:ETA6973_REG_09:0x%x, reg_val_old:0x%x, reg_val_new:0x%x\n", __func__, __LINE__, reg_val, reg_val_old, reg_val_new);
 }
 
@@ -672,6 +919,64 @@ static void eta6973_power_monitor(struct work_struct *work)
 	schedule_delayed_work(&charger_power->charger_supply_mon, msecs_to_jiffies(1 * 1000));
 }
 
+static void eta6973_temp_process_monitor(struct work_struct *work)
+{
+	struct eta6973_power *charger_power =
+		container_of(work, typeof(*charger_power), bat_qc_temp_process.work);
+	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
+	struct regmap *regmap = charger_power->regmap;
+	union power_supply_propval bat_temp_val;
+	static int charge_status = 2;
+	int tmp, qc_status_val = 0, qc_cur_val = 0;
+	bool jetia_status = atomic_read(&charger_power->pmu_jetia_status);
+
+	power_supply_get_property(charger_power->bat_supply, POWER_SUPPLY_PROP_TEMP, &bat_temp_val);
+	tmp = bat_temp_val.intval;
+
+	if (charge_status != 1 && ((tmp <= bmp_dts_info->pmu_bat_charge_ltf) || (tmp >= bmp_dts_info->pmu_bat_charge_htf))) {
+		PMIC_DEBUG("bat temp(%d) is over/under than chage mode temp(%d/%d): hold wake lock and discharge\n", tmp,
+				 bmp_dts_info->pmu_bat_charge_htf, bmp_dts_info->pmu_bat_charge_ltf);
+		qc_status_val = 1;
+	} else if (charge_status == 1 && (tmp > (bmp_dts_info->pmu_bat_charge_ltf + 30) && (tmp < (bmp_dts_info->pmu_bat_charge_htf - 30)))) {
+		PMIC_DEBUG("release wake lock and recharge:bat_temp:%d\n", tmp);
+		qc_status_val = 2;
+	}
+
+	if ((charge_status != qc_status_val) && (qc_status_val != 0)) {
+		charge_status = qc_status_val;
+		eta6973_set_bat_status(regmap, charge_status);
+		if (charge_status == 1) {
+			__pm_stay_awake(charger_power->bat_qc_temp_ws);
+		} else {
+			__pm_relax(charger_power->bat_qc_temp_ws);
+		}
+	}
+
+	if (bmp_dts_info->pmu_jetia_en && (charge_status == 2)) {
+		if ((tmp <= bmp_dts_info->pmu_jetia_cool) || (tmp >= bmp_dts_info->pmu_jetia_warm)) {
+			PMIC_DEBUG("bat temp(%d) is over/under than chage mode temp(%d/%d):limit chgcur\n", tmp,
+					  bmp_dts_info->pmu_jetia_warm, bmp_dts_info->pmu_jetia_cool);
+			qc_cur_val = bmp_dts_info->pmu_runtime_chgcur / 2;
+			jetia_status = true;
+		} else if ((tmp > (bmp_dts_info->pmu_jetia_cool + 30)) && (tmp < (bmp_dts_info->pmu_jetia_warm - 30))) {
+			PMIC_DEBUG("restore bat chgcur:bat_temp:%d\n", tmp);
+			qc_cur_val = bmp_dts_info->pmu_runtime_chgcur;
+			jetia_status = false;
+		}
+	}
+
+	atomic_set(&charger_power->pmu_jetia_status, jetia_status);
+	qc_cur_val = eta6973_ichg_limit_ext(charger_power, qc_cur_val);
+
+	PMIC_DEBUG("%s:%d bat_temp:%d, charge_status:%d, jetia_status:%d, lim_cur:%d\n", __func__, __LINE__,
+			  tmp, charge_status, jetia_status, qc_cur_val);
+	power_supply_changed(charger_power->charger_supply);
+
+	if ((charge_status == 1) || jetia_status) {
+		schedule_delayed_work(&charger_power->bat_qc_temp_process, msecs_to_jiffies(5 * 1000));
+	}
+}
+
 static int eta6973_power_gpio_check(struct eta6973_power *charger_power, int gpio_no, const char *name)
 {
 	int ret = 0;
@@ -691,7 +996,7 @@ static int eta6973_power_gpio_init(struct eta6973_power *charger_power)
 {
 	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
 	unsigned long int config_set;
-	int bat_det_gpio, bat_det_gpio_value;
+	int bat_det_gpio, bat_det_gpio_value, qc_nce_gpio;
 	int ret = 0;
 
 	/* set gpio pull down */
@@ -700,30 +1005,38 @@ static int eta6973_power_gpio_init(struct eta6973_power *charger_power)
 				1);
 
 	/* set charge pin state low */
-	charger_power->qc_nce_gpio =
+	qc_nce_gpio =
 		of_get_named_gpio(charger_power->dev->of_node, "qc_nce_gpio", 0);
-	ret = eta6973_power_gpio_check(charger_power, charger_power->qc_nce_gpio, "eta6973_charge_en");
-	if (ret < 0) {
-		return ret;
+	if (qc_nce_gpio > 0) {
+		ret = eta6973_power_gpio_check(charger_power, qc_nce_gpio, "eta6973_charge_en");
+		if (ret < 0) {
+			return ret;
+		}
+		gpio_direction_output(qc_nce_gpio, 0);
+		pinctrl_gpio_set_config(qc_nce_gpio, config_set);
 	}
-	gpio_direction_output(charger_power->qc_nce_gpio, 0);
-	pinctrl_gpio_set_config(charger_power->qc_nce_gpio, config_set);
 
 	/* get battery status */
 	if (!bmp_dts_info->battery_exist_sets) {
 		bat_det_gpio =
 			of_get_named_gpio(charger_power->dev->of_node, "bat_state_gpio", 0);
-		ret = eta6973_power_gpio_check(charger_power, bat_det_gpio, "eta6973_bat_status");
-		if (ret < 0) {
-			return ret;
-		}
-		pinctrl_gpio_set_config(bat_det_gpio, config_set);
-		bat_det_gpio_value = __gpio_get_value(bat_det_gpio);
-		if (bat_det_gpio_value)
+		if (bat_det_gpio > 0) {
+			ret = eta6973_power_gpio_check(charger_power, bat_det_gpio, "eta6973_bat_status");
+			if (ret < 0) {
+				return ret;
+			}
+			pinctrl_gpio_set_config(bat_det_gpio, config_set);
+			bat_det_gpio_value = gpio_get_value(bat_det_gpio);
+			if (bat_det_gpio_value)
+				charger_power->battery_exist = 0;
+			else
+				charger_power->battery_exist = 1;
+			PMIC_DEBUG("eta6973_battery_check:%d", charger_power->battery_exist);
+		} else {
 			charger_power->battery_exist = 0;
-		else
-			charger_power->battery_exist = 1;
-		PMIC_DEBUG("eta6973_battery_check:%d", charger_power->battery_exist);
+		}
+	} else {
+		charger_power->battery_exist = bmp_dts_info->battery_exist_sets - 1;
 	}
 
 	/* set gpio pull up */
@@ -753,12 +1066,27 @@ static int eta6973_power_gpio_init(struct eta6973_power *charger_power)
 	return 0;
 }
 
-static void eta6973_power_init(struct eta6973_power *charger_power)
+static void eta6973_power_init_late(struct eta6973_power *charger_power)
 {
 	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
 	struct regmap *regmap = charger_power->regmap;
-	struct power_supply *ps = NULL;
-	struct device_node *np = NULL;
+	unsigned int data = 0;
+
+	/* set charger voltage limit */
+	data = bmp_dts_info->pmu_init_chgvol;
+	data = ((data - 3848) / 32);
+	regmap_update_bits(regmap, ETA6973_REG_04, ETA6973_REG04_VREG_MASK,
+				 data << ETA6973_REG04_VREG_SHIFT);
+
+	/* set chgcur lim */
+	atomic_set(&charger_power->charge_set_limit, bmp_dts_info->pmu_runtime_chgcur);
+	eta6973_ichg_limit_ext(charger_power, bmp_dts_info->pmu_runtime_chgcur);
+}
+
+static void eta6973_power_init(struct eta6973_power *charger_power, int flags)
+{
+	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
+	struct regmap *regmap = charger_power->regmap;
 	unsigned int data = 0;
 
 	/* distinguish between ETA6973 and ETA6973*/
@@ -772,6 +1100,7 @@ static void eta6973_power_init(struct eta6973_power *charger_power)
 		charger_power->charger_type = 1;
 	}
 
+	/* init eta6973 private paras */
 	regmap_read(regmap, ETA6973_REG_08, &data);
 	charger_power->reg_val_08_old = data;
 
@@ -781,9 +1110,22 @@ static void eta6973_power_init(struct eta6973_power *charger_power)
 	regmap_read(regmap, ETA6973_REG_0A, &data);
 	charger_power->reg_val_0a_old = data;
 
+	atomic_set(&charger_power->charge_over_time, false);
+	atomic_set(&charger_power->pmu_jetia_status, false);
+	atomic_set(&charger_power->pmu_limit_status, false);
+	atomic_set(&charger_power->charge_control_lim, 0);
+	atomic_set(&charger_power->charge_set_limit, 2000);
+
 	/* set default input voltage limit to 5V*/
 	charger_power->vbus_set_vol_limit = 5000;
-	eta6973_set_ovp_vol(charger_power->regmap, 5000);
+	eta6973_set_ovp_vol(charger_power->regmap, charger_power->vbus_set_vol_limit);
+
+	/* check battery exist & set default input cur when non-battery*/
+	if (!charger_power->battery_exist) {
+		eta6973_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbad_input_cur);
+		PMIC_INFO("bmu-ext:chip init non-battery finish\n");
+		return;
+	}
 
 	/* set default charge time */
 	if (bmp_dts_info->bmu_ext_save_charge_time > 5)
@@ -794,43 +1136,11 @@ static void eta6973_power_init(struct eta6973_power *charger_power)
 	regmap_update_bits(regmap, ETA6973_REG_05, ETA6973_REG05_CHG_TIMER_MASK,
 				 data << ETA6973_REG05_CHG_TIMER_SHIFT);
 
-	if (!bmp_dts_info->battery_exist_sets) {
-		charger_power->battery_exist = 0;
-		eta6973_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbad_input_cur);
-	} else {
-		charger_power->battery_exist = bmp_dts_info->battery_exist_sets - 1;
-	}
-	if (!charger_power->battery_exist) {
-		eta6973_set_iin_limit(charger_power, charger_power->dts_info.pmu_usbad_input_cur);
+	if (!flags) {
+		charger_power->bat_supply_probe_finish = true;
+		eta6973_power_init_late(charger_power);
 	}
 
-	/* set charger voltage limit */
-	data = 4350;
-	if (of_find_property(charger_power->dev->of_node, "det_battery_supply", NULL))
-		ps = devm_power_supply_get_by_phandle(charger_power->dev,
-							"det_battery_supply");
-	if (ps && (!IS_ERR(ps))) {
-		if (of_device_is_available(ps->of_node)) {
-			np = of_parse_phandle(charger_power->dev->of_node, "det_battery_supply", 0);
-			if (np) {
-				of_property_read_u32(np, "pmu_init_chgvol", &data);
-				PMIC_DEBUG("bmu-ext:pmu_init_chgvol:%d\n", data);
-			}
-		}
-	}
-
-	if (data > 4616)
-		data = 4616;
-	if (data < 3848)
-		data = 3848;
-
-	data = ((data - 3848) / 32);
-	regmap_update_bits(regmap, ETA6973_REG_04, ETA6973_REG04_VREG_MASK,
-				 data << ETA6973_REG04_VREG_SHIFT);
-
-	/* set chgcur lim */
-	eta6973_set_ichg_limit(regmap, bmp_dts_info->pmu_runtime_chgcur);
-	charger_power->charge_set_limit = bmp_dts_info->pmu_runtime_chgcur;
 	PMIC_INFO("bmu-ext:chip init finish\n");
 }
 
@@ -875,8 +1185,18 @@ static void eta6973_charger_parse_device_tree(struct eta6973_power *charger_powe
 		return;
 	}
 
-	/*init eta6973 charger by device tree*/
-	eta6973_power_init(charger_power);
+	/* get battery paras */
+	if (!eta6973_battery_power_get(charger_power)) {
+		PMIC_INFO("bmu-ext:Matching battery driver found, init paras finish\n");
+		eta6973_power_init(charger_power, 0);
+	} else if (charger_power->bat_supply_exist) {
+		PMIC_INFO("bmu-ext:Matching battery driver found, init paras after battery driver loaded\n");
+		eta6973_power_init(charger_power, 1);
+	} else {
+		PMIC_INFO("bmu-ext:No matching battery driver found\n");
+		/*init eta6973 charger by device tree*/
+		eta6973_power_init(charger_power, 0);
+	}
 }
 
 static int eta6973_charger_probe(struct platform_device *pdev)
@@ -897,6 +1217,13 @@ static int eta6973_charger_probe(struct platform_device *pdev)
 	charger_power->dev = &pdev->dev;
 	charger_power->regmap = ext->regmap;
 
+	/* init gpio control: irq pin, nce pin, battery det pin */
+	ret = eta6973_power_gpio_init(charger_power);
+	if (ret != 0) {
+		PMIC_INFO("gpio init failed\n");
+		return ret;
+	}
+
 	/* parse device tree and set register */
 	eta6973_charger_parse_device_tree(charger_power);
 
@@ -914,11 +1241,6 @@ static int eta6973_charger_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&charger_power->charger_supply_mon, eta6973_power_monitor);
 
-	ret = eta6973_power_gpio_init(charger_power);
-	if (ret != 0) {
-		PMIC_INFO("gpio init failed\n");
-		return ret;
-	}
 	if (charger_power->gpio_int_n > 0) {
 		PMIC_DEBUG("gpio interrupts:%d", charger_power->gpio_int_n);
 		ret = devm_request_threaded_irq(&pdev->dev, charger_power->gpio_int_n_irq, NULL,
@@ -977,22 +1299,32 @@ static void eta6973_charger_shutdown(struct platform_device *pdev)
 {
 	struct eta6973_power *charger_power = platform_get_drvdata(pdev);
 	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
+	int charge_limit = atomic_read(&charger_power->charge_set_limit);
 
-	if (charger_power->charge_set_limit >= bmp_dts_info->pmu_runtime_chgcur)
+	if (charge_limit >= bmp_dts_info->pmu_runtime_chgcur)
 		eta6973_set_ichg_limit(charger_power->regmap, bmp_dts_info->pmu_shutdown_chgcur);
 
 	cancel_delayed_work_sync(&charger_power->charger_supply_mon);
+
+	if (charger_power->dts_info.pmu_bat_temp_enable) {
+		cancel_delayed_work_sync(&charger_power->bat_qc_temp_process);
+	}
 }
 
 static int eta6973_charger_suspend(struct platform_device *p, pm_message_t state)
 {
 	struct eta6973_power *charger_power = platform_get_drvdata(p);
 	struct bmu_ext_config_info *bmp_dts_info = &charger_power->dts_info;
+	int charge_limit = atomic_read(&charger_power->charge_set_limit);
 
-	if (charger_power->charge_set_limit >= bmp_dts_info->pmu_runtime_chgcur)
+	if (charge_limit >= bmp_dts_info->pmu_runtime_chgcur)
 		eta6973_set_ichg_limit(charger_power->regmap, bmp_dts_info->pmu_suspend_chgcur);
 
 	cancel_delayed_work_sync(&charger_power->charger_supply_mon);
+
+	if (charger_power->dts_info.pmu_bat_temp_enable) {
+		cancel_delayed_work_sync(&charger_power->bat_qc_temp_process);
+	}
 
 	return 0;
 }
@@ -1000,9 +1332,14 @@ static int eta6973_charger_suspend(struct platform_device *p, pm_message_t state
 static int eta6973_charger_resume(struct platform_device *p)
 {
 	struct eta6973_power *charger_power = platform_get_drvdata(p);
+	int charge_limit = atomic_read(&charger_power->charge_set_limit);
 
-	eta6973_set_ichg_limit(charger_power->regmap, charger_power->charge_set_limit);
+	eta6973_set_ichg_limit(charger_power->regmap, charge_limit);
 	schedule_delayed_work(&charger_power->charger_supply_mon, 0);
+
+	if (charger_power->dts_info.pmu_bat_temp_enable) {
+		schedule_delayed_work(&charger_power->bat_qc_temp_process, 0);
+	}
 
 	return 0;
 }

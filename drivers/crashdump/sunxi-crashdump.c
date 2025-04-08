@@ -26,6 +26,8 @@
 #include <linux/version.h>
 #include <linux/input.h>
 #include "sunxi-crashdump.h"
+#include "sunxi-crashnote.h"
+#include "sunxi-minidump.h"
 
 static int __init sunxi_crashdump_init(void)
 {
@@ -35,6 +37,10 @@ static int __init sunxi_crashdump_init(void)
 	if (sunxi_crashdump_key_register())
 		pr_err("register sunxi crashdump key failed.\n");
 
+	if (sunxi_md_init())
+		pr_err("register sunxi minidump failed.\n");
+
+	crash_info_init();
 	return 0;
 }
 
@@ -54,4 +60,5 @@ MODULE_AUTHOR("cuizhikui<cuizhikui@allwinnertech.com>");
 MODULE_AUTHOR("kanghoupeng<kanghoupeng@allwinnertech.com>");
 MODULE_DESCRIPTION("sunxi crash dump debug");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.4");
+MODULE_VERSION("1.0.8");
+MODULE_IMPORT_NS(MINIDUMP);

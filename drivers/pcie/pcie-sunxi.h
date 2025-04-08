@@ -25,7 +25,7 @@
 #include <linux/pci.h>
 #include <linux/pci-epc.h>
 #include <linux/pci-epf.h>
-#include <linux/version.h>
+
 #include "pcie-sunxi-dma.h"
 
 #define PCIE_PORT_LINK_CONTROL			0x710
@@ -221,27 +221,6 @@
 #define PCIE_PHY_FUNC_CFG		(PCIE_CTRL_MGMT_BASE + 0x2c0)
 #define PCIE_RC_BAR_CONF		(PCIE_CTRL_MGMT_BASE + 0x300)
 
-//ECC
-#define PCIE_RASDP_ERR_PROT_CTRL_OFF			0X1F0
-#define PCIE_RASDP_ERR_INJ_CTRL_OFF			0X204
-#define PCIE_RASDP_UNCORR_COUNTER_CTRL_OFF		0X1FC
-#define PCIE_RASDP_UNCORR_COUNTER_REPORT_OFF		0X200
-#define PCIE_RASDP_UNCORR_ERROR_LOCATION_OFF		0X20C
-#define PCIE_RASDP_ERROR_MODR_CLEAR_OFF			0X214
-
-#define PCIE_RASDP_CORR_COUNTER_CTRL_OFF		0X1F4
-#define PCIE_RASDP_CORR_COUNTER_REPORT_OFF		0X1F8
-#define PCIE_RASDP_CORR_ERROR_LOCATION_OFF		0X208
-
-#define PCIE_SII_INT_MASK_RES2				0XE10
-#define PCIE_SII_INT_RES2				0XE18
-#define APP_PARITY_ERRS2_MASK				BIT(12)
-#define APP_PARITY_ERRS1_MASK				BIT(11)
-#define APP_PARITY_ERRS0_MASK				BIT(10)
-#define SLV_RASDP_ERR_MODE_MASK				BIT(9)
-#define MATR_RASDP_ERR_MODE_MASK			BIT(8)
-#define RASDP_ERR_PENDING 				(BIT(8) | BIT(9) | BIT(10) | BIT(11) | BIT(12))
-#define PCIE_SII_INT_RES2_ECC_MASK 			GENMASK(12, 8)
 enum sunxi_pcie_device_mode {
 	SUNXI_PCIE_EP_TYPE,
 	SUNXI_PCIE_RC_TYPE,
@@ -305,6 +284,8 @@ struct sunxi_pcie_port {
 	int				msi_irq;
 	struct irq_domain		*irq_domain;
 	struct irq_domain		*msi_domain;
+	u16			msi_msg;
+	dma_addr_t		msi_data;
 	struct pci_host_bridge		*bridge;
 	raw_spinlock_t			lock;
 	unsigned long			msi_map[BITS_TO_LONGS(INT_PCI_MSI_NR)];
@@ -358,7 +339,7 @@ struct sunxi_pcie_host_ops {
 	void (*writel_rc)(struct sunxi_pcie_port *pp,	u32 val, void __iomem *dbi_base);
 	int  (*rd_own_conf)(struct sunxi_pcie_port *pp, int where, int size, u32 *val);
 	int  (*wr_own_conf)(struct sunxi_pcie_port *pp, int where, int size, u32 val);
-	int  (*link_up)(struct sunxi_pcie_port *pp);
+	bool (*is_link_up)(struct sunxi_pcie_port *pp);
 	void (*host_init)(struct sunxi_pcie_port *pp);
 	void (*scan_bus)(struct sunxi_pcie_port *pp);
 };

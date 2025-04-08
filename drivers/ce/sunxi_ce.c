@@ -34,7 +34,6 @@
 #include <linux/reset.h>
 #include "sunxi_ce_cdev.h"
 #include "sunxi_ce_proc.h"
-
 #ifdef SS_SUPPORT_CE_V5
 #include "v5/sunxi_ce_reg.h"
 #elif defined(SS_SUPPORT_CE_V4)
@@ -94,6 +93,10 @@ void ss_reset(void)
 	SS_ENTER();
 	reset_control_assert(ss_dev->reset);
 	reset_control_deassert(ss_dev->reset);
+#ifdef CE_DBL_ENT_SRC_EN
+	/* TRNG double entropy should be enabled when ce is enabled */
+	ss_trng_dbl_ent_en();
+#endif
 }
 
 #ifdef SS_RSA_CLK_ENABLE
@@ -236,6 +239,7 @@ static int ss_aes_cts_decrypt(struct skcipher_request *req)
 }
 
 #ifdef SS_XTS_MODE_ENABLE
+#ifdef SS_AES_MODE_XTS
 static int ss_aes_xts_encrypt(struct skcipher_request *req)
 {
 	return ss_aes_crypt(req,
@@ -248,7 +252,9 @@ static int ss_aes_xts_decrypt(struct skcipher_request *req)
 			SS_DIR_DECRYPT, SS_METHOD_AES, SS_AES_MODE_XTS);
 }
 #endif
+#endif
 
+#ifdef SS_AES_MODE_OFB
 static int ss_aes_ofb_encrypt(struct skcipher_request *req)
 {
 	return ss_aes_crypt(req,
@@ -260,7 +266,9 @@ static int ss_aes_ofb_decrypt(struct skcipher_request *req)
 	return ss_aes_crypt(req,
 		SS_DIR_DECRYPT, SS_METHOD_AES, SS_AES_MODE_OFB);
 }
+#endif
 
+#ifdef SS_AES_MODE_CFB
 static int ss_aes_cfb1_encrypt(struct skcipher_request *req)
 {
 	ss_aes_req_ctx_t *req_ctx = skcipher_request_ctx(req);
@@ -332,6 +340,7 @@ static int ss_aes_cfb128_decrypt(struct skcipher_request *req)
 	return ss_aes_crypt(req,
 		SS_DIR_DECRYPT, SS_METHOD_AES, SS_AES_MODE_CFB);
 }
+#endif
 
 #ifdef SS_GCM_MODE_ENABLE
 static int sunxi_aes_gcm_encrypt(struct aead_request *req)
@@ -407,56 +416,6 @@ static int ss_rsa_decrypt(struct skcipher_request *req)
 	return ss_aes_crypt(req, SS_DIR_DECRYPT,
 		SS_METHOD_RSA, CE_RSA_OP_M_EXP);
 }
-
-#ifdef SS_DH_ENABLE
-static int ss_dh_encrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_ENCRYPT,
-		SS_METHOD_DH, CE_RSA_OP_M_EXP);
-}
-
-static int ss_dh_decrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_DECRYPT,
-		SS_METHOD_DH, CE_RSA_OP_M_EXP);
-}
-#endif
-
-#ifdef SS_ECC_ENABLE
-static int ss_ecdh_encrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_ENCRYPT, SS_METHOD_ECC,
-				CE_ECC_OP_POINT_MUL);
-}
-
-static int ss_ecdh_decrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_DECRYPT, SS_METHOD_ECC,
-				CE_ECC_OP_POINT_MUL);
-}
-
-static int ss_ecc_sign_encrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_ENCRYPT, SS_METHOD_ECC, CE_ECC_OP_SIGN);
-}
-
-static int ss_ecc_sign_decrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_DECRYPT, SS_METHOD_ECC, CE_ECC_OP_SIGN);
-}
-
-static int ss_ecc_verify_encrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_ENCRYPT, SS_METHOD_RSA,
-				CE_RSA_OP_M_MUL);
-}
-
-static int ss_ecc_verify_decrypt(struct skcipher_request *req)
-{
-	return ss_aes_crypt(req, SS_DIR_DECRYPT, SS_METHOD_RSA,
-				CE_RSA_OP_M_MUL);
-}
-#endif
 #endif
 
 int ss_rng_reset(struct crypto_rng *tfm, const u8 *seed, u32 slen)
@@ -804,6 +763,7 @@ static int sunxi_ss_hmac_hash_import(struct ahash_request *req, const void *in)
 }
 
 #ifdef SS_XTS_MODE_ENABLE
+#ifdef SS_AES_MODE_XTS
 #define DECLARE_SS_AES_XTS_ALG(utype, ltype, lmode, block_size, iv_size) \
 { \
 	.type = ALG_TYPE_CIPHER, \
@@ -822,22 +782,23 @@ static int sunxi_ss_hmac_hash_import(struct ahash_request *req, const void *in)
 	} \
 }
 #endif
+#endif
 
 #ifdef SS_RSA_ENABLE
 #define DECLARE_SS_ASYM_ALG(type, bitwidth, key_size, iv_size) \
 { \
-	.alg.asym = { \
-		.set_pub_key  = ss_asym_setpubkey, \
-		.set_priv_key = ss_asym_setprivkey, \
+	.alg.skcipher = { \
+		.base.cra_name   = #type"("#bitwidth")", \
+		.base.cra_driver_name = "ss-"#type"-"#bitwidth, \
+		.base.cra_flags       = CRYPTO_ALG_ASYNC, \
+		.base.cra_blocksize   = key_size%AES_BLOCK_SIZE == 0 ? AES_BLOCK_SIZE : 4, \
+		.base.cra_alignmask      = key_size%AES_BLOCK_SIZE == 0 ? 31 : 3, \
+		.setkey      = ss_aes_setkey, \
 		.encrypt      = ss_##type##_encrypt, \
 		.decrypt      = ss_##type##_decrypt, \
 		.max_keysize  = key_size, \
+		.min_keysize  = key_size, \
 		.ivsize       = iv_size, \
-		.reqsize      = 64, \
-		.base.cra_name	 = #type"("#bitwidth")", \
-		.base.cra_driver_name = "ss-"#type"-"#bitwidth, \
-		.base.cra_blocksize	 = key_size%AES_BLOCK_SIZE == 0 ? AES_BLOCK_SIZE : 4, \
-		.base.cra_alignmask	 = key_size%AES_BLOCK_SIZE == 0 ? 31 : 3, \
 	}, \
 }
 
@@ -881,21 +842,24 @@ static struct sunxi_crypto_tmp sunxi_ss_algs[] = {
 	DECLARE_SS_AES_ALG(AES, aes, ctr, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
 	DECLARE_SS_AES_ALG(AES, aes, cts, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
 #ifdef SS_XTS_MODE_ENABLE
+#ifdef SS_AES_MODE_XTS
 	DECLARE_SS_AES_XTS_ALG(AES, aes, xts, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
 #endif
+#endif
+#ifdef SS_AES_MODE_OFB
 	DECLARE_SS_AES_ALG(AES, aes, ofb, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
+#endif
+#ifdef SS_AES_MODE_CFB
 	DECLARE_SS_AES_ALG(AES, aes, cfb1, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
 	DECLARE_SS_AES_ALG(AES, aes, cfb8, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
 	DECLARE_SS_AES_ALG(AES, aes, cfb64, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
 	DECLARE_SS_AES_ALG(AES, aes, cfb128, AES_BLOCK_SIZE, AES_MIN_KEY_SIZE),
+#endif
 	DECLARE_SS_AES_ALG(DES, des, ecb, DES_BLOCK_SIZE, 0),
 	DECLARE_SS_AES_ALG(DES, des, cbc, DES_BLOCK_SIZE, DES_KEY_SIZE),
 	DECLARE_SS_AES_ALG(DES3, des3, ecb, DES3_EDE_BLOCK_SIZE, 0),
 	DECLARE_SS_AES_ALG(DES3, des3, cbc, DES3_EDE_BLOCK_SIZE, DES_KEY_SIZE),
-};
-
-#ifdef SS_RSA_ENABLE
-static struct akcipher_alg sunxi_ss_algs_asym[] = {
+#if defined(SS_RSA_ENABLE) && defined(SS_SUPPORT_CE_V3_1)
 #ifdef SS_RSA512_ENABLE
 	DECLARE_SS_RSA_ALG(rsa, 512),
 #endif
@@ -905,53 +869,8 @@ static struct akcipher_alg sunxi_ss_algs_asym[] = {
 #ifdef SS_RSA2048_ENABLE
 	DECLARE_SS_RSA_ALG(rsa, 2048),
 #endif
-#ifdef SS_RSA3072_ENABLE
-	DECLARE_SS_RSA_ALG(rsa, 3072),
-#endif
-#ifdef SS_RSA4096_ENABLE
-	DECLARE_SS_RSA_ALG(rsa, 4096),
-#endif
-#ifdef SS_DH512_ENABLE
-	DECLARE_SS_DH_ALG(dh, 512),
-#endif
-#ifdef SS_DH1024_ENABLE
-	DECLARE_SS_DH_ALG(dh, 1024),
-#endif
-#ifdef SS_DH2048_ENABLE
-	DECLARE_SS_DH_ALG(dh, 2048),
-#endif
-#ifdef SS_DH3072_ENABLE
-	DECLARE_SS_DH_ALG(dh, 3072),
-#endif
-#ifdef SS_DH4096_ENABLE
-	DECLARE_SS_DH_ALG(dh, 4096),
-#endif
-
-#ifdef SS_ECC_ENABLE
-#ifndef SS_SUPPORT_CE_V3_2
-	DECLARE_SS_ASYM_ALG(ecdh, 160, 160/8, 160/8),
-	DECLARE_SS_ASYM_ALG(ecdh, 224, 224/8, 224/8),
-	DECLARE_SS_ASYM_ALG(ecdh, 256, 256/8, 256/8),
-	DECLARE_SS_ASYM_ALG(ecdh, 521, ((521+31)/32)*4, ((521+31)/32)*4),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 160, 160/8, (160/8)*2),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 224, 224/8, (224/8)*2),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 256, 256/8, (256/8)*2),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 521, ((521+31)/32)*4, ((521+31)/32)*4*2),
-#else
-	DECLARE_SS_ASYM_ALG(ecdh, 160, 160/8, 0),
-	DECLARE_SS_ASYM_ALG(ecdh, 224, 224/8, 0),
-	DECLARE_SS_ASYM_ALG(ecdh, 256, 256/8, 0),
-	DECLARE_SS_ASYM_ALG(ecdh, 521, ((521+31)/32)*4, 0),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 160, 160/8, 0),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 224, 224/8, 0),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 256, 256/8, 0),
-	DECLARE_SS_ASYM_ALG(ecc_sign, 521, ((521+31)/32)*4, 0),
-#endif
-	DECLARE_SS_RSA_ALG(ecc_verify, 512),
-	DECLARE_SS_RSA_ALG(ecc_verify, 1024),
 #endif
 };
-#endif
 
 #ifdef SS_HMAC_ENABLE
 static struct sunxi_crypto_tmp sunxi_ss_algs_hmac_hash[] = {
@@ -962,7 +881,6 @@ static struct sunxi_crypto_tmp sunxi_ss_algs_hmac_hash[] = {
 	.alg.hash.halg.statesize		= sizeof(struct sha1_state),
 	.alg.hash.halg.base.cra_driver_name	= "ss-hmac-sha1",
 	.alg.hash.halg.base.cra_name		= "hmac(sha1)",
-	.alg.hash.halg.base.cra_driver_name	= "ss-hmac-sha1",
 	.alg.hash.halg.base.cra_blocksize	= SHA1_BLOCK_SIZE,
 },
 {
@@ -972,7 +890,6 @@ static struct sunxi_crypto_tmp sunxi_ss_algs_hmac_hash[] = {
 	.alg.hash.halg.statesize		= sizeof(struct sha256_state),
 	.alg.hash.halg.base.cra_driver_name	= "ss-hmac-sha256",
 	.alg.hash.halg.base.cra_name		= "hmac(sha256)",
-	.alg.hash.halg.base.cra_driver_name	= "ss-hmac-sha256",
 	.alg.hash.halg.base.cra_blocksize	= SHA256_BLOCK_SIZE,
 },
 };
@@ -1150,7 +1067,6 @@ static int sunxi_get_ce_clk(sunxi_ce_cdev_t *sss)
 	sss->pclk = devm_clk_get(&pdev->dev, "clk_src");
 	if (IS_ERR(sss->pclk)) {
 		SS_ERR("Fail to get src clk\n");
-		return PTR_ERR(sss->pclk);
 	}
 	sss->ce_clk = devm_clk_get(&pdev->dev, "ce_clk");
 	if (IS_ERR(sss->ce_clk)) {
@@ -1161,13 +1077,11 @@ static int sunxi_get_ce_clk(sunxi_ce_cdev_t *sss)
 	sss->bus_clk = devm_clk_get(&pdev->dev, "bus_ce");
 	if (IS_ERR(sss->bus_clk)) {
 		SS_ERR("Fail to get bus_ce clk\n");
-		return PTR_ERR(sss->bus_clk);
 	}
 
 	sss->mbus_clk = devm_clk_get(&pdev->dev, "mbus_ce");
 	if (IS_ERR(sss->mbus_clk)) {
 		SS_ERR("Fail to get mbus clk\n");
-		return PTR_ERR(sss->mbus_clk);
 	}
 
 	sss->ce_sys_clk = devm_clk_get(&pdev->dev, "ce_sys_clk");
@@ -1196,6 +1110,7 @@ static int sunxi_ss_hw_init(sunxi_ce_cdev_t *sss)
 		SS_ERR("Couldn't deassert reset\n");
 		return -EBUSY;
 	}
+
 	/* enable ce gating */
 	if (clk_prepare_enable(sss->bus_clk)) {
 		SS_ERR("Couldn't enable bus gating\n");
@@ -1209,12 +1124,14 @@ static int sunxi_ss_hw_init(sunxi_ce_cdev_t *sss)
 	if (of_property_read_u32(pnode, "clock-frequency", &sss->gen_clkrate)) {
 #endif
 		SS_ERR("Unable to get clock-frequency.\n");
-		return -EINVAL;
+		/* return -EINVAL; */
 	}
 	SS_DBG("The clk freq: %d, %d\n", sss->gen_clkrate, sss->rsa_clkrate);
 
-	SS_DBG("SS ce_clk%luMHz, pclk %luMHz\n", clk_get_rate(sss->ce_clk)/1000000,
-			clk_get_rate(sss->pclk)/1000000);
+	if (!IS_ERR_OR_NULL(sss->pclk)) {
+		SS_DBG("SS ce_clk%luMHz, pclk %luMHz\n", clk_get_rate(sss->ce_clk)/1000000,
+				clk_get_rate(sss->pclk)/1000000);
+	}
 
 	/* enable ce clock */
 	if (clk_prepare_enable(sss->ce_clk)) {
@@ -1223,9 +1140,11 @@ static int sunxi_ss_hw_init(sunxi_ce_cdev_t *sss)
 	}
 
 	/* enable ce mbus_clock */
-	if (clk_prepare_enable(sss->mbus_clk)) {
-		SS_ERR("Couldn't enable ce mbus clock\n");
-		return -EBUSY;
+	if (!IS_ERR_OR_NULL(sss->mbus_clk)) {
+		if (clk_prepare_enable(sss->mbus_clk)) {
+			SS_ERR("Couldn't enable ce mbus clock\n");
+			return -EBUSY;
+		}
 	}
 
 	/* enable ce sys clk */
@@ -1233,6 +1152,11 @@ static int sunxi_ss_hw_init(sunxi_ce_cdev_t *sss)
 		if (clk_prepare_enable(sss->ce_sys_clk))
 			SS_ERR("Couldn't enable ce sys clk\n");
 	}
+
+#ifdef CE_DBL_ENT_SRC_EN
+	/* TRNG double entropy should be enabled when ce is enabled */
+	ss_trng_dbl_ent_en();
+#endif
 
 	return 0;
 }
@@ -1442,6 +1366,7 @@ static int sunxi_ss_probe(struct platform_device *pdev)
 		goto err0;
 
 	sss->pdev = pdev;
+	ss_dev = sss;
 
 	ret = sunxi_ss_hw_init(sss);
 	if (ret != 0) {
@@ -1449,7 +1374,6 @@ static int sunxi_ss_probe(struct platform_device *pdev)
 		goto err1;
 	}
 
-	ss_dev = sss;
 	ret = sunxi_ss_alg_register();
 	if (ret != 0) {
 		SS_ERR("sunxi_ss_alg_register() failed! return %d\n", ret);
@@ -1575,7 +1499,7 @@ module_init(sunxi_ss_init);
 module_exit(sunxi_ss_exit);
 
 MODULE_AUTHOR("mintow");
-MODULE_VERSION("1.0.7");
+MODULE_VERSION("1.1.2");
 MODULE_DESCRIPTION("SUNXI SS Controller Driver");
 MODULE_ALIAS("platform:"SUNXI_SS_DEV_NAME);
 MODULE_LICENSE("GPL");

@@ -57,7 +57,6 @@
 
 #include "kernel_compatibility.h"
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 static int netlink_gem_mmap_capsys(struct file *file,
 				   struct vm_area_struct *vma)
 {
@@ -105,39 +104,3 @@ int netlink_gem_mmap(struct file *file, struct vm_area_struct *vma)
 
 	return err;
 }
-#else	/* (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)) */
-int netlink_gem_mmap(struct file *file, struct vm_area_struct *vma)
-{
-	struct drm_file *file_priv = file->private_data;
-	struct drm_device *dev = file_priv->minor->dev;
-	struct drm_vma_offset_node *node;
-	struct drm_gem_object *obj;
-	int err;
-
-	mutex_lock(&dev->struct_mutex);
-
-	node = drm_vma_offset_exact_lookup(dev->vma_offset_manager,
-					   vma->vm_pgoff,
-					   vma_pages(vma));
-	if (!node) {
-		err = -EINVAL;
-		goto exit_unlock;
-	}
-
-	/* Allow Netlink clients to mmap any object for reading */
-	if (!capable(CAP_SYS_RAWIO) || (vma->vm_flags & VM_WRITE)) {
-		if (!drm_vma_node_is_allowed(node, file_priv)) {
-			err = -EACCES;
-			goto exit_unlock;
-		}
-	}
-
-	obj = container_of(node, struct drm_gem_object, vma_node);
-
-	err = drm_gem_mmap_obj(obj, drm_vma_node_size(node) << PAGE_SHIFT, vma);
-
-exit_unlock:
-	mutex_unlock(&dev->struct_mutex);
-	return err;
-}
-#endif	/* (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)) */

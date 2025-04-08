@@ -37,6 +37,15 @@
 #define SUNXI_HDMI_ENABLE   			(0x1)
 #define SUNXI_HDMI_DISABLE  			(0x0)
 
+enum shdmi_dynamic_range_e {
+	SHDMI_SDR    = 0,
+	SHDMI_HDR10  = 1,
+	SHDMI_HDR10P = 2,
+	SHDMI_HLG    = 3,
+	SHDMI_DV     = 4,
+	SHDMI_MAX_DR,
+};
+
 enum sunxi_hdmi_update_bits {
 	SUNXI_HDMI_UPDATE_FAORMAT = (0),
 	SUNXI_HDMI_UPDATE_BITS    = (1),
@@ -49,23 +58,23 @@ enum sunxi_hdmi_update_bits {
 };
 
 enum sunxi_hdmi_color_capability {
-	SUNXI_COLOR_RGB888_8BITS    = 0,
-	SUNXI_COLOR_YUV444_8BITS    = 1,
-	SUNXI_COLOR_YUV422_8BITS    = 2,
-	SUNXI_COLOR_YUV420_8BITS    = 3,
-	SUNXI_COLOR_RGB888_10BITS   = 4,
-	SUNXI_COLOR_YUV444_10BITS   = 5,
-	SUNXI_COLOR_YUV422_10BITS   = 6,
-	SUNXI_COLOR_YUV420_10BITS   = 7,
-	SUNXI_COLOR_RGB888_12BITS   = 8,
-	SUNXI_COLOR_YUV444_12BITS   = 9,
-	SUNXI_COLOR_YUV422_12BITS   = 10,
-	SUNXI_COLOR_YUV420_12BITS   = 11,
-	SUNXI_COLOR_RGB888_16BITS   = 12,
-	SUNXI_COLOR_YUV444_16BITS   = 13,
-	SUNXI_COLOR_YUV422_16BITS   = 14,
-	SUNXI_COLOR_YUV420_16BITS   = 15,
-	SUNXI_COLOR_MAX_MASK,
+	SHDMI_RGB888_8BITS    = 0,
+	SHDMI_YUV444_8BITS    = 1,
+	SHDMI_YUV422_8BITS    = 2,
+	SHDMI_YUV420_8BITS    = 3,
+	SHDMI_RGB888_10BITS   = 4,
+	SHDMI_YUV444_10BITS   = 5,
+	SHDMI_YUV422_10BITS   = 6,
+	SHDMI_YUV420_10BITS   = 7,
+	SHDMI_RGB888_12BITS   = 8,
+	SHDMI_YUV444_12BITS   = 9,
+	SHDMI_YUV422_12BITS   = 10,
+	SHDMI_YUV420_12BITS   = 11,
+	SHDMI_RGB888_16BITS   = 12,
+	SHDMI_YUV444_16BITS   = 13,
+	SHDMI_YUV422_16BITS   = 14,
+	SHDMI_YUV420_16BITS   = 15,
+	SHDMI_MAX_MASK,
 };
 
 enum sunxi_cec_irq_state_e {
@@ -183,6 +192,8 @@ struct sunxi_hdmi_s {
 	struct sunxi_hdmi_plat_s    *plat_data;
 	struct disp_device_config	disp_info;
 	struct dw_hdmi_dev_s    	dw_hdmi;
+
+	struct mutex  lock_config;
 };
 
 /**
@@ -263,6 +274,14 @@ void sunxi_hdmi_phy_reset(void);
  */
 int sunxi_hdmi_phy_resume(void);
 /**
+ * @desc: sunxi hdmi i2c set mode and rate
+ * @mode: i2c mode. standard or fast mode
+ * @rate: i2c rate. (*100Hz)
+ * @return: 0 - suaccess
+ *         -1 - failed
+ */
+int sunxi_hdmi_i2cm_set_ddc(u32 mode, u32 rate);
+/**
  * @desc: sunxi hdmi i2c master xfer, support send and receive
  * @msgs: buffer fot send or receive message
  * @num: send or receive message number
@@ -329,6 +348,7 @@ int sunxi_hdcp2x_config(u8 state);
  *          SUNXI_HDCP_SUCCESS - encry success
  */
 u8 sunxi_hdcp_get_state(void);
+void sunxi_hdcp_set_path(u8 path);
 
 /*******************************************************************************
  * sunxi hdmi core cec function
@@ -388,7 +408,7 @@ int sunxi_hdmi_audio_enable(void);
 /*******************************************************************************
  * sunxi hdmi core video info function
  ******************************************************************************/
-u8 sunxi_hdmi_get_support_hdr_mode(void);
+u32 sunxi_hdmi_get_support_hdr_mode(void);
 /**
  * @desc: sunxi hdmi get useing disp info
  * @return: disp info struct

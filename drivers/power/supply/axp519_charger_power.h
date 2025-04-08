@@ -3,7 +3,8 @@
 #ifndef _AXP519_CHARGER_H_
 #define _AXP519_CHARGER_H_
 
-#include "linux/types.h"
+#include "sunxi-power-supply.h"
+#include "bmu-ext.h"
 
 #define AXP519_MANUFACTURER  "x-power,axp519"
 

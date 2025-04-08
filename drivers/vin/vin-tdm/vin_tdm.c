@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  * Copyright (c) 2007-2019 Allwinnertech Co., Ltd.
@@ -153,6 +153,9 @@ static int tdm_rx_bufs_alloc(struct tdm_rx_dev *tdm_rx, u32 size, u32 count)
 		if (!os_mem_alloc(&tdm->pdev->dev, mm)) {
 			buf->virt_addr = mm->vir_addr;
 			buf->dma_addr = mm->dma_addr;
+		} else {
+			vin_err("%s: Can't acquire memory for DMA buffer %d\n",	tdm_rx->subdev.name, i);
+			return -ENOMEM;
 		}
 		if (!buf->virt_addr || !buf->dma_addr) {
 			vin_err("%s: Can't acquire memory for DMA buffer %d\n",	tdm_rx->subdev.name, i);
@@ -383,11 +386,14 @@ static int tdm_set_rx_cfg(struct tdm_rx_dev *tdm_rx, unsigned int en)
 	if (en) {
 		if (tdm_rx->large_image == 3) {
 			overlayer = vin_set_large_overlayer(tdm_rx->format.width);
-			if (tdm_rx->id == 0)
+			if (tdm_rx->id == 0) {
 				tdm_rx->format.width = tdm_rx->format.width / 2 + overlayer;
-			else if (tdm_rx->id == 1)
+				csic_tdm_set_tx_chn_cfg_mode(tdm->id, CH0_1);
+			} else if (tdm_rx->id == 1) {
 				tdm_rx->format.width = tdm_rx->format.width / 2 + overlayer;
-		}
+			}
+		} else
+			csic_tdm_set_tx_chn_cfg_mode(tdm->id, TX_NONE);
 		csic_tdm_rx_set_min_ddr_size(tdm->id, tdm_rx->id, DDRSIZE_512b);
 		csic_tdm_rx_input_bit(tdm->id, tdm_rx->id, tdm_rx->tdm_fmt->input_type);
 		csic_tdm_rx_input_fmt(tdm->id, tdm_rx->id, tdm_rx->tdm_fmt->raw_fmt);
@@ -404,10 +410,15 @@ static int tdm_set_rx_cfg(struct tdm_rx_dev *tdm_rx, unsigned int en)
 			csic_tdm_rx_head_fifo_depth(tdm->id, tdm_rx->id, tdm_rx->ws.head_fifo_depth);
 #endif
 		} else {
-#if IS_ENABLED(CONFIG_WDR)
+#if IS_ENABLED(CONFIG_AVG_TDM_FIFO)
 			if (tdm_rx->ws.data_fifo_depth && tdm_rx->ws.head_fifo_depth) {
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW1)
 				csic_tdm_rx_data_fifo_depth(tdm->id, tdm_rx->id, tdm_rx->ws.data_fifo_depth);
 				csic_tdm_rx_head_fifo_depth(tdm->id, tdm_rx->id, tdm_rx->ws.head_fifo_depth);
+#else
+				csic_tdm_rx_data_fifo_depth(tdm->id, tdm_rx->id, MAX_RX_DATA_FIFO_DEPTH / 4);
+				csic_tdm_rx_head_fifo_depth(tdm->id, tdm_rx->id, MAX_RX_HEAD_FIFO_DEPTH / 4);
+#endif
 			} else {
 				csic_tdm_rx_data_fifo_depth(tdm->id, tdm_rx->id, (512)/4);
 				csic_tdm_rx_head_fifo_depth(tdm->id, tdm_rx->id, (32)/4);
@@ -464,7 +475,7 @@ static int tdm_set_rx_cfg(struct tdm_rx_dev *tdm_rx, unsigned int en)
 			else
 				tdm_buf_num = 0;
 		} else {
-#ifndef CONFIG_TDM_ONE_BUFFER
+#if !IS_ENABLED(CONFIG_TDM_ONE_BUFFER)
 			if (tdm_rx->sensor_fps <= 30)
 				tdm_buf_num = 2;
 			else if (tdm_rx->sensor_fps <= 60)
@@ -485,7 +496,7 @@ static int tdm_set_rx_cfg(struct tdm_rx_dev *tdm_rx, unsigned int en)
 			ret = tdm_rx_bufs_alloc(tdm_rx, size, tdm_buf_num);
 			if (ret)
 				return ret;
-#ifndef CONFIG_TDM_ONE_BUFFER
+#if !IS_ENABLED(CONFIG_TDM_ONE_BUFFER)
 			csic_tdm_rx_set_buf_num(tdm->id, tdm_rx->id, tdm_buf_num - 1);
 			for (i = 0; i < tdm_buf_num; i++) {
 				csic_tdm_rx_set_address(tdm->id, tdm_rx->id, (unsigned long)tdm_rx->buf[i].dma_addr);
@@ -646,6 +657,8 @@ static int sunxi_tdm_top_s_stream(struct tdm_rx_dev *rx, int enable)
 
 		/*tx init*/
 		tdm_set_tx_blank(tdm);
+		/* rx fifo clear */
+		csic_tdm_rx_data_fifo_clear(tdm->id);
 		csic_tdm_set_tx_t1_cycle(tdm->id, tdm->tx_cfg.t1_cycle = 0x40);
 		if (tdm->work_mode == TDM_ONLINE) {
 			csic_tdm_fifo_mode(tdm->id, tdm->tx_cfg.fifo_mode);
@@ -755,9 +768,10 @@ static void tdm_set_rx_data_rate(struct tdm_rx_dev *tdm_rx, unsigned int en)
 	unsigned int width[TDM_RX_NUM], height[TDM_RX_NUM], fps[TDM_RX_NUM], vts[TDM_RX_NUM];
 	bool rx_stream[TDM_RX_NUM] = {false, false, false, false};
 	unsigned int wh_fps = 0, vw_fps = 0, hh_fps = 0, vh_fps = 0;
-	__maybe_unused unsigned int vb_percentage[TDM_RX_NUM], vb_percent_min = 100, isp_need_clk;
+	__maybe_unused unsigned int vb_percentage[TDM_RX_NUM], vb_percent_min = 100, isp_need_clk, onebuffer_isp_need_clk;
 	unsigned int isp_clk = 0;
 	unsigned int i;
+	unsigned int n_rx_use = 0;
 
 	if (tdm->work_mode == TDM_ONLINE || !tdm->ws.speed_dn_en)
 		return;
@@ -789,40 +803,44 @@ static void tdm_set_rx_data_rate(struct tdm_rx_dev *tdm_rx, unsigned int en)
 		height[chn_fmt->rx_dev->id] = chn_fmt->rx_dev->format.height;
 		fps[chn_fmt->rx_dev->id] = chn_fmt->rx_dev->sensor_fps;
 		vts[chn_fmt->rx_dev->id] = chn_fmt->rx_dev->vts;
+		vin_log(VIN_LOG_TDM, "at the same time tdm_rx%d %s, size is %dfps@%dx%d, vts is %d\n",
+				chn_fmt->rx_dev->id, "enabled",
+				chn_fmt->rx_dev->sensor_fps, chn_fmt->rx_dev->format.width, chn_fmt->rx_dev->format.height,
+				chn_fmt->rx_dev->vts);
 	}
-	vin_log(VIN_LOG_TDM, "at the same time tdm_rx%d %s, size is %dfps@%dx%d, vts is %d\n",
-		chn_fmt->rx_dev->id, "enabled",
-		chn_fmt->rx_dev->sensor_fps, chn_fmt->rx_dev->format.width, chn_fmt->rx_dev->format.height,
-		chn_fmt->rx_dev->vts);
 	for (i = 0; i < TDM_RX_NUM; i++) {
 		if (rx_stream[i] == false) {
 			width[i] = 0;
 			height[i] = 0;
 			fps[i] = 0;
 			vts[i] = 0;
-		}
+		} else
+			n_rx_use++;
 	}
+
 
 	/*
 	 * m: valid num, n: invalid num, m + n = 255
 	 * rx0 real work clock num: sum0 = ((w0*(255/m)+hb)*h0+(w0+hb)*vb)*fps0
-	 * rx0 real work clock num: sum1 = ((w1*(255/m)+hb)*h1+(w1+hb)*vb)*fps1
-	 * rx0 real work clock num: sum2 = ((w2*(255/m)+hb)*h2+(w2+hb)*vb)*fps2
-	 * rx0 real work clock num: sum3 = ((w3*(255/m)+hb)*h3+(w3+hb)*vb)*fps3
+	 * rx1 real work clock num: sum1 = ((w1*(255/m)+hb)*h1+(w1+hb)*vb)*fps1
+	 * rx2 real work clock num: sum2 = ((w2*(255/m)+hb)*h2+(w2+hb)*vb)*fps2
+	 * rx3 real work clock num: sum3 = ((w3*(255/m)+hb)*h3+(w3+hb)*vb)*fps3
 	 * sum0 + sum1 + sum2 + sum3 = isp_clk
 	 * 255/m * wh_fps = (isp_clk - hh_fps - vw_fps - vh_fps)
 	 *
 	 * tdm one buffer:
 	 * sum0 + sum1 + sum2 + sum3 = isp_need_clk_cycle
-	 * 255/m * wh_fps + hh_fps + vw_fps + vh_fps = isp_need_clk_cycle
-	 * (isp_need_clk_cycle/isp_clk = T) < (T1 = 1* vb% = 1 * ((vs - w)/vs)
+	 * wh_fps + hh_fps + vw_fps + vh_fps = isp_need_clk_cycle
+	 * isp_need_clk_cycle = isp_need_clk_cycle / (n - 1), n mean use n rx
+	 * (isp_need_clk_cycle/onebuffer_isp_need_clk = T) < (T1 = 1* vb% = 1 * ((vs - w)/vs)
+	 * onebuffer_isp_need_clk / isp_clk = m/255
 	 */
-#ifndef CONFIG_TDM_ONE_BUFFER
+#if !IS_ENABLED(CONFIG_TDM_ONE_BUFFER)
 	for (i = 0; i < TDM_RX_NUM; i++) {
 		wh_fps += (width[i] * height[i] * fps[i]);
-		hh_fps += (TDM_TX_HBLANK * height[i] * fps[i]);
+		hh_fps += (TDM_TX_HBLANK_OFFLINE * height[i] * fps[i]);
 		vw_fps += (TDM_TX_VBLANK * width[i] * fps[i]);
-		vh_fps += (TDM_TX_HBLANK * TDM_TX_VBLANK * fps[i]);
+		vh_fps += (TDM_TX_HBLANK_OFFLINE * TDM_TX_VBLANK * fps[i]);
 	}
 	vin_log(VIN_LOG_TDM, "wh_fps %d, hh_fps %d, vw_fps %d, vh_fps %d\n", wh_fps, hh_fps, vw_fps, vh_fps);
 
@@ -850,12 +868,16 @@ static void tdm_set_rx_data_rate(struct tdm_rx_dev *tdm_rx, unsigned int en)
 		if (vb_percentage[i] != 0)
 			vb_percent_min = min(vb_percent_min, vb_percentage[i]);
 	}
-	isp_need_clk = isp_clk / 100 * vb_percent_min;
-	if (wh_fps) {
-		wh_fps = roundup(wh_fps, 100);
-		tdm->tx_cfg.valid_num = DIV_ROUND_UP(10 * 255 * 128 / (128 * ((isp_need_clk - hh_fps - vw_fps - vh_fps) / 100) / (wh_fps / 100)), 10);
-	} else
-		tdm->tx_cfg.valid_num = 0;
+	isp_need_clk = wh_fps + hh_fps + vw_fps + vh_fps;
+	if (n_rx_use > 1)
+		isp_need_clk = isp_need_clk / n_rx_use * (n_rx_use - 1);
+	onebuffer_isp_need_clk = isp_need_clk / vb_percent_min * 100;
+
+	vin_print("wh_fps %d, hh_fps %d, vw_fps %d, vh_fps %d, vb_percent_min is %d, isp_need_clk is %d, onebuffer_isp_need_clk is %d\n",
+					wh_fps, hh_fps, vw_fps, vh_fps, vb_percent_min, isp_need_clk, onebuffer_isp_need_clk);
+
+	tdm->tx_cfg.valid_num = onebuffer_isp_need_clk / (isp_clk / 255);
+	tdm->tx_cfg.valid_num += 8;
 #endif
 	if (tdm->tx_cfg.valid_num > 255) {
 		tdm->tx_cfg.valid_num = 255;
@@ -1041,7 +1063,7 @@ static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 					tdm_rx->ws.lbc_en = 1;
 #endif
 					tdm_rx->ws.sync_en = 0;
-#if !defined(CONFIG_ARCH_SUN55IW3) && !defined(CONFIG_ARCH_SUN60IW1)
+#if !IS_ENABLED(CONFIG_ARCH_SUN55IW3) && !IS_ENABLED(CONFIG_ARCH_SUN60IW1)
 					tdm_rx->ws.data_fifo_depth = MAX_RX_DATA_FIFO_DEPTH/2;
 					tdm_rx->ws.head_fifo_depth = MAX_RX_HEAD_FIFO_DEPTH/2;
 #endif
@@ -1049,7 +1071,7 @@ static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 					tdm_rx->ws.pkg_en = 1;
 					tdm_rx->ws.lbc_en = 0;
 					tdm_rx->ws.sync_en = 0;
-#if !defined(CONFIG_ARCH_SUN55IW3) && !defined(CONFIG_ARCH_SUN60IW1)
+#if !IS_ENABLED(CONFIG_ARCH_SUN55IW3) && !IS_ENABLED(CONFIG_ARCH_SUN60IW1)
 					tdm_rx->ws.data_fifo_depth = MAX_RX_DATA_FIFO_DEPTH/4;
 					tdm_rx->ws.head_fifo_depth = MAX_RX_HEAD_FIFO_DEPTH/4;
 #endif

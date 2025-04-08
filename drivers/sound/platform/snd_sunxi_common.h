@@ -18,13 +18,16 @@
 #include <sound/jack.h>
 
 /******* reg label *******/
-#define REG_LABEL(constant)	{#constant, constant, 0}
-#define REG_LABEL_END		{NULL, 0, 0}
+#define REG_LABEL(constant)	{constant, 0}
+#define REG_GROUP(constant)	{constant, ARRAY_SIZE(constant)}
 
 struct audio_reg_label {
-	const char *name;
-	const unsigned int address;
+	unsigned int address;
 	unsigned int value;
+};
+struct audio_reg_group {
+	struct audio_reg_label *label;
+	unsigned int size;
 };
 
 /* EX:
@@ -32,11 +35,15 @@ struct audio_reg_label {
  * 	REG_LABEL(SUNXI_REG_0),
  * 	REG_LABEL(SUNXI_REG_1),
  * 	REG_LABEL(SUNXI_REG_n),
- * 	REG_LABEL_END,
+ * };
+ * static struct audio_reg_group reg_groups[] = {
+ * 	REG_GROUP(reg_labels0),
+ * 	REG_GROUP(reg_labels1),
+ * 	REG_GROUP(reg_labels2),
  * };
  */
-int snd_sunxi_save_reg(struct regmap *regmap, struct audio_reg_label *reg_labels);
-int snd_sunxi_echo_reg(struct regmap *regmap, struct audio_reg_label *reg_labels);
+int snd_sunxi_save_reg(struct regmap *regmap, struct audio_reg_group *reg_group);
+int snd_sunxi_echo_reg(struct regmap *regmap, struct audio_reg_group *reg_group);
 
 /******* regulator config *******/
 /* board.dts format
@@ -79,7 +86,7 @@ struct snd_sunxi_rglt {
 	void *priv;
 };
 
-struct snd_sunxi_rglt *snd_sunxi_regulator_init(struct platform_device *pdev);
+struct snd_sunxi_rglt *snd_sunxi_regulator_init(struct device *dev);
 void snd_sunxi_regulator_exit(struct snd_sunxi_rglt *rglt);
 int snd_sunxi_regulator_enable(struct snd_sunxi_rglt *rglt);
 void snd_sunxi_regulator_disable(struct snd_sunxi_rglt *rglt);
@@ -114,13 +121,15 @@ enum SND_SUNXI_PACFG_MODE {
 
 struct pacfg_level_trig {
 	u32 pin;
-	u32 msleep;
+	u32 msleep_0;
+	u32 msleep_1;
 	bool level;
 };
 
 struct pacfg_pulse_trig {
 	u32 pin;
-	u32 msleep;
+	u32 msleep_0;
+	u32 msleep_1;
 	bool level;
 
 	u32 duty_us;
@@ -142,6 +151,10 @@ struct snd_sunxi_pacfg {
 	u32 index;
 	struct platform_device *pdev;
 	struct work_struct pa_en_work;
+	struct work_struct pa_disa_work;
+
+	void *param;
+	void (*pa_disa_cb)(void *data);
 };
 
 struct snd_sunxi_pacfg *snd_sunxi_pa_pin_init(struct platform_device *pdev, u32 *pa_pin_max);
@@ -151,8 +164,20 @@ int snd_sunxi_pa_pin_probe(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max,
 void snd_sunxi_pa_pin_remove(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max);
 int snd_sunxi_pa_pin_enable(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max);
 void snd_sunxi_pa_pin_disable(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max);
+void snd_sunxi_pa_pin_disable_irp(struct snd_sunxi_pacfg *pa_cfg, u32 pa_pin_max, void *param,
+				  void (*pa_disa_cb)(void *data));
 
-/******* hdmi format config *******/
+/******* extparam config *******/
+/* id -> EXTPARAM_ID_DAI_UCFMT */
+struct snd_sunxi_dai_ucfmt {
+	u32 fmt;
+
+	u32 data_late;
+	bool tx_lsb_first;
+	bool rx_lsb_first;
+};
+
+/* id -> EXTPARAM_ID_HDMI_FMT */
 #define	SUNXI_DAI_I2S_TYPE	0
 #define	SUNXI_DAI_HDMI_TYPE	1
 
@@ -174,38 +199,39 @@ enum HDMI_FORMAT {
 	HDMI_FMT_WMAPRO,
 };
 
-enum HDMI_FORMAT snd_sunxi_hdmi_get_fmt(void);
-int snd_sunxi_hdmi_set_fmt(int hdmi_fmt);
 int snd_sunxi_hdmi_get_dai_type(struct device_node *np, unsigned int *dai_type);
 
-/******* PCM uncommon format config *******/
-struct snd_sunxi_ucfmt;
-
-typedef int (*ucfmt_callback_f)(struct snd_sunxi_ucfmt *ucfmt, struct snd_soc_dai *dai);
-
-struct snd_sunxi_ucfmt_cb {
-	const char *dai_name;
-	ucfmt_callback_f callback;
+enum EXTPARAM_ID {
+	EXTPARAM_ID_DAI_UCFMT = 0,
+	EXTPARAM_ID_HDMI_FMT,
+	EXTPARAM_ID_CNT,
 };
 
-struct snd_sunxi_ucfmt {
+struct snd_sunxi_extparam {
+	struct list_head list;
+	const char *name;
+	enum EXTPARAM_ID id;
+
+	struct list_head extparam_nbs;
+};
+struct snd_notifier_block;
+typedef void (*snd_notifier_fn_t)(struct snd_notifier_block *snd_nb);
+struct snd_notifier_block {
 	struct list_head list;
 
-	unsigned int fmt;
-
-	u32 data_late;
-	bool tx_lsb_first;
-	bool rx_lsb_first;
-
-	struct snd_sunxi_ucfmt_cb cpu_dai_cb;
-	struct snd_sunxi_ucfmt_cb *codec_dai_cbs;
-	u32 num_codecs;
+	void *tx_data;
+	void *cb_data;
+	snd_notifier_fn_t notifier_call;
 };
 
-int snd_sunxi_ucfmt_register_cb(ucfmt_callback_f callback, const char *dai_name);
-void snd_sunxi_ucfmt_unregister_cb(const char *dai_name);
-int snd_sunxi_ucfmt_probe(struct snd_soc_card *card, struct snd_sunxi_ucfmt **ucfmt);
-void snd_sunxi_ucfmt_remove(struct snd_sunxi_ucfmt *ucfmt);
+int snd_sunxi_extparam_probe(const char *card_name, enum EXTPARAM_ID id);
+void snd_sunxi_extparam_remove(const char *card_name, enum EXTPARAM_ID id);
+int snd_sunxi_extparam_register_cb(const char *card_name, enum EXTPARAM_ID id,
+				   snd_notifier_fn_t notifier_call, void *cb_data);
+void snd_sunxi_extparam_unregister_cb(const char *card_name, enum EXTPARAM_ID id,
+				      snd_notifier_fn_t notifier_call);
+void *snd_sunxi_extparam_get_state(const char *card_name, enum EXTPARAM_ID id);
+int snd_sunxi_extparam_set_state_sync(const char *card_name, enum EXTPARAM_ID id, void *tx_data);
 
 /******* sysfs dump *******/
 struct snd_sunxi_dump {
@@ -226,5 +252,11 @@ void snd_sunxi_dump_unregister(struct snd_sunxi_dump *dump);
 
 /* update jack_statet to module parameter */
 void snd_sunxi_jack_state_upto_modparam(enum snd_jack_types type);
+
+/******* clk *******/
+enum SND_SUNXI_CLK_STATUS {
+	SND_SUNXI_CLK_CLOSE = 0,
+	SND_SUNXI_CLK_OPEN,
+};
 
 #endif /* __SND_SUNXI_COMMON_H */

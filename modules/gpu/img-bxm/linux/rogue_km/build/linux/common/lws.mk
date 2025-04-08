@@ -48,10 +48,35 @@ ifeq ($(SUPPORT_KMS),1)
 
  # Common tunable config options
 
+
+
  # Xorg specific config options
  ifeq ($(WINDOW_SYSTEM),xorg)
  endif
 
  ifeq ($(WINDOW_SYSTEM),wayland)
  endif
+
+ ifeq ($(WINDOW_SYSTEM),tizen)
+  override SUPPORT_TIZEN_PLATFORM := 1
+ endif
+
+ # DRI Support library specific config options.
+
+ # If attempting to import non-display surfaces into the display driver
+ # causes issues, set PVRDRI_DBM_BUFFER_FROM_FD to zero. For Tizen,
+ # PVRDRI_DBM_BUFFER_FROM_FD_PROTECTED defaults to zero.
+ ifeq ($(SUPPORT_TIZEN_PLATFORM),1)
+  PVRDRI_DBM_BUFFER_FROM_FD ?= 0
+ else
+  PVRDRI_DBM_BUFFER_FROM_FD ?= 1
+ endif
+
+ # EGL_EXTENSION_CONTENT_PROTECTED specific config options.
+
+ # If it is possible to import protected surfaces into the display driver,
+ # and this behaviour is desired, set PVRDRI_DBM_BUFFER_FROM_FD_PROTECTED
+ # to one. This option is ignored if PVRDRI_DBM_BUFFER_FROM_FD is zero.
+ PVRDRI_DBM_BUFFER_FROM_FD_PROTECTED ?= 0
+
 endif

@@ -18,7 +18,7 @@
 #define _FB_G2D_ROT_H
 
 #include "disp_sys_intf.h"
-#include <sunxi-g2d.h>
+#include <uapi/linux/sunxi-g2d.h>
 #include "de/disp_features.h"
 #include <uapi/video/sunxi_display2.h>
 #include "dev_disp.h"

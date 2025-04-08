@@ -56,7 +56,7 @@ int ss_sg_cnt(struct scatterlist *sg, int total)
 		cnt++;
 		prev = cur;
 		SS_DBG("cnt: %d, cur: %px, len: %d, is_last: %lu\n", cnt, cur,
-				cur->length, sg_is_last(cur));
+				cur->length, (unsigned long)sg_is_last(cur));
 		nbyte += cur->length;
 		if (nbyte >= total)
 			break;
@@ -255,7 +255,7 @@ int ss_hash_padding(ss_hash_ctx_t *ctx, int type)
 static int ss_hash_one_req(sunxi_ce_cdev_t *sss, struct ahash_request *req)
 {
 	int ret = 0;
-	ss_aes_req_ctx_t *req_ctx = NULL;
+	ss_aes_req_ctx_t *req_ctx = ahash_request_ctx(req);
 	ss_hash_ctx_t *ctx = crypto_ahash_ctx(crypto_ahash_reqtfm(req));
 
 	SS_ENTER();
@@ -266,7 +266,6 @@ static int ss_hash_one_req(sunxi_ce_cdev_t *sss, struct ahash_request *req)
 
 	ss_dev_lock();
 
-	req_ctx = ahash_request_ctx(req);
 	req_ctx->dma_src.sg = req->src;
 
 	ret = ss_hash_start(ctx, req_ctx, req->nbytes, 0);
@@ -280,6 +279,10 @@ static int ss_hash_one_req(sunxi_ce_cdev_t *sss, struct ahash_request *req)
 /* Backup the tail data to req_ctx->pad[]. */
 void ss_hash_save_tail(struct ahash_request *req)
 {
+#ifdef HMAC_DATA_RREPROCE_ENABLE
+	int i;
+	unsigned char i_pad[SHA1_BLOCK_SIZE] = {0x36};
+#endif
 	s8 *buf = NULL;
 	s32 sg_cnt = 0;
 	s32 taillen = 0;
@@ -289,8 +292,20 @@ void ss_hash_save_tail(struct ahash_request *req)
 	taillen = req->nbytes % ss_hash_blk_size(req_ctx->type);
 	SS_DBG("type: %d, mode: %d, len: %d, tail: %d\n", req_ctx->type, req_ctx->mode, req->nbytes, taillen);
 	ctx->tail_len = taillen;
-	if (taillen == 0) /* The package don't need to backup. */
-		return;
+	if (taillen == 0) {
+#ifndef HMAC_DATA_RREPROCE_ENABLE
+		return;  /* The package don't need to backup. */
+#else
+		if (CE_METHOD_IS_HMAC(req_ctx->type))
+			ctx->hmac_all_data_len = req->nbytes + SHA1_BLOCK_SIZE;
+		else
+			return;
+	} else {
+		if (CE_METHOD_IS_HMAC(req_ctx->type))
+			ctx->hmac_all_data_len = req->nbytes / ss_hash_blk_size(req_ctx->type) * 64
+					+ 2 * SHA1_BLOCK_SIZE;
+#endif
+	}
 
 	buf = vmalloc(req->nbytes);
 	if (unlikely(buf == NULL)) {
@@ -300,8 +315,25 @@ void ss_hash_save_tail(struct ahash_request *req)
 
 	sg_cnt = ss_sg_cnt(req->src, req->nbytes);
 	sg_copy_to_buffer(req->src, sg_cnt, buf, req->nbytes); /* copy data from req->src to buf */
-
 	memcpy(ctx->pad, buf + req->nbytes - taillen, taillen);
+
+#ifdef HMAC_DATA_RREPROCE_ENABLE
+	if (CE_METHOD_IS_HMAC(req_ctx->type)) {
+		ctx->save_hmac_data = kzalloc(ctx->hmac_all_data_len + SHA1_BLOCK_SIZE, GFP_KERNEL);
+		if (!ctx->save_hmac_data) {
+			SS_ERR("Failed to kzalloc(%d)\n", req->nbytes + SHA1_BLOCK_SIZE);
+			return;
+		}
+
+		for (i = 0; i < SHA1_BLOCK_SIZE; i++) {
+			i_pad[i] = 0x36;  /* i_pad data, default is 0x36 */
+			ctx->save_hmac_data[i] = i_pad[i] ^ ctx->key[i];
+		}
+		ctx->cnt += SHA1_BLOCK_SIZE;
+
+		memcpy(ctx->save_hmac_data + SHA1_BLOCK_SIZE, buf, req->nbytes - ctx->tail_len);
+	}
+#endif
 	vfree(buf);
 }
 
@@ -345,17 +377,32 @@ int ss_hash_final(struct ahash_request *req)
 	SS_DBG("Pad len: %d\n", pad_len);
 	req_ctx->dma_src.sg = &last;
 	sg_init_table(&last, 1);
-	sg_set_buf(&last, ctx->pad, pad_len);
-	SS_DBG("Padding data:\n");
-	ss_print_hex((s8 *)ctx->pad, 128, ctx->pad);
-
-	ss_dev_lock();
-#ifdef SS_HASH_HW_PADDING_ALIGN_CASE
-	if (ctx->tail_len == 0)
-		ss_hash_start(ctx, req_ctx, pad_len, 0);
-	else
+#ifdef HMAC_DATA_RREPROCE_ENABLE
+	if (CE_METHOD_IS_HMAC(req_ctx->type)) {
+		memcpy(ctx->save_hmac_data + SHA1_BLOCK_SIZE + req->nbytes - ctx->tail_len,
+			ctx->pad, pad_len);
+		if (pad_len > SHA1_BLOCK_SIZE)
+			ctx->hmac_all_data_len += SHA1_BLOCK_SIZE;
+		sg_set_buf(&last, ctx->save_hmac_data, ctx->hmac_all_data_len);
+		SS_DBG("HMAC all data:\n");
+		ss_print_hex((s8 *)ctx->save_hmac_data, ctx->hmac_all_data_len, ctx->save_hmac_data);
+		ss_hash_start(ctx, req_ctx, ctx->hmac_all_data_len, 1);
+		kfree(ctx->save_hmac_data);
+	} else
 #endif
-		ss_hash_start(ctx, req_ctx, pad_len, 1);
+	{
+		sg_set_buf(&last, ctx->pad, pad_len);
+		SS_DBG("Padding data:\n");
+		ss_print_hex((s8 *)ctx->pad, pad_len, ctx->pad);
+
+		ss_dev_lock();
+#ifdef SS_HASH_HW_PADDING_ALIGN_CASE
+		if (ctx->tail_len == 0)
+			ss_hash_start(ctx, req_ctx, pad_len, 0);
+		else
+#endif
+			ss_hash_start(ctx, req_ctx, pad_len, 1);
+	}
 
 	ss_sha_final();
 
@@ -368,12 +415,14 @@ int ss_hash_final(struct ahash_request *req)
 	 * the preprocessing has aligned their words,
 	 * and the final output needs to be configured to the original length.
 	 */
+#ifdef SS_SHA224_ENABLE
 	if (req_ctx->type == SS_METHOD_SHA224)
 		ctx->md_size = SHA224_DIGEST_SIZE;
-	else if (req_ctx->type == SS_METHOD_SHA384)
+#endif
+#ifdef SS_SHA384_ENABLE
+	if (req_ctx->type == SS_METHOD_SHA384)
 		ctx->md_size = SHA384_DIGEST_SIZE;
-	else
-		SS_DBG("Word alignment itself does not need to be modified\n");
+#endif
 
 	ss_md_get(req->result, ctx->md, ctx->md_size);
 	ss_ctrl_stop();

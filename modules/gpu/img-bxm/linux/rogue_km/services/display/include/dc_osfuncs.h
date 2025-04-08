@@ -61,9 +61,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define DC_ASSERT(EXPR) (void)(EXPR) /* Null implementation of ASSERT (does nothing) */
 #endif
 
-#define DC_ALIGN(value, alignment) (((value) + ((alignment) - 1)) & ~((alignment) - 1))
-
-
 /******************************************************************************
  * DC OS functions
  *****************************************************************************/
@@ -76,7 +73,7 @@ typedef PVRSRV_ERROR (*PFN_DC_IMPORT_BUFFER_ACQUIRE)(IMG_HANDLE hImport, IMG_DEV
 typedef void (*PFN_DC_IMPORT_BUFFER_RELEASE)(IMG_HANDLE hImport, IMG_DEV_PHYADDR *pasDevPAddr);
 
 /* Services physical heap function pointers */
-typedef PVRSRV_ERROR (*PFN_PHYS_HEAP_ACQUIRE_BY_USAGE)(PHYS_HEAP_USAGE_FLAGS ui32UsageFlag, PPVRSRV_DEVICE_NODE psDevNode, PHYS_HEAP **ppsPhysHeap);
+typedef PVRSRV_ERROR (*PFN_PHYS_HEAP_ACQUIRE_BY_ID)(PVRSRV_PHYS_HEAP eDevPhysHeap, PPVRSRV_DEVICE_NODE psDevNode, PHYS_HEAP **ppsPhysHeap);
 typedef void (*PFN_PHYS_HEAP_RELEASE)(PHYS_HEAP *psPhysHeap);
 typedef PHYS_HEAP_TYPE (*PFN_PHYS_HEAP_GET_TYPE)(PHYS_HEAP *psPhysHeap);
 typedef PVRSRV_ERROR (*PFN_PHYS_HEAP_GET_SIZE)(PHYS_HEAP *psPhysHeap, IMG_UINT64 *puiSize);
@@ -104,7 +101,7 @@ typedef struct DC_SERVICES_FUNCS_TAG
 	PFN_DC_IMPORT_BUFFER_RELEASE		pfnDCImportBufferRelease;
 
 	/* Physical heap functions */
-	PFN_PHYS_HEAP_ACQUIRE_BY_USAGE	pfnPhysHeapAcquireByUsage;
+	PFN_PHYS_HEAP_ACQUIRE_BY_ID		pfnPhysHeapAcquireByID;
 	PFN_PHYS_HEAP_RELEASE			pfnPhysHeapRelease;
 	PFN_PHYS_HEAP_GET_TYPE			pfnPhysHeapGetType;
 	PFN_PHYS_HEAP_GET_SIZE			pfnPhysHeapGetSize;

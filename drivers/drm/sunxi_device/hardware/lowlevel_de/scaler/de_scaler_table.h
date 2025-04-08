@@ -42,5 +42,6 @@ extern u32 lan2coefftab32[512];
 extern u32 bicubic8coefftab32_left[512];
 extern u32 bicubic8coefftab32_right[512];
 extern u32 bicubic4coefftab32[512];
+extern u32 linearcoefftab32_4tab[32];
 
 #endif /* #ifndef _DE_SCALER_TABLE_H_ */

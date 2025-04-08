@@ -12,6 +12,7 @@
 struct ccu_reset_map {
 	u16	reg;
 	u32	bit;
+	u32	key_value;
 };
 
 

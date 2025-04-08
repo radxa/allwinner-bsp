@@ -248,7 +248,7 @@ static ssize_t DisplayEnabledWrite(struct file *psFile,
 
 	pszBuffer[uiLocCount] = '\0';
 
-	if (strtobool(pszBuffer, &bPDPEnabled) == 0)
+	if (kstrtobool(pszBuffer, &bPDPEnabled) == 0)
 	{
 		/* If we have no device-specific data we iterate over all units */
 		if (psDeviceData == NULL)

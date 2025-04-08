@@ -334,7 +334,7 @@ static ssize_t DisplayEnabledWrite(struct file *psFile,
 
 	pszBuffer[uiCount] = '\0';
 
-	if (strtobool(pszBuffer, &bPDPEnabled) == 0)
+	if (kstrtobool(pszBuffer, &bPDPEnabled) == 0)
 	{
 		sModuleParams.ui32PDPEnabled = bPDPEnabled ? 1 : 0;
 

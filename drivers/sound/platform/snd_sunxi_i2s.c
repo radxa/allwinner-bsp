@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/regulator/consumer.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/of.h>
 #include <linux/clk.h>
 #include <linux/reset.h>
@@ -32,74 +33,97 @@
 #include <sound/pcm_params.h>
 
 #include "snd_sunxi_i2s.h"
+#include "snd_sunxi_adapter.h"
+
 
 #define DRV_NAME	"sunxi-snd-plat-i2s"
 
 /* for reg debug */
-static struct audio_reg_label sunxi_reg_labels[] = {
-	REG_LABEL(SUNXI_I2S_CTL),
-	REG_LABEL(SUNXI_I2S_FMT0),
-	REG_LABEL(SUNXI_I2S_FMT1),
-	REG_LABEL(SUNXI_I2S_INTSTA),
-	/* REG_LABEL(SUNXI_I2S_RXFIFO), */
-	REG_LABEL(SUNXI_I2S_FIFOCTL),
-	REG_LABEL(SUNXI_I2S_FIFOSTA),
-	REG_LABEL(SUNXI_I2S_INTCTL),
-	/* REG_LABEL(SUNXI_I2S_TXFIFO), */
-	REG_LABEL(SUNXI_I2S_CLKDIV),
-	REG_LABEL(SUNXI_I2S_TXCNT),
-	REG_LABEL(SUNXI_I2S_RXCNT),
+static unsigned int audio_reg_addrs[] = {
+	SUNXI_I2S_CTL,
+	SUNXI_I2S_FMT0,
+	SUNXI_I2S_FMT1,
+	SUNXI_I2S_INTSTA,
+	/* SUNXI_I2S_RXFIFO */
+	SUNXI_I2S_FIFOCTL,
+	SUNXI_I2S_FIFOSTA,
+	SUNXI_I2S_INTCTL,
+	/* SUNXI_I2S_TXFIFO */
+	SUNXI_I2S_CLKDIV,
+	SUNXI_I2S_TXCNT,
+	SUNXI_I2S_RXCNT,
 
-	REG_LABEL(SUNXI_I2S_CHCFG),
-	REG_LABEL(SUNXI_I2S_TX0CHSEL),
-	REG_LABEL(SUNXI_I2S_TX1CHSEL),
-	REG_LABEL(SUNXI_I2S_TX2CHSEL),
-	REG_LABEL(SUNXI_I2S_TX3CHSEL),
-	REG_LABEL(SUNXI_I2S_TX0CHMAP0),
-	REG_LABEL(SUNXI_I2S_TX0CHMAP1),
-	REG_LABEL(SUNXI_I2S_TX1CHMAP0),
-	REG_LABEL(SUNXI_I2S_TX1CHMAP1),
-	REG_LABEL(SUNXI_I2S_TX2CHMAP0),
-	REG_LABEL(SUNXI_I2S_TX2CHMAP1),
-	REG_LABEL(SUNXI_I2S_TX3CHMAP0),
-	REG_LABEL(SUNXI_I2S_TX3CHMAP1),
-	REG_LABEL(SUNXI_I2S_RXCHSEL),
-	REG_LABEL(SUNXI_I2S_RXCHMAP0),
-	REG_LABEL(SUNXI_I2S_RXCHMAP1),
-	REG_LABEL(SUNXI_I2S_RXCHMAP2),
-	REG_LABEL(SUNXI_I2S_RXCHMAP3),
+	SUNXI_I2S_CHCFG,
+	SUNXI_I2S_TX0CHSEL,
+	SUNXI_I2S_TX1CHSEL,
+	SUNXI_I2S_TX2CHSEL,
+	SUNXI_I2S_TX3CHSEL,
+	SUNXI_I2S_TX0CHMAP0,
+	SUNXI_I2S_TX0CHMAP1,
+	SUNXI_I2S_TX1CHMAP0,
+	SUNXI_I2S_TX1CHMAP1,
+	SUNXI_I2S_TX2CHMAP0,
+	SUNXI_I2S_TX2CHMAP1,
+	SUNXI_I2S_TX3CHMAP0,
+	SUNXI_I2S_TX3CHMAP1,
+	SUNXI_I2S_RXCHSEL,
+	SUNXI_I2S_RXCHMAP0,
+	SUNXI_I2S_RXCHMAP1,
+	SUNXI_I2S_RXCHMAP2,
+	SUNXI_I2S_RXCHMAP3,
 
-	REG_LABEL(SUNXI_I2S_DEBUG),
-	REG_LABEL(SUNXI_I2S_REV),
-	REG_LABEL_END,
+	SUNXI_I2S_DEBUG,
+	SUNXI_I2S_REV,
 };
 
-static struct audio_reg_label sun8iw11_reg_labels[] = {
-	REG_LABEL(SUNXI_I2S_CTL),
-	REG_LABEL(SUNXI_I2S_FMT0),
-	REG_LABEL(SUNXI_I2S_FMT1),
-	REG_LABEL(SUNXI_I2S_INTSTA),
-	/* REG_LABEL(SUNXI_I2S_RXFIFO), */
-	REG_LABEL(SUNXI_I2S_FIFOCTL),
-	REG_LABEL(SUNXI_I2S_FIFOSTA),
-	REG_LABEL(SUNXI_I2S_INTCTL),
-	/* REG_LABEL(SUNXI_I2S_TXFIFO), */
-	REG_LABEL(SUNXI_I2S_CLKDIV),
-	REG_LABEL(SUNXI_I2S_TXCNT),
-	REG_LABEL(SUNXI_I2S_RXCNT),
+static unsigned int sun8iw11_reg_addrs[] = {
+	SUNXI_I2S_CTL,
+	SUNXI_I2S_FMT0,
+	SUNXI_I2S_FMT1,
+	SUNXI_I2S_INTSTA,
+	/* SUNXI_I2S_RXFIFO */
+	SUNXI_I2S_FIFOCTL,
+	SUNXI_I2S_FIFOSTA,
+	SUNXI_I2S_INTCTL,
+	/* SUNXI_I2S_TXFIFO */
+	SUNXI_I2S_CLKDIV,
+	SUNXI_I2S_TXCNT,
+	SUNXI_I2S_RXCNT,
 
-	REG_LABEL(SUNXI_I2S_8SLOT_CHCFG),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX0CHSEL),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX1CHSEL),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX2CHSEL),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX3CHSEL),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX0CHMAP),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX1CHMAP),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX2CHMAP),
-	REG_LABEL(SUNXI_I2S_8SLOT_TX3CHMAP),
-	REG_LABEL(SUNXI_I2S_8SLOT_RXCHSEL),
-	REG_LABEL(SUNXI_I2S_8SLOT_RXCHMAP),
-	REG_LABEL_END,
+	SUNXI_I2S_8SLOT_CHCFG,
+	SUNXI_I2S_8SLOT_TX0CHSEL,
+	SUNXI_I2S_8SLOT_TX1CHSEL,
+	SUNXI_I2S_8SLOT_TX2CHSEL,
+	SUNXI_I2S_8SLOT_TX3CHSEL,
+	SUNXI_I2S_8SLOT_TX0CHMAP,
+	SUNXI_I2S_8SLOT_TX1CHMAP,
+	SUNXI_I2S_8SLOT_TX2CHMAP,
+	SUNXI_I2S_8SLOT_TX3CHMAP,
+	SUNXI_I2S_8SLOT_RXCHSEL,
+	SUNXI_I2S_8SLOT_RXCHMAP,
+};
+
+static unsigned int sun8iw17_reg_addrs[] = {
+	SUNXI_I2S_CTL,
+	SUNXI_I2S_FMT0,
+	SUNXI_I2S_FMT1,
+	SUNXI_I2S_INTSTA,
+	/* SUNXI_I2S_RXFIFO */
+	SUNXI_I2S_FIFOCTL,
+	SUNXI_I2S_FIFOSTA,
+	SUNXI_I2S_INTCTL,
+	/* SUNXI_I2S_TXFIFO */
+	SUNXI_I2S_CLKDIV,
+	SUNXI_I2S_TXCNT,
+	SUNXI_I2S_RXCNT,
+
+	SUNXI_I2S_CHCFG,
+	SUNXI_I2S_TX0CHSEL,
+	SUNXI_I2S_TX0CHMAP0,
+	SUNXI_I2S_TX0CHMAP1,
+	SUNXI_I2S_RXCHSEL,
+	SUNXI_I2S_RXCHMAP0,
+	SUNXI_I2S_RXCHMAP1,
 };
 
 static struct regmap_config g_regmap_config = {
@@ -117,21 +141,43 @@ static int sunxi_set_i2s_dai_fmt(struct sunxi_i2s_dai_fmt *i2s_dai_fmt,
 
 static void sunxi_rx_sync_enable(void *data, bool enable);
 
-static int sunxi_i2s_set_pcm_ucfmt(struct snd_sunxi_ucfmt *ucfmt, struct snd_soc_dai *dai)
+static void sunxi_i2s_get_dai_ucfmt(struct snd_notifier_block *snd_nb)
 {
-	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
-	struct sunxi_i2s_dai_fmt *i2s_dai_fmt = &i2s->i2s_dai_fmt;
+	struct sunxi_i2s *i2s;
+	struct snd_sunxi_dai_ucfmt *fmt_data;
+	struct sunxi_i2s_dai_fmt *i2s_dai_fmt;
 
-	if (!ucfmt || !dai) {
-		SND_LOG_ERR_STD(E_I2S_SWARG_UCFMT_CB, "ucfmt or dai is null\n");
-		return -EINVAL;
+	if (!snd_nb) {
+		SND_LOG_ERR_STD(E_I2S_SWARG_UCFMT_CB, "snd_nb is null\n");
+		return;
 	}
 
-	i2s_dai_fmt->data_late = ucfmt->data_late;
-	i2s_dai_fmt->tx_lsb_first = ucfmt->tx_lsb_first;
-	i2s_dai_fmt->rx_lsb_first = ucfmt->rx_lsb_first;
+	i2s = (struct sunxi_i2s *)snd_nb->cb_data;
+	fmt_data = (struct snd_sunxi_dai_ucfmt *)snd_nb->tx_data;
+	i2s_dai_fmt = &i2s->i2s_dai_fmt;
 
-	return 0;
+	i2s_dai_fmt->data_late = fmt_data->data_late;
+	i2s_dai_fmt->tx_lsb_first = fmt_data->tx_lsb_first;
+	i2s_dai_fmt->rx_lsb_first = fmt_data->rx_lsb_first;
+}
+
+static void sunxi_i2s_get_hdmi_fmt(struct snd_notifier_block *snd_nb)
+{
+	struct sunxi_i2s *i2s;
+	enum HDMI_FORMAT *hdmi_fmt;
+
+	if (!snd_nb) {
+		SND_LOG_ERR_STD(E_I2S_SWARG_UCFMT_CB, "snd_nb is null\n");
+		return;
+	}
+
+	i2s = (struct sunxi_i2s *)snd_nb->cb_data;
+	hdmi_fmt = (enum HDMI_FORMAT *)snd_nb->tx_data;
+
+	if (i2s->dts.dai_type == SUNXI_DAI_HDMI_TYPE) {
+		i2s->playback_dma_param.hdmi_fmt = *hdmi_fmt;
+		SND_LOG_DEBUG("hdmi fmt -> %d\n", i2s->playback_dma_param.hdmi_fmt);
+	}
 }
 
 static int sunxi_i2s_set_ch_en(struct sunxi_i2s *i2s, int stream, unsigned int channels)
@@ -250,6 +296,55 @@ static int sun8iw11_i2s_set_ch_en(struct sunxi_i2s *i2s, int stream, unsigned in
 				   (channels - 1) << RX_SLOT_NUM_8SLOT);
 		regmap_update_bits(regmap, SUNXI_I2S_8SLOT_RXCHSEL, 0x7 << RX_CHSEL_8SLOT,
 				   (channels - 1) << RX_CHSEL_8SLOT);
+	}
+
+	return 0;
+}
+
+static int sun8iw17_i2s_set_ch_en(struct sunxi_i2s *i2s, int stream, unsigned int channels)
+{
+	struct regmap *regmap = i2s->mem.regmap;
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+	const struct sunxi_i2s_quirks *quirks = i2s->quirks;
+	struct sunxi_i2s_dai_fmt *i2s_dai_fmt = &i2s->i2s_dai_fmt;
+	unsigned int slot_en_num;
+	unsigned int i;
+	uint32_t channels_en_slot[16] = {
+		0x0001, 0x0003, 0x0007, 0x000f, 0x001f, 0x003f, 0x007f, 0x00ff,
+		0x01ff, 0x03ff, 0x07ff, 0x0fff, 0x1fff, 0x3fff, 0x7fff, 0xffff
+	};
+	int ret;
+
+	if (IS_ERR_OR_NULL(i2s) || channels < 1 || channels > 16)
+		return -EINVAL;
+
+	ret = sunxi_get_i2s_dai_fmt(i2s_dai_fmt, SUNXI_I2S_DAI_SLOT_NUM, &slot_en_num);
+	if (ret < 0)
+		return -EINVAL;
+
+	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		if (dts->tx_pin[1] || dts->tx_pin[2] || dts->tx_pin[3])
+			SND_LOG_WARN("only support DOUT0\n");
+
+		regmap_update_bits(regmap, SUNXI_I2S_CHCFG, 0xF << TX_SLOT_NUM,
+				   (channels - 1) << TX_SLOT_NUM);
+
+		if (dts->tx_pin[0]) {
+			regmap_update_bits(regmap, SUNXI_I2S_TX0CHSEL, 0xF << TX_CHSEL,
+					   (slot_en_num - 1) << TX_CHSEL);
+			regmap_update_bits(regmap, SUNXI_I2S_TX0CHSEL, 0xFFFF << TX_CHEN,
+					   channels_en_slot[slot_en_num - 1] << TX_CHEN);
+		}
+	} else {
+		for (i = 0; i < quirks->slot_num_max; ++i) {
+			if (dts->rxfifo_pinmap[i] != 0)
+				SND_LOG_WARN("only support DIN0\n");
+		}
+
+		regmap_update_bits(regmap, SUNXI_I2S_CHCFG, 0xF << RX_SLOT_NUM,
+				   (channels - 1) << RX_SLOT_NUM);
+		regmap_update_bits(regmap, SUNXI_I2S_RXCHSEL, 0xF << RX_CHSEL,
+				   (channels - 1) << RX_CHSEL);
 	}
 
 	return 0;
@@ -383,6 +478,64 @@ static int sun8iw11_i2s_set_daifmt_fmt(struct sunxi_i2s *i2s, unsigned int forma
 	return 0;
 }
 
+static int sun8iw17_i2s_set_daifmt_fmt(struct sunxi_i2s *i2s, unsigned int format)
+{
+	struct sunxi_i2s_dai_fmt *i2s_dai_fmt = &i2s->i2s_dai_fmt;
+	struct regmap *regmap = i2s->mem.regmap;
+	unsigned int mode;
+
+	if (IS_ERR_OR_NULL(i2s))
+		return -EINVAL;
+
+	switch (format) {
+	case SND_SOC_DAIFMT_I2S:
+		mode = 1;
+		break;
+	case SND_SOC_DAIFMT_RIGHT_J:
+		mode = 2;
+		break;
+	case SND_SOC_DAIFMT_LEFT_J:
+		mode = 1;
+		break;
+	case SND_SOC_DAIFMT_DSP_A:
+		mode = 0;
+		/* L data MSB after FRM LRC (short frame) */
+		regmap_update_bits(regmap, SUNXI_I2S_FMT0, 1 << LRCK_WIDTH, 0 << LRCK_WIDTH);
+		break;
+	case SND_SOC_DAIFMT_DSP_B:
+		mode = 0;
+		/* L data MSB during FRM LRC (long frame) */
+		regmap_update_bits(regmap, SUNXI_I2S_FMT0, 1 << LRCK_WIDTH, 1 << LRCK_WIDTH);
+		break;
+	default:
+		SND_LOG_ERR_STD(E_I2S_SWARG_DAIFMT_SET, "format setting failed\n");
+		return -EINVAL;
+	}
+
+	regmap_update_bits(regmap, SUNXI_I2S_CTL, 3 << MODE_SEL, mode << MODE_SEL);
+
+	regmap_update_bits(regmap, SUNXI_I2S_TX0CHSEL,
+			   3 << TX_OFFSET, i2s_dai_fmt->data_late << TX_OFFSET);
+	regmap_update_bits(regmap, SUNXI_I2S_RXCHSEL,
+			   3 << RX_OFFSET, i2s_dai_fmt->data_late << RX_OFFSET);
+
+	if (!i2s_dai_fmt->rx_lsb_first && !i2s_dai_fmt->tx_lsb_first) {
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << RX_MLS, 0 << RX_MLS);
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << TX_MLS, 0 << TX_MLS);
+	} else if (i2s_dai_fmt->rx_lsb_first && !i2s_dai_fmt->tx_lsb_first) {
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << RX_MLS, 1 << RX_MLS);
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << TX_MLS, 0 << TX_MLS);
+	} else if (!i2s_dai_fmt->rx_lsb_first && i2s_dai_fmt->tx_lsb_first) {
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << RX_MLS, 0 << RX_MLS);
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << TX_MLS, 1 << TX_MLS);
+	} else {
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << RX_MLS, 1 << RX_MLS);
+		regmap_update_bits(regmap, SUNXI_I2S_FMT1, 1 << TX_MLS, 1 << TX_MLS);
+	}
+
+	return 0;
+}
+
 static int sunxi_i2s_set_ch_map(struct sunxi_i2s *i2s, unsigned int channels)
 {
 	struct regmap *regmap = i2s->mem.regmap;
@@ -451,6 +604,38 @@ static int sun8iw11_i2s_set_ch_map(struct sunxi_i2s *i2s, unsigned int channels)
 		reg_val_rx |= (dts->rxfifo_chmap[i] << (j << 2));
 
 	regmap_write(regmap, SUNXI_I2S_8SLOT_RXCHMAP, reg_val_rx);
+
+	return 0;
+}
+
+static int sun8iw17_i2s_set_ch_map(struct sunxi_i2s *i2s, unsigned int channels)
+{
+	struct regmap *regmap = i2s->mem.regmap;
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+	unsigned int reg_val_tx[2] = {0};
+	unsigned int reg_val_rx[2] = {0};
+	unsigned int i;
+
+	(void)channels;
+
+	if (IS_ERR_OR_NULL(i2s))
+		return -EINVAL;
+
+	for (i = 0; i < 8; ++i) {
+		reg_val_tx[0] |= (dts->tx_pin_chmap[0][i] << (i << 2));
+		reg_val_tx[1] |= (dts->tx_pin_chmap[0][i + 8] << (i << 2));
+	}
+
+	regmap_write(regmap, SUNXI_I2S_TX0CHMAP0, reg_val_tx[1]);
+	regmap_write(regmap, SUNXI_I2S_TX0CHMAP1, reg_val_tx[0]);
+
+	for (i = 0; i < 8; ++i) {
+		reg_val_rx[0] |= (dts->rxfifo_chmap[i] << (i << 2));
+		reg_val_rx[1] |= (dts->rxfifo_chmap[i + 8] << (i << 2));
+	}
+
+	regmap_write(regmap, SUNXI_I2S_RXCHMAP0, reg_val_rx[1]);
+	regmap_write(regmap, SUNXI_I2S_RXCHMAP1, reg_val_rx[0]);
 
 	return 0;
 }
@@ -555,11 +740,6 @@ static int sunxi_i2s_dai_set_pll(struct snd_soc_dai *dai, int pll_id, int source
 	int ret;
 
 	SND_LOG_DEBUG("\n");
-
-	if (snd_i2s_clk_rate(i2s->clk, freq_in, freq_out)) {
-		SND_LOG_ERR("clk set rate failed\n");
-		return -EINVAL;
-	}
 
 	ret = sunxi_set_i2s_dai_fmt(i2s_dai_fmt, SUNXI_I2S_DAI_PLL, freq_in);
 	if (ret < 0)
@@ -915,43 +1095,111 @@ static int sunxi_i2s_dai_set_tdm_slot(struct snd_soc_dai *dai,
 static int sunxi_i2s_dai_startup(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
 {
 	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
-	const struct sunxi_i2s_quirks *quirks = i2s->quirks;
-	struct sunxi_i2s_dts *dts = &i2s->dts;
 
 	SND_LOG_DEBUG("\n");
 
-	if (snd_i2s_clk_enable(i2s->clk)) {
-		SND_LOG_ERR("clk enable failed\n");
-		return -EINVAL;
-	}
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		snd_soc_dai_set_dma_data(dai, substream, &i2s->playback_dma_param);
-	} else {
+	else
 		snd_soc_dai_set_dma_data(dai, substream, &i2s->capture_dma_param);
-		if (quirks->rx_sync_en && dts->rx_sync_en && dts->rx_sync_ctl)
-			sunxi_rx_sync_startup(dts->rx_sync_domain, dts->rx_sync_id);
-	}
 
 	return 0;
 }
 
 static void sunxi_i2s_dai_shutdown(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
 {
-	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
-	const struct sunxi_i2s_quirks *quirks = i2s->quirks;
-	struct sunxi_i2s_dts *dts = &i2s->dts;
+	(void)substream;
+	(void)dai;
+}
 
-	SND_LOG_DEBUG("\n");
+static int sunxi_i2s_clk_set_rate_en(struct sunxi_i2s *i2s)
+{
+	struct sunxi_i2s_dai_fmt *i2s_dai_fmt = &i2s->i2s_dai_fmt;
+	struct regmap *regmap = i2s->mem.regmap;
+	unsigned int freq_in, freq_out;
+	int ret;
 
-	snd_i2s_clk_disable(i2s->clk);
+	ret = sunxi_get_i2s_dai_fmt(i2s_dai_fmt, SUNXI_I2S_DAI_PLL, &freq_in);
+	if (ret < 0)
+		return -EINVAL;
 
-	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
-		if (quirks->rx_sync_en && dts->rx_sync_en && dts->rx_sync_ctl)
-			sunxi_rx_sync_shutdown(dts->rx_sync_domain, dts->rx_sync_id);
+	ret = sunxi_get_i2s_dai_fmt(i2s_dai_fmt, SUNXI_I2S_DAI_MCLK, &freq_out);
+	if (ret < 0)
+		return -EINVAL;
+
+	if (snd_i2s_clk_rate(i2s->clk, freq_in, freq_out)) {
+		SND_LOG_ERR("clk set rate failed\n");
+		return -EINVAL;
 	}
 
-	return;
+	ret = snd_i2s_clk_enable(i2s->clk);
+	if (ret < 0)
+		return -1;
+
+	regmap_update_bits(regmap, SUNXI_I2S_CTL,
+			   1 << GLOBAL_EN, 1 << GLOBAL_EN);
+
+	return 0;
+}
+
+
+static int sunxi_i2s_clk_open(struct snd_pcm_substream *substream,
+			      struct snd_pcm_hw_params *params,
+			      struct snd_soc_dai *dai)
+{
+	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
+	struct sunxi_i2s_clk_sta *i2s_clk_sta = &i2s->i2s_clk_sta;
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+	struct regmap *regmap = i2s->mem.regmap;
+	unsigned int sample_rate;
+
+	sample_rate = params_rate(params);
+
+	/* open clk */
+	if (!i2s_clk_sta->p_work && !i2s_clk_sta->c_work && !i2s_clk_sta->old_rate) {
+		if (sunxi_i2s_clk_set_rate_en(i2s))
+			return -1;
+	}
+
+	/* if clk_keep, need disable and then open clk for sample rate change */
+	if (!i2s_clk_sta->p_work && !i2s_clk_sta->c_work &&
+	    sample_rate != i2s_clk_sta->old_rate && dts->clk_keep) {
+		regmap_update_bits(regmap, SUNXI_I2S_CTL,
+				   1 << GLOBAL_EN, 0 << GLOBAL_EN);
+
+		snd_i2s_clk_disable(i2s->clk);
+
+		if (sunxi_i2s_clk_set_rate_en(i2s))
+			return -1;
+	}
+
+	/* need different sample rate when i2s is woring, this cased i2s woring error */
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
+	    !i2s_clk_sta->p_work && i2s_clk_sta->c_work &&
+	    sample_rate != i2s_clk_sta->old_rate) {
+		SND_LOG_ERR("i2s is capture in %dKHz, but new rate is %dKHz,"
+			    "capture has wrong!!!\n",
+			    i2s_clk_sta->old_rate, sample_rate);
+		return -1;
+	}
+	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE &&
+	    !i2s_clk_sta->c_work && i2s_clk_sta->p_work &&
+	    sample_rate != i2s_clk_sta->old_rate) {
+		SND_LOG_ERR("i2s is playing in %dKHz, but new rate is %dKHz,"
+			    "playing has wrong!!!\n",
+			    i2s_clk_sta->old_rate, sample_rate);
+		return -1;
+	}
+
+	i2s_clk_sta->old_rate = sample_rate;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		i2s_clk_sta->p_work = 1;
+	} else {
+		i2s_clk_sta->c_work = 1;
+	}
+
+	return 0;
 }
 
 static int sunxi_i2s_dai_hw_params(struct snd_pcm_substream *substream,
@@ -960,22 +1208,21 @@ static int sunxi_i2s_dai_hw_params(struct snd_pcm_substream *substream,
 {
 	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
 	const struct sunxi_i2s_quirks *quirks = i2s->quirks;
+	struct sunxi_i2s_dts *dts = &i2s->dts;
 	struct regmap *regmap = i2s->mem.regmap;
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct sunxi_dma_params *dma_params = snd_soc_dai_get_dma_data(sunxi_adpt_rtd_cpu_dai(rtd),
+								       substream);
 	int ret;
 
 	SND_LOG_DEBUG("\n");
-
-	if (i2s->dts.dai_type == SUNXI_DAI_HDMI_TYPE) {
-		i2s->hdmi_fmt = snd_sunxi_hdmi_get_fmt();
-		SND_LOG_DEBUG("hdmi fmt -> %d\n", i2s->hdmi_fmt);
-	}
 
 	/* set bits */
 	switch (params_format(params)) {
 	case SNDRV_PCM_FORMAT_S16_LE:
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 			if (i2s->dts.dai_type == SUNXI_DAI_HDMI_TYPE &&
-			    i2s->hdmi_fmt > HDMI_FMT_PCM) {
+			    dma_params->hdmi_fmt > HDMI_FMT_PCM) {
 				regmap_update_bits(regmap, SUNXI_I2S_FMT0,
 						   0x7 << I2S_SAMPLE_RESOLUTION,
 						   0x5 << I2S_SAMPLE_RESOLUTION);
@@ -1034,6 +1281,60 @@ static int sunxi_i2s_dai_hw_params(struct snd_pcm_substream *substream,
 		return -EINVAL;
 	}
 
+	mutex_lock(&i2s->i2s_clk_sta.clk_mutex);
+	ret = sunxi_i2s_clk_open(substream, params, dai);
+	mutex_unlock(&i2s->i2s_clk_sta.clk_mutex);
+	if (ret < 0)
+		return -1;
+
+	if (dts->clk_en_post_delay)
+		msleep(dts->clk_en_post_delay);
+
+	return 0;
+}
+
+static int sunxi_i2s_dai_hw_free(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
+{
+	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+	struct regmap *regmap = i2s->mem.regmap;
+	struct sunxi_i2s_clk_sta *i2s_clk_sta = &i2s->i2s_clk_sta;
+
+	SND_LOG_DEBUG("\n");
+
+	mutex_lock(&i2s->i2s_clk_sta.clk_mutex);
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		if (!i2s_clk_sta->p_work)
+			goto exit;
+
+		if ((!dts->clk_keep) && (!i2s_clk_sta->c_work)) {
+			regmap_update_bits(regmap, SUNXI_I2S_CTL,
+					   1 << GLOBAL_EN, 0 << GLOBAL_EN);
+
+			snd_i2s_clk_disable(i2s->clk);
+
+			i2s_clk_sta->old_rate = 0;
+		}
+
+		i2s_clk_sta->p_work = 0;
+	} else {
+		if (!i2s_clk_sta->c_work)
+			goto exit;
+
+		if ((!dts->clk_keep) && !(i2s_clk_sta->p_work)) {
+			regmap_update_bits(regmap, SUNXI_I2S_CTL,
+					   1 << GLOBAL_EN, 0 << GLOBAL_EN);
+
+			snd_i2s_clk_disable(i2s->clk);
+
+			i2s_clk_sta->old_rate = 0;
+		}
+
+		i2s_clk_sta->c_work = 0;
+	}
+
+exit:
+	mutex_unlock(&i2s->i2s_clk_sta.clk_mutex);
 	return 0;
 }
 
@@ -1116,9 +1417,23 @@ static int sunxi_i2s_dai_trigger(struct snd_pcm_substream *substream,
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			if (i2s->tx_trigger_bypass)
+				return 0;
+			sunxi_i2s_dai_tx_route(i2s, true);
+		} else {
+			sunxi_i2s_dai_rx_route(i2s, true);
+			if (dts->rx_sync_en && dts->rx_sync_ctl && quirks->rx_sync_en)
+				sunxi_rx_sync_control(dts->rx_sync_domain, dts->rx_sync_id, true);
+		}
+		break;
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			if (i2s->tx_trigger_bypass)
+				return 0;
 			sunxi_i2s_dai_tx_route(i2s, true);
+			if (i2s->audio_sta.spk)
+				snd_sunxi_pa_pin_enable(i2s->pa_cfg, i2s->pa_pin_max);
 		} else {
 			sunxi_i2s_dai_rx_route(i2s, true);
 			if (dts->rx_sync_en && dts->rx_sync_ctl && quirks->rx_sync_en)
@@ -1127,8 +1442,23 @@ static int sunxi_i2s_dai_trigger(struct snd_pcm_substream *substream,
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			if (i2s->tx_trigger_bypass)
+				return 0;
+			sunxi_i2s_dai_tx_route(i2s, false);
+		} else {
+			sunxi_i2s_dai_rx_route(i2s, false);
+			if (dts->rx_sync_en && dts->rx_sync_ctl && quirks->rx_sync_en)
+				sunxi_rx_sync_control(dts->rx_sync_domain, dts->rx_sync_id, false);
+		}
+		break;
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			if (i2s->tx_trigger_bypass)
+				return 0;
+			if (i2s->audio_sta.spk)
+				snd_sunxi_pa_pin_disable_irp(i2s->pa_cfg, i2s->pa_pin_max,
+							     NULL, NULL);
 			sunxi_i2s_dai_tx_route(i2s, false);
 		} else {
 			sunxi_i2s_dai_rx_route(i2s, false);
@@ -1143,18 +1473,19 @@ static int sunxi_i2s_dai_trigger(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static const struct snd_soc_dai_ops sunxi_i2s_dai_ops = {
+static struct snd_soc_dai_ops sunxi_i2s_dai_ops = {
 	/* call by machine */
-	.set_pll	= sunxi_i2s_dai_set_pll,		/* set pllclk */
-	.set_sysclk	= sunxi_i2s_dai_set_sysclk,		/* set mclk */
+	.set_pll	= sunxi_i2s_dai_set_pll,	/* set pllclk */
+	.set_sysclk	= sunxi_i2s_dai_set_sysclk,	/* set mclk */
 	.set_bclk_ratio	= sunxi_i2s_dai_set_bclk_ratio,	/* set bclk freq */
-	.set_fmt	= sunxi_i2s_dai_set_fmt,		/* set tdm fmt */
+	.set_fmt	= sunxi_i2s_dai_set_fmt,	/* set tdm fmt */
 	.set_tdm_slot	= sunxi_i2s_dai_set_tdm_slot,	/* set slot num and width */
 	/* call by asoc */
 	.startup	= sunxi_i2s_dai_startup,
 	.hw_params	= sunxi_i2s_dai_hw_params,
 	.prepare	= sunxi_i2s_dai_prepare,
 	.trigger	= sunxi_i2s_dai_trigger,
+	.hw_free	= sunxi_i2s_dai_hw_free,
 	.shutdown	= sunxi_i2s_dai_shutdown,
 };
 
@@ -1170,15 +1501,12 @@ static int sunxi_i2s_init(struct sunxi_i2s *i2s)
 	if (quirks->rx_sync_en)
 		regmap_update_bits(regmap, SUNXI_I2S_CTL, 1 << RX_SYNC_EN, 0 << RX_SYNC_EN);
 
-	regmap_update_bits(regmap, SUNXI_I2S_CTL, 1 << GLOBAL_EN, 1 << GLOBAL_EN);
-
 	return 0;
 }
 
 static int sunxi_i2s_dai_probe(struct snd_soc_dai *dai)
 {
 	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
-	int ret;
 
 	SND_LOG_DEBUG("\n");
 
@@ -1188,34 +1516,18 @@ static int sunxi_i2s_dai_probe(struct snd_soc_dai *dai)
 				  &i2s->capture_dma_param);
 
 	sunxi_i2s_init(i2s);
-
-	ret = snd_sunxi_ucfmt_register_cb(sunxi_i2s_set_pcm_ucfmt, dai->name);
-	if (ret < 0) {
-		SND_LOG_ERR("ucfmt callback register failed\n");
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
 static int sunxi_i2s_dai_remove(struct snd_soc_dai *dai)
 {
-	struct sunxi_i2s *i2s = snd_soc_dai_get_drvdata(dai);
-	struct regmap *regmap = i2s->mem.regmap;
-
 	SND_LOG_DEBUG("\n");
-
-	regmap_update_bits(regmap, SUNXI_I2S_CTL, 0x1 << GLOBAL_EN, 0x0 << GLOBAL_EN);
-
-	snd_sunxi_ucfmt_unregister_cb(dai->name);
 
 	return 0;
 }
 
 static struct snd_soc_dai_driver sunxi_i2s_dai = {
 	.name = DRV_NAME,
-	.probe		= sunxi_i2s_dai_probe,
-	.remove		= sunxi_i2s_dai_remove,
 	.playback = {
 		.stream_name	= "Playback",
 		.channels_min	= 1,
@@ -1240,8 +1552,59 @@ static struct snd_soc_dai_driver sunxi_i2s_dai = {
 				| SNDRV_PCM_FMTBIT_S24_3LE
 				| SNDRV_PCM_FMTBIT_S32_LE,
 	},
-	.ops = &sunxi_i2s_dai_ops,
 };
+
+/* clk */
+static int sunxi_get_i2s_delay_mode(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+
+	ucontrol->value.integer.value[0] = dts->clk_en_post_delay;
+
+	return 0;
+}
+
+static int sunxi_put_i2s_delay_mode(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+
+	dts->clk_en_post_delay = ucontrol->value.integer.value[0];
+
+	return 0;
+}
+
+static int sunxi_get_i2s_clk_keep_mode(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+
+	ucontrol->value.integer.value[0] = dts->clk_keep;
+
+	return 0;
+}
+
+static int sunxi_put_i2s_clk_keep_mode(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+	struct sunxi_i2s_clk_sta *i2s_clk_sta = &i2s->i2s_clk_sta;
+	struct sunxi_i2s_dts *dts = &i2s->dts;
+
+	mutex_lock(&i2s_clk_sta->clk_mutex);
+	if (!i2s_clk_sta->p_work && !i2s_clk_sta->c_work) {
+		dts->clk_keep = ucontrol->value.integer.value[0];
+	} else {
+		SND_LOG_ERR("i2s is working, cannot change thie value");
+	}
+	mutex_unlock(&i2s_clk_sta->clk_mutex);
+
+	return 0;
+}
 
 /*******************************************************************************
  * *** sound card & component function source ***
@@ -1325,14 +1688,19 @@ static int sunxi_set_rx_sync_mode(struct snd_kcontrol *kcontrol,
 	struct sunxi_i2s_dts *dts = &i2s->dts;
 	struct regmap *regmap = i2s->mem.regmap;
 
+	if (dts->rx_sync_ctl == ucontrol->value.integer.value[0])
+		return 0;
+
 	switch (ucontrol->value.integer.value[0]) {
 	case 0:
 		dts->rx_sync_ctl = 0;
 		regmap_update_bits(regmap, SUNXI_I2S_CTL, 1 << RX_SYNC_EN, 0 << RX_SYNC_EN);
+		sunxi_rx_sync_shutdown(dts->rx_sync_domain, dts->rx_sync_id);
 		break;
 	case 1:
 		regmap_update_bits(regmap, SUNXI_I2S_CTL, 1 << RX_SYNC_EN, 1 << RX_SYNC_EN);
 		dts->rx_sync_ctl = 1;
+		sunxi_rx_sync_startup(dts->rx_sync_domain, dts->rx_sync_id);
 		break;
 	default:
 		return -EINVAL;
@@ -1340,10 +1708,34 @@ static int sunxi_set_rx_sync_mode(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int sunxi_get_tx_trigger_mode(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+
+	ucontrol->value.integer.value[0] = i2s->tx_trigger_bypass;
+
+	return 0;
+}
+
+static int sunxi_set_tx_trigger_mode(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+
+	i2s->tx_trigger_bypass = ucontrol->value.integer.value[0];
+
+	return 0;
+}
+
 static const char *sunxi_switch_text[] = {"Off", "On"};
 
 static SOC_ENUM_SINGLE_EXT_DECL(sunxi_tx_hub_mode_enum, sunxi_switch_text);
 static SOC_ENUM_SINGLE_EXT_DECL(sunxi_rx_sync_mode_enum, sunxi_switch_text);
+static SOC_ENUM_SINGLE_EXT_DECL(sunxi_tx_trigger_mode_enum, sunxi_switch_text);
+
 static const struct snd_kcontrol_new sunxi_tx_hub_controls[] = {
 	SOC_ENUM_EXT("tx hub mode", sunxi_tx_hub_mode_enum,
 		     sunxi_get_tx_hub_mode, sunxi_set_tx_hub_mode),
@@ -1352,19 +1744,81 @@ static const struct snd_kcontrol_new sunxi_rx_sync_controls[] = {
 	SOC_ENUM_EXT("rx sync mode", sunxi_rx_sync_mode_enum,
 		     sunxi_get_rx_sync_mode, sunxi_set_rx_sync_mode),
 };
+static const struct snd_kcontrol_new sunxi_tx_tirgger_controls[] = {
+	SOC_ENUM_EXT("tx trigger bypass", sunxi_tx_trigger_mode_enum,
+		     sunxi_get_tx_trigger_mode, sunxi_set_tx_trigger_mode),
+};
 static const struct snd_kcontrol_new sunxi_i2s_controls[] = {
 	SOC_SINGLE("loopback debug", SUNXI_I2S_CTL, LOOP_EN, 1, 0),
+};
+
+static const struct snd_kcontrol_new sunxi_i2s_delay_controls[] = {
+	SOC_SINGLE_EXT("clk en post delay", SND_SOC_NOPM, 0, 5000, 0,
+		       sunxi_get_i2s_delay_mode,
+		       sunxi_put_i2s_delay_mode),
+};
+
+static const struct snd_kcontrol_new sunxi_i2s_clk_keep_controls[] = {
+	SOC_SINGLE_BOOL_EXT("clk keep", 0,
+			    sunxi_get_i2s_clk_keep_mode,
+			    sunxi_put_i2s_clk_keep_mode),
+};
+
+static int sunxi_spk_event(struct snd_soc_dapm_widget *w, struct snd_kcontrol *k, int event)
+{
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
+	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+
+	SND_LOG_DEBUG("\n");
+
+	switch (event) {
+	case SND_SOC_DAPM_POST_PMU:
+		mutex_lock(&i2s->audio_sta.apf_mutex);
+		i2s->audio_sta.spk = true;
+		mutex_unlock(&i2s->audio_sta.apf_mutex);
+		snd_sunxi_pa_pin_enable(i2s->pa_cfg, i2s->pa_pin_max);
+		break;
+	case SND_SOC_DAPM_PRE_PMD:
+		snd_sunxi_pa_pin_disable(i2s->pa_cfg, i2s->pa_pin_max);
+		mutex_lock(&i2s->audio_sta.apf_mutex);
+		i2s->audio_sta.spk = false;
+		mutex_unlock(&i2s->audio_sta.apf_mutex);
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static const struct snd_soc_dapm_widget sunxi_i2s_dapm_widgets[] = {
+	SND_SOC_DAPM_AIF_IN("DAC", "Playback", 0, SND_SOC_NOPM, 0, 0),
+	SND_SOC_DAPM_OUTPUT("I2S_PIN"),
+	SND_SOC_DAPM_SPK("SPK", sunxi_spk_event),
+};
+
+static const struct snd_soc_dapm_route sunxi_i2s_dapm_routes[] = {
+	{"I2S_PIN", NULL, "DAC"},
 };
 
 static int sunxi_i2s_component_probe(struct snd_soc_component *component)
 {
 	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
+	struct snd_soc_dapm_context *dapm = &component->dapm;
 	const struct sunxi_i2s_quirks *quirks = i2s->quirks;
+	struct audio_reg_label *reg_label = i2s->reg_group.label;
 	struct sunxi_i2s_dts *dts = &i2s->dts;
 	struct regmap *regmap = i2s->mem.regmap;
+	unsigned int i;
 	int ret;
 
 	SND_LOG_DEBUG("\n");
+
+	mutex_init(&i2s->audio_sta.apf_mutex);
+	mutex_init(&i2s->i2s_clk_sta.clk_mutex);
+
+	for (i = 0; i < i2s->reg_group.size; ++i)
+		reg_label[i].address = quirks->audio_reg_addrs[i];
 
 	/* component kcontrols -> tx_hub */
 	if (dts->tx_hub_en) {
@@ -1396,6 +1850,47 @@ static int sunxi_i2s_component_probe(struct snd_soc_component *component)
 		}
 	}
 
+	/* component kcontrols -> tx_trigger_bypass */
+	ret = snd_soc_add_component_controls(component, sunxi_tx_tirgger_controls,
+					     ARRAY_SIZE(sunxi_tx_tirgger_controls));
+	if (ret)
+		SND_LOG_ERR_STD(E_I2S_SWSYS_COMP_PROBE, "add tx_trigger kcontrols failed\n");
+
+	/* dapm-widget */
+	ret = snd_soc_dapm_new_controls(dapm, sunxi_i2s_dapm_widgets,
+					ARRAY_SIZE(sunxi_i2s_dapm_widgets));
+	if (ret)
+		SND_LOG_ERR("register i2s dapm_widgets failed\n");
+
+	/* dapm-routes */
+	ret = snd_soc_dapm_add_routes(dapm, sunxi_i2s_dapm_routes,
+				      ARRAY_SIZE(sunxi_i2s_dapm_routes));
+	if (ret)
+		SND_LOG_ERR("register i2s dapm_routes failed\n");
+
+	ret = snd_sunxi_extparam_register_cb(component->card->name, EXTPARAM_ID_DAI_UCFMT,
+					     sunxi_i2s_get_dai_ucfmt, (void *)i2s);
+	if (ret) {
+		SND_LOG_ERR("dai ucfmt callback register failed\n");
+		return -EINVAL;
+	}
+	ret = snd_sunxi_extparam_register_cb(component->card->name, EXTPARAM_ID_HDMI_FMT,
+					     sunxi_i2s_get_hdmi_fmt, (void *)i2s);
+	if (ret) {
+		SND_LOG_ERR("hdmi fmt callback register failed\n");
+		return -EINVAL;
+	}
+
+	ret = snd_soc_add_component_controls(component, sunxi_i2s_delay_controls,
+					     ARRAY_SIZE(sunxi_i2s_delay_controls));
+	if (ret)
+		SND_LOG_ERR_STD(E_I2S_SWSYS_COMP_PROBE, "add clk_en_post_delay kcontrols failed\n");
+
+	ret = snd_soc_add_component_controls(component, sunxi_i2s_clk_keep_controls,
+					     ARRAY_SIZE(sunxi_i2s_clk_keep_controls));
+	if (ret)
+		SND_LOG_ERR_STD(E_I2S_SWSYS_COMP_PROBE, "add clk_keep kcontrols failed\n");
+
 	return 0;
 }
 
@@ -1406,22 +1901,30 @@ static void sunxi_i2s_component_remove(struct snd_soc_component *component)
 	struct sunxi_i2s_dts *dts = &i2s->dts;
 	SND_LOG_DEBUG("\n");
 
+	mutex_destroy(&i2s->audio_sta.apf_mutex);
+	mutex_destroy(&i2s->i2s_clk_sta.clk_mutex);
+
 	if (quirks->rx_sync_en && dts->rx_sync_en)
 		sunxi_rx_sync_unregister_cb(dts->rx_sync_domain, dts->rx_sync_id);
+
+	snd_sunxi_extparam_unregister_cb(component->card->name, EXTPARAM_ID_DAI_UCFMT,
+					 sunxi_i2s_get_dai_ucfmt);
+	snd_sunxi_extparam_unregister_cb(component->card->name, EXTPARAM_ID_HDMI_FMT,
+					 sunxi_i2s_get_hdmi_fmt);
 }
 
 static int sunxi_i2s_component_suspend(struct snd_soc_component *component)
 {
 	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
-	const struct sunxi_i2s_quirks *quirks = i2s->quirks;
 	struct regmap *regmap = i2s->mem.regmap;
 
 	SND_LOG_DEBUG("\n");
 
 	/* save reg value */
-	snd_sunxi_save_reg(regmap, quirks->reg_labels);
+	snd_sunxi_save_reg(regmap, &i2s->reg_group);
 
-	/* disable clk & regulator */
+	/* disable clk & regulator & pa */
+	snd_sunxi_pa_pin_disable(i2s->pa_cfg, i2s->pa_pin_max);
 	snd_sunxi_regulator_disable(i2s->rglt);
 	snd_i2s_clk_bus_disable(i2s->clk);
 
@@ -1431,7 +1934,6 @@ static int sunxi_i2s_component_suspend(struct snd_soc_component *component)
 static int sunxi_i2s_component_resume(struct snd_soc_component *component)
 {
 	struct sunxi_i2s *i2s = snd_soc_component_get_drvdata(component);
-	const struct sunxi_i2s_quirks *quirks = i2s->quirks;
 	struct regmap *regmap = i2s->mem.regmap;
 	int ret;
 	int i;
@@ -1449,11 +1951,13 @@ static int sunxi_i2s_component_resume(struct snd_soc_component *component)
 		return ret;
 	}
 
+	snd_sunxi_pa_pin_disable(i2s->pa_cfg, i2s->pa_pin_max);
+
 	/* for i2s init */
 	sunxi_i2s_init(i2s);
 
 	/* resume reg value */
-	snd_sunxi_echo_reg(regmap, quirks->reg_labels);
+	snd_sunxi_echo_reg(regmap, &i2s->reg_group);
 
 	/* for clear TX fifo */
 	for (i = 0 ; i < 10 ; i++) {
@@ -1554,7 +2058,7 @@ static void snd_sunxi_dts_params_init(struct platform_device *pdev, struct sunxi
 	unsigned int i, j, k;
 	int ret;
 	unsigned int tmp_val0, tmp_val1;
-	unsigned int tx_pin_cnt, rx_pin_cnt;
+	unsigned int tx_pin_cnt;
 	char tx_pin_chmap_str[32] = "";
 	struct device_node *np = pdev->dev.of_node;
 
@@ -1645,21 +2149,6 @@ static void snd_sunxi_dts_params_init(struct platform_device *pdev, struct sunxi
 		}
 	}
 
-	rx_pin_cnt = of_property_count_elems_of_size(np, "rx-pin", 4);
-	for (i = 0; i < rx_pin_cnt; ++i) {
-		ret = of_property_read_u32_index(np, "rx-pin", i, &tmp_val0);
-		if (tmp_val0 > 3) {
-			SND_LOG_WARN("rx-pin[%u] config invalid\n", i);
-			continue;
-		}
-		if (ret < 0) {
-			dts->rx_pin[tmp_val0] = false;
-			SND_LOG_WARN("rx-pin[%u] config missing\n", i);
-		} else {
-			dts->rx_pin[tmp_val0] = true;
-		}
-	}
-
 	for (i = 0; i < quirks->slot_num_max; ++i) {
 		ret = of_property_read_u32_index(np, "rxfifo-pinmap", i, &tmp_val1);
 		if (i == 0 && ret < 0) {
@@ -1714,6 +2203,22 @@ static void snd_sunxi_dts_params_init(struct platform_device *pdev, struct sunxi
 	ret = snd_sunxi_hdmi_get_dai_type(np, &dts->dai_type);
 	if (ret)
 		dts->dai_type = SUNXI_DAI_I2S_TYPE;
+
+	ret = of_property_read_u32(np, "clk-en-post-delay", &tmp_val0);
+	if (ret < 0) {
+		SND_LOG_WARN("clk-en-post-delay missing\n");
+		dts->clk_en_post_delay = 0;
+	} else {
+		dts->clk_en_post_delay = tmp_val0;
+	}
+
+	ret = of_property_read_u32(np, "clk-keep", &tmp_val0);
+	if (ret < 0) {
+		SND_LOG_WARN("clk-keep missing\n");
+		dts->clk_keep = 0;
+	} else {
+		dts->clk_keep = tmp_val0;
+	}
 }
 
 static int snd_sunxi_pin_init(struct platform_device *pdev, struct sunxi_i2s_pinctl *pin)
@@ -1777,6 +2282,7 @@ static void snd_sunxi_dma_params_init(struct sunxi_i2s *i2s)
 	i2s->playback_dma_param.dma_addr = res->start + SUNXI_I2S_TXFIFO;
 	i2s->playback_dma_param.cma_kbytes = dts->playback_cma;
 	i2s->playback_dma_param.fifo_size = dts->playback_fifo_size;
+	i2s->playback_dma_param.hdmi_fmt = HDMI_FMT_PCM;
 
 	i2s->capture_dma_param.src_maxburst = 8;
 	i2s->capture_dma_param.dst_maxburst = 8;
@@ -1793,6 +2299,7 @@ static void snd_sunxi_pin_exit(struct platform_device *pdev, struct sunxi_i2s_pi
 		devm_pinctrl_put(pin->pinctrl);
 }
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 /* sysfs debug */
 static void snd_sunxi_dump_version(void *priv, char *buf, size_t *count)
 {
@@ -1832,8 +2339,8 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 {
 	size_t count_tmp = 0;
 	struct sunxi_i2s *i2s = (struct sunxi_i2s *)priv;
-	int i = 0;
-	unsigned int reg_cnt;
+	struct audio_reg_group *reg_group = &i2s->reg_group;
+	unsigned int i = 0;
 	unsigned int output_reg_val;
 	struct regmap *regmap;
 
@@ -1847,12 +2354,10 @@ static int snd_sunxi_dump_show(void *priv, char *buf, size_t *count)
 		i2s->show_reg_all = false;
 
 	regmap = i2s->mem.regmap;
-	reg_cnt = ARRAY_SIZE(sunxi_reg_labels);
-	while ((i < reg_cnt) && sunxi_reg_labels[i].name) {
-		regmap_read(regmap, sunxi_reg_labels[i].address, &output_reg_val);
+	for (i = 0; i < reg_group->size; ++i) {
+		regmap_read(regmap, reg_group->label[i].address, &output_reg_val);
 		count_tmp += sprintf(buf + count_tmp, "[0x%03x]: 0x%8x\n",
-				     sunxi_reg_labels[i].address, output_reg_val);
-		i++;
+				     reg_group->label[i].address, output_reg_val);
 	}
 
 	*count = count_tmp;
@@ -1897,13 +2402,16 @@ static int snd_sunxi_dump_store(void *priv, const char *buf, size_t count)
 
 	return 0;
 }
+#endif
 
 static int sunxi_i2s_dev_probe(struct platform_device *pdev)
 {
+	struct sunxi_adapt_dai_ops_priv priv;
 	int ret;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = pdev->dev.of_node;
 	struct sunxi_i2s *i2s;
+	struct audio_reg_label *reg_label;
 	struct sunxi_i2s_mem *mem;
 	struct sunxi_i2s_pinctl *pin;
 	struct sunxi_i2s_dts *dts;
@@ -1930,9 +2438,23 @@ static int sunxi_i2s_dev_probe(struct platform_device *pdev)
 	quirks = of_device_get_match_data(&pdev->dev);
 	if (quirks == NULL) {
 		SND_LOG_ERR_STD(E_I2S_SWSYS_PLAT_PROBE, "quirks get failed\n");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto err_devm_kzalloc;
 	}
 	i2s->quirks = quirks;
+
+	/* pa_pin init */
+	i2s->pa_cfg = snd_sunxi_pa_pin_init(pdev, &i2s->pa_pin_max);
+
+	reg_label = devm_kzalloc(dev, sizeof(*reg_label) * quirks->audio_reg_size,
+				 GFP_KERNEL);
+	if (IS_ERR_OR_NULL(reg_label)) {
+		SND_LOG_ERR("alloc reg_label failed\n");
+		ret = -ENOMEM;
+		goto err_devm_kzalloc;
+	}
+	i2s->reg_group.label = reg_label;
+	i2s->reg_group.size = quirks->audio_reg_size;
 
 	ret = snd_sunxi_mem_init(pdev, mem);
 	if (ret) {
@@ -1954,7 +2476,7 @@ static int sunxi_i2s_dev_probe(struct platform_device *pdev)
 		goto err_clk_bus_enable;
 	}
 
-	i2s->rglt = snd_sunxi_regulator_init(pdev);
+	i2s->rglt = snd_sunxi_regulator_init(dev);
 	if (!i2s->rglt) {
 		SND_LOG_ERR("rglt init failed\n");
 		ret = -EINVAL;
@@ -1971,6 +2493,10 @@ static int sunxi_i2s_dev_probe(struct platform_device *pdev)
 		goto err_snd_sunxi_pin_init;
 	}
 
+	priv.probe = sunxi_i2s_dai_probe;
+	priv.remove = sunxi_i2s_dai_remove;
+	sunxi_adpt_set_dai_ops(&sunxi_i2s_dai, &sunxi_i2s_dai_ops, &priv);
+
 	ret = snd_soc_register_component(&pdev->dev, &sunxi_i2s_dev, &sunxi_i2s_dai, 1);
 	if (ret) {
 		SND_LOG_ERR_STD(E_I2S_SWSYS_PLAT_PROBE, "component register failed\n");
@@ -1985,6 +2511,7 @@ static int sunxi_i2s_dev_probe(struct platform_device *pdev)
 		goto err_snd_sunxi_platform_register;
 	}
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	snprintf(i2s->module_name, 32, "%s%u", "I2S", dts->tdm_num);
 	dump->name = i2s->module_name;
 	dump->priv = i2s;
@@ -1995,6 +2522,7 @@ static int sunxi_i2s_dev_probe(struct platform_device *pdev)
 	ret = snd_sunxi_dump_register(dump);
 	if (ret)
 		SND_LOG_WARN("snd_sunxi_dump_register failed\n");
+#endif
 
 	SND_LOG_DEBUG("register i2s platform success\n");
 
@@ -2012,6 +2540,7 @@ err_clk_bus_enable:
 err_snd_i2s_clk_init:
 	snd_sunxi_mem_exit(pdev, mem);
 err_snd_sunxi_mem_init:
+	devm_kfree(dev, i2s->reg_group.label);
 	devm_kfree(dev, i2s);
 err_devm_kzalloc:
 	of_node_put(np);
@@ -2027,12 +2556,17 @@ static int sunxi_i2s_dev_remove(struct platform_device *pdev)
 	struct sunxi_i2s_mem *mem = &i2s->mem;
 	struct sunxi_i2s_pinctl *pin = &i2s->pin;
 	struct sunxi_i2s_dts *dts = &i2s->dts;
+
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	struct snd_sunxi_dump *dump = &i2s->dump;
+#endif
 
 	SND_LOG_DEBUG("\n");
 
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_DEBUG)
 	/* remove components */
 	snd_sunxi_dump_unregister(dump);
+#endif
 	if (dts->rx_sync_en)
 		sunxi_rx_sync_remove(dts->rx_sync_domain);
 
@@ -2046,7 +2580,9 @@ static int sunxi_i2s_dev_remove(struct platform_device *pdev)
 	snd_i2s_clk_exit(i2s->clk);
 	snd_sunxi_mem_exit(pdev, mem);
 	snd_sunxi_regulator_exit(i2s->rglt);
+	snd_sunxi_pa_pin_exit(i2s->pa_cfg, i2s->pa_pin_max);
 
+	devm_kfree(dev, i2s->reg_group.label);
 	devm_kfree(dev, i2s);
 	of_node_put(np);
 
@@ -2057,8 +2593,8 @@ static int sunxi_i2s_dev_remove(struct platform_device *pdev)
 
 static const struct sunxi_i2s_quirks sunxi_i2s_quirks = {
 	.slot_num_max		= 16,
-	.reg_labels		= sunxi_reg_labels,
-	.reg_labels_size	= ARRAY_SIZE(sunxi_reg_labels),
+	.audio_reg_addrs	= audio_reg_addrs,
+	.audio_reg_size		= ARRAY_SIZE(audio_reg_addrs),
 	.reg_max		= SUNXI_I2S_MAX_REG,
 	.rx_sync_en = true,
 	.set_channel_enable	= sunxi_i2s_set_ch_en,
@@ -2068,13 +2604,24 @@ static const struct sunxi_i2s_quirks sunxi_i2s_quirks = {
 
 static const struct sunxi_i2s_quirks sun8iw11_i2s_quirks = {
 	.slot_num_max		= 8,
-	.reg_labels		= sun8iw11_reg_labels,
-	.reg_labels_size	= ARRAY_SIZE(sun8iw11_reg_labels),
+	.audio_reg_addrs	= sun8iw11_reg_addrs,
+	.audio_reg_size		= ARRAY_SIZE(sun8iw11_reg_addrs),
 	.reg_max		= SUN8IW11_I2S_MAX_REG,
 	.rx_sync_en = false,
 	.set_channel_enable	= sun8iw11_i2s_set_ch_en,
 	.set_daifmt_format	= sun8iw11_i2s_set_daifmt_fmt,
 	.set_channels_map	= sun8iw11_i2s_set_ch_map,
+};
+
+static const struct sunxi_i2s_quirks sun8iw17_i2s_quirks = {
+	.slot_num_max		= 16,
+	.audio_reg_addrs	= sun8iw17_reg_addrs,
+	.audio_reg_size		= ARRAY_SIZE(sun8iw17_reg_addrs),
+	.reg_max		= SUN8IW17_I2S_MAX_REG,
+	.rx_sync_en = false,
+	.set_channel_enable	= sun8iw17_i2s_set_ch_en,
+	.set_daifmt_format	= sun8iw17_i2s_set_daifmt_fmt,
+	.set_channels_map	= sun8iw17_i2s_set_ch_map,
 };
 
 static const struct of_device_id sunxi_i2s_of_match[] = {
@@ -2085,6 +2632,10 @@ static const struct of_device_id sunxi_i2s_of_match[] = {
 	{
 		.compatible = "allwinner,sun8iw11-i2s",
 		.data = &sun8iw11_i2s_quirks,
+	},
+	{
+		.compatible = "allwinner,sun8iw17-i2s",
+		.data = &sun8iw17_i2s_quirks,
 	},
 	{},
 };
@@ -2123,5 +2674,5 @@ module_exit(sunxi_i2s_dev_exit);
 
 MODULE_AUTHOR("Dby@allwinnertech.com");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.10");
+MODULE_VERSION("1.0.15");
 MODULE_DESCRIPTION("sunxi soundcard platform of i2s");

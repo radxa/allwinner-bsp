@@ -17,19 +17,8 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/err.h>
-#include <linux/delay.h>
-#include <linux/interrupt.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/pm_runtime.h>
-#include <linux/regmap.h>
-#include <linux/regulator/consumer.h>
-#include <power/axp2101.h>
-#include <linux/mfd/core.h>
-#include <linux/of_device.h>
-#include <linux/acpi.h>
-#include <linux/version.h>
+#include "sunxi-power-mfd.h"
+#include "axp2101.h"
 
 #define AXP20X_OFF	0x80
 
@@ -37,7 +26,7 @@ static const char *const axp20x_model_names[] = {
 	"AXP152", "AXP202", "AXP209", "AXP221",  "AXP223",
 	"AXP288", "AXP806", "AXP809", "AXP2101", "AXP15",
 	"AXP1530", "AXP858", "AXP803", "AXP2202", "AXP2585",
-	"AXP8191"
+	"AXP8191", "AXP515"
 };
 
 static const struct regmap_range axp152_writeable_ranges[] = {
@@ -273,6 +262,25 @@ static const struct regmap_access_table axp8191_volatile_table = {
 	.yes_ranges	= axp8191_volatile_ranges,
 	.n_yes_ranges	= ARRAY_SIZE(axp8191_volatile_ranges),
 };
+
+static const struct regmap_range axp515_writeable_ranges[] = {
+	regmap_reg_range(AXP515_STATUS0,  AXP515_ADDR_EXTENSION)
+};
+
+static const struct regmap_range axp515_volatile_ranges[] = {
+	regmap_reg_range(AXP515_STATUS0, AXP515_ADDR_EXTENSION),
+};
+
+static const struct regmap_access_table axp515_writeable_table = {
+	.yes_ranges	= axp515_writeable_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(axp515_writeable_ranges),
+};
+
+static const struct regmap_access_table axp515_volatile_table = {
+	.yes_ranges	= axp515_volatile_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(axp515_volatile_ranges),
+};
+
 /*---------------*/
 static struct resource axp152_pek_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP152_IRQ_PEK_RIS_EDGE, "PEK_DBR"),
@@ -530,6 +538,18 @@ static const struct regmap_config axp8191_regmap_config = {
 	.use_single_write = true,
 	.cache_type	= REGCACHE_RBTREE,
 };
+
+static const struct regmap_config axp515_regmap_config = {
+	.reg_bits	= 8,
+	.val_bits	= 8,
+	.wr_table	= &axp515_writeable_table,
+	.volatile_table	= &axp515_volatile_table,
+	.max_register	= AXP515_ADDR_EXTENSION,
+	.use_single_read = true,
+	.use_single_write = true,
+	.cache_type	= REGCACHE_RBTREE,
+};
+
 /*------------------*/
 #define INIT_REGMAP_IRQ(_variant, _irq, _off, _mask)			\
 	[_variant##_IRQ_##_irq] = { .reg_offset = (_off), .mask = BIT(_mask) }
@@ -888,12 +908,63 @@ static const struct regmap_irq axp8191_regmap_irqs[] = {
 	INIT_REGMAP_IRQ(AXP8191, WATDOG,     3, 0),
 };
 
+static const struct regmap_irq axp515_regmap_irqs[] = {
+	INIT_REGMAP_IRQ(AXP515, Q_DROP2,     0, 7),
+	INIT_REGMAP_IRQ(AXP515, Q_DROP1,     0, 6),
+	INIT_REGMAP_IRQ(AXP515, Q_CHANGE,    0, 5),
+	INIT_REGMAP_IRQ(AXP515, Q_GOOD,      0, 4),
+	INIT_REGMAP_IRQ(AXP515, BAT_DECT,    0, 3),
+	INIT_REGMAP_IRQ(AXP515, BOOST_OVP,   0, 2),
+	INIT_REGMAP_IRQ(AXP515, BOOST_OCP,   0, 1),
+	INIT_REGMAP_IRQ(AXP515, BAT_OCP,     0, 0),
+	INIT_REGMAP_IRQ(AXP515, BCOT,        1, 7),
+	INIT_REGMAP_IRQ(AXP515, QBCOT,       1, 6),
+	INIT_REGMAP_IRQ(AXP515, BCUT,        1, 5),
+	INIT_REGMAP_IRQ(AXP515, QBCUT,       1, 4),
+	INIT_REGMAP_IRQ(AXP515, BWOT,        1, 3),
+	INIT_REGMAP_IRQ(AXP515, QBWOT,       1, 2),
+	INIT_REGMAP_IRQ(AXP515, BWUT,        1, 1),
+	INIT_REGMAP_IRQ(AXP515, QBWUT,       1, 0),
+	INIT_REGMAP_IRQ(AXP515, VBUS_INSERT, 2, 7),
+	INIT_REGMAP_IRQ(AXP515, VBUS_REMOVE, 2, 6),
+	INIT_REGMAP_IRQ(AXP515, BAT_INSERT,  2, 5),
+	INIT_REGMAP_IRQ(AXP515, BAT_REMOVE,  2, 4),
+	INIT_REGMAP_IRQ(AXP515, BAT_DB2GD,   2, 3),
+	INIT_REGMAP_IRQ(AXP515, TJ_OTP,      2, 2),
+	INIT_REGMAP_IRQ(AXP515, BAT_SMODE,   2, 1),
+	INIT_REGMAP_IRQ(AXP515, VBUS_OVP,    2, 0),
+	INIT_REGMAP_IRQ(AXP515, SIRQ,        3, 7),
+	INIT_REGMAP_IRQ(AXP515, LIRQ,        3, 6),
+	INIT_REGMAP_IRQ(AXP515, NIRQ,        3, 5),
+	INIT_REGMAP_IRQ(AXP515, PIRQ,        3, 4),
+	INIT_REGMAP_IRQ(AXP515, GPADC_BWOT,  3, 3),
+	INIT_REGMAP_IRQ(AXP515, GPADC_QBWOT, 3, 2),
+	INIT_REGMAP_IRQ(AXP515, GPADC_BWUT,  3, 1),
+	INIT_REGMAP_IRQ(AXP515, GPADC_QBWUT, 3, 0),
+	INIT_REGMAP_IRQ(AXP515, CHGBG,       4, 7),
+	INIT_REGMAP_IRQ(AXP515, CHGDONE,     4, 6),
+	INIT_REGMAP_IRQ(AXP515, BC_OK,       4, 5),
+	INIT_REGMAP_IRQ(AXP515, BC_CHANGE,   4, 4),
+	INIT_REGMAP_IRQ(AXP515, RID_CHANGE,  4, 3),
+	INIT_REGMAP_IRQ(AXP515, BAT_OVP,     4, 2),
+	INIT_REGMAP_IRQ(AXP515, REMOVE,      5, 7),
+	INIT_REGMAP_IRQ(AXP515, INSERT,      5, 6),
+	INIT_REGMAP_IRQ(AXP515, TOGGLE_DONE, 5, 5),
+	INIT_REGMAP_IRQ(AXP515, VBUS_SAFE5V, 5, 4),
+	INIT_REGMAP_IRQ(AXP515, ERROR_GEN,   5, 3),
+	INIT_REGMAP_IRQ(AXP515, POW_CHNG,    5, 2),
+};
+
 static const struct regmap_irq_chip axp152_regmap_irq_chip = {
 	.name			= "axp152_irq_chip",
 	.status_base		= AXP152_IRQ1_STATE,
 	.ack_base		= AXP152_IRQ1_STATE,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP152_IRQ1_EN,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP152_IRQ1_EN,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp152_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp152_regmap_irqs),
@@ -904,8 +975,12 @@ static const struct regmap_irq_chip axp20x_regmap_irq_chip = {
 	.name			= "axp20x_irq_chip",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP20X_IRQ1_EN,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP20X_IRQ1_EN,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp20x_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp20x_regmap_irqs),
@@ -917,8 +992,12 @@ static const struct regmap_irq_chip axp22x_regmap_irq_chip = {
 	.name			= "axp22x_irq_chip",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP20X_IRQ1_EN,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP20X_IRQ1_EN,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp22x_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp22x_regmap_irqs),
@@ -929,8 +1008,12 @@ static const struct regmap_irq_chip axp288_regmap_irq_chip = {
 	.name			= "axp288_irq_chip",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP20X_IRQ1_EN,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP20X_IRQ1_EN,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp288_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp288_regmap_irqs),
@@ -942,8 +1025,12 @@ static const struct regmap_irq_chip axp806_regmap_irq_chip = {
 	.name			= "axp806",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP20X_IRQ1_EN,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP20X_IRQ1_EN,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp806_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp806_regmap_irqs),
@@ -954,8 +1041,12 @@ static const struct regmap_irq_chip axp809_regmap_irq_chip = {
 	.name			= "axp809",
 	.status_base		= AXP20X_IRQ1_STATE,
 	.ack_base		= AXP20X_IRQ1_STATE,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP20X_IRQ1_EN,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP20X_IRQ1_EN,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp809_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp809_regmap_irqs),
@@ -966,8 +1057,12 @@ static const struct regmap_irq_chip axp2101_regmap_irq_chip = {
 	.name			= "axp2101_irq_chip",
 	.status_base		= AXP2101_INTSTS1,
 	.ack_base		= AXP2101_INTSTS1,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP2101_INTEN1,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP2101_INTEN1,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp2101_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp2101_regmap_irqs),
@@ -979,8 +1074,12 @@ static const struct regmap_irq_chip axp15_regmap_irq_chip = {
 	.name			= "axp15_irq_chip",
 	.status_base		= AXP15_INTSTS1,
 	.ack_base		= AXP15_INTSTS1,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP15_INTEN1,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP15_INTEN1,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp15_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp15_regmap_irqs),
@@ -991,8 +1090,12 @@ static const struct regmap_irq_chip axp1530_regmap_irq_chip = {
 	.name			= "axp1530_irq_chip",
 	.status_base		= AXP1530_IRQ_STATUS1,
 	.ack_base		= AXP1530_IRQ_STATUS1,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP1530_IRQ_ENABLE1,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP1530_IRQ_ENABLE1,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp1530_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp1530_regmap_irqs),
@@ -1000,11 +1103,15 @@ static const struct regmap_irq_chip axp1530_regmap_irq_chip = {
 };
 /********************************/
 static const struct regmap_irq_chip axp858_regmap_irq_chip = {
-	.name			= "axp858_irq_chip",
+	.name				= "axp858_irq_chip",
 	.status_base		= AXP858_IRQ_STS1,
 	.ack_base		= AXP858_IRQ_STS1,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP858_IRQ_EN1,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP858_IRQ_EN1,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp858_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp858_regmap_irqs),
@@ -1015,8 +1122,12 @@ static const struct regmap_irq_chip axp803_regmap_irq_chip = {
 	.name			= "axp803_irq_chip",
 	.status_base		= AXP803_INTSTS1,
 	.ack_base		= AXP803_INTSTS1,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP803_INTEN1,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP803_INTEN1,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp803_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp803_regmap_irqs),
@@ -1027,8 +1138,12 @@ static const struct regmap_irq_chip axp2202_regmap_irq_chip = {
 	.name			= "axp2202_irq_chip",
 	.status_base		= AXP2202_IRQ0,
 	.ack_base		= AXP2202_IRQ0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 	.mask_base		= AXP2202_IRQ_EN0,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP2202_IRQ_EN0,
+#endif
 	.init_ack_masked	= true,
 	.irqs			= axp2202_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp2202_regmap_irqs),
@@ -1039,15 +1154,34 @@ static const struct regmap_irq_chip axp8191_regmap_irq_chip = {
 	.name			= "axp8191_irq_chip",
 	.status_base		= AXP8191_IRQ_STATUS1,
 	.ack_base		= AXP8191_IRQ_STATUS1,
-	.mask_base		= AXP8191_IRQ_ENABLE1,
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+	.mask_base		= AXP8191_IRQ_ENABLE1,
 	.mask_invert		= true,
+#else
+	.unmask_base		= AXP8191_IRQ_ENABLE1,
 #endif
 	.init_ack_masked	= true,
 	.irqs			= axp8191_regmap_irqs,
 	.num_irqs		= ARRAY_SIZE(axp8191_regmap_irqs),
 	.num_regs		= 4,
 };
+
+static const struct regmap_irq_chip axp515_regmap_irq_chip = {
+	.name			= "axp515_irq_chip",
+	.status_base	= AXP515_INTSTS1,
+	.ack_base		= AXP515_INTSTS1,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+	.mask_invert		= true,
+	.mask_base		= AXP515_INTEN1,
+#else
+	.unmask_base		= AXP515_INTEN1,
+#endif
+	.init_ack_masked	= true,
+	.irqs			= axp515_regmap_irqs,
+	.num_irqs		= ARRAY_SIZE(axp515_regmap_irqs),
+	.num_regs		= 6,
+};
+
 /*--------------------*/
 static struct mfd_cell axp20x_cells[] = {
 	{
@@ -1370,7 +1504,12 @@ static struct resource axp288_adc_resources[] = {
 	},
 };
 
-static struct resource axp2101_power_supply_resources[] = {
+static struct resource axp2101_usb_power_supply_resources[] = {
+	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_VINSET, "usb in"),
+	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_VREMOV, "usb out"),
+};
+
+static struct resource axp2101_bat_power_supply_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_BWUT, "bat untemp work"),
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_BWOT, "bat ovtemp work"),
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_BCUT, "bat untemp chg"),
@@ -1381,8 +1520,6 @@ static struct resource axp2101_power_supply_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_SOCWL2, "low warning2"),
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_BREMOV, "bat out"),
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_BINSERT, "bat in"),
-	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_VINSET, "usb in"),
-	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_VREMOV, "usb out"),
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_BOVP, "CHG_BOVP"),
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_CHGTE, "CHG_CHGTE"),
 	DEFINE_RES_IRQ_NAMED(AXP2101_IRQ_DOTL1, "CHG_DOTL1"),
@@ -1477,6 +1614,13 @@ static struct resource axp8191_pek_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP8191_IRQ_POKPIEN, "PEK_DBR"),
 };
 
+static struct resource axp8191_temp_ctrl_resources[] = {
+	DEFINE_RES_IRQ_NAMED(AXP8191_IRQ_PCBUT, "ts_pcb_under"),
+	DEFINE_RES_IRQ_NAMED(AXP8191_IRQ_QTUT, "quit_ts_pcb_under"),
+	DEFINE_RES_IRQ_NAMED(AXP8191_IRQ_PCBOT, "ts_pcb_over"),
+	DEFINE_RES_IRQ_NAMED(AXP8191_IRQ_QTOT, "quit_ts_pcb_over"),
+};
+
 static struct resource axp2202_bat_power_supply_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP2202_IRQ_SOCWL1, "soc_drop_w1"),
 	DEFINE_RES_IRQ_NAMED(AXP2202_IRQ_SOCWL2, "soc_drop_w2"),
@@ -1505,6 +1649,36 @@ static struct resource axp2202_usb_power_supply_resources[] = {
 	DEFINE_RES_IRQ_NAMED(AXP2202_IRQ_VBUS_SAFE5V, "type-c_safe-5v"),
 	DEFINE_RES_IRQ_NAMED(AXP2202_IRQ_VBUS_SAFE0V, "type-c_safe-0v"),
 	DEFINE_RES_IRQ_NAMED(AXP2202_IRQ_PWR_CHNG, "type-c_state_change"),
+};
+
+static struct resource axp515_pek_resources[] = {
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_NIRQ, "PEK_DBF"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_PIRQ, "PEK_DBR"),
+};
+
+static struct resource axp515_bat_power_supply_resources[] = {
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_BAT_INSERT, "bat in"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_BAT_REMOVE, "bat out"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_Q_CHANGE, "gauge_new_soc"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_CHGBG, "charging"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_CHGDONE, "charge over"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_Q_DROP1, "low warning1"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_Q_DROP2, "low warning2"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_BWUT, "bat untemp work"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_BWOT, "bat ovtemp work"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_QBWUT, "quit bat untemp work"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_QBWOT, "quit bat ovtemp work"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_BCUT, "bat untemp chg"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_BCOT, "bat ovtemp chg"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_QBCUT, "quit bat untemp chg"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_QBCOT, "quit bat ovtemp chg"),
+};
+
+static struct resource axp515_usb_power_supply_resources[] = {
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_VBUS_INSERT, "usb in"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_VBUS_REMOVE, "usb out"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_INSERT, "tc in"),
+	DEFINE_RES_IRQ_NAMED(AXP515_IRQ_REMOVE, "tc out"),
 };
 
 static struct resource axp288_extcon_resources[] = {
@@ -1782,10 +1956,16 @@ static struct mfd_cell axp2101_cells[] = {
 		.name = "axp2101-regulator",
 	},
 	{
-		.name = "axp2101-power-supply",
-		.of_compatible = "x-powers,axp2101-power-supply",
-		.num_resources = ARRAY_SIZE(axp2101_power_supply_resources),
-		.resources = axp2101_power_supply_resources,
+		.name = "axp2101-bat-power-supply",
+		.of_compatible = "x-powers,axp2101-bat-power-supply",
+		.resources = axp2101_bat_power_supply_resources,
+		.num_resources = ARRAY_SIZE(axp2101_bat_power_supply_resources),
+	},
+	{
+		.name = "axp2101-usb-power-supply",
+		.of_compatible = "x-powers,axp2101-usb-power-supply",
+		.resources = axp2101_usb_power_supply_resources,
+		.num_resources = ARRAY_SIZE(axp2101_usb_power_supply_resources),
 	},
 	{
 		.name = "axp2xx-watchdog",
@@ -2033,14 +2213,15 @@ static struct mfd_cell axp1530_cells[] = {
 		.resources = axp1530_gpio_resources, */
 	},
 	{
-		.name = "axp2101-pek",
+		.name = "axp1530-pek",
 		.num_resources = ARRAY_SIZE(axp1530_pek_resources),
 		.resources = axp1530_pek_resources,
-		.of_compatible = "x-powers,axp2101-pek",
+		.of_compatible = "x-powers,axp1530-pek",
 	},
 	{
 		/* match drivers/regulator/axp2101.c */
-		.name = "axp2101-regulator",
+		.name = "axp1530-regulator",
+		.of_compatible = "x-powers,axp1530-regulator",
 	},
 	{
 		.of_compatible = "xpower-vregulator,dcdc1",
@@ -2101,7 +2282,7 @@ static struct mfd_cell axp1530_cells[] = {
 #define AXP858_CLDO3 "cldo3"
 #define AXP858_CLDO4 "cldo4"
 #define AXP858_CPUSLDO "cpusldo"
-#define AXP858_SWOUT "swout"
+#define AXP858_DC1SW "dc1sw"
 
 static struct mfd_cell axp858_cells[] = {
 	{
@@ -2272,11 +2453,11 @@ static struct mfd_cell axp858_cells[] = {
 		.pdata_size = sizeof(AXP858_CPUSLDO),
 	},
 	{
-		.of_compatible = "xpower-vregulator,swout",
+		.of_compatible = "xpower-vregulator,dc1sw",
 		.name = "reg-virt-consumer",
 		.id = PLATFORM_DEVID_AUTO,
-		.platform_data = AXP858_SWOUT,
-		.pdata_size = sizeof(AXP858_SWOUT),
+		.platform_data = AXP858_DC1SW,
+		.pdata_size = sizeof(AXP858_DC1SW),
 	},
 
 };
@@ -2560,6 +2741,10 @@ static struct mfd_cell axp2202_cells[] = {
 		.of_compatible = "x-powers,gpio-supply",
 	},
 	{
+		.name = "axp2202-acin-power-supply",
+		.of_compatible = "x-powers,axp2202-acin-power-supply",
+	},
+	{
 		.of_compatible = "xpower-vregulator,dcdc1",
 		.name = "reg-virt-consumer",
 		.id = PLATFORM_DEVID_AUTO,
@@ -2740,6 +2925,13 @@ static struct mfd_cell axp8191_cells[] = {
 		.of_compatible = "x-powers,axp2101-pek",
 		.resources = axp8191_pek_resources,
 		.num_resources = ARRAY_SIZE(axp8191_pek_resources),
+
+	},
+	{
+		.name = "axp8191-temp-ctrl",
+		.of_compatible = "x-powers,axp8191-temp-ctrl",
+		.resources = axp8191_temp_ctrl_resources,
+		.num_resources = ARRAY_SIZE(axp8191_temp_ctrl_resources),
 
 	},
 	{
@@ -3025,6 +3217,45 @@ static struct mfd_cell axp8191_cells[] = {
 		.id = PLATFORM_DEVID_AUTO,
 		.platform_data = AXP8191_DC1SW2,
 		.pdata_size = sizeof(AXP8191_DC1SW2),
+	},
+};
+
+#define AXP515_DRIVEVBUS "drivevbus"
+
+static struct mfd_cell axp515_cells[] = {
+	{
+		.name = "axp515-regulator",
+		.of_compatible = "x-powers,axp515-regulator"
+	},
+	{
+		.name = "axp515-pek",
+		.of_compatible = "x-powers,axp515-pek",
+		.resources = axp515_pek_resources,
+		.num_resources = ARRAY_SIZE(axp515_pek_resources),
+
+	},
+	{
+		.name = "axp515-bat-power-supply",
+		.of_compatible = "x-powers,axp515-bat-power-supply",
+		.resources = axp515_bat_power_supply_resources,
+		.num_resources = ARRAY_SIZE(axp515_bat_power_supply_resources),
+	},
+	{
+		.name = "axp515-usb-power-supply",
+		.of_compatible = "x-powers,axp515-usb-power-supply",
+		.resources = axp515_usb_power_supply_resources,
+		.num_resources = ARRAY_SIZE(axp515_usb_power_supply_resources),
+	},
+	{
+		.name = "axp515-acin-power-supply",
+		.of_compatible = "x-powers,axp515-acin-power-supply",
+	},
+	{
+		.of_compatible = "xpower-vregulator,drivevbus",
+		.name = "reg-virt-consumer",
+		.id = PLATFORM_DEVID_AUTO,
+		.platform_data = AXP515_DRIVEVBUS,
+		.pdata_size = sizeof(AXP515_DRIVEVBUS),
 	},
 };
 
@@ -3516,6 +3747,49 @@ static void axp858_dts_parse(struct axp20x_dev *axp20x)
 	}
 }
 
+static void axp515_dts_parse(struct axp20x_dev *axp20x)
+{
+	struct device_node *node = axp20x->dev->of_node;
+	struct regmap *map = axp20x->regmap;
+	u32 val;
+
+	/* dafault onlevel setting 1s */
+	regmap_update_bits(map, AXP515_POK_SET, GENMASK(3, 2), BIT(3));
+
+	/* init irq wakeup en */
+	if (of_property_read_u32(node, "pmu_irq_wakeup", &val))
+		val = 0;
+	if (val) {
+		regmap_update_bits(map, AXP515_PWRON_CTL, BIT(4), BIT(4));
+	} else {
+		regmap_update_bits(map, AXP515_PWRON_CTL, BIT(4), 0);
+	}
+
+	/* set die thermal, default 80°C */
+	if (of_property_read_u32(node, "pmu_thermal_threshold", &val))
+		val = 80;
+
+	if (val > 100)
+		val = 0x03;
+	else if (val > 80)
+		val = 0x02;
+	else if (val > 60)
+		val = 0x01;
+	else
+		val = 0x00;
+
+	regmap_update_bits(map, AXP515_GPIO1_CTL, 0xc0, val << 6);
+
+	/*
+	 * when use this bit to shutdown system, it must write 0
+	 * when system power on
+	 */
+	regmap_read(map, AXP515_ILIMIT, &val);
+	if (val & BIT(7))
+		regmap_update_bits(map, AXP515_ILIMIT, BIT(7), 0);
+
+}
+
 int axp20x_match_device(struct axp20x_dev *axp20x)
 {
 	struct device *dev = axp20x->dev;
@@ -3633,6 +3907,13 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 		axp20x->regmap_irq_chip = &axp8191_regmap_irq_chip;
 		axp20x->dts_parse = axp8191_dts_parse;
 		break;
+	case AXP515_ID:
+		axp20x->nr_cells = ARRAY_SIZE(axp515_cells);
+		axp20x->cells = axp515_cells;
+		axp20x->regmap_cfg = &axp515_regmap_config;
+		axp20x->regmap_irq_chip = &axp515_regmap_irq_chip;
+		axp20x->dts_parse = axp515_dts_parse;
+		break;
 /*-------------------*/
 	default:
 		PMIC_DEV_ERR(dev, "unsupported AXP20X ID %lu\n", axp20x->variant);
@@ -3645,13 +3926,18 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 }
 EXPORT_SYMBOL(axp20x_match_device);
 
-
 int axp_debug_mask;
 EXPORT_SYMBOL(axp_debug_mask);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 static ssize_t debug_mask_store(struct class *class,
 				struct class_attribute *attr,
 				const char *buf, size_t count)
+#else
+static ssize_t debug_mask_store(const struct class *class,
+				const struct class_attribute *attr,
+				const char *buf, size_t count)
+#endif
 {
 	int val, err;
 
@@ -3664,8 +3950,13 @@ static ssize_t debug_mask_store(struct class *class,
 	return count;
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 static ssize_t debug_mask_show(struct class *class,
 				struct class_attribute *attr, char *buf)
+#else
+static ssize_t debug_mask_show(const struct class *class,
+				const struct class_attribute *attr, char *buf)
+#endif
 {
 	char *s = buf;
 	char *end = (char *)((ptrdiff_t)buf + (ptrdiff_t)PAGE_SIZE);
@@ -3677,24 +3968,30 @@ static ssize_t debug_mask_show(struct class *class,
 }
 static CLASS_ATTR_RW(debug_mask);
 
-static u32 axp_reg_addr;
+struct axp_sysfs_device {
+	struct device dev;
+	struct regmap *regmap;
+	u32 axp_reg_addr;
+};
 
-static ssize_t axp_reg_show(struct class *class,
-				struct class_attribute *attr, char *buf)
+static ssize_t axp_reg_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
 {
+	struct axp_sysfs_device *axp20x = container_of(dev, struct axp_sysfs_device, dev);
 	u32 val;
 
-	regmap_read(axp20x_pm_power_off->regmap, axp_reg_addr, &val);
-	return sprintf(buf, "REG[0x%x]=0x%x\n",
-				axp_reg_addr, val);
+	regmap_read(axp20x->regmap, axp20x->axp_reg_addr, &val);
+	return sprintf(buf, "%s-REG[0x%x]=0x%x\n",
+				dev_name(dev), axp20x->axp_reg_addr, val);
 }
 
-static ssize_t axp_reg_store(struct class *class,
-				struct class_attribute *attr,
-				const char *buf, size_t count)
+static ssize_t axp_reg_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
 {
+	struct axp_sysfs_device *axp20x = container_of(dev, struct axp_sysfs_device, dev);
+
 	s32 tmp;
-	u32 val;
+	u32 val, reg_addr = axp20x->axp_reg_addr;
 	int err;
 
 	err = kstrtoint(buf, 16, &tmp);
@@ -3702,19 +3999,29 @@ static ssize_t axp_reg_store(struct class *class,
 		return err;
 
 	if (tmp < 256) {
-		axp_reg_addr = tmp;
+		reg_addr = tmp;
 	} else {
 		val = tmp & 0x00FF;
-		axp_reg_addr = (tmp >> 8) & 0x00FF;
-		regmap_write(axp20x_pm_power_off->regmap, axp_reg_addr, val);
+		reg_addr = (tmp >> 8) & 0x00FF;
+		regmap_write(axp20x->regmap, reg_addr, val);
 	}
 
+	axp20x->axp_reg_addr = reg_addr;
 	return count;
 }
-static CLASS_ATTR_RW(axp_reg);
+
+static DEVICE_ATTR(axp_reg, S_IRUGO | S_IWUSR, axp_reg_show, axp_reg_store);
+
+static struct attribute *axp_attrs[] = {
+	&dev_attr_axp_reg.attr,
+	NULL,
+};
+
+static struct attribute_group axp_attr_group = {
+	.attrs = axp_attrs,
+};
 
 static struct attribute *axp_class_attrs[] = {
-	&class_attr_axp_reg.attr,
 	&class_attr_debug_mask.attr,
 	NULL,
 };
@@ -3725,15 +4032,53 @@ static struct class axp_class = {
 	.class_groups = axp_class_groups,
 };
 
-static int axp_sysfs_init(void)
+static int axp_sysfs_init(struct axp20x_dev *axp20x)
 {
-	int status;
+	struct axp_sysfs_device *axp_dev;
+	struct device *dev;
+	char str[16];
+	int ret, i;
+	static bool axp_class_registered;
 
-	status = class_register(&axp_class);
-	if (status < 0)
-		PMIC_ERR("%s,%d err, status:%d\n", __func__, __LINE__, status);
+	if (!axp_class_registered) {
+		if (class_register(&axp_class)) {
+			return -ENODEV;
+	}
+		axp_class_registered = true;
+	}
 
-	return status;
+	axp_dev = kzalloc(sizeof(*axp_dev), GFP_KERNEL);
+	if (!axp_dev) {
+		ret = -ENOMEM;
+		goto err_dev_alloc;
+	}
+
+	axp_dev->regmap = axp20x->regmap;
+
+	dev = &axp_dev->dev;
+	dev->class = &axp_class;
+	strcpy(str, axp20x_model_names[axp20x->variant]);
+	for (i = 0; i < 3; i++) {
+		str[i] = tolower(str[i]);
+	}
+	dev_set_name(dev, "%s", str);
+
+	ret = device_register(dev);
+	if (ret)
+		goto err_dev_register;
+
+	ret = sysfs_create_group(&dev->kobj, &axp_attr_group);
+	if (ret)
+		goto err_sysfs_create;
+
+	return 0;
+
+err_sysfs_create:
+	device_unregister(dev);
+err_dev_register:
+	kfree(axp_dev);
+err_dev_alloc:
+	return ret;
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 99)) && IS_ENABLED(CONFIG_THERMAL)
@@ -3797,9 +4142,8 @@ static const struct thermal_cooling_device_ops psy_tcd_ops = {
 
 int axp20x_register_cooler(struct power_supply *psy)
 {
-	psy->tcd = thermal_cooling_device_register(
-						(char *)psy->desc->name,
-						psy, &psy_tcd_ops);
+	psy->tcd = devm_thermal_of_cooling_device_register(&psy->dev,
+		psy->of_node, (char *)psy->desc->name, psy, &psy_tcd_ops);
 
 	return PTR_ERR_OR_ZERO(psy->tcd);
 }
@@ -3860,7 +4204,7 @@ int axp20x_device_probe(struct axp20x_dev *axp20x)
 	}
 
 	axp20x_pm_power_off = axp20x;
-	axp_sysfs_init();
+	axp_sysfs_init(axp20x);
 	if (!pm_power_off) {
 		pm_power_off = axp20x_power_off;
 	}

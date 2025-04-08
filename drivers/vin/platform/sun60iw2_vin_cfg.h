@@ -45,6 +45,7 @@
 #define VIN_MAX_MIPI		3
 #define VIN_MAX_ISP			7
 #define VIN_MAX_SCALER		18
+#define VIN_MAX_PINCTRL		3
 
 #define MAX_CH_NUM			4
 

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
 /*
  * vin_core.c for video manage
@@ -77,6 +77,7 @@ struct vin_debugfs_buffer {
 struct dentry *vi_debugfs_root, *vi_node;
 size_t vi_status_size[VIN_MAX_DEV];
 size_t vi_status_size_sum;
+struct dentry *isp_debugfs_root, *isp_node;
 
 uint ptn_frame_cnt;
 
@@ -1330,15 +1331,73 @@ static irqreturn_t vin_isr(int irq, void *priv)
 		csic_dma_int_clear_status(vinc->vipp_sel, DMA_INT_ADDR_OVERFLOW);
 	}
 
-	if (status.pixel_miss) {
-		csic_dma_int_clear_status(vinc->vipp_sel, DMA_INT_PIXEL_MISS);
-		vin_warn("vinc%d input pixel in one line is less than expected!\n", vinc->id);
-	}
+	if (vinc->large_image != 3) {
+		if (status.pixel_miss) {
+			csic_dma_int_clear_status(vinc->vipp_sel, DMA_INT_PIXEL_MISS);
+			switch (vinc->vid_cap.frame.fmt.fourcc) {
+			case V4L2_PIX_FMT_SBGGR8:
+			case V4L2_PIX_FMT_SGBRG8:
+			case V4L2_PIX_FMT_SGRBG8:
+			case V4L2_PIX_FMT_SRGGB8:
+			case V4L2_PIX_FMT_SBGGR10:
+			case V4L2_PIX_FMT_SGBRG10:
+			case V4L2_PIX_FMT_SGRBG10:
+			case V4L2_PIX_FMT_SRGGB10:
+			case V4L2_PIX_FMT_SBGGR12:
+			case V4L2_PIX_FMT_SGBRG12:
+			case V4L2_PIX_FMT_SGRBG12:
+			case V4L2_PIX_FMT_SRGGB12:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+			case V4L2_PIX_FMT_SBGGR14:
+			case V4L2_PIX_FMT_SGBRG14:
+			case V4L2_PIX_FMT_SGRBG14:
+			case V4L2_PIX_FMT_SRGGB14:
+#endif
+			case V4L2_PIX_FMT_SBGGR16:
+			case V4L2_PIX_FMT_SGBRG16:
+			case V4L2_PIX_FMT_SGRBG16:
+			case V4L2_PIX_FMT_SRGGB16:
+				vin_err("vinc%d output fmt is raw and input pixel in one line is less than expected!\n", vinc->id);
+				break;
+			default:
+				cap->frame_delay_cnt++;
+				vin_warn("vinc%d input pixel in one line is less than expected!\n", vinc->id);
+			}
+		}
 
-	if (status.line_miss) {
-		csic_dma_int_clear_status(vinc->vipp_sel, DMA_INT_LINE_MISS);
-		cap->frame_delay_cnt++;
-		vin_err("vinc%d input lines in one frame is less than execpted, frame lost!\n", vinc->id);
+		if (status.line_miss) {
+			csic_dma_int_clear_status(vinc->vipp_sel, DMA_INT_LINE_MISS);
+			switch (vinc->vid_cap.frame.fmt.fourcc) {
+			case V4L2_PIX_FMT_SBGGR8:
+			case V4L2_PIX_FMT_SGBRG8:
+			case V4L2_PIX_FMT_SGRBG8:
+			case V4L2_PIX_FMT_SRGGB8:
+			case V4L2_PIX_FMT_SBGGR10:
+			case V4L2_PIX_FMT_SGBRG10:
+			case V4L2_PIX_FMT_SGRBG10:
+			case V4L2_PIX_FMT_SRGGB10:
+			case V4L2_PIX_FMT_SBGGR12:
+			case V4L2_PIX_FMT_SGBRG12:
+			case V4L2_PIX_FMT_SGRBG12:
+			case V4L2_PIX_FMT_SRGGB12:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+			case V4L2_PIX_FMT_SBGGR14:
+			case V4L2_PIX_FMT_SGBRG14:
+			case V4L2_PIX_FMT_SGRBG14:
+			case V4L2_PIX_FMT_SRGGB14:
+#endif
+			case V4L2_PIX_FMT_SBGGR16:
+			case V4L2_PIX_FMT_SGBRG16:
+			case V4L2_PIX_FMT_SGRBG16:
+			case V4L2_PIX_FMT_SRGGB16:
+				vin_err("vinc%d output fmt is raw and input lines in one frame is less than execpted!\n", vinc->id);
+				break;
+			default:
+				cap->frame_delay_cnt++;
+				vin_err("vinc%d input lines in one frame is less than execpted, frame lost!\n", vinc->id);
+				break;
+			}
+		}
 	}
 #endif
 #ifndef BUF_AUTO_UPDATE
@@ -1612,7 +1671,7 @@ static int vinc_irq_enable(void *dev, void *data, int len)
 		rt_vin_is_ready(vinc->id);
 #endif
 	}
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	vin_iommu_en(CSI_IOMMU_MASTER, true);
 #endif
 	return 0;
@@ -1717,14 +1776,14 @@ static int vinc_irq_control(void *dev, void *data, int len)
 			vin_err("failed to install CSI DMA irq (%d)\n", ret);
 			return -ENXIO;
 		}
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		vin_iommu_en(CSI_IOMMU_MASTER, true);
 #endif
 	} else if (!strncmp(data, "get", len)) {
 		if (vinc->irq > 0)
 			free_irq(vinc->irq, &vinc->vid_cap);
 
-#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		vin_iommu_en(CSI_IOMMU_MASTER, false);
 #endif
 	} else if (!strncmp(data, "rv_start", len)) {
@@ -1769,7 +1828,16 @@ static int vin_irq_request(struct vin_core *vinc, int i)
 		else {
 #if IS_ENABLED(CONFIG_VIN_INIT_MELIS)
 			sprintf(name, "vinc%d", vinc->id);
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 			rpmsg_notify_add("e907_rproc@0", name, vinc_irq_enable, vinc);
+#else
+			of_property_read_string(np, "rpmsg-ser-name", &vinc->rpmsg_ser_name);
+			if (!vinc->rpmsg_ser_name) {
+				vin_err("vinc%d get rpmsg_ser_name falid\n", vinc->id);
+				return -ENXIO;
+			} else
+				rpmsg_notify_add(vinc->rpmsg_ser_name, name, vinc_irq_enable, vinc);
+#endif
 #endif
 		}
 		vinc->is_irq_empty = 1;
@@ -1802,10 +1870,28 @@ static int vin_irq_request(struct vin_core *vinc, int i)
 	} else {
 		sprintf(name, "vinc%d", vinc->id);
 #if IS_ENABLED(CONFIG_RV_RUN_CAR_REVERSE)
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 		rpmsg_notify_add("7130000.e906_rproc", name, vinc_irq_control, vinc);
+#else
+		of_property_read_string(np, "rpmsg-ser-name", &vinc->rpmsg_ser_name);
+		if (!vinc->rpmsg_ser_name) {
+			vin_err("vinc%d get rpmsg_ser_name falid\n", vinc->id);
+			return -ENXIO;
+		} else
+			rpmsg_notify_add(vinc->rpmsg_ser_name, name, vinc_irq_enable, vinc);
+#endif
 		vinc->rpmsg.control = CONTROL_BY_RTOS;
 #else
+#if IS_ENABLED(CONFIG_ARCH_SUN55IW3)
 		rpmsg_notify_add("7130000.e906_rproc", name, vinc_irq_enable, vinc);
+#else
+		of_property_read_string(np, "rpmsg-ser-name", &vinc->rpmsg_ser_name);
+		if (!vinc->rpmsg_ser_name) {
+			vin_err("vinc%d get rpmsg_ser_name falid\n", vinc->id);
+			return -ENXIO;
+		} else
+			rpmsg_notify_add(vinc->rpmsg_ser_name, name, vinc_irq_enable, vinc);
+#endif
 #endif
 	}
 #endif
@@ -2062,6 +2148,10 @@ static int vin_core_probe(struct platform_device *pdev)
 	if (of_property_read_u32(np, property_name, &vinc->mipi_sel))
 		vinc->mipi_sel = 0xff;
 
+	sprintf(property_name, "vinc%d_csi_ch", pdev->id);
+	if (of_property_read_u32(np, property_name, &vinc->csi_ch))
+		vinc->csi_ch = 0xff;
+
 	sprintf(property_name, "vinc%d_isp_sel", pdev->id);
 	if (of_property_read_u32(np, property_name, &vinc->isp_sel))
 		vinc->isp_sel = 0;
@@ -2073,6 +2163,10 @@ static int vin_core_probe(struct platform_device *pdev)
 	sprintf(property_name, "vinc%d_tdm_rx_sel", pdev->id);
 	if (of_property_read_u32(np, property_name, &vinc->tdm_rx_sel))
 		vinc->tdm_rx_sel = 0;
+#if IS_ENABLED(CONFIG_RV_RUN_CAR_REVERSE)
+	if (of_property_read_string(np, "rproc-name", &vinc->rproc_ser_name))
+		vin_err("vinc%d can not find rproc name\n", vinc->id);
+#endif
 
 	vinc->vipp_sel = pdev->id;
 
@@ -2129,6 +2223,7 @@ static int vin_core_probe(struct platform_device *pdev)
 	vin_log(VIN_LOG_VIDEO, "front_sensor_sel = %d\n", vinc->front_sensor);
 	vin_log(VIN_LOG_VIDEO, "csi_sel = %d\n", vinc->csi_sel);
 	vin_log(VIN_LOG_VIDEO, "mipi_sel = %d\n", vinc->mipi_sel);
+	vin_log(VIN_LOG_VIDEO, "csi_ch = 0x%x\n", vinc->csi_ch);
 	vin_log(VIN_LOG_VIDEO, "isp_sel = %d\n", vinc->isp_sel);
 	vin_log(VIN_LOG_VIDEO, "isp_tx_ch = %d\n", vinc->isp_tx_ch);
 	vin_log(VIN_LOG_VIDEO, "vipp_sel = %d\n", vinc->vipp_sel);
@@ -2236,8 +2331,10 @@ int sunxi_vin_debug_register_driver(void)
 		if (vinc)
 			break;
 	}
-	if (!vinc && vinc->v4l2_dev && vinc->v4l2_dev->dev)
-		return -1;
+	if (!vinc || !vinc->v4l2_dev || !vinc->v4l2_dev->dev) {
+		vin_err("%s failed, please check if the pointer related to vinc is NULL!\n", __func__);
+		return -ENOENT;
+	}
 	ret = device_create_file(vinc->v4l2_dev->dev, &dev_attr_vi);
 	if (ret) {
 		vin_err("vin debug node register fail\n");

@@ -29,8 +29,10 @@
 #include <asm/cacheflush.h>
 #include <linux/module.h>
 #include <linux/compiler.h>
+#include <linux/delay.h>
+#include <linux/dma-map-ops.h>
 
-#ifdef CONFIG_AW_IOMMU_TESTS
+#if IS_ENABLED(CONFIG_AW_IOMMU_TESTS)
 
 #ifdef CONFIG_64BIT
 
@@ -620,20 +622,104 @@ static const struct file_operations iommu_ion_interface_test_fops = {
 	.release = single_release,
 };
 
+static bool __testing_largeiova;
+__maybe_unused static int __extra_test(struct device *dev, struct seq_file *s,
+				       struct iommu_domain *domain,
+				       void *ignored)
+{
+	u32 *coherent, *noncoherent;
+	dma_addr_t dma_coherent, dma_noncoherent;
+	int ret;
+	const size_t size = SZ_4K * 1024;
+	u32 *tmp_buffer;
+	const int rount = 100;
+
+	struct timespec64 tbefore, tafter, diff;
+	u64 ns;
+
+	/* alloc coherent */
+	coherent = dma_alloc_coherent(dev, size, &dma_coherent, GFP_KERNEL);
+	/* alloc noncoherent */
+	noncoherent = dma_alloc_noncoherent(dev, size, &dma_noncoherent,
+					    DMA_BIDIRECTIONAL, GFP_KERNEL);
+	/* cpu va write */
+	memset(coherent, 0xa5, size);
+	memset(noncoherent, 0x3c, size);
+	wmb();
+	/* iova write */
+	sunxi_iova_test_write((dma_addr_t)dma_coherent, 0xdead);
+	sunxi_iova_test_write((dma_addr_t)dma_noncoherent, 0xdead);
+	rmb();
+	/* (non)coherent read */
+	ds_printf(dev, s, "coherent: %x, noncoherent: %x", coherent[0],
+		  noncoherent[0]);
+	/* perfermence test */
+	tmp_buffer = kmalloc(size, GFP_KERNEL);
+	ktime_get_ts64(&tbefore);
+	for (ret = 0; ret < rount; ret++) {
+		memcpy(tmp_buffer, coherent, size);
+	}
+	ktime_get_ts64(&tafter);
+	diff.tv_sec = tafter.tv_sec - tbefore.tv_sec;
+	diff.tv_nsec = tafter.tv_nsec - tbefore.tv_nsec;
+	ns = diff.tv_sec * NSEC_PER_SEC + diff.tv_nsec;
+	ds_printf(dev, s, "coherent time for %d round %ld bytes %lld", rount,
+		  size, ns);
+
+	ktime_get_ts64(&tbefore);
+	for (ret = 0; ret < rount; ret++) {
+		memcpy(tmp_buffer, noncoherent, size);
+	}
+	ktime_get_ts64(&tafter);
+	diff.tv_sec = tafter.tv_sec - tbefore.tv_sec;
+	diff.tv_nsec = tafter.tv_nsec - tbefore.tv_nsec;
+	ns = diff.tv_sec * NSEC_PER_SEC + diff.tv_nsec;
+	ds_printf(dev, s,
+		  "noncoherent(non flush) time for %d round %ld bytes %lld",
+		  rount, size, ns);
+
+	ktime_get_ts64(&tbefore);
+	for (ret = 0; ret < rount; ret++) {
+		dma_sync_single_for_cpu(dev, dma_noncoherent, size,
+					DMA_FROM_DEVICE);
+		memcpy(tmp_buffer, noncoherent, size);
+	}
+	ktime_get_ts64(&tafter);
+	diff.tv_sec = tafter.tv_sec - tbefore.tv_sec;
+	diff.tv_nsec = tafter.tv_nsec - tbefore.tv_nsec;
+	ns = diff.tv_sec * NSEC_PER_SEC + diff.tv_nsec;
+	ds_printf(dev, s, "noncoherent(flush) time for %d round %ld bytes %lld",
+		  rount, size, ns);
+	dma_free_coherent(dev, size, coherent, dma_coherent);
+	dma_free_noncoherent(dev, size, noncoherent, dma_noncoherent,
+			     DMA_FROM_DEVICE);
+	kfree(tmp_buffer);
+	return 0;
+}
+
+static bool __testing_largeiova;
 static int __functional_dma_api_iova_test(struct device *dev,
 					   struct seq_file *s,
 					   struct iommu_domain *domain,
 					   void *ignored)
 {
-	size_t size = SZ_4K * 1024;
+	size_t size = SZ_4K * 512;
 	int ret = 0;
 	u32 *data;
 	dma_addr_t iova;
 
 	sunxi_set_debug_mode();
+	//__extra_test(dev,s,domain,ignored);
 
 	/* Make sure we can allocate and use a buffer */
 	ds_printf(dev, s, "Allocating coherent iova buffer");
+	/*
+	 * same size will resulting in reusing freed iova
+	 * not what we want when testing large iova and normal
+	 * iova, use different size(in order) insted
+	 */
+	if (__testing_largeiova)
+		size *= 2;
 	data = dma_alloc_coherent(dev, size, &iova, GFP_KERNEL);
 	if (!data) {
 		ds_printf(dev, s, "  -> FAILED\n");
@@ -641,9 +727,27 @@ static int __functional_dma_api_iova_test(struct device *dev,
 	} else {
 		int i;
 
+		if (__testing_largeiova) {
+			/* we are testing large iova, iova should be large enough */
+			if (iova < 0x100000000) {
+				ds_printf(
+					dev, s,
+					"iova %pad too small for a large iova test\n",
+					&iova);
+				goto out;
+			}
+		}
 		ds_printf(dev, s, "  -> SUCCEEDED\n");
+#if 1
+		{
+			char *buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			sunxi_iommu_dump_pgtable(buf, PAGE_SIZE, false);
+			pr_err("%s", buf);
+			kfree(buf);
+		}
+#endif
 		ds_printf(dev, s, "Using coherent buffer");
-		for (i = 0; i < 1024; ++i) {
+		for (i = 0; i < 128; ++i) {
 			int ind = (SZ_4K * i) / sizeof(u32);
 			u32 *p = data + ind;
 			u32 *p1 = (u32 *)iova + ind;
@@ -695,27 +799,38 @@ out:
 }
 
 /* iommu test use debug interface */
-static int iommu_vir_devio_addr_rdwr_show(struct seq_file *s,
-						    void *ignored)
+static int iommu_vir_devio_addr_rdwr_show(struct seq_file *s, void *ignored)
 {
 	int ret = 0;
+	struct iommu_debug_device *ddev = s->private;
+	struct device *dev = ddev->dev;
+	u64 old_dma_mask;
+	const char *idx_prompt[] = { "1st", "2nd", "3rd", "th" };
+	int i, j;
 
-	ret = __apply_to_new_mapping(s, __functional_dma_api_iova_test, NULL);
-	if (ret) {
-		pr_err("the first iova test failed\n");
-		return ret;
-	}
-	ret = 0;
-	ret = __apply_to_new_mapping(s, __functional_dma_api_iova_test, NULL);
-	if (ret) {
-		pr_err("the second iova test failed\n");
-		return ret;
-	}
-	ret = 0;
-	ret = __apply_to_new_mapping(s, __functional_dma_api_iova_test, NULL);
-	if (ret) {
-		pr_err("the third iova test failed\n");
-		return ret;
+	for (j = 0; j < 2; j++) {
+		if (j == 1) {
+			old_dma_mask = dma_get_mask(dev);
+			dma_set_mask(dev, DMA_BIT_MASK(64));
+			__testing_largeiova = 1;
+		}
+		for (i = 0; i < 3; i++) {
+			ret = __apply_to_new_mapping(
+				s, __functional_dma_api_iova_test, NULL);
+			if (ret) {
+				if (i < 3) {
+					pr_err("the %s iova test failed\n",
+					       idx_prompt[i]);
+				} else {
+					pr_err("the %d%s iova test failed\n",
+					       i + 1, idx_prompt[3]);
+				}
+			}
+		}
+		if (j == 1) {
+			dma_set_mask(dev, old_dma_mask);
+			__testing_largeiova = 0;
+		}
 	}
 	return 0;
 }
@@ -757,6 +872,14 @@ static int __functional_dma_api_basic_test(struct device *dev,
 		}
 		memset(data, 0xa5, size);
 		iova = dma_map_single(dev, data, size, DMA_TO_DEVICE);
+#if IS_ENABLED(DEBUG)
+		{
+			char *buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			sunxi_iommu_dump_pgtable(buf, PAGE_SIZE, false);
+			pr_err("%s", buf);
+			kfree(buf);
+		}
+#endif
 		pa = iommu_iova_to_phys(domain, iova);
 		pa2 = virt_to_phys(data);
 		if (pa != pa2) {
@@ -815,6 +938,584 @@ static const struct file_operations iommu_debug_basic_test_fops = {
 	.release = single_release,
 };
 
+#ifdef AW_IOMMU_PGTABLE_V2
+/*
+ * only page table v2 can handle iova/phys > 4G,
+ * we use it to determ whether we should run larget iova/phys test
+ */
+#define LARGE_IOVA_PHY_TEST
+#endif
+
+#ifdef LARGE_IOVA_PHY_TEST
+/* iommu basic test */
+static int iommu_debug_basic_large_iova_test_show(struct seq_file *s,
+						  void *ignored)
+{
+	struct iommu_debug_device *ddev = s->private;
+	struct device *dev = ddev->dev;
+	int ret = -EINVAL;
+	u64 old_dma_mask;
+	ds_printf(dev, s, "large iova(>8G)");
+
+	old_dma_mask = dma_get_mask(dev);
+
+	dma_set_mask(dev, DMA_BIT_MASK(64));
+	ret = __functional_dma_api_basic_test(dev, s, global_iommu_domain,
+					      NULL);
+	dma_set_mask(dev, old_dma_mask);
+	return ret;
+}
+
+static int iommu_debug_basic_large_iova_test_open(struct inode *inode,
+						  struct file *file)
+{
+	return single_open(file, iommu_debug_basic_large_iova_test_show,
+			   inode->i_private);
+}
+
+static const struct file_operations iommu_debug_basic_large_iova_test_fops = {
+	.open = iommu_debug_basic_large_iova_test_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int __tested_phy_is_rollbacked(dma_addr_t phys, uint32_t test_val)
+{
+	/*
+	 * if addressed phys is rollbacked to a lower address
+	 * then *phys should be same as *(phys & mask(bits(phys)-1))
+	 */
+	unsigned long width = __ffs64(phys);
+	dma_addr_t mask = (1 << width) - 1;
+	uint32_t *test_ptr;
+	int ret = 0;
+	uint32_t offset = phys - PAGE_ALIGN(phys) / sizeof(uint32_t *);
+	phys = PAGE_ALIGN(phys);
+	while (mask > 0x40000000 && !ret) {
+		phys = phys & mask;
+		if (!phys)
+			break; /* no more valid candidate */
+		test_ptr = ioremap(phys, 4096);
+		if (test_ptr[offset] == test_val)
+			ret = 1; /* mask addr got same val, possible rollback detected */
+		iounmap(test_ptr);
+		mask >>= 1;
+	}
+	return ret;
+}
+
+static int __functional_large_phys_test(struct device *dev, struct seq_file *s,
+					struct iommu_domain *domain,
+					void *ignored)
+{
+	size_t size = SZ_4K * 128;
+	char *dump_buffer;
+	int ret = 0;
+	int i;
+	u32 *data;
+	dma_addr_t iova;
+	u64 test_param[4];
+	struct page *premap_pages[128];
+	struct of_phandle_args args;
+	const char *name;
+	dump_buffer = kmalloc(4096, GFP_KERNEL);
+	if (!dump_buffer)
+		return -ENOMEM;
+	/* test only for g2d , pass in other device */
+	of_parse_phandle_with_args(dev->of_node, "iommus", "#iommu-cells", 0,
+				   &args);
+	of_property_read_string_index(to_of_node(dev->iommu->iommu_dev->fwnode),
+				      "masters", args.args[0], &name);
+	if (of_property_read_string_index(
+		    to_of_node(dev->iommu->iommu_dev->fwnode), "masters",
+		    args.args[0], &name) ||
+	    (strcasecmp("g2d", name) != 0)) {
+		pr_err("search iommmu name for maseter %s failed\n",
+		       dev_name(dev));
+		return 0;
+	}
+
+	memset(test_param, 0, sizeof(test_param));
+	/* premap large iova(to identical large pa)*/
+	if (!of_find_property(dev->of_node, "sunxi-iova-premap", NULL)) {
+		return -ENOMEM;
+	}
+	if (of_property_read_variable_u64_array(
+		    dev->of_node, "sunxi-iova-premap", test_param, 0, 4) < 0)
+		pr_err("read_premap_failed");
+	iova = test_param[0];
+
+	/* map premap large pa for cpu access */
+	for (i = 0; i < size / SZ_4K; i++)
+		premap_pages[i] = i ? premap_pages[i - 1] + 1 :
+				      phys_to_page(test_param[0]);
+	data = vmap(premap_pages, size / SZ_4K, VM_MAP,
+		    pgprot_writecombine(PAGE_KERNEL));
+	size = test_param[1] > size ? size : test_param[1];
+
+	sunxi_iommu_dump_pgtable(dump_buffer, 4096, false);
+	ds_printf(dev, s, "%s", dump_buffer);
+
+	ds_printf(dev, s, "  -> SUCCEEDED\n");
+
+	/* make sure we are not in a rollbacked access */
+	data[0] = 0xA5A5A5A5;
+	data[1] = 0x3C3C3C3C;
+	if (__tested_phy_is_rollbacked(test_param[0], data[0]) &&
+	    __tested_phy_is_rollbacked(test_param[0] + sizeof(data), data[1])) {
+		ds_printf(dev, s,
+			  "%llu is rollbacked and not a valid phys addr",
+			  test_param[0]);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ds_printf(dev, s, "Using coherent buffer");
+	for (i = 0; i < 128; ++i) {
+		int ind = (SZ_4K * i) / sizeof(u32);
+		u32 *p = data + ind;
+		u32 *p1 = (u32 *)iova + ind;
+		u32 read_data;
+
+		memset(data, 0xa5, size);
+		*p = 0x5a5a5a5a;
+		/**
+		 * make sure that *p is written before
+		 * the write operation of the debug mode of iommu
+		 */
+		wmb();
+		sunxi_iova_test_write((dma_addr_t)p1, 0xdead);
+		/**
+		 * do the write operation of debug mode of iommu
+		 * in order
+		 */
+		rmb();
+		if ((*p) != 0xdead) {
+			ds_printf(dev, s, "-> FAILED on iova0 iter %x  %x\n", i,
+				  *p);
+			ret = -EINVAL;
+			goto out;
+		}
+
+		*p = 0xffffaaaa;
+		/**
+		 * make sure that *p is written before
+		 * the read operation of the debug mode of iommu
+		 */
+		wmb();
+		read_data = sunxi_iova_test_read((dma_addr_t)p1);
+		if (read_data != 0xffffaaaa) {
+			ds_printf(dev, s, "-> FAILED on iova1 iter %x  %x\n", i,
+				  read_data);
+			ret = -EINVAL;
+			goto out;
+		}
+	}
+
+out:
+	vunmap(data);
+	kfree(dump_buffer);
+	return ret;
+}
+
+/* iommu basic test */
+static int iommu_debug_large_phys_show(struct seq_file *s, void *ignored)
+{
+	struct iommu_debug_device *ddev = s->private;
+	struct device *dev = ddev->dev;
+	int ret = -EINVAL;
+
+	ret = __functional_large_phys_test(dev, s, global_iommu_domain, NULL);
+	return ret;
+}
+
+static int iommu_debug_large_phys_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, iommu_debug_large_phys_show, inode->i_private);
+}
+
+static const struct file_operations iommu_debug_large_phys_fops = {
+	.open = iommu_debug_large_phys_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+#endif
+#if defined(CONFIG_AW_IOMMU_V2) || defined(CONFIG_AW_IOMMU_V3)
+#define BYPASS_TEST
+/* we may use other master for test later */
+#define BYPASS_TEST_USE_G2D
+#ifndef TEST_USE_G2D
+#define TEST_USE_G2D
+#endif
+#endif
+
+#if defined(CONFIG_AW_IOMMU_V2)
+#define PREVENT_HANG_TEST
+/* we may use other master for test later */
+#define PREVENT_HANG_TEST_USE_G2D
+#ifndef TEST_USE_G2D
+#define TEST_USE_G2D
+#endif
+#endif
+
+#ifdef TEST_USE_G2D
+#include <sunxi-g2d.h>
+
+static int __prepare_rotate0_param(dma_addr_t src, dma_addr_t dst, size_t size,
+				   g2d_blt_h *blit_para)
+{
+	if (size < 512 * 512 * 4) {
+		WARN_ON(size < 512 * 512 * 4);
+		return -EINVAL;
+	}
+	/* to output size for preparing */
+	if (blit_para == NULL) {
+		return 512 * 512 * 4;
+	}
+	memset(blit_para, 0, sizeof(*blit_para));
+
+	blit_para->src_image_h.laddr[0] = src;
+	blit_para->dst_image_h.laddr[0] = dst;
+	pr_err("src_paddr: 0x%x\n", blit_para->src_image_h.laddr[0]);
+	pr_err("dst_paddr: 0x%x\n", blit_para->dst_image_h.laddr[0]);
+
+	blit_para->flag_h = G2D_ROT_0;
+	/* configure src image */
+	blit_para->src_image_h.bbuff = 1;
+	blit_para->src_image_h.format = G2D_FORMAT_ARGB8888;
+	blit_para->src_image_h.laddr[0] =
+		(int)(blit_para->src_image_h.laddr[0]);
+	blit_para->src_image_h.use_phy_addr = 1;
+	blit_para->src_image_h.width = 512;
+	blit_para->src_image_h.height = 512;
+	blit_para->src_image_h.align[0] = 0;
+	blit_para->src_image_h.align[1] = 0;
+	blit_para->src_image_h.align[2] = 0;
+	blit_para->src_image_h.clip_rect.x = 0;
+	blit_para->src_image_h.clip_rect.y = 0;
+	blit_para->src_image_h.clip_rect.w = 512;
+	blit_para->src_image_h.clip_rect.h = 512;
+	blit_para->src_image_h.coor.x = 0;
+	blit_para->src_image_h.coor.y = 0;
+	blit_para->src_image_h.gamut = G2D_BT601;
+
+	/* configure dst image */
+	blit_para->dst_image_h.bbuff = 1;
+	blit_para->dst_image_h.format = G2D_FORMAT_ARGB8888;
+	blit_para->dst_image_h.laddr[0] =
+		(int)(blit_para->dst_image_h.laddr[0]);
+	blit_para->dst_image_h.use_phy_addr = 1;
+	blit_para->dst_image_h.width = 512;
+	blit_para->dst_image_h.height = 512;
+	blit_para->dst_image_h.align[0] = 0;
+	blit_para->dst_image_h.align[1] = 0;
+	blit_para->dst_image_h.align[2] = 0;
+	blit_para->dst_image_h.clip_rect.x = 0;
+	blit_para->dst_image_h.clip_rect.y = 0;
+	blit_para->dst_image_h.clip_rect.w = 512;
+	blit_para->dst_image_h.clip_rect.h = 512;
+	blit_para->src_image_h.coor.x = 0;
+	blit_para->src_image_h.coor.y = 0;
+	blit_para->dst_image_h.gamut = G2D_BT601;
+	return 512 * 512 * 4;
+}
+
+extern int g2d_blit_h(g2d_blt_h *para);
+extern int g2d_open(struct inode *inode, struct file *file);
+extern int g2d_release(struct inode *inode, struct file *file);
+#define ROTATE_FLUSH_SRC (0x1)
+#define ROTATE_FLUSH_DST (0x2)
+static int __perform_one_rotate_0(struct device *dev, dma_addr_t src,
+				  dma_addr_t dst, size_t size,
+				  uint32_t flush_flag)
+{
+	g2d_blt_h g2d_param;
+	struct file g2d_file;
+	int ret;
+	g2d_open(0, &g2d_file);
+	__prepare_rotate0_param(src, dst, size, &g2d_param);
+	if (flush_flag & 0x1)
+		dma_sync_single_range_for_device(dev, src, 0, size,
+						 DMA_TO_DEVICE);
+	if (flush_flag & 0x2)
+		dma_sync_single_range_for_device(dev, dst, 0, size,
+						 DMA_TO_DEVICE);
+	ret = g2d_blit_h(&g2d_param);
+	if (flush_flag & 0x1)
+		dma_sync_single_range_for_cpu(dev, src, 0, size,
+					      DMA_FROM_DEVICE);
+	if (flush_flag & 0x2)
+		dma_sync_single_range_for_cpu(dev, dst, 0, size,
+					      DMA_FROM_DEVICE);
+	g2d_release(0, &g2d_file);
+
+	return ret;
+}
+#endif
+
+#ifdef PREVENT_HANG_TEST
+/* iommu basic test */
+static int iommu_debug_prevent_hang_show(struct seq_file *s, void *ignored)
+{
+	struct iommu_debug_device *ddev = s->private;
+	struct device *dev = ddev->dev;
+	int ret = -EINVAL;
+	union {
+		uint64_t buf[4];
+		struct {
+			uint64_t buffer_invalid_src_addr;
+			uint64_t buffer_invalid_src_size;
+			uint64_t buffer_invalid_dst_addr;
+			uint64_t buffer_invalid_dst_size;
+		};
+	} test_params;
+	dma_addr_t valid_src_phys, valid_dst_phys;
+	void *valid_src_virt, *valid_dst_virt;
+	uint32_t size;
+
+	/*
+	 * 3 cases
+			SRC(read)	DST(write)
+	 * 1:	valid		valid
+	 * 2:	invalid		valid
+	 * 3:	valid		invalid
+	 * we used g2d rotate 0 degree as tester as
+	 * it act like a memcpy and easy to understand in/out put
+	 */
+	/* buffer preparation */
+	/* get reserved iova for later test */
+	if (of_property_count_u64_elems(dev->of_node, "sunxi-iova-reserve") !=
+	    ARRAY_SIZE(test_params.buf)) {
+		return ret;
+	}
+
+	of_property_read_u64_array(dev->of_node, "sunxi-iova-reserve",
+				   test_params.buf,
+				   ARRAY_SIZE(test_params.buf));
+	/* make sure input buffer unmapped */
+	if (iommu_iova_to_phys(iommu_get_domain_for_dev(dev),
+			       test_params.buffer_invalid_src_addr) ||
+	    iommu_iova_to_phys(iommu_get_domain_for_dev(dev),
+			       test_params.buffer_invalid_dst_addr)) {
+		return -EINVAL;
+	}
+	size = __prepare_rotate0_param(0, 0, test_params.buffer_invalid_src_size, NULL);
+	if (size > test_params.buffer_invalid_src_size ||
+	    size > test_params.buffer_invalid_dst_size) {
+		pr_err("reserve buffer too small (%llu/%llu < %u) for prevent hang test",
+		       test_params.buffer_invalid_src_size,
+		       test_params.buffer_invalid_dst_size, size);
+	}
+
+	/* valid src & dst buffer, just alloc once */
+	valid_src_virt =
+		dma_alloc_coherent(dev, size, &valid_src_phys, GFP_KERNEL);
+	valid_dst_virt =
+		dma_alloc_coherent(dev, size, &valid_dst_phys, GFP_KERNEL);
+
+	sunxi_iommu_enable_interrupt(0);
+	sunxi_iommu_prevent_hang_enable(1);
+
+	/* case 1 copy from valid src to valid dst */
+	memset(valid_src_virt, 2, size);
+	memset(valid_dst_virt, 3, size);
+	__perform_one_rotate_0(dev, valid_src_phys, valid_dst_phys, size,
+			       ROTATE_FLUSH_DST | ROTATE_FLUSH_SRC);
+	if (memcmp(valid_src_virt, valid_dst_virt, size) != 0) {
+		ds_printf(dev, s, "prevent hang test failed at case 1");
+		print_hex_dump(KERN_ERR, "src", DUMP_PREFIX_OFFSET, 16, 1,
+			       valid_src_virt, 64, false);
+		print_hex_dump(KERN_ERR, "dst", DUMP_PREFIX_OFFSET, 16, 1,
+			       valid_dst_virt, 64, false);
+	} else {
+		ds_printf(dev, s, "prevent hang test passed at case 1");
+	}
+	sunxi_iommu_enable_interrupt(1);
+	mdelay(200);
+	sunxi_iommu_enable_interrupt(0);
+
+	/* case 2 copy from invlalid src to valid dst */
+	memset(valid_src_virt, 2, size);
+	memset(valid_dst_virt, 3, size);
+	__perform_one_rotate_0(dev, test_params.buffer_invalid_src_addr,
+			       valid_dst_phys, size, ROTATE_FLUSH_DST);
+	/* g2d read from invalid src get 0, so dst buffer should be all 0 */
+	if (memcmp(valid_dst_virt, memset(valid_src_virt, 0, size), size) !=
+	    0) {
+		ds_printf(dev, s, "prevent hang test failed at case 2");
+		print_hex_dump(KERN_ERR, "src", DUMP_PREFIX_OFFSET, 16, 1,
+			       valid_src_virt, 64, false);
+		print_hex_dump(KERN_ERR, "dst", DUMP_PREFIX_OFFSET, 16, 1,
+			       valid_dst_virt, 64, false);
+	} else {
+		ds_printf(dev, s, "prevent hang test passed at case 2");
+	}
+	sunxi_iommu_enable_interrupt(1);
+	mdelay(200);
+	sunxi_iommu_enable_interrupt(0);
+
+	/* case 2 copy from vlalid src to invalid dst */
+	memset(valid_src_virt, 2, size);
+	memset(valid_dst_virt, 3, size);
+	__perform_one_rotate_0(dev, valid_src_phys,
+			       test_params.buffer_invalid_dst_addr, size,
+			       ROTATE_FLUSH_SRC);
+	/* g2d write to invalid dst do nothing , so dst buffer should be untouch */
+	if (memcmp(valid_dst_virt, memset(valid_src_virt, 3, size), size) !=
+	    0) {
+		ds_printf(dev, s, "prevent hang test failed at case 3");
+		print_hex_dump(KERN_ERR, "src", DUMP_PREFIX_OFFSET, 16, 1,
+			       valid_src_virt, 64, false);
+		print_hex_dump(KERN_ERR, "dst", DUMP_PREFIX_OFFSET, 16, 1,
+			       valid_dst_virt, 64, false);
+	} else {
+		ds_printf(dev, s, "prevent hang test passed at case 3");
+	}
+	sunxi_iommu_prevent_hang_enable(0);
+	sunxi_iommu_enable_interrupt(1);
+
+	return 0;
+}
+
+static int iommu_debug_prevent_hang_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, iommu_debug_prevent_hang_show,
+			   inode->i_private);
+}
+
+static const struct file_operations iommu_debug_prevent_hang_fops = {
+	.open = iommu_debug_prevent_hang_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+#endif
+
+#ifdef BYPASS_TEST
+#ifdef BYPASS_TEST_USE_G2D
+/* iommu basic test */
+static int iommu_debug_bypass_show(struct seq_file *s, void *ignored)
+{
+	struct iommu_debug_device *ddev = s->private;
+	struct device *dev = ddev->dev;
+	int ret = -EINVAL;
+	union {
+		uint64_t buf[4];
+		struct {
+			uint64_t premap_1_addr;
+			uint64_t premap_1_size;
+			uint64_t premap_2_addr;
+			uint64_t premap_2_size;
+		};
+	} test_params;
+	dma_addr_t valid_src_phys;
+	void *valid_src_virt;
+	void *premap_1, *premap_2;
+	uint32_t size;
+	struct of_phandle_args args;
+	const char *name;
+
+	/* test only for g2d , pass in other device */
+	of_parse_phandle_with_args(dev->of_node, "iommus", "#iommu-cells", 0,
+				   &args);
+	if (of_property_read_string_index(
+		    to_of_node(dev->iommu->iommu_dev->fwnode), "masters",
+		    args.args[0], &name) ||
+	    (strcasecmp("g2d", name) != 0))
+		pr_err("search iommmu name for maseter %s failed\n",
+		       dev_name(dev));
+	{
+		return 0;
+	}
+	/*
+	 * premap range A & B
+	 * then we iommu_map iova A to phy B and set g2d to write addr A.
+	 * if bypass works, g2d write to phy A
+	 * if bypass not work, g2d write to phy B since iova A
+	 *   is mapped to phy B
+	 */
+	/* buffer preparation */
+	/* get reserved iova for later test */
+	if (of_property_count_u64_elems(dev->of_node, "sunxi-iova-premap") !=
+	    ARRAY_SIZE(test_params.buf)) {
+		return ret;
+	}
+
+	of_property_read_u64_array(dev->of_node, "sunxi-iova-premap",
+				   test_params.buf,
+				   ARRAY_SIZE(test_params.buf));
+	size = __prepare_rotate0_param(0, 0, test_params.premap_1_size, NULL);
+	if (size > test_params.premap_1_size ||
+	    size > test_params.premap_2_size) {
+		pr_err("reserve buffer too small (%llu/%llu < %u) for prevent hang test",
+		       test_params.premap_1_size, test_params.premap_2_size,
+		       size);
+	}
+	/* now remap iova A to phy B */
+	iommu_unmap(iommu_get_domain_for_dev(dev), test_params.premap_1_addr,
+		    test_params.premap_1_size);
+	iommu_map(iommu_get_domain_for_dev(dev), test_params.premap_1_addr,
+		  test_params.premap_2_addr, test_params.premap_2_size,
+		  IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
+	/* also phy A to B for cpu to check result later */
+	premap_1 =
+		ioremap(test_params.premap_1_addr, test_params.premap_1_size);
+	premap_2 =
+		ioremap(test_params.premap_2_addr, test_params.premap_2_size);
+
+	/* valid src & dst buffer, just alloc once */
+	valid_src_virt =
+		dma_alloc_coherent(dev, size, &valid_src_phys, GFP_KERNEL);
+
+	/*
+	 * actual test, check if g2d output to phy B with bypass enabled
+	 * bypass disabled is default state and checked in basic test
+	 * do not test here
+	 */
+	sunxi_enable_device_iommu(args.args[0], 0);
+
+	memset(valid_src_virt, 3, size);
+	memset(premap_1, 0xc, size);
+	memset(premap_2, 0xa, size);
+
+	__perform_one_rotate_0(dev, valid_src_phys, test_params.premap_1_addr,
+			       size, ROTATE_FLUSH_DST | ROTATE_FLUSH_SRC);
+	if (memcmp(valid_src_virt, premap_2, size) != 0 ||
+	    memcpy(valid_src_virt, premap_1, size) == 0) {
+		ds_printf(dev, s, "bypass test failed at case 1");
+	} else {
+		ds_printf(dev, s, "bypass test passed at case 1");
+	}
+	sunxi_enable_device_iommu(args.args[0], 1);
+	ret = 0;
+
+	iounmap(premap_1);
+	iounmap(premap_2);
+	dma_free_coherent(dev, size, valid_src_virt, valid_src_phys);
+	/* incase we want to repeat test later */
+	iommu_unmap(iommu_get_domain_for_dev(dev), test_params.premap_1_addr,
+		    test_params.premap_1_size);
+	iommu_map(iommu_get_domain_for_dev(dev), test_params.premap_1_addr,
+		  test_params.premap_1_addr, test_params.premap_1_size,
+		  IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
+	return ret;
+}
+#endif
+static int iommu_debug_bypass_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, iommu_debug_bypass_show,
+			   inode->i_private);
+}
+
+static const struct file_operations iommu_debug_bypass_fops = {
+	.open = iommu_debug_bypass_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+#endif
 
 /*
  * The following will only work for drivers that implement the generic
@@ -883,6 +1584,40 @@ static int snarf_iommu_devices(struct device *dev, const char *name)
 		       name);
 		goto err_rmdir;
 	}
+
+#ifdef LARGE_IOVA_PHY_TEST
+	if (!debugfs_create_file("iommu_large_phys", 0400, dir, ddev,
+				 &iommu_debug_large_phys_fops)) {
+		pr_err("Couldn't create iommu/devices/%s/iommu_large_phys debugfs file\n",
+		       name);
+		goto err_rmdir;
+	}
+
+	if (!debugfs_create_file("iommu_basic_large_iova_test", 0400, dir, ddev,
+				 &iommu_debug_basic_large_iova_test_fops)) {
+		pr_err("Couldn't create iommu/devices/%s/iommu_basic_large_iova_test debugfs file\n",
+		       name);
+		goto err_rmdir;
+	}
+#endif
+
+#ifdef PREVENT_HANG_TEST
+	if (!debugfs_create_file("iommu_basic_prevent_hang_test", 0400, dir,
+				 ddev, &iommu_debug_prevent_hang_fops)) {
+		pr_err("Couldn't create iommu/devices/%s/iommu_basic_prevent_hang_test debugfs file\n",
+		       name);
+		goto err_rmdir;
+	}
+#endif
+
+#ifdef BYPASS_TEST
+	if (!debugfs_create_file("iommu_bypass_test", 0400, dir,
+				 ddev, &iommu_debug_bypass_fops)) {
+		pr_err("Couldn't create iommu/devices/%s/iommu_basic_test debugfs file\n",
+		       name);
+		goto err_rmdir;
+	}
+#endif
 
 	list_add(&ddev->list, &iommu_debug_devices);
 	return 0;

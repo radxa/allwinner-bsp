@@ -107,6 +107,9 @@ int panel_lvds_regulator_enable(struct drm_panel *panel)
 	struct panel_lvds *lvds = to_panel_lvds(panel);
 	int err, i;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+	panel->prepared = true;
+#endif
 	for (i = 0; i < POWER_MAX; i++) {
 		if (lvds->supply[i]) {
 			err = regulator_enable(lvds->supply[i]);
@@ -122,6 +125,32 @@ int panel_lvds_regulator_enable(struct drm_panel *panel)
 	return 0;
 }
 EXPORT_SYMBOL(panel_lvds_regulator_enable);
+
+bool panel_lvds_is_support_backlight(struct drm_panel *panel)
+{
+	return panel->backlight;
+}
+EXPORT_SYMBOL(panel_lvds_is_support_backlight);
+
+int panel_lvds_get_backlight_value(struct drm_panel *panel)
+{
+	if (panel->backlight)
+		return backlight_get_brightness(panel->backlight);
+
+	return 0;
+}
+EXPORT_SYMBOL(panel_lvds_get_backlight_value);
+
+void panel_lvds_set_backlight_value(struct drm_panel *panel, int brightness)
+{
+	if (!panel->backlight || backlight_is_blank(panel->backlight) || brightness <= 0)
+		return ;
+
+	// TODO: support backlight mapping
+	panel->backlight->props.brightness = brightness;
+	backlight_update_status(panel->backlight);
+}
+EXPORT_SYMBOL(panel_lvds_set_backlight_value);
 
 static int panel_lvds_prepare(struct drm_panel *panel)
 {

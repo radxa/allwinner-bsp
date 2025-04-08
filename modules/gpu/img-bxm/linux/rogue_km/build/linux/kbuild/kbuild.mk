@@ -42,14 +42,36 @@ $(TARGET_PRIMARY_OUT)/kbuild/Makefile: $(MAKE_TOP)/kbuild/Makefile.template
 	@[ ! -e $(dir $@) ] && mkdir -p $(dir $@) || true
 	$(CP) -f $< $@
 
+# Android builds explicitly set KERNEL_CROSS_COMPILE to undef if target platform
+# is one of x86-ish, even though CROSS_COMPILE is set correctly. Ignore Android
+# in this check.
+ifeq ($(SUPPORT_ANDROID_PLATFORM),)
+ # This is only relevant for kernel modules as kernel makefiles will be looking
+ # at ARCH to deduce what to pass as clang target. We do not use ARCH in
+ # userspace modules, so it's not a problem - a host compiler would be used.
+ ifneq ($(ARCH),)
+  ifeq ($(notdir $(KERNEL_CC)),clang)
+   ifeq ($(KERNEL_CROSS_COMPILE),)
+    _clang_no_cross_err := 1
+    # The difference between KERNEL_CROSS_COMPILE and CROSS_COMPILE in the
+    # message is intentional and is not a typo. This is because at the time of
+    # change, setting KERNEL_CROSS_COMPILE with clang builds on command line is
+    # not supported.
+    _clang_no_cross_err_msg := ARCH=$(ARCH) is populated and clang is used, but KERNEL_CROSS_COMPILE is empty. Please populate CROSS_COMPILE if you want to cross compile, or unset ARCH if you want to use the host compiler
+   endif
+  endif
+ endif
+endif
+
 # We need to make INTERNAL_KBUILD_MAKEFILES absolute because the files will be
 # read while chdir'd into $(KERNELDIR)
-INTERNAL_KBUILD_MAKEFILES := $(abspath $(foreach _m,$(KERNEL_COMPONENTS) $(EXTRA_PVRSRVKM_COMPONENTS),$(if $(INTERNAL_KBUILD_MAKEFILE_FOR_$(_m)),$(INTERNAL_KBUILD_MAKEFILE_FOR_$(_m)),$(error Unknown kbuild module "$(_m)"))))
-INTERNAL_KBUILD_OBJECTS := $(foreach _m,$(KERNEL_COMPONENTS),$(if $(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(error BUG: Unknown kbuild module "$(_m)" should have been caught earlier)))
-INTERNAL_EXTRA_KBUILD_OBJECTS := $(foreach _m,$(EXTRA_PVRSRVKM_COMPONENTS),$(if $(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(error BUG: Unknown kbuild module "$(_m)" should have been caught earlier)))
+INTERNAL_KBUILD_MAKEFILES = $(abspath $(foreach _m,$(KERNEL_COMPONENTS) $(EXTRA_PVRSRVKM_COMPONENTS),$(if $(INTERNAL_KBUILD_MAKEFILE_FOR_$(_m)),$(INTERNAL_KBUILD_MAKEFILE_FOR_$(_m)),$(error Unknown kbuild module "$(_m)"))))
+INTERNAL_KBUILD_OBJECTS = $(foreach _m,$(KERNEL_COMPONENTS),$(if $(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(error BUG: Unknown kbuild module "$(_m)" should have been caught earlier)))
+INTERNAL_EXTRA_KBUILD_OBJECTS = $(foreach _m,$(EXTRA_PVRSRVKM_COMPONENTS),$(if $(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(INTERNAL_KBUILD_OBJECTS_FOR_$(_m)),$(error BUG: Unknown kbuild module "$(_m)" should have been caught earlier)))
 .PHONY: kbuild kbuild_clean kbuild_check
 
 kbuild_check:
+	@: $(if $(_clang_no_cross_err),$(error $(_clang_no_cross_err_msg)),)
 	@: $(if $(strip $(KERNELDIR)),,$(error KERNELDIR must be set))
 	@: $(call directory-must-exist,$(KERNELDIR))
 	@: $(foreach _m,$(ALL_KBUILD_MODULES),$(if $(wildcard $(abspath $(INTERNAL_KBUILD_MAKEFILE_FOR_$(_m)))),,$(error In makefile $(INTERNAL_MAKEFILE_FOR_MODULE_$(_m)): Module $(_m) requires kbuild makefile $(INTERNAL_KBUILD_MAKEFILE_FOR_$(_m)), which is missing)))
@@ -119,9 +141,37 @@ kbuild_clean: kbuild_check $(TARGET_PRIMARY_OUT)/kbuild/Makefile
 		$(if $(KBUILD_LLD_VERSION),$(shell echo CONFIG_LLD_VERSION=$(KBUILD_LLD_VERSION)),) \
 		V=$(V) W=$(W) TOP=$(TOP) clean
 
+ifeq ($(PVR_SUPPORT_KBUILD_MODULES_INSTALL),1)
+
+.PHONY: kbuild_modules_install
+
+kbuild_modules_install: kbuild_check $(TARGET_PRIMARY_OUT)/kbuild/Makefile
+	$(if $(V),,@)$(MAKE) -Rr --no-print-directory -C $(KERNELDIR) \
+		M=$(abspath $(TARGET_PRIMARY_OUT)/kbuild) \
+		$(if $(MODLIB),MODLIB=$(MODLIB)) \
+		$(if $(DEPMOD),DEPMOD=$(DEPMOD)) \
+		INTERNAL_KBUILD_MAKEFILES="$(INTERNAL_KBUILD_MAKEFILES)" \
+		INTERNAL_KBUILD_OBJECTS="$(INTERNAL_KBUILD_OBJECTS)" \
+		INTERNAL_EXTRA_KBUILD_OBJECTS="$(INTERNAL_EXTRA_KBUILD_OBJECTS)" \
+		BRIDGE_SOURCE_ROOT=$(abspath $(BRIDGE_SOURCE_ROOT)) \
+		TARGET_PRIMARY_ARCH=$(TARGET_PRIMARY_ARCH) \
+		CLANG_TRIPLE=$(if $(filter %-androideabi,$(CROSS_TRIPLE)),$(patsubst \
+		%-androideabi,%-gnueabi,$(CROSS_TRIPLE)),$(patsubst \
+		%-android,%-gnu,$(CROSS_TRIPLE)))- \
+		CROSS_COMPILE="$(CCACHE) $(KERNEL_CROSS_COMPILE)" \
+		EXTRA_CFLAGS="$(ALL_KBUILD_CFLAGS)" \
+		CC=$(if $(KERNEL_CC),$(KERNEL_CC),$(KERNEL_CROSS_COMPILE)gcc) \
+		LD=$(if $(KERNEL_LD),$(KERNEL_LD),$(KERNEL_CROSS_COMPILE)ld) \
+		NM=$(if $(KERNEL_NM),$(KERNEL_NM),$(KERNEL_CROSS_COMPILE)nm) \
+		OBJCOPY=$(if $(KERNEL_OBJCOPY),$(KERNEL_OBJCOPY),$(KERNEL_CROSS_COMPILE)objcopy) \
+		V=$(V) W=$(W) TOP=$(TOP) modules_install
+endif
+
 kbuild_install: installkm
 kbuild: install_script_km
 
 ifeq ($(PVR_ANDROID_SUPPORT_KBUILD_OVERLAY),1)
 include $(MAKE_TOP)/kbuild/android_kbuild.mk
 endif
+
+-include $(MAKE_TOP)/kbuild/kbuild_all.mk
