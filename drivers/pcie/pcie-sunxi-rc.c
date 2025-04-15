@@ -226,6 +226,8 @@ static void sunxi_pcie_prog_outbound_atu(struct sunxi_pcie_port *pp, int index, 
 					u64 cpu_addr, u64 pci_addr, u32 size)
 {
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
+	unsigned int retries;
+	int val;
 
 	sunxi_pcie_writel_dbi(pci, PCIE_ATU_LOWER_BASE_OUTBOUND(index), lower_32_bits(cpu_addr));
 	sunxi_pcie_writel_dbi(pci, PCIE_ATU_UPPER_BASE_OUTBOUND(index), upper_32_bits(cpu_addr));
@@ -234,6 +236,16 @@ static void sunxi_pcie_prog_outbound_atu(struct sunxi_pcie_port *pp, int index, 
 	sunxi_pcie_writel_dbi(pci, PCIE_ATU_UPPER_TARGET_OUTBOUND(index), upper_32_bits(pci_addr));
 	sunxi_pcie_writel_dbi(pci, PCIE_ATU_CR1_OUTBOUND(index), type);
 	sunxi_pcie_writel_dbi(pci, PCIE_ATU_CR2_OUTBOUND(index), PCIE_ATU_ENABLE);
+
+	for (retries = 0; retries < LINK_WAIT_MAX_RETRIE; retries++) {
+		val = sunxi_pcie_readl_dbi(pci, PCIE_ATU_CR2_OUTBOUND(index));
+
+		if (val & PCIE_ATU_ENABLE)
+			return;
+
+		mdelay(WAIT_ATU);
+	}
+	sunxi_warn(pp->dev, "Outbound iATU is not being enabled\n");
 }
 
 static int sunxi_pcie_rd_other_conf(struct sunxi_pcie_port *pp, struct pci_bus *bus,
