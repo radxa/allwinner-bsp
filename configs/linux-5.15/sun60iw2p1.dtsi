@@ -3486,7 +3486,7 @@
 			phy-handle = <&gmac0_phy0>;
 			status = "disabled";
 
-			aw,rgmii-clk-ext;
+			//aw,rgmii-clk-ext;
 			snps,fixed-burst;
 			snps,en-tx-lpi-clockgating;
 			snps,axi-config = <&gmac_stmmac_axi_setup>;
