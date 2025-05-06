@@ -435,7 +435,7 @@ static void sunxi_jack_adv_det_irq_work(void *data, enum snd_jack_types *jack_ty
 			return;
 		}
 	} else if (jack_adv_priv->irq == plug_irq) {
-		if (gpio_get_value(jack_adv_priv->plug_gpio)) {
+		if (!gpio_get_value(jack_adv_priv->plug_gpio)) {
 			regmap_read(regmap, HMIC_STS, &reg_val_tmp);
 			reg_val_tmp |= 0x1 << KEYDOWN_PEND;
 			reg_val_tmp |= 0x1 << KEYUP_PEND;
