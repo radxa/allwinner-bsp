@@ -382,7 +382,6 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 	}
 
 	pp->bridge = bridge;
-
 	/* Get the I/O and memory ranges from DT */
 	resource_list_for_each_entry(win, &bridge->windows) {
 		switch (resource_type(win->res)) {
@@ -604,11 +603,13 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 {
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
 
-	if (sunxi_pcie_host_link_up(pp))
-		sunxi_info(pci->dev, "pcie is already link up\n");
-	else
+	//sunxi_pcie_plat_ltssm_disable(pci);
+	// if (sunxi_pcie_host_link_up(pp))
+	// 	sunxi_info(pci->dev, "pcie is already link up\n");
+	// else
+	// 	sunxi_pcie_plat_ltssm_disable(pci);
+	if (!sunxi_pcie_host_is_link_up(pp))
 		sunxi_pcie_plat_ltssm_disable(pci);
-
 	if (!IS_ERR(pci->rst_gpio))
 		gpiod_set_value(pci->rst_gpio, 0);
 	msleep(100);
@@ -627,7 +628,6 @@ static bool sunxi_pcie_host_link_up_status(struct sunxi_pcie_port *pp)
 	u32 val;
 	int ret;
 	struct sunxi_pcie *pcie = to_sunxi_pcie_from_pp(pp);
-
 	val = sunxi_pcie_readl(pcie, PCIE_LINK_STAT);
 
 	if ((val & RDLH_LINK_UP) && (val & SMLH_LINK_UP))
