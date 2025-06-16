@@ -580,6 +580,7 @@ static inline int rwnx_rx_scanu_start_cfm(struct rwnx_hw *rwnx_hw,
 {
 	RWNX_DBG(RWNX_FN_ENTRY_STR);
 
+	spin_lock_bh(&rwnx_hw->cb_lock);
 	if (rwnx_hw->scan_request
 #ifdef CONFIG_SCHED_SCAN
 		&& !rwnx_hw->is_sched_scan
@@ -612,6 +613,7 @@ static inline int rwnx_rx_scanu_start_cfm(struct rwnx_hw *rwnx_hw,
 
 	rwnx_hw->scan_request = NULL;
 	scanning = 0;
+	spin_unlock_bh(&rwnx_hw->cb_lock);
 
 	return 0;
 }
@@ -719,13 +721,18 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 	const u8 *extcap_ie;
 	const struct ieee_types_extcap *extcap;
 	struct ieee80211_channel *chan;
-	struct cfg80211_bss *bss = NULL;
+	//struct cfg80211_bss *bss = NULL;
 	struct wireless_dev *wdev = NULL;
-	int retry_counter = 10;
+	//int retry_counter = 10;
 
 	RWNX_DBG(RWNX_FN_ENTRY_STR);
 	if (rwnx_vif == NULL) {
 		printk("rwnx_vif is NULL\n");
+		return 0;
+	}
+
+	if (!rwnx_vif->up) {
+		printk("rwnx_vif up is off\n");
 		return 0;
 	}
 
@@ -837,60 +844,18 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 			rwnx_vif->wep_auth_err = true;
 			printk("con ind wep_auth_err %d\n", rwnx_vif->wep_auth_err);
 		}
-		atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
+		rwnx_set_conn_state(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
 	} else {
-		atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
+		rwnx_set_conn_state(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
 	}
 
 	printk("%s ind->roamed:%d ind->status_code:%d rwnx_vif->drv_conn_state:%d\r\n",
 			__func__, ind->roamed, ind->status_code, (int)atomic_read(&rwnx_vif->drv_conn_state));
 
-	do {
-		bss = cfg80211_get_bss(wdev->wiphy, NULL, rwnx_vif->sta.bssid,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 41) && defined(KERNEL_AOSP)
-							wdev->u.client.ssid, wdev->u.client.ssid_len,
-#else
-							wdev->ssid, wdev->ssid_len,
-#endif
-							wdev->conn_bss_type,
-							IEEE80211_PRIVACY_ANY);
-
-		if (!bss) {
-			printk("%s bss is NULL \r\n", __func__);
-
-			printk("%s bss ssid(%d):%s conn_bss_type:%d bss2 ssid(%d):%s conn_bss_type:%d\r\n",
-				__func__,
-				rwnx_vif->sta.ssid_len,
-				rwnx_vif->sta.ssid,
-				IEEE80211_BSS_TYPE_ESS,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 41) && defined(KERNEL_AOSP)
-				wdev->u.client.ssid_len,
-				wdev->u.client.ssid,
-#else
-				wdev->ssid_len,
-				wdev->ssid,
-#endif
-				wdev->conn_bss_type);
-
-			printk("%s rwnx_vif->sta.bssid %02x %02x %02x %02x %02x %02x \r\n", __func__,
-				rwnx_vif->sta.bssid[0], rwnx_vif->sta.bssid[1], rwnx_vif->sta.bssid[2],
-				rwnx_vif->sta.bssid[3], rwnx_vif->sta.bssid[4], rwnx_vif->sta.bssid[5]);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 41) && defined(KERNEL_AOSP)
-			wdev->u.client.ssid_len = (int)rwnx_vif->sta.ssid_len;
-			memcpy(wdev->u.client.ssid, rwnx_vif->sta.ssid, wdev->u.client.ssid_len);
-#else
-			wdev->ssid_len = (int)rwnx_vif->sta.ssid_len;
-			memcpy(wdev->ssid, rwnx_vif->sta.ssid, wdev->ssid_len);
-#endif
-			msleep(100);
-			retry_counter--;
-			if (retry_counter == 0) {
-				printk("%s bss recover fail \r\n", __func__);
-				break;
-			}
-		}
-	} while (!bss);
+	if (ind->status_code == 0 && (int)atomic_read(&rwnx_vif->drv_conn_state) == RWNX_DRV_STATUS_DISCONNECTING){
+		printk("%s the disconnection has been requested, return it\r\n", __func__);
+		goto exit;
+	}
 
 	if (!ind->roamed) { //not roaming
 		cfg80211_connect_result(dev, (const u8 *)ind->bssid.array, req_ie,
@@ -898,24 +863,24 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 								ind->assoc_rsp_ie_len, ind->status_code,
 								GFP_ATOMIC);
 		if (ind->status_code == 0) {
-			atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_CONNECTED);
+			rwnx_set_conn_state(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_CONNECTED);
+			printk("%s cfg80211_connect_result pass, rwnx_vif->drv_conn_state:%d\r\n",
+				__func__, (int)atomic_read(&rwnx_vif->drv_conn_state));
 		} else {
-			atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
+			rwnx_set_conn_state(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
 			rwnx_external_auth_disable(rwnx_vif);
 		}
-		printk("%s cfg80211_connect_result pass, rwnx_vif->drv_conn_state: %d \r\n",
-				__func__, (int)atomic_read(&rwnx_vif->drv_conn_state));
 	} else { //roaming
 		if (ind->status_code != 0) {
 			printk("%s roaming fail to notify disconnect \r\n", __func__);
 			cfg80211_disconnected(dev, 0, NULL, 0, 1, GFP_ATOMIC);
-			atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
+			rwnx_set_conn_state(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
 			rwnx_external_auth_disable(rwnx_vif);
 		} else {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
 			struct cfg80211_roam_info info;
 			memset(&info, 0, sizeof(info));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) && defined(KERNEL_AOSP)
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) && defined(KERNEL_AOSP)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 20, 0)))
 			if (rwnx_vif->ch_index < NX_CHAN_CTXT_CNT)
 				info.links[0].channel = rwnx_hw->chanctx_table[rwnx_vif->ch_index].chan_def.chan;
 			info.links[0].bssid = (const u8 *)ind->bssid.array;
@@ -930,7 +895,6 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 			info.resp_ie_len = ind->assoc_rsp_ie_len;
 			printk("%s roaming success to notify roam \r\n", __func__);
 			cfg80211_roamed(dev, &info, GFP_ATOMIC);
-			atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_CONNECTED);
 #else
 			chan = ieee80211_get_channel(rwnx_hw->wiphy, ind->center_freq);
 			printk("%s roaming success to notify roam \r\n", __func__);
@@ -945,13 +909,18 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 				, ind->assoc_rsp_ie_len
 				, GFP_ATOMIC);
 #endif /*LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)*/
-			atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_CONNECTED);
+			rwnx_set_conn_state(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_CONNECTED);
 		}
+		rwnx_vif->sta.is_roam = false;
 	}
 
-	netif_tx_start_all_queues(dev);
-	netif_carrier_on(dev);
+	if (ind->status_code == 0) {
+		netif_tx_start_all_queues(dev);
+		netif_carrier_on(dev);
+	}
 
+exit:
+	rwnx_vif->sta.is_roam = false;
 	return 0;
 }
 
@@ -1000,7 +969,8 @@ static inline int rwnx_rx_sm_disconnect_ind(struct rwnx_hw *rwnx_hw,
 	struct aicwf_rx_priv *rx_priv;
 #endif
 
-	RWNX_DBG(RWNX_FN_ENTRY_STR);
+	//RWNX_DBG(RWNX_FN_ENTRY_STR);
+	printk("%s reason code:%d \r\n", __func__, ind->reason_code);
 
 	if ((int)atomic_read(&rwnx_vif->drv_conn_state) == (int)RWNX_DRV_STATUS_DISCONNECTED) {
 		printk("%s, is already disconnected, drop disconnect ind", __func__);
@@ -1018,6 +988,10 @@ static inline int rwnx_rx_sm_disconnect_ind(struct rwnx_hw *rwnx_hw,
 	} else {
 		printk("%s roaming no rwnx_cfg80211_unlink_bss \r\n", __func__);
 	}
+
+#ifdef CONFIG_DEBUG_FS
+	rwnx_dbgfs_unregister_rc_stat(rwnx_hw, rwnx_vif->sta.ap);
+#endif
 
 	if (rwnx_vif->wdev.iftype == NL80211_IFTYPE_P2P_CLIENT)
 		rwnx_hw->is_p2p_connected = 0;
@@ -1043,12 +1017,12 @@ static inline int rwnx_rx_sm_disconnect_ind(struct rwnx_hw *rwnx_hw,
 	rx_priv = rwnx_hw->usbdev->rx_priv;
 #endif
 	if ((rwnx_vif->wdev.iftype == NL80211_IFTYPE_STATION) || (rwnx_vif->wdev.iftype == NL80211_IFTYPE_P2P_CLIENT)) {
-		macaddr = rwnx_vif->ndev->dev_addr;
+		macaddr = (u8 *)rwnx_vif->ndev->dev_addr;
 		printk("deinit:macaddr:%x,%x,%x,%x,%x,%x\r\n", macaddr[0], macaddr[1], macaddr[2], \
 							   macaddr[3], macaddr[4], macaddr[5]);
 		//spin_lock_bh(&rx_priv->stas_reord_lock);
 		list_for_each_entry_safe(reord_info, tmp, &rx_priv->stas_reord_list, list) {
-			macaddr = rwnx_vif->ndev->dev_addr;
+			macaddr = (u8 *)rwnx_vif->ndev->dev_addr;
 			printk("reord_mac:%x,%x,%x,%x,%x,%x\r\n", reord_info->mac_addr[0], reord_info->mac_addr[1], reord_info->mac_addr[2], \
 								   reord_info->mac_addr[3], reord_info->mac_addr[4], reord_info->mac_addr[5]);
 			if (!memcmp(reord_info->mac_addr, macaddr, 6)) {
@@ -1072,7 +1046,10 @@ static inline int rwnx_rx_sm_disconnect_ind(struct rwnx_hw *rwnx_hw,
 	rwnx_external_auth_disable(rwnx_vif);
 	rwnx_chanctx_unlink(rwnx_vif);
 
-	atomic_set(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
+	if (rwnx_vif->sta.is_roam == false) {
+		rwnx_set_conn_state(&rwnx_vif->drv_conn_state, (int)RWNX_DRV_STATUS_DISCONNECTED);
+	}
+
 	return 0;
 }
 
@@ -1108,13 +1085,6 @@ static inline int rwnx_rx_sm_external_auth_required_ind(struct rwnx_hw *rwnx_hw,
 		}
 	}
 	printk("%s wdev->conn_owner_nlportid:%d \r\n", __func__, (int)wdev->conn_owner_nlportid);
-
-	if (wdev->conn_owner_nlportid != 0) {
-		rwnx_vif->sta.conn_owner_nlportid = wdev->conn_owner_nlportid;
-	} else {
-		printk("%s try to recover conn_owner_nlportid\r\n", __func__);
-		wdev->conn_owner_nlportid = rwnx_vif->sta.conn_owner_nlportid;
-	}
 
 	if ((ind->vif_idx > NX_VIRT_DEV_MAX) || !rwnx_vif->up ||
 		(RWNX_VIF_TYPE(rwnx_vif) != NL80211_IFTYPE_STATION) ||

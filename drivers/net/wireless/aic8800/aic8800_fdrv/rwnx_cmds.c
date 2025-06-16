@@ -157,7 +157,7 @@ static int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 	trace_msg_send(cmd->id);
 #endif
 
-	spin_lock_bh(&cmd_mgr->lock);
+		spin_lock_bh(&cmd_mgr->lock);
 
 	if (cmd_mgr->state == RWNX_CMD_MGR_STATE_CRASHED) {
 		printk(KERN_CRIT"cmd queue crashed\n");
@@ -385,9 +385,7 @@ void cmd_mgr_task_process(struct work_struct *work)
 				kfree(next);
 		}
 	}
-
 }
-
 
 static int cmd_mgr_run_callback(struct rwnx_hw *rwnx_hw, struct rwnx_cmd *cmd,
 								struct rwnx_cmd_e2amsg *msg, msg_cb_fct cb)

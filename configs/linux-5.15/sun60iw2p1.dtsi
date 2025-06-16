@@ -754,7 +754,6 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			/*
 			pd_vi@SUN60IW2_PCK_VI {
 				reg = <SUN60IW2_PCK_VI>;
 			};
@@ -764,6 +763,7 @@
 			pd_ve_enc@SUN60IW2_PCK_VE_ENC {
 				reg = <SUN60IW2_PCK_VE_ENC>;
 			};
+			/*
 			pd_gpu_top@SUN60IW2_PCK_GPU_TOP {
 				reg = <SUN60IW2_PCK_GPU_TOP>;
 			};
@@ -771,14 +771,15 @@
 				reg = <SUN60IW2_PCK_GPU_CORE>;
 			};
 			*/
+
 			pd_pcie@SUN60IW2_PCK_PCIE {
 				reg = <SUN60IW2_PCK_PCIE>;
 			};
-			
+
 			pd_npu@SUN60IW2_PCK_NPU {
 				reg = <SUN60IW2_PCK_NPU>;
 			};
-			
+
 			pd_usb2@SUN60IW2_PCK_USB2 {
 				reg = <SUN60IW2_PCK_USB2>;
 			};
@@ -830,8 +831,9 @@
 		clocks = <&ddr_clk>, <&ccu CLK_NSI>;
 		clock-names = "dram", "bus";
 		operating-points-v2 = <&dram_opp_table>;
-		upthreshold = <60>;
+		upthreshold = <50>;
 		downdifferential = <20>;
+		holdtime = <25>;
 		vddcore-supply = <&reg_vdd_sys>;
 		normalvoltage = <900000>;
 		boostvoltage = <900000>;
@@ -863,10 +865,13 @@
 			reset-names = "reset_ve";
 			operating-points-v2 = <&ve_opp_table>;
 			iommus = <&mmu_aw 6 1>;
+                        nsi = <&nsi0 7>;
+                        power-domains = <&pd SUN60IW2_PCK_VE_DEC>;
 		};
 		ve1: ve1@1c0e000 {
 			compatible = "allwinner,sunxi-cedar-ve1";
 			iommus = <&mmu_aw 7 1>;
+                        nsi = <&nsi0 8>;
 		};
 		ve2: ve2@1c10000 {
 			compatible = "allwinner,sunxi-cedar-ve2";
@@ -889,6 +894,8 @@
 			reset-names = "reset_ve";
 			operating-points-v2 = <&ve_opp_table>;
 			iommus = <&mmu_aw 3 1>;
+                        nsi = <&nsi0 9>;
+                        power-domains = <&pd SUN60IW2_PCK_VE_ENC>;
 			ve_top_reg_offset = <0x800>;
 		};
 		rtc_ccu: rtc_ccu@7090000 {
@@ -1163,7 +1170,7 @@
 				pins = "PE0", "PE1", "PE2",
 				"PE3", "PE4", "PE6", "PE7",
 				"PE8", "PE9", "PE10";
-				function = "ncsi";
+				function = "ncsi0";
 				drive-strength = <20>;
 			};
 
@@ -1178,7 +1185,7 @@
 				pins = "PK0", "PK1", "PK2",
 				"PK19", "PK18", "PK17", "PK16",
 				"PK15", "PK14", "PK13", "PK12";
-				function = "ncsi";
+				function = "ncsi1";
 				drive-strength = <20>;
 			};
 
@@ -1195,7 +1202,7 @@
 				"PK15", "PK14", "PK13", "PK12",
 				"PK11", "PK10", "PK9", "PK8",
 				"PK7", "PK6", "PK5", "PK4";
-				function = "ncsi";
+				function = "ncsi1";
 				drive-strength = <20>;
 			};
 
@@ -3385,6 +3392,12 @@
 			status = "okay";
 		};
 
+		pd_ve_dec_test: pd_ve_dec_test@0 {
+			compatible = "allwinner,sunxi-power-domain-test";
+			power-domains = <&pd SUN60IW2_PCK_VE_DEC>;
+			status = "okay";
+		};
+
 		pd_ve_enc_test: pd_ve_enc_test@0 {
 			compatible = "allwinner,sunxi-power-domain-test";
 			power-domains = <&pd SUN60IW2_PCK_VE_ENC>;
@@ -4605,6 +4618,11 @@
 				opp-microvolt-vf0502 = <800000>;
 				opp-microvolt-vf0602 = <800000>;
 				opp-microvolt-vf0300 = <800000>;
+				opp-microvolt-vf0400 = <800000>;
+				opp-microvolt-vf0500 = <800000>;
+				opp-microvolt-vf0600 = <800000>;
+				opp-microvolt-vf1400 = <800000>;
+				opp-microvolt-vf1500 = <800000>;
 			};*/
 
 			opp@400000000 {
@@ -4622,6 +4640,11 @@
 				opp-microvolt-vf0502 = <800000>;
 				opp-microvolt-vf0602 = <800000>;
 				opp-microvolt-vf0300 = <800000>;
+				opp-microvolt-vf0400 = <800000>;
+				opp-microvolt-vf0500 = <800000>;
+				opp-microvolt-vf0600 = <800000>;
+				opp-microvolt-vf1400 = <800000>;
+				opp-microvolt-vf1500 = <800000>;
 			};
 
 			opp@600000000 {
@@ -4639,6 +4662,11 @@
 				opp-microvolt-vf0502 = <800000>;
 				opp-microvolt-vf0602 = <800000>;
 				opp-microvolt-vf0300 = <800000>;
+				opp-microvolt-vf0400 = <800000>;
+				opp-microvolt-vf0500 = <800000>;
+				opp-microvolt-vf0600 = <800000>;
+				opp-microvolt-vf1400 = <800000>;
+				opp-microvolt-vf1500 = <800000>;
 			};
 
 			opp@800000000 {
@@ -4646,16 +4674,21 @@
 				opp-microvolt = <840000>;
 				opp-microvolt-vfdefault = <840000>;
 				opp-microvolt-vf0000 = <840000>;
-				opp-microvolt-vf0100 = <820000>;
+				opp-microvolt-vf0100 = <840000>;
 				opp-microvolt-vf0101 = <800000>;
-				opp-microvolt-vf0200 = <800000>;
+				opp-microvolt-vf0200 = <840000>;
 				opp-microvolt-vf0201 = <800000>;
 				opp-microvolt-vf0202 = <800000>;
 				opp-microvolt-vf0302 = <800000>;
 				opp-microvolt-vf0402 = <800000>;
 				opp-microvolt-vf0502 = <800000>;
 				opp-microvolt-vf0602 = <800000>;
-				opp-microvolt-vf0300 = <800000>;
+				opp-microvolt-vf0300 = <820000>;
+				opp-microvolt-vf0400 = <800000>;
+				opp-microvolt-vf0500 = <800000>;
+				opp-microvolt-vf0600 = <800000>;
+				opp-microvolt-vf1400 = <800000>;
+				opp-microvolt-vf1500 = <800000>;
 			};
 
 			opp@1008000000 {
@@ -4663,16 +4696,21 @@
 				opp-microvolt = <960000>;
 				opp-microvolt-vfdefault = <960000>;
 				opp-microvolt-vf0000 = <960000>;
-				opp-microvolt-vf0100 = <940000>;
+				opp-microvolt-vf0100 = <960000>;
 				opp-microvolt-vf0101 = <920000>;
-				opp-microvolt-vf0200 = <900000>;
+				opp-microvolt-vf0200 = <960000>;
 				opp-microvolt-vf0201 = <880000>;
 				opp-microvolt-vf0202 = <920000>;
 				opp-microvolt-vf0302 = <920000>;
 				opp-microvolt-vf0402 = <900000>;
 				opp-microvolt-vf0502 = <880000>;
 				opp-microvolt-vf0602 = <860000>;
-				opp-microvolt-vf0300 = <860000>;
+				opp-microvolt-vf0300 = <940000>;
+				opp-microvolt-vf0400 = <900000>;
+				opp-microvolt-vf0500 = <880000>;
+				opp-microvolt-vf0600 = <920000>;
+				opp-microvolt-vf1400 = <880000>;
+				opp-microvolt-vf1500 = <860000>;
 			};
 		};
 

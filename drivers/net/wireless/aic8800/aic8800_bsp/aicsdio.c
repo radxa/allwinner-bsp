@@ -54,6 +54,10 @@ static struct priv_dev *sdiodev;
 static struct semaphore *aicbsp_notify_semaphore;
 static const struct sdio_device_id aicbsp_sdmmc_ids[];
 
+#ifdef CONFIG_SDIO_F1_FLAG
+extern bool sdio_f1_flag;
+#endif
+
 int aicbsp_device_init(void)
 {
 	return 0;
@@ -61,13 +65,15 @@ int aicbsp_device_init(void)
 
 void aicbsp_device_exit(void)
 {
+	aicbsp_set_subsys(AIC_BLUETOOTH, AIC_PWR_OFF);
+	aicbsp_set_subsys(AIC_WIFI, AIC_PWR_OFF);
 }
 
 static struct device_match_entry aicdev_match_table[] = {
-	{0x544a, 0x0146, PRODUCT_ID_AIC8800D,   "aic8800d",   0, 0, 0, 0},                 // 8800d in bootloader mode
-	{0xc8a1, 0xc18d, PRODUCT_ID_AIC8800DC,  "aic8800dc",  0, 0, 0, AICBT_PCM_SUPPORT}, // 8800dc in bootloader mode
-//	{0x5449, 0x0145, PRODUCT_ID_AIC8800DW,  "aic8800dw",  0, 0, 0, AICBT_PCM_SUPPORT},
-	{0xc8a1, 0x0182, PRODUCT_ID_AIC8800D80, "aic8800d80", 0, 0, 0, AICBT_PCM_SUPPORT}, // 8800d80 in bootloader mode
+	{0x544a, 0x0146, PRODUCT_ID_AIC8800D,   "aic8800d",   0, 0, 0, 0, 0},                 // 8800d in bootloader mode
+	{0xc8a1, 0xc18d, PRODUCT_ID_AIC8800DC,  "aic8800dc",  0, 0, 0, AICBT_PCM_SUPPORT, 0}, // 8800dc in bootloader mode
+//	{0x5449, 0x0145, PRODUCT_ID_AIC8800DW,  "aic8800dw",  0, 0, 0, AICBT_PCM_SUPPORT, 0},
+	{0xc8a1, 0x0182, PRODUCT_ID_AIC8800D80, "aic8800d80", 0, 0, 0, AICBT_PCM_SUPPORT, 0}, // 8800d80 in bootloader mode
 };
 
 static struct device_match_entry *aic_matched_ic;
@@ -312,6 +318,7 @@ done:
 	bsp_dbg("%s done\n", __func__);
 }
 
+#if IS_ENABLED(CONFIG_PM)
 static int aicbsp_sdio_suspend(struct device *dev)
 {
 	struct sdio_func *func = dev_to_sdio_func(dev);
@@ -343,6 +350,12 @@ static int aicbsp_sdio_resume(struct device *dev)
 	return 0;
 }
 
+static const struct dev_pm_ops aicbsp_sdio_pm_ops = {
+	.suspend = aicbsp_sdio_suspend,
+	.resume = aicbsp_sdio_resume,
+};
+#endif  /* CONFIG_PM */
+
 static const struct sdio_device_id aicbsp_sdmmc_ids[] = {
 	{SDIO_DEVICE(0x544a, 0x0146)}, // aic8800d in bootloader mode
 	{SDIO_DEVICE(0xc8a1, 0xc18d)}, // aic8800dc in bootloader mode
@@ -352,18 +365,16 @@ static const struct sdio_device_id aicbsp_sdmmc_ids[] = {
 
 MODULE_DEVICE_TABLE(sdio, aicbsp_sdmmc_ids);
 
-static const struct dev_pm_ops aicbsp_sdio_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(aicbsp_sdio_suspend, aicbsp_sdio_resume)
-};
-
 static struct sdio_driver aicbsp_sdio_driver = {
 	.probe = aicbsp_sdio_probe,
 	.remove = aicbsp_sdio_remove,
 	.name = AICBSP_SDIO_NAME,
 	.id_table = aicbsp_sdmmc_ids,
+#if IS_ENABLED(CONFIG_PM)
 	.drv = {
 		.pm = &aicbsp_sdio_pm_ops,
 	},
+#endif  /* CONFIG_PM */
 };
 
 static int aicbsp_platform_power_on(void)
@@ -1288,6 +1299,7 @@ static void aicwf_sdio_hal_irqhandler(struct sdio_func *func)
 	u8 byte_len = 0;
 	struct sk_buff *pkt = NULL;
 	int ret;
+	int retry = 10;
 
 	if (!bus_if || bus_if->state == BUS_DOWN_ST) {
 		bsp_err("bus err\n");
@@ -1299,6 +1311,8 @@ static void aicwf_sdio_hal_irqhandler(struct sdio_func *func)
 		while (ret || (intstatus & SDIO_OTHER_INTERRUPT)) {
 			bsp_err("ret=%d, intstatus=%x\r\n", ret, intstatus);
 			ret = aicwf_sdio_readb(aicdev->func[0], aicdev->sdio_reg.block_cnt_reg, &intstatus);
+			if (retry-- <= 0)
+				break;
 		}
 		aicdev->rx_priv->data_len = intstatus * SDIOWIFI_FUNC_BLOCKSIZE;
 
@@ -1323,6 +1337,11 @@ static void aicwf_sdio_hal_irqhandler(struct sdio_func *func)
 				break;
 			}
 			bsp_err("ret=%d, intstatus=%x\r\n", ret, intstatus);
+			#ifdef CONFIG_SDIO_F1_FLAG
+			sdio_f1_flag = true;
+			#endif
+			if (retry-- <= 0)
+				break;
 		} while (1);
 		if (intstatus & SDIO_OTHER_INTERRUPT) {
 			u8 int_pending;
@@ -1383,7 +1402,11 @@ static void aicwf_sdio_hal_irqhandler_func2(struct sdio_func *func)
 	struct priv_dev *aicdev = sdiodev;
 	u8 intstatus = 0;
 	u8 byte_len = 0;
+#ifdef CONFIG_PREALLOC_RX_SKB
+	struct rx_buff *pkt = NULL;
+#else
 	struct sk_buff *pkt = NULL;
+#endif
 	int ret;
 
 	if (!bus_if || bus_if->state == BUS_DOWN_ST) {
@@ -1394,6 +1417,13 @@ static void aicwf_sdio_hal_irqhandler_func2(struct sdio_func *func)
 		bsp_err("bus err\n");
 		return;
 	}
+
+#ifdef CONFIG_PREALLOC_RX_SKB
+	if (list_empty(&aic_rx_buff_list.rxbuff_list)) {
+		printk("%s %d, rxbuff list is empty\n", __func__, __LINE__);
+		return;
+	}
+#endif
 
 	ret = aicwf_sdio_readb(aicdev->func[1], aicdev->sdio_reg.block_cnt_reg, &intstatus);
 
@@ -1639,12 +1669,19 @@ static int aicwf_sdiov3_func_init(struct priv_dev *aicdev)
 		sdio_release_host(aicdev->func[0]);
 		return ret;
 	}
-	sdio_f0_writeb(aicdev->func[0], 0x80, 0xF1, &ret);
-	if (ret) {
-		bsp_err("set iopad delay1 fail %d\n", ret);
-		sdio_release_host(aicdev->func[0]);
-		return ret;
+	#ifdef CONFIG_SDIO_F1_FLAG
+	if (sdio_f1_flag) {
+		bsp_err("func_init sdio_f1\n");
+	#endif
+		sdio_f0_writeb(aicdev->func[0], 0x80, 0xF1, &ret);
+		if (ret) {
+			bsp_err("set iopad delay1 fail %d\n", ret);
+			sdio_release_host(aicdev->func[0]);
+			return ret;
+		}
+	#ifdef CONFIG_SDIO_F1_FLAG
 	}
+	#endif
 	msleep(1);
 #if 1 // SDIO CLOCK SETTING
 	if ((feature.sdio_clock > 0) && (host->ios.timing != MMC_TIMING_UHS_DDR50)) {

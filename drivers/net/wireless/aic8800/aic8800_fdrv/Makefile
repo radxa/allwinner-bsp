@@ -64,6 +64,19 @@ CONFIG_WPA3_FOR_OLD_KERNEL ?= n
 CONFIG_SCHED_SCAN = n
 CONFIG_RX_NETIF_RECV_SKB = y
 CONFIG_OOB = n
+CONFIG_DPD = y
+CONFIG_FORCE_DPD_CALIB = y
+CONFIG_FILTER_TCP_ACK = y
+# CONFIG_MCC = n for sta and p2p concurrent in same channel.
+CONFIG_MCC = y
+CONFIG_ONE_TXQ = n
+CONFIG_PREALLOC_TXQ = y
+CONFIG_APF = y
+CONFIG_PREALLOC_RX_SKB = n
+CONFIG_FOR_IPCAM = y
+
+# Enable wifi-hal Latency Mode
+CONFIG_AICWF_LATENCY_MODE = n
 
 # Support of MU-MIMO transmission (need FW support)
 ifeq ($(CONFIG_RWNX_BFMER), y)
@@ -107,7 +120,9 @@ aic8800_fdrv-y := \
 	rwnx_v7.o              \
 	ipc_host.o             \
 	rwnx_tdls.o            \
-	aic_vendor.o
+	aic_vendor.o           \
+	aicwf_8800dc.o         \
+	aicwf_8800d80.o        \
 
 aic8800_fdrv-$(CONFIG_RWNX_RADAR)       += rwnx_radar.o
 aic8800_fdrv-$(CONFIG_DEBUG_FS)         += rwnx_debugfs.o
@@ -117,7 +132,9 @@ aic8800_fdrv-$(CONFIG_RWNX_BFMER)       += rwnx_bfmer.o
 aic8800_fdrv-$(CONFIG_RWNX_MUMIMO_TX)   += rwnx_mu_group.o
 aic8800_fdrv-$(CONFIG_SDIO_SUPPORT)     += sdio_host.o
 aic8800_fdrv-$(CONFIG_SDIO_SUPPORT)     += aicwf_txrxif.o
+aic8800_fdrv-$(CONFIG_FILTER_TCP_ACK)   += aicwf_tcp_ack.o
 aic8800_fdrv-$(CONFIG_SDIO_SUPPORT)     += aicwf_sdio.o
+aic8800_fdrv-$(CONFIG_PREALLOC_RX_SKB)  += aicwf_rx_prealloc.o
 
 aic8800_fdrv-$(CONFIG_USB_SUPPORT)     += usb_host.o
 aic8800_fdrv-$(CONFIG_USB_SUPPORT)     += aicwf_txrxif.o
@@ -126,6 +143,8 @@ aic8800_fdrv-$(CONFIG_USB_SUPPORT)     += aicwf_usb.o
 aic8800_fdrv-$(CONFIG_PCIE_SUPPORT)    += rwnx_pci.o
 
 ccflags-y += -Wno-implicit-fallthrough
+ccflags-y += -Wno-frame-larger-than
+
 ccflags-$(CONFIG_DEBUG_FS) += -DCONFIG_RWNX_DEBUGFS
 ccflags-$(CONFIG_DEBUG_FS) += -DCONFIG_RWNX_UM_HELPER_DFLT=\"$(CONFIG_RWNX_UM_HELPER_DFLT)\"
 ccflags-$(CONFIG_RWNX_P2P_DEBUGFS) += -DCONFIG_RWNX_P2P_DEBUGFS
@@ -137,13 +156,8 @@ endif
 
 # FW VARS
 ccflags-y += -DNX_VIRT_DEV_MAX=4
-ifeq ($(CONFIG_USB_SUPPORT),y)
-ccflags-y += -DNX_REMOTE_STA_MAX=8
-ccflags-y += -DNX_REMOTE_STA_MAX_FOR_OLD_IC=8
-else
 ccflags-y += -DNX_REMOTE_STA_MAX_FOR_OLD_IC=10
 ccflags-y += -DNX_REMOTE_STA_MAX=32
-endif
 ccflags-y += -DNX_MU_GROUP_MAX=62
 ccflags-y += -DNX_TXDESC_CNT=64
 ccflags-y += -DNX_TX_MAX_RATES=4
@@ -184,6 +198,16 @@ ccflags-$(CONFIG_WPA3_FOR_OLD_KERNEL) += -DCONFIG_WPA3_FOR_OLD_KERNEL
 ccflags-$(CONFIG_SCHED_SCAN) += -DCONFIG_SCHED_SCAN
 ccflags-$(CONFIG_RX_NETIF_RECV_SKB) += -DCONFIG_RX_NETIF_RECV_SKB
 ccflags-$(CONFIG_OOB) += -DCONFIG_OOB
+ccflags-$(CONFIG_AICWF_LATENCY_MODE) += -DAICWF_LATENCY_MODE
+ccflags-$(CONFIG_DPD) += -DCONFIG_DPD
+ccflags-$(CONFIG_FORCE_DPD_CALIB) += -DCONFIG_FORCE_DPD_CALIB -DCONFIG_DPD
+ccflags-$(CONFIG_FILTER_TCP_ACK) += -DCONFIG_FILTER_TCP_ACK
+ccflags-$(CONFIG_MCC) += -DCONFIG_MCC
+ccflags-$(CONFIG_ONE_TXQ)  += -DCONFIG_ONE_TXQ
+ccflags-$(CONFIG_PREALLOC_TXQ) += -DCONFIG_PREALLOC_TXQ
+ccflags-$(CONFIG_APF) += -DCONFIG_APF
+ccflags-$(CONFIG_PREALLOC_RX_SKB) += -DCONFIG_PREALLOC_RX_SKB
+ccflags-$(CONFIG_FOR_IPCAM) += -DCONFIG_FOR_IPCAM
 
 ccflags-$(CONFIG_AIC_BSP_CTRL) += -DAICWF_BSP_CTRL
 ccflags-$(CONFIG_SDIO_SUPPORT) += -DAICWF_SDIO_SUPPORT

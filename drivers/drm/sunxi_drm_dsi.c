@@ -38,6 +38,7 @@
 #else
 #include <drm/drm_dsc.h>
 #endif
+#include "sunxi-sid.h"
 #include "sunxi_drm_drv.h"
 #include "sunxi_device/sunxi_tcon.h"
 #include "sunxi_drm_intf.h"
@@ -116,9 +117,10 @@ struct sunxi_drm_dsi {
 	unsigned long hs_clk_rate;
 	unsigned long ls_clk_rate;
 	bool displl_clk;
+	unsigned int pll_ss_permille;
+
 	struct esd_sw_wd *esd_wdt;
 	struct gpio_desc *te_gpio;
-
 	int te_irq;
 	struct workqueue_struct *panel_wq;
 	struct work_struct panel_work;
@@ -479,11 +481,23 @@ static irqreturn_t sunxi_dsi_irq_event_proc(int irq, void *parg)
 {
 	struct sunxi_drm_dsi *dsi = parg;
 	struct disp_video_timings *timings = &dsi->dsi_para.timings;
+	struct disp_video_timings timing_t;
 	u32 dsi_line = 0;
 	static u32 a;
 
 	if (dsi_irq_query(&dsi->dsi_lcd, DSI_IRQ_VIDEO_LINE)) {
-		sunxi_dsi_vrr_irq(&dsi->dsi_lcd, timings, false);
+		if (sunxi_get_soc_ver() == 0)
+			sunxi_dsi_vrr_irq(&dsi->dsi_lcd, timings, false);
+		else {
+			dsi_line = dsi_get_real_cur_line(&dsi->dsi_lcd);
+			dsi_get_timing(&dsi->dsi_lcd, &timing_t);
+			if (dsi_line >= 1 && dsi_line < (timing_t.ver_sync_time - 5)) {
+				sunxi_tcon_vfp_vrr_set(dsi->sdrm.tcon_dev, timings);
+				sunxi_dsi_updata_vt_2(&dsi->dsi_lcd, timings);
+				DRM_INFO("[DSI-VRR] dsi_line:%d okkkk\n", dsi_line);
+			} else
+				DRM_WARN("[DSI-VRR] dsi_line:%d errrr\n", dsi_line);
+		}
 
 		return IRQ_HANDLED;
 	}
@@ -628,7 +642,7 @@ static void dsi_timing_setup(struct sunxi_drm_dsi *dsi, struct disp_video_timing
 		DRM_ERROR("One or more PPS parameters exceeded their allowed bit depth.");
 }
 
-static int sunxi_drm_dsi_set_vfp(struct device *dev)
+static int sunxi_drm_dsi_set_vbp(struct device *dev)
 {
 	struct sunxi_drm_dsi *dsi = dev_get_drvdata(dev);
 	struct disp_video_timings *timings = &dsi->dsi_para.timings;
@@ -692,13 +706,15 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 	if (dsi->slave || (dsi->dsi_para.mode_flags & MIPI_DSI_SLAVE_MODE))
 		disp_cfg.slave_dsi = true;
 
-	disp_cfg.set_dsi_vfp = sunxi_drm_dsi_set_vfp;
+	disp_cfg.set_dsi_vbp = sunxi_drm_dsi_set_vbp;
 	disp_cfg.get_dsi_line = sunxi_drm_dsi_get_line;
 	if (dsi->enable) {
-		disp_cfg.set_dsi_vfp = sunxi_drm_dsi_set_vfp;
-		if (disp_cfg.slave_dsi)
-			sunxi_tcon_vrr_set(dsi->sdrm.tcon_dev, &disp_cfg);
-		else
+		if (disp_cfg.slave_dsi) {
+			if (sunxi_get_soc_ver() == 0)
+				sunxi_tcon_vrr_set(dsi->sdrm.tcon_dev, &disp_cfg);
+			else
+				sunxi_dsi_vfp_vrr_irq(&dsi->dsi_lcd, &dsi->dsi_para.timings);
+		} else
 			sunxi_dsi_vrr_irq(&dsi->dsi_lcd, &dsi->dsi_para.timings, true);
 		DRM_DEBUG_KMS("[DSI-VRR] set mode: " DRM_MODE_FMT "\n", DRM_MODE_ARG(&dsi->mode));
 		return;
@@ -714,7 +730,7 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 	sunxi_tcon_mode_init(dsi->sdrm.tcon_dev, &disp_cfg);
 
 	/* dual dsi use tcon's irq, single dsi use its own irq */
-	if (!disp_cfg.slave_dsi) {
+	if (!disp_cfg.slave_dsi || (sunxi_get_soc_ver() != 0 && dsi->dsc)) {
 		dsi->irq_handler = sunxi_crtc_event_proc;
 		dsi->irq_data = scrtc_state->base.crtc;
 		ret = devm_request_irq(dsi->dev, dsi->irq_no, sunxi_dsi_irq_event_proc,
@@ -786,6 +802,8 @@ void sunxi_drm_dsi_encoder_atomic_enable(struct drm_encoder *encoder,
 		drm_panel_prepare(dsi->sdrm.panel);
 
 		sunxi_dsi_displl_enable(dsi);
+		if (dsi->pll_ss_permille)
+			phy_set_speed(dsi->phy, dsi->pll_ss_permille);
 
 		ret = sunxi_dsi_enable_output(dsi);
 		if (ret < 0)
@@ -840,10 +858,9 @@ void sunxi_drm_dsi_encoder_atomic_disable(struct drm_encoder *encoder,
 		esd_watchdog_stop(dsi->esd_wdt);
 	drm_panel_disable(dsi->sdrm.panel);
 
-	sunxi_dsi_displl_disable(dsi);
-
 	drm_panel_unprepare(dsi->sdrm.panel);
 
+	sunxi_dsi_displl_disable(dsi);
 	if (dsi->phy) {
 		phy_power_off(dsi->phy);
 	}
@@ -862,7 +879,8 @@ void sunxi_drm_dsi_encoder_atomic_disable(struct drm_encoder *encoder,
 	sunxi_dsi_disable_output(dsi);
 	sunxi_tcon_mode_exit(dsi->sdrm.tcon_dev);
 
-	if (!(dsi->slave || (dsi->dsi_para.mode_flags & MIPI_DSI_SLAVE_MODE)))
+	if (!(dsi->slave || (dsi->dsi_para.mode_flags & MIPI_DSI_SLAVE_MODE)) ||
+			(sunxi_get_soc_ver() != 0 && dsi->dsc))
 		devm_free_irq(dsi->dev, dsi->irq_no, dsi);
 
 	dsi->enable = false;
@@ -1373,6 +1391,7 @@ static int sunxi_drm_dsi_host_attach(struct mipi_dsi_host *host,
 	dsi->dsi_para.hs_rate = device->hs_rate;
 	dsi->dsi_para.lp_rate = device->lp_rate;
 	dsi->dsi_para.vrr_setp = dsi_panel->vrr_setp;
+	dsi->pll_ss_permille = dsi_panel->pll_ss_permille;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 	if (device->dsc)
 		dsi->dsc = device->dsc;

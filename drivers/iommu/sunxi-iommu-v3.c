@@ -1766,9 +1766,6 @@ static int sunxi_iommu_probe(struct platform_device *pdev)
 		goto err_clk;
 	}
 
-	if (dev->parent)
-		pm_runtime_enable(dev);
-
 	sunxi_iommu_sysfs_create(pdev, sunxi_iommu);
 	ret = iommu_device_sysfs_add(&sunxi_iommu->iommu, dev, NULL,
 				     dev_name(dev));

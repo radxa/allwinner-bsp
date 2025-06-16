@@ -22,8 +22,15 @@
 
 /* #include "g2d_bsp_v2.h" */
 
+extern __u32 dbg_info;
 #define G2D_DBG(format, args...) \
-	sunxi_debug(NULL, "[G2D]: " format, ## args)
+	do { \
+		if (dbg_info == 1) { \
+			sunxi_info(NULL, "[G2D]: " format, ## args); \
+		} else { \
+			sunxi_debug(NULL, "[G2D]: " format, ## args); \
+		} \
+	} while (0)
 #define G2D_ERR(format, args...) \
 	sunxi_err(NULL, "[G2D]: " format, ## args)
 #define G2D_WARN(format, args...) \
@@ -73,7 +80,15 @@ typedef struct {
 	struct clk *clk_parent;
 	struct clk *bus_clk;
 	struct clk *mbus_clk;
+	struct clk *hb_clk;
+	struct clk *ahb_clk;
+	struct clk *ahb_de_clk;
+	struct clk *vo_clk;
+	struct clk *mbus_vo_clk;
+	struct clk *mbus_desys_clk;
 	struct reset_control *reset;
+	struct reset_control *vo_reset;
+	struct reset_control *desys_reset;
 } __g2d_info_t;
 
 typedef struct {
@@ -120,13 +135,25 @@ struct g2d_format_attr {
 	unsigned int div;
 };
 
+struct g2d_time_info {
+	struct timespec64 time_start;
+	struct timespec64 time_end;
+	__u32 waiting_runtime;
+	__u32 para_config_runtime;
+	__u32 dma_map_start;
+	__u32 dma_map_end;
+	__u32 dma_unmap_start;
+	__u32 dma_unmap_end;
+	__u32 hardware_process_runtime;
+	__u32 total_runtime;
+};
 
 int g2d_wait_cmd_finish(unsigned int timeout);
 int g2d_dma_map(int fd, struct dmabuf_item *item);
 void g2d_dma_unmap(struct dmabuf_item *item);
 __s32 g2d_set_info(g2d_image_enh *g2d_img, struct dmabuf_item *item);
 void *g2d_malloc(__u32 bytes_num, __u32 *phy_addr);
-void g2d_free(void *virt_addr, void *phy_addr, unsigned int size);
+void g2d_free(void *virt_addr, uintptr_t phy_addr, unsigned int size);
 __s32 g2d_image_check(g2d_image_enh *p_image);
 __s32 g2d_byte_cal(__u32 format, __u32 *ycnt, __u32 *ucnt, __u32 *vcnt);
 __u32 cal_align(__u32 width, __u32 align);

@@ -265,4 +265,8 @@ config SENSOR_RK628F
 	tristate "use rk628f driver"
 	default n
 
+config SENSOR_PTN
+	tristate "use ptn driver"
+	default n
+
 endmenu

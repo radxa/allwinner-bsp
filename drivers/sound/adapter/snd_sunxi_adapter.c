@@ -76,6 +76,18 @@ int snd_sunxi_card_jack_new(struct snd_soc_card *card, const char *id, int type,
 			    struct snd_soc_jack *jack)
 {
 	int ret;
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_PULSEAUDIO)
+	struct snd_soc_jack_pin sunxi_jack_pin_switchs[] = {
+		{
+			.pin = "HP",
+			.mask = SND_JACK_HEADPHONE,
+		},
+		{
+			.pin = "HS MIC",
+			.mask = SND_JACK_MICROPHONE,
+		},
+	};
+#endif
 
 	mutex_init(&jack->mutex);
 	jack->card = card;
@@ -92,6 +104,14 @@ int snd_sunxi_card_jack_new(struct snd_soc_card *card, const char *id, int type,
 	default:
 		SND_LOGDEV_ERR(card->dev, "ASoC: error on %s: %d\n", card->name, ret);
 	}
+
+#if IS_ENABLED(CONFIG_SND_SOC_SUNXI_PULSEAUDIO)
+	ret = snd_soc_jack_add_pins(jack, ARRAY_SIZE(sunxi_jack_pin_switchs), sunxi_jack_pin_switchs);
+	if (ret) {
+		SND_LOG_ERR("snd_soc_jack_add_pins failed\n");
+		return ret;
+	}
+#endif
 
 	return ret;
 }

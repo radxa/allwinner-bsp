@@ -40,7 +40,7 @@
 #define AICBT_RELEASE_NAME "202012_ANDROID"
 #define VERSION            "2.1.0"
 #define DRV_RELEASE_DATE   "20220429"
-#define DRV_PATCH_LEVEL    "001"
+#define DRV_PATCH_LEVEL    "002"
 #define DRV_RELEASE_TAG    "aic-btusb-" DRV_RELEASE_DATE "-" DRV_PATCH_LEVEL
 
 #define SUSPNED_DW_FW 0
@@ -1168,7 +1168,11 @@ failed:
 static long compat_btchr_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	AICBT_DBG("%s: enter", __func__);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
 	return btchr_ioctl(filp, cmd, (unsigned long) compat_ptr(arg));
+#else
+	return btchr_ioctl(filp, cmd, (unsigned long __user)arg);
+#endif
 }
 #endif
 

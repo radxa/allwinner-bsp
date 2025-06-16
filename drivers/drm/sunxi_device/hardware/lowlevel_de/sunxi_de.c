@@ -807,6 +807,7 @@ static int rtmx_start(struct sunxi_display_engine *engine, unsigned int id, unsi
 	cfg.pixel_mode = pixel_mode;
 	cfg.w = w;
 	cfg.h = h;
+	cfg.interlaced = hwde->output_info.interlaced;
 	cfg.device_index = hwdev_index;
 	cfg.rcq_header_addr = use_rcq ? (unsigned long)rcq_info->phy_addr : 0;
 	cfg.rcq_header_byte = use_rcq ? rcq_info->block_num_aligned * sizeof(*(rcq_info->vir_addr)) : 0;

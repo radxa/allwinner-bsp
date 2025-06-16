@@ -2750,10 +2750,10 @@ static irqreturn_t isp_isr(int irq, void *priv)
 
 	if (bsp_isp_get_irq_status(isp->id, PARA_LOAD_PD)) {
 		bsp_isp_clr_irq_status(isp->id, PARA_LOAD_PD);
-		if (isp->ptn_type) {
-			spin_unlock_irqrestore(&isp->slock, flags);
-			return IRQ_HANDLED;
-		}
+		// if (isp->ptn_type) {
+		// 	spin_unlock_irqrestore(&isp->slock, flags);
+		// 	return IRQ_HANDLED;
+		// }
 		bsp_isp_set_para_ready(isp->id, PARA_NOT_READY);
 		if (isp->load_flag)
 			memcpy(isp->isp_load.vir_addr, &isp->load_shadow[0], ISP_LOAD_DRAM_SIZE);
@@ -2790,6 +2790,13 @@ static irqreturn_t isp_isr(int irq, void *priv)
 		isp_3d_pingpong_update(isp);
 #endif
 		bsp_isp_set_para_ready(isp->id, PARA_READY);
+		if (isp->ptn_cfg && isp->ptn_cfg->ptn_en) {
+			if (isp->ptn_cfg->ptn_type)
+				csic_ptn_addr(0, (unsigned long)(isp->ptn_cfg->ptn_buf.dma_addr + (isp->ptn_isp_cnt % isp->ptn_cfg->ptn_cnt) * isp->ptn_cfg->ptn_size));
+			if (isp->ptn_isp_cnt > 0)
+				csic_ptn_generation_en(0, 1);
+			isp->ptn_isp_cnt++;
+		}
 	}
 	spin_unlock_irqrestore(&isp->slock, flags);
 
@@ -3112,6 +3119,14 @@ static irqreturn_t isp_isr(int irq, void *priv)
 		}
 
 		bsp_isp_set_para_ready(isp->id, PARA_READY);
+		if (isp->ptn_cfg && isp->ptn_cfg->ptn_en) {
+			printk("isp ptn_cfg->ptn_en work!!\n");
+			if (isp->ptn_cfg->ptn_type)
+				csic_ptn_addr(0, (unsigned long)(isp->ptn_cfg->ptn_buf.dma_addr + (isp->ptn_isp_cnt % isp->ptn_cfg->ptn_cnt) * isp->ptn_cfg->ptn_size));
+			if (glb_isp[isp->id/ISP_VIRT_NUM]->work_mode == ISP_OFFLINE || isp->ptn_isp_cnt > 0)
+				csic_ptn_generation_en(0, 1);
+			isp->ptn_isp_cnt++;
+		}
 	}
 	spin_unlock_irqrestore(&isp->slock, flags);
 

@@ -252,6 +252,8 @@ static int sunxi_scaler_subdev_get_selection(struct v4l2_subdev *sd,
 	format_source = &scaler->formats[SCALER_PAD_SOURCE];
 
 	switch (sel->target) {
+	case V4L2_SEL_TGT_COMPOSE:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
 	case V4L2_SEL_TGT_CROP_BOUNDS:
 		sel->r.left = 0;
 		sel->r.top = 0;

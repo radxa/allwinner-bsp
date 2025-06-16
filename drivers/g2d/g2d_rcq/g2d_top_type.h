@@ -36,6 +36,14 @@ union g2d_hclk_gate {
 	} bits;
 };
 
+union g2d_mclk_gate {
+	unsigned int dwval;
+	struct {
+		unsigned int mclk_gate:1;
+		unsigned int res0:31;
+	} bits;
+};
+
 union g2d_ahb_reset {
 	unsigned int dwval;
 	struct {
@@ -116,7 +124,9 @@ struct g2d_top_reg {
 	union g2d_sclk_div sclk_div;
 	/* 0x10 */
 	union g2d_version version;
-	unsigned int res0[3];
+	unsigned int res0;
+	union g2d_mclk_gate mclk_gate;
+	unsigned int res1;
 	/* 0x20 */
 	union g2d_rcq_irq_ctl rcq_irq_ctl;
 	union g2d_rcq_status rcq_status;

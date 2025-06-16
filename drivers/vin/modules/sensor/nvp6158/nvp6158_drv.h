@@ -11,7 +11,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#include <media/sunxi_camera_v2.h>
+#include <uapi/media/sunxi_camera_v2.h>
 
 u32 gpio_i2c_write(u8 da, u8 reg, u8 val);
 u32 gpio_i2c_read(u8 da, u8 reg);

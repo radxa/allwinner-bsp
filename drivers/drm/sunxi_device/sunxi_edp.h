@@ -441,6 +441,7 @@ struct edp_tx_core {
 	u32 controller_mode;
 	bool interlace;
 	bool sync_clock;
+	bool force_level;
 	struct edp_lane_para lane_para;
 	struct edp_lane_para debug_lane_para;
 	struct edp_lane_para backup_lane_para;

@@ -45,6 +45,13 @@ struct csic_version {
 	unsigned int ver_small;
 };
 
+enum ptn_port_sel {
+	NCSIC1 = 0x3,
+	NCSIC2 = 0x4,
+	NCSIC3 = 0x5,
+	COMBO = 0x6,
+};
+
 enum  csic_mulp_cs {
 	CSIC_MULF_DMA0_CS = 0x1,
 	CSIC_MULF_DMA1_CS = 0x2,
@@ -139,7 +146,7 @@ void csic_mulp_int_disable(unsigned int sel, enum csis_mulp_int interrupt);
 void csic_mulp_int_get_status(unsigned int sel, struct cisc_mulp_int_status *status);
 void csic_mulp_int_clear_status(unsigned int sel, enum csis_mulp_int interrupt);
 void csic_ptn_generation_en(unsigned int sel, unsigned int en);
-void csic_ptn_control(unsigned int sel, int mode, int dw, int port);
+void csic_ptn_control(unsigned int sel, int mode, int dw, enum ptn_port_sel port, int gen_dly);
 void csic_ptn_length(unsigned int sel, unsigned int len);
 void csic_ptn_addr(unsigned int sel, unsigned long dma_addr);
 void csic_ptn_size(unsigned int sel, unsigned int w, unsigned int h);

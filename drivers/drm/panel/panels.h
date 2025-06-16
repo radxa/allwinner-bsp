@@ -23,6 +23,7 @@ struct panel_dsi {
 	const struct panel_desc *desc;
 	unsigned int bus_format;
 	unsigned int vrr_setp;
+	unsigned int pll_ss_permille;
 
 	unsigned int power_num;
 	unsigned int gpio_num;

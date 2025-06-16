@@ -48,6 +48,12 @@ static struct ve_dvfs_pair ve_dvfs[] = {
 	{0x11, "opp-vf0101", "opp-hz-0", "opp-microvolt-0"},
 	{0x02, "opp-vf0200", "opp-hz-0", "opp-microvolt-0"},
 	{0x12, "opp-vf0201", "opp-hz-0", "opp-microvolt-0"},
+	{0x03, "opp-vf0300", "opp-hz-0", "opp-microvolt-0"},
+	{0x04, "opp-vf0400", "opp-hz-0", "opp-microvolt-0"},
+	{0x05, "opp-vf0500", "opp-hz-0", "opp-microvolt-0"},
+	{0x06, "opp-vf0600", "opp-hz-0", "opp-microvolt-0"},
+	{0x14, "opp-vf0401", "opp-hz-0", "opp-microvolt-0"},
+	{0x15, "opp-vf0501", "opp-hz-0", "opp-microvolt-0"},
 };
 
 enum VE_DVFS_LEVEL {

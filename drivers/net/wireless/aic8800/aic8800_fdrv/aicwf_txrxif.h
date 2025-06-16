@@ -12,6 +12,9 @@
 #include <linux/skbuff.h>
 #include <linux/sched.h>
 #include "ipc_shared.h"
+#ifdef CONFIG_PREALLOC_RX_SKB
+#include "aicwf_rx_prealloc.h"
+#endif
 #ifdef AICWF_SDIO_SUPPORT
 #include "aicwf_sdio.h"
 #else
@@ -34,10 +37,12 @@
 #define DEBUG_INFO_LEVEL            2
 
 #define DBG_LEVEL                   DEBUG_DEBUG_LEVEL
+extern int aicwf_intf_dbg_level;
 
 #define txrx_err(fmt, ...)          pr_err("txrx_err:<%s,%d>: " fmt, __func__, __LINE__, ##__VA_ARGS__)
 #define sdio_err(fmt, ...)          pr_err("sdio_err:<%s,%d>: " fmt, __func__, __LINE__, ##__VA_ARGS__)
 #define usb_err(fmt, ...)           pr_err("usb_err:<%s,%d>: " fmt, __func__, __LINE__, ##__VA_ARGS__)
+#if 0
 #if DBG_LEVEL >= DEBUG_DEBUG_LEVEL
 #define txrx_dbg(fmt, ...)          printk("txrx: " fmt, ##__VA_ARGS__)
 #define sdio_dbg(fmt, ...)          printk("aicsdio: " fmt, ##__VA_ARGS__)
@@ -55,6 +60,49 @@
 #define txrx_info(fmt, ...)
 #define sdio_info(fmt, ...)
 #define usb_info(fmt, ...)
+#endif
+#else
+#define txrx_dbg(fmt, args...) \
+	do { \
+		if (aicwf_intf_dbg_level >= DEBUG_DEBUG_LEVEL) { \
+			pr_debug("txrx_dbg: " fmt, ##args); \
+		} \
+	} while (0)
+
+#define sdio_dbg(fmt, args...) \
+	do { \
+		if (aicwf_intf_dbg_level >= DEBUG_DEBUG_LEVEL) { \
+			pr_debug("sdio_dbg: " fmt, ##args); \
+		} \
+	} while (0)
+
+#define usb_dbg(fmt, args...) \
+	do { \
+		if (aicwf_intf_dbg_level >= DEBUG_DEBUG_LEVEL) { \
+			pr_debug("usb_dbg: " fmt, ##args); \
+		} \
+	} while (0)
+
+#define txrx_info(fmt, args...) \
+	do { \
+		if (aicwf_intf_dbg_level >= DEBUG_INFO_LEVEL) { \
+			pr_info("txrx_info: " fmt, ##args); \
+		} \
+	} while (0)
+
+#define sdio_info(fmt, args...) \
+	do { \
+		if (aicwf_intf_dbg_level >= DEBUG_INFO_LEVEL) { \
+			pr_info("sdio_info: " fmt, ##args); \
+		} \
+	} while (0)
+
+#define usb_info(fmt, args...) \
+	do { \
+		if (aicwf_intf_dbg_level >= DEBUG_INFO_LEVEL) { \
+			pr_info("usb_info: " fmt, ##args); \
+		} \
+	} while (0)
 #endif
 
 enum aicwf_bus_state {
@@ -76,6 +124,14 @@ struct frame_queue {
 	u16              qcnt;
 	struct sk_buff_head queuelist[8];
 };
+
+#ifdef CONFIG_PREALLOC_RX_SKB
+struct rx_frame_queue {
+	u16              qmax;      /* max number of queued frames */
+	u16              qcnt;
+	struct list_head queuelist;
+};
+#endif
 
 struct aicwf_bus {
 	union {
@@ -176,7 +232,11 @@ struct aicwf_rx_priv {
 	atomic_t rx_cnt;
 	u32 data_len;
 	spinlock_t rxqlock;
+#ifdef CONFIG_PREALLOC_RX_SKB
+	struct rx_frame_queue rxq;
+#else
 	struct frame_queue rxq;
+#endif
 
 #ifdef AICWF_RX_REORDER
 	spinlock_t freeq_lock;
@@ -189,6 +249,9 @@ struct aicwf_rx_priv {
 	unsigned long rx_data_len;
 	ktime_t rxtimebegin;
 	ktime_t rxtimeend;
+#ifdef CONFIG_PREALLOC_RX_SKB
+	spinlock_t rxbuff_lock;
+#endif
 };
 
 static inline int aicwf_bus_start(struct aicwf_bus *bus)
@@ -239,5 +302,13 @@ void aicwf_frame_tx(void *dev, struct sk_buff *skb);
 void aicwf_dev_skb_free(struct sk_buff *skb);
 struct sk_buff *aicwf_frame_dequeue(struct frame_queue *pq);
 struct sk_buff *aicwf_frame_queue_peek_tail(struct frame_queue *pq, int *prio_out);
+#ifdef CONFIG_PREALLOC_RX_SKB
+void rxbuff_queue_flush(struct aicwf_rx_priv* rx_priv);
+void aicwf_rxframe_queue_init_2(struct rx_frame_queue *pq, int max_len);
+void rxbuff_free(struct rx_buff *rxbuff);
+struct rx_buff *rxbuff_dequeue(struct rx_frame_queue *pq);
+bool aicwf_rxbuff_enqueue(struct device *dev, struct rx_frame_queue *rxq, struct rx_buff *pkt);
+extern struct aicwf_rx_buff_list aic_rx_buff_list;
+#endif
 
 #endif /* _AICWF_TXRXIF_H_ */

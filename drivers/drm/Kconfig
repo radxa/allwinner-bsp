@@ -28,6 +28,14 @@ config AW_DRM_TCON
 	help
 		If you want use TCON, select it.
 
+config AW_DRM_BOOT_COLORBAR
+	int "Boot which Colorbar when Kernel Boot."
+	depends on AW_DRM_TCON
+	default 0
+	range 0 7
+	help
+		If you need Colobar in kernel boot, select it.
+
 config AW_DRM_TCON_TV
 	bool "Support Timing Controller(TCON_TV)"
 	depends on AW_DRM

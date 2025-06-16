@@ -16,7 +16,7 @@
 #include <linux/module.h>
 #include "aic_bsp_export.h"
 
-#define RWNX_CMD_TIMEOUT_MS         3000//500//300
+#define RWNX_CMD_TIMEOUT_MS         6000//500//300
 
 #define RWNX_CMD_FLAG_NONBLOCK      BIT(0)
 #define RWNX_CMD_FLAG_REQ_CFM       BIT(1)
@@ -191,6 +191,31 @@ enum dbg_msg_tag {
 	DBG_BINDING_REQ,
 	DBG_BINDING_CFM,
 	DBG_BINDING_IND,
+
+	DBG_CUSTOM_MSG_REQ,
+	DBG_CUSTOM_MSG_CFM,
+	DBG_CUSTOM_MSG_IND,
+
+	DBG_GPIO_WRITE_REQ,
+	DBG_GPIO_WRITE_CFM,
+	DBG_GPIO_READ_REQ,
+	DBG_GPIO_READ_CFM,
+	DBG_GPIO_INIT_REQ,
+	DBG_GPIO_INIT_CFM,
+
+	/// EF usrdata read request
+	DBG_EF_USRDATA_READ_REQ,
+	/// EF usrdata read confirm
+	DBG_EF_USRDATA_READ_CFM,
+	/// Memory block read request
+	DBG_MEM_BLOCK_READ_REQ,
+	/// Memory block read confirm
+	DBG_MEM_BLOCK_READ_CFM,
+
+	DBG_PWM_INIT_REQ,
+	DBG_PWM_INIT_CFM,
+	DBG_PWM_DEINIT_REQ,
+	DBG_PWM_DEINIT_CFM,
 
 	/// Max number of Debug messages
 	DBG_MAX,
@@ -385,6 +410,10 @@ enum aicdev_hw_feature {
 #define AIC_SDIO_V3_CLOCK           208000000U // 0: default, other: target clock rate
 #define AIC_SDIO_V3_PHASE           0x30       // 0: default
 
+#define FW_PATH_MAX_LEN 200
+
+typedef u32 (*array2_tbl_t)[2];
+typedef u32 (*array3_tbl_t)[3];
 
 struct aicbt_patch_table {
 	char     *name;
@@ -413,6 +442,9 @@ struct aicbt_patch_info_t {
 	uint32_t reset_val;
 	uint32_t adid_flag_addr;
 	uint32_t adid_flag;
+	uint32_t ext_patch_nb_addr;
+	uint32_t ext_patch_nb;
+	uint32_t *ext_patch_param;
 };
 
 struct aicbsp_firmware {
@@ -420,8 +452,10 @@ struct aicbsp_firmware {
 	const char *bt_adid;
 	const char *bt_patch;
 	const char *bt_table;
+	const char *bt_ext_patch;
 	const char *wl_fw;
 	const char *wl_table;
+	const char *wl_calib;
 };
 
 struct aicbsp_info_t {
@@ -434,6 +468,8 @@ struct aicbsp_info_t {
 	int32_t sdio_clock;
 	int32_t sdio_phase;
 	uint8_t btpcm;
+	int32_t btmode;
+	int32_t lpm_enable;
 };
 
 int aicbsp_8800d_fw_init(struct priv_dev *aicdev);
@@ -447,6 +483,10 @@ int aicbt_patch_table_free(struct aicbt_patch_table **head);
 struct aicbt_patch_table *aicbt_patch_table_alloc(const char *filename);
 int aicbt_patch_info_unpack(struct aicbt_patch_table *head, struct aicbt_patch_info_t *patch_info);
 int aicbt_patch_table_load(struct priv_dev *aicdev, struct aicbt_info_t *aicbt_info, struct aicbt_patch_table *head);
+int aicbt_ext_patch_data_load(struct priv_dev *aicdev, struct aicbt_patch_info_t *patch_info);
+
+int aicbsp_driver_btmode_reinit(struct aicbt_info_t *aicbt_info);
+int aicbsp_driver_lpm_enable_reinit(struct aicbt_info_t *aicbt_info);
 
 extern u8 binding_enc_data[16];
 extern bool need_binding_verify;

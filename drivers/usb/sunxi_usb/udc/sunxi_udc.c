@@ -1149,8 +1149,8 @@ static int dma_got_short_pkt(struct sunxi_udc_ep *ep, struct sunxi_udc_request *
 	if (!sunxi_udc_confirm_rx_ready())
 		return 0;
 
-	dma_bc = USBC_Readw(USBC_REG_DMA_BC(pchan->reg_base, pchan->channel_num));
-	dma_r_bc = USBC_Readw(USBC_REG_DMA_RESIDUAL_BC(pchan->reg_base, pchan->channel_num));
+	dma_bc = USBC_Readl(USBC_REG_DMA_BC(pchan->reg_base, pchan->channel_num));
+	dma_r_bc = USBC_Readl(USBC_REG_DMA_RESIDUAL_BC(pchan->reg_base, pchan->channel_num));
 	fifo_count = USBC_ReadLenFromFifo(g_sunxi_udc_io.usb_bsp_hdle, USBC_EP_TYPE_RX);
 
 	if (dma_r_bc == 0)

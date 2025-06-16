@@ -90,6 +90,10 @@
 /*use for wait dma des hold bit clear*/
 #define SUNXI_DES_CLR_WAIT_CNT (20000)
 
+/*use for cmdq recovert*/
+#define SUNXI_SUB_FREQ (50000000)
+#define SUNXI_SUB_FREQ_MAX (100000000)
+
 /* whether can fix read data timeout problem */
 #define SUNXI_RDTO_OPERATION(host, data)	\
 	((host->ctl_spec_cap & SUNXI_MANUAL_READ_DATA_TIMEOUT)	\
@@ -1201,14 +1205,22 @@ static int sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
 
 out:
 #if IS_ENABLED(CONFIG_AW_MMC_CQHCI) || IS_ENABLED(CONFIG_MMC_CQHCI)
-	/* only use sdr50, while cmdq failed */
+	/* while cmdq failed */
 	/* card will be NULL, because uhs-3 sd card may send the cmd48 */
 	if ((mrq->cmd->opcode == MMC_CMDQ_TASK_MGMT) && (host->sunxi_caps3 & MMC_SUNXI_CQE_ON)) {
 		/*In the case of recovery, force entry through cmd48 error to
-		 * initialize recovery to sdr50*/
+		 * initialize recovery to sub 50M
+		 * eg, HS400 200M - HS400 150M - HS400 150M - SDR 50M */
 		mrq->cmd->error = -ETIMEDOUT;
-		if (card != NULL)
-			sunxi_mmc_select_timing(host->mmc, MMC_TIMING_MMC_HS);
+		if (card != NULL) {
+			if (host->mmc->ios.clock > SUNXI_SUB_FREQ_MAX) {
+				/* This function will be entered multiple times when an error occurs.
+				 * f_max only sub once before recovery */
+				if (host->mmc->f_max == host->mmc->ios.clock)
+					host->mmc->f_max -= SUNXI_SUB_FREQ;
+			} else
+				sunxi_mmc_select_timing(host->mmc, MMC_TIMING_MMC_HS);
+		}
 	}
 
 	if (host->rstr_nrml) {

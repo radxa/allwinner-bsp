@@ -11,7 +11,7 @@
  */
 
 #undef TRACE_SYSTEM
-#define TRACE_INCLUDE_PATH ./g2d_legacy/
+#define TRACE_INCLUDE_PATH .
 #define TRACE_SYSTEM g2d_trace
 
 #if !defined(_TRACE_G2D_H) || defined(TRACE_HEADER_MULTI_READ)

@@ -17,6 +17,7 @@
 
 #ifdef CONFIG_AIC_INTF_SDIO
 #define RAM_FMAC_FW_ADDR            0x00120000
+#define RAM_FMAC_FW_PATCH_ADDR      0x00190000
 #else
 #define RAM_FMAC_FW_ADDR            0x00110000
 #endif
@@ -180,7 +181,8 @@ static const struct aicbsp_firmware fw_u02[] = {
 		.bt_adid       = "fw_adid.bin",
 		.bt_patch      = "fw_patch.bin",
 		.bt_table      = "fw_patch_table.bin",
-		.wl_fw         = "fmacfw.bin"
+		.wl_fw         = "fmacfw.bin",
+		.wl_table      = "fmacfw_patch.bin"
 	},
 
 	[AICBSP_CPMODE_TEST] = {
@@ -198,7 +200,8 @@ static const struct aicbsp_firmware fw_u03[] = {
 		.bt_adid       = "fw_adid_u03.bin",
 		.bt_patch      = "fw_patch_u03.bin",
 		.bt_table      = "fw_patch_table_u03.bin",
-		.wl_fw         = "fmacfw.bin"
+		.wl_fw         = "fmacfw.bin",
+		.wl_table      = "fmacfw_patch.bin"
 	},
 
 	[AICBSP_CPMODE_TEST] = {
@@ -276,6 +279,9 @@ static int aicbt_init(struct priv_dev *aicdev)
 		printk("aicbt_patch_table_alloc fail\n");
 		return -1;
 	}
+
+	aicbsp_driver_btmode_reinit(&aicbt_info);
+	aicbsp_driver_lpm_enable_reinit(&aicbt_info);
 
 	ret = aicbt_patch_info_unpack(head, &patch_info);
 	if (ret) {
@@ -437,6 +443,15 @@ static int aicwifi_init(struct priv_dev *aicdev)
 		printk("download wifi fw fail\n");
 		return -1;
 	}
+
+#if defined(AICWF_SDIO_SUPPORT)
+	if (aicbsp_info.cpmode == AICBSP_CPMODE_WORK) {
+		if (rwnx_plat_bin_fw_upload_android(aicdev, RAM_FMAC_FW_PATCH_ADDR, aicbsp_firmware_list[aicbsp_info.cpmode].wl_table)) {
+			printk("download wifi fw patch fail\n");
+			return -1;
+		}
+	}
+#endif
 
 	if (aicwifi_patch_config(aicdev)) {
 		printk("aicwifi_patch_config fail\n");

@@ -557,16 +557,40 @@ typedef struct {
 #define GET_USB_INFO            _IOR('E', 180, int)
 
 /*  for altsettings*/
+#if IS_ENABLED(CONFIG_AW_MACADDR_MGT) || IS_ENABLED(CONFIG_SUNXI_ADDR_MGT)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+extern int get_custom_mac_address(int fmt, char *name, char *addr);
+#else
+extern int get_wifi_custom_mac_address(char *addr_str);
+#endif
+#else
 #include <linux/fs.h>
 #define BDADDR_FILE "/data/misc/bluetooth/bdaddr"
 #define FACTORY_BT_BDADDR_STORAGE_LEN 17
+#endif
 
 static inline int getmacaddr(uint8_t *vnd_local_bd_addr)
 {
+	uint8_t mac_addr[6] = { 0x10, 0x11, 0x12, 0x13, 0x14, 0x15};
+	int32_t i = 0;
+
+#if IS_ENABLED(CONFIG_AW_MACADDR_MGT) || IS_ENABLED(CONFIG_SUNXI_ADDR_MGT)
+	int ret = -1;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+	ret = get_custom_mac_address(1, "bt", mac_addr);
+#else
+	uint8_t addr_str[20];
+	ret = get_bt_custom_mac_address(addr_str);
+	if (ret >= 0) {
+		sscanf(addr_str, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+				&mac_addr[0], &mac_addr[1], &mac_addr[2],
+				&mac_addr[3], &mac_addr[4], &mac_addr[5]);
+	}
+#endif
+#else
 	struct file  *bdaddr_file;
 	mm_segment_t oldfs;
 	char buf[FACTORY_BT_BDADDR_STORAGE_LEN];
-	int32_t i = 0;
 	memset(buf, 0, FACTORY_BT_BDADDR_STORAGE_LEN);
 	bdaddr_file = filp_open(BDADDR_FILE, O_RDONLY, 0);
 	if (IS_ERR(bdaddr_file)) {
@@ -587,10 +611,14 @@ static inline int getmacaddr(uint8_t *vnd_local_bd_addr)
 				buf[3*i+1] -= ('a' - 'A'); //change  a to A
 			buf[3*i+1] -= ('A' - '9' - 1);
 		}
-		vnd_local_bd_addr[5-i] = ((uint8_t)buf[3*i] - '0') * 16 + ((uint8_t)buf[3*i+1] - '0');
+		mac_addr[i] = ((uint8_t)buf[3*i] - '0') * 16 + ((uint8_t)buf[3*i+1] - '0');
 	}
 	set_fs(oldfs);
 	filp_close(bdaddr_file, NULL);
+#endif
+
+	for (i = 0; i < 6; i++)
+		vnd_local_bd_addr[5 - i] = mac_addr[i];
 	return 0;
 }
 

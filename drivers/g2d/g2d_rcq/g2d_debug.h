@@ -19,7 +19,11 @@
 #define __G2D_DEBUG_H__
 #include "g2d_driver_i.h"
 
-void dump_bld_images_info(g2d_image_enh *src0_image, g2d_image_enh *src1_image,
-						  g2d_image_enh *dst_image);
+void dump_g2d_bld_info(const g2d_bld *g2d_bld_para);
+void dump_mixer_para_info(const mixer_para *mixer_paras);
+void dump_g2d_blt_h_info(const g2d_blt_h *g2d_blt_h_para);
+void dump_g2d_lbc_rot_info(const g2d_lbc_rot *g2d_lbc_rot_para);
+void dump_g2d_fillrect_h_info(const g2d_fillrect_h *g2d_fillrect_h_para);
+void dump_g2d_maskblt_info(const g2d_maskblt *g2d_maskblt_para);
 
 #endif  /* __G2D_DEBUG_H__ */

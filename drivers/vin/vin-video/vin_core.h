@@ -72,7 +72,10 @@ struct vin_ptn_cfg {
 	__u32 ptn_h;
 	__u32 ptn_mode;
 	__u32 ptn_dw;
+	__u32 ptn_gen_dly;
 	__u32 ptn_type;
+	__u32 ptn_size;
+	__u32 ptn_cnt;
 	struct vin_mm ptn_buf;
 };
 

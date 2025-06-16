@@ -9,8 +9,17 @@
 #include <linux/rtnetlink.h>
 #include <net/netlink.h>
 #include "rwnx_version_gen.h"
+#include "rwnx_msg_tx.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
+
+#ifdef CONFIG_APF
+#define AIC_APF_MEM_SIZE      2048
+#define AIC_APF_VERSION       4
+
+static char apfProgram[AIC_APF_MEM_SIZE];
+#endif
+
 static struct wifi_ring_buffer_status ring_buffer[] = {
 	{
 		.name            = "aicwf_ring_buffer0",
@@ -379,6 +388,8 @@ static int aicwf_vendor_subcmd_get_feature_set(struct wiphy *wiphy, struct wirel
 	/*bit 21:WiFi mkeep_alive*/
 	feature |= WIFI_FEATURE_MKEEP_ALIVE;
 
+	feature |= WIFI_FEATURE_SET_LATENCY_MODE;
+
 	if (nla_put_u32(reply, ANDR_WIFI_ATTRIBUTE_NUM_FEATURE_SET, feature)) {
 		wiphy_err(wiphy, "%s put u32 error\n", __func__);
 		goto out_put_fail;
@@ -575,14 +586,121 @@ out_put_fail:
 	return -EMSGSIZE;
 }
 
+#ifdef CONFIG_APF
 static int aicwf_vendor_apf_subcmd_get_capabilities(struct wiphy *wiphy, struct wireless_dev *wdev,
 	const void *data, int len)
 {
-	/* TODO
-	 * Add handle in the future
-	 */
-	return 0;
+	int ret;
+	struct sk_buff *reply;
+	uint32_t payload;
+	printk("%s\n", __func__);
+
+	/* APF_ATTRIBUTE_VERSION + APF_ATTRIBUTE_MAX_LEN */
+	payload = sizeof(u32) * 2;
+	reply = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, payload);
+
+	if (!reply)
+		return -ENOMEM;
+
+	if (nla_put_u32(reply, APF_ATTRIBUTE_VERSION, AIC_APF_VERSION))
+		goto out_put_fail;
+
+	if (nla_put_u32(reply, APF_ATTRIBUTE_MAX_LEN, AIC_APF_MEM_SIZE))
+		goto out_put_fail;
+
+	ret = cfg80211_vendor_cmd_reply(reply);
+	if (ret)
+		wiphy_err(wiphy, "reply cmd error\n");
+
+	return ret;
+
+out_put_fail:
+	kfree_skb(reply);
+	return -EMSGSIZE;
 }
+
+static int aicwf_vendor_apf_set_filter(struct wiphy *wiphy, struct wireless_dev *wdev,
+	const void *data, int len)
+{
+	int ret = 0, rem, type;
+	const struct nlattr *iter;
+	unsigned int mProgramLen = 0;
+	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+
+	printk("%s\n", __func__);
+
+	nla_for_each_attr(iter, data, len, rem) {
+		type = nla_type(iter);
+		switch (type) {
+		case APF_ATTRIBUTE_PROGRAM_LEN:
+			memcpy(&mProgramLen, nla_data(iter), sizeof(unsigned int));
+			ret = (mProgramLen > 0 && mProgramLen <= AIC_APF_MEM_SIZE) ? 0 : -EINVAL;
+			break;
+		case APF_ATTRIBUTE_PROGRAM:
+			if (mProgramLen > AIC_APF_MEM_SIZE || mProgramLen == 0) {
+				printk("%s: apf program size invalid: %d (should > 0 and <= %d)\n",
+						__func__, mProgramLen, AIC_APF_MEM_SIZE);
+				return -EINVAL;
+			}
+
+			memcpy(apfProgram, nla_data(iter), mProgramLen);
+			ret = rwnx_send_set_apf_prog_req(rwnx_hw, apfProgram, mProgramLen);
+			break;
+		default:
+			pr_err("%s(%d), Unknown type: %d\n", __func__, __LINE__, type);
+			return -EINVAL;
+		}
+	}
+
+	return ret;
+}
+
+static int aicwf_vendor_apf_read_filter_data(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void *data, int len)
+{
+	struct sk_buff *reply;
+	int ret, payload, apf_mem_size;
+	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+
+	printk("%s\n", __func__);
+
+	apf_mem_size = AIC_APF_MEM_SIZE;
+	payload = sizeof(u32) + apf_mem_size;
+
+	ret = rwnx_send_get_apf_prog_req(rwnx_hw, apfProgram, apf_mem_size);
+	if (ret != 0) {
+		pr_err("%s, Failed to read apf mem from firmware, ret = %d\n", __func__, ret);
+		return ret;
+	}
+
+	reply = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, payload);
+	if (!reply)
+		return -ENOMEM;
+
+	ret = nla_put_u32(reply, APF_ATTRIBUTE_PROGRAM_LEN, apf_mem_size);
+	if (ret < 0) {
+		pr_err("%s, Failed to put APF_ATTRIBUTE_MAX_LEN, ret = %d\n", __func__, ret);
+		goto out_put_fail;
+	}
+
+	/* copy the full apf mem */
+	ret = nla_put(reply, APF_ATTRIBUTE_PROGRAM, apf_mem_size, &apfProgram[0]);
+	if (ret < 0) {
+		pr_err("%s, Failed to put APF_ATTRIBUTE_PROGRAM, ret = %d\n", __func__, ret);
+		goto out_put_fail;
+	}
+
+	ret = cfg80211_vendor_cmd_reply(reply);
+	if (ret)
+		wiphy_err(wiphy, "reply cmd error\n");
+
+	return ret;
+
+out_put_fail:
+	kfree_skb(reply);
+	return -EMSGSIZE;
+}
+#endif
 
 static int aicwf_vendor_sub_cmd_set_mac(struct wiphy *wiphy, struct wireless_dev *wdev,
 	const void *data, int len)
@@ -612,6 +730,47 @@ static int aicwf_vendor_sub_cmd_set_mac(struct wiphy *wiphy, struct wireless_dev
 	return ret;
 }
 
+static int aicwf_vendor_subcmd_set_latency_mode(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void *data, int len)
+{
+	int err = 0, rem, type;
+	u32 latency_mode;
+	const struct nlattr *iter;
+#ifdef AICWF_LATENCY_MODE
+	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+#endif
+
+	nla_for_each_attr(iter, data, len, rem) {
+		type = nla_type(iter);
+		switch (type) {
+		case ANDR_WIFI_ATTRIBUTE_LATENCY_MODE:
+			latency_mode = nla_get_u32(iter);
+			printk("%s,Setting latency mode %d\n", __func__, latency_mode);
+#ifdef AICWF_LATENCY_MODE
+			#ifdef AICWF_SDIO_SUPPORT
+			if (latency_mode) {
+				rwnx_send_me_set_lp_level(rwnx_hw, 0, 1);
+			} else {
+				rwnx_send_me_set_lp_level(rwnx_hw, 1, 0);
+			}
+			#endif
+#endif
+			break;
+		default:
+			pr_err("%s(%d), Unknown type: %d\n", __func__, __LINE__, type);
+			return err;
+		}
+	}
+
+	return err;
+}
+
+static int aicwf_vendor_logger_start_pkt_fate_monitoring(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void *data, int len)
+{
+	return -3;  // WIFI_ERROR_NOT_SUPPORTED
+}
+
 static const struct nla_policy
 aicwf_cfg80211_mkeep_alive_policy[MKEEP_ALIVE_ATTRIBUTE_MAX+1] = {
 	[0] = {.type = NLA_UNSPEC },
@@ -637,6 +796,17 @@ aicwf_cfg80211_logger_policy[LOGGER_ATTRIBUTE_MAX + 1] = {
 	[LOGGER_ATTRIBUTE_RING_NAME] = { .type = NLA_STRING },
 };
 
+#ifdef CONFIG_APF
+static const struct nla_policy
+aicwf_cfg80211_apf_policy[APF_ATTRIBUTE_MAX + 1] = {
+	[0] = {.type = NLA_UNSPEC },
+	[APF_ATTRIBUTE_VERSION] = {.type = NLA_U32 },
+	[APF_ATTRIBUTE_MAX_LEN] = {.type = NLA_U32 },
+	[APF_ATTRIBUTE_PROGRAM] = { .type = NLA_BINARY },
+	[APF_ATTRIBUTE_PROGRAM_LEN] = { .type = NLA_U32 },
+};
+#endif
+
 static const struct nla_policy
 aicwf_cfg80211_subcmd_policy[GSCAN_ATTRIBUTE_MAX + 1] = {
 	[0] = {.type = NLA_UNSPEC },
@@ -647,6 +817,7 @@ static const struct nla_policy
 aicwf_cfg80211_andr_wifi_policy[ANDR_WIFI_ATTRIBUTE_MAX + 1] = {
 	[0] = {.type = NLA_UNSPEC },
 	[ANDR_WIFI_ATTRIBUTE_COUNTRY] = { .type = NLA_STRING },
+	[ANDR_WIFI_ATTRIBUTE_LATENCY_MODE] = { .type = NLA_U32, .len = sizeof(uint32_t) },
 };
 
 static const struct nla_policy
@@ -815,6 +986,7 @@ const struct wiphy_vendor_command aicwf_vendor_cmd[] = {
 		.policy = VENDOR_CMD_RAW_DATA,
 #endif
 	},
+#ifdef CONFIG_APF
 	{
 		{
 			.vendor_id = GOOGLE_OUI,
@@ -824,9 +996,35 @@ const struct wiphy_vendor_command aicwf_vendor_cmd[] = {
 		.doit = aicwf_vendor_apf_subcmd_get_capabilities,
 		.dumpit = aicwf_dump_interface,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
-		.policy = VENDOR_CMD_RAW_DATA,
+		.policy = aicwf_cfg80211_apf_policy,
+		.maxattr = APF_ATTRIBUTE_MAX,
 #endif
 	},
+	{
+		{
+			.vendor_id = GOOGLE_OUI,
+			.subcmd = APF_SUBCMD_SET_FILTER
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = aicwf_vendor_apf_set_filter,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+		.policy = aicwf_cfg80211_apf_policy,
+		.maxattr = APF_ATTRIBUTE_MAX,
+#endif
+	},
+	{
+		{
+			.vendor_id = GOOGLE_OUI,
+			.subcmd = APF_SUBCMD_READ_FILTER_DATA
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = aicwf_vendor_apf_read_filter_data,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
+		.policy = aicwf_cfg80211_apf_policy,
+		.maxattr = APF_ATTRIBUTE_MAX
+#endif /* LINUX_VERSION >= 5.3 */
+	},
+#endif
 	{
 		{
 			.vendor_id = GOOGLE_OUI,
@@ -851,6 +1049,29 @@ const struct wiphy_vendor_command aicwf_vendor_cmd[] = {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
 		.policy = aicwf_cfg80211_subcmd_set_mac_policy,
 		.maxattr = WIFI_VENDOR_ATTR_DRIVER_MAX,
+#endif
+	},
+	{
+		{
+			.vendor_id = GOOGLE_OUI,
+			.subcmd = WIFI_SUBCMD_SET_LATENCY_MODE
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = aicwf_vendor_subcmd_set_latency_mode,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
+		.policy = aicwf_cfg80211_andr_wifi_policy,
+		.maxattr = ANDR_WIFI_ATTRIBUTE_MAX
+#endif /* LINUX_VERSION >= 5.3 */
+	},
+	{
+		{
+			.vendor_id = GOOGLE_OUI,
+			.subcmd = LOGGER_START_PKT_FATE_MONITORING
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = aicwf_vendor_logger_start_pkt_fate_monitoring,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
+		.policy = VENDOR_CMD_RAW_DATA,
 #endif
 	},
 };

@@ -120,6 +120,8 @@ s32 tcon_lcd_src_select(struct sunxi_tcon_lcd *tcon, enum __lcd_src_t src);
 s32 tcon_lcd_src_get(struct sunxi_tcon_lcd *tcon);
 int sunxi_tcon_updata_vt(struct sunxi_tcon_lcd *tcon,
 		struct disp_video_timings *timings, u32 vrr_setp);
+int sunxi_tcon_updata_vt_2(struct sunxi_tcon_lcd *tcon,
+		struct disp_video_timings *timings);
 /**
  * @name       :tcon_fsync_set_pol
  * @brief      :set fsync's polarity

@@ -540,6 +540,74 @@ no_timer:
 }
 EXPORT_SYMBOL_GPL(sensor_set_ir);
 
+int sensor_ptn_init(struct v4l2_subdev *sd, struct vin_pattern_config *ptn)
+{
+	struct sensor_info *info = to_state(sd);
+	char in_fmt[10] = {'\0'};
+
+	info->win_pt->height = ptn->ptn_h;
+	info->win_pt->width = ptn->ptn_w;
+
+	switch (ptn->ptn_fmt) {
+	case V4L2_PIX_FMT_SBGGR8:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SBGGR8_1X8;
+		sprintf(in_fmt, "%s", "BGGR8");
+		break;
+	case V4L2_PIX_FMT_SGBRG8:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SGBRG8_1X8;
+		sprintf(in_fmt, "%s", "BGGR8");
+		break;
+	case V4L2_PIX_FMT_SGRBG8:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SGRBG8_1X8;
+		sprintf(in_fmt, "%s", "GBRG8");
+		break;
+	case V4L2_PIX_FMT_SRGGB8:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SRGGB8_1X8;
+		sprintf(in_fmt, "%s", "RGGB8");
+		break;
+	case V4L2_PIX_FMT_SBGGR10:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SBGGR10_1X10;
+		sprintf(in_fmt, "%s", "BGGR10");
+		break;
+	case V4L2_PIX_FMT_SGBRG10:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SGBRG10_1X10;
+		sprintf(in_fmt, "%s", "GBRG10");
+		break;
+	case V4L2_PIX_FMT_SGRBG10:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SGRBG10_1X10;
+		sprintf(in_fmt, "%s", "GRBG10");
+		break;
+	case V4L2_PIX_FMT_SRGGB10:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SRGGB10_1X10;
+		sprintf(in_fmt, "%s", "RGGB10");
+		break;
+	case V4L2_PIX_FMT_SBGGR12:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SBGGR12_1X12;
+		sprintf(in_fmt, "%s", "BGGR12");
+		break;
+	case V4L2_PIX_FMT_SGBRG12:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SGBRG12_1X12;
+		sprintf(in_fmt, "%s", "GBRG12");
+		break;
+	case V4L2_PIX_FMT_SGRBG12:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SGRBG12_1X12;
+		sprintf(in_fmt, "%s", "GRBG12");
+		break;
+	case V4L2_PIX_FMT_SRGGB12:
+		info->fmt_pt->mbus_code = MEDIA_BUS_FMT_SRGGB12_1X12;
+		sprintf(in_fmt, "%s", "RGGB12");
+		break;
+	default:
+		sprintf(in_fmt, "%s", "incorrect");
+		break;
+	}
+
+	vin_print("init size %dX%d, fmt is %s\n", info->win_pt->width, info->win_pt->height, in_fmt);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sensor_ptn_init);
+
 int sensor_enum_mbus_code(struct v4l2_subdev *sd,
 				struct v4l2_subdev_state *state,
 				struct v4l2_subdev_mbus_code_enum *code)

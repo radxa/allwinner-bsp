@@ -343,8 +343,8 @@ static int sensor_s_gain(struct v4l2_subdev *sd, int gain_val)
 
 static int imx319_sensor_vts;
 static int frame_length = 2688;
-static int expo_val_save = 2670 * 16;
-static int gain_val_save = 960;
+static int expo_val_save = 1540 * 16;
+static int gain_val_save = 480;
 static int sensor_s_exp_gain(struct v4l2_subdev *sd,
 				struct sensor_exp_gain *exp_gain)
 {
@@ -754,6 +754,15 @@ static int sensor_s_stream(struct v4l2_subdev *sd, int enable)
 	return sensor_reg_init(info);
 }
 
+static int imx319_g_pixelaspect(struct v4l2_subdev *sd, struct v4l2_fract *aspect)
+{
+
+	aspect->numerator = 4;
+	aspect->denominator = 3;
+
+	return 0;
+}
+
 /* ----------------------------------------------------------------------- */
 
 static const struct v4l2_ctrl_ops sensor_ctrl_ops = {
@@ -774,6 +783,7 @@ static const struct v4l2_subdev_core_ops sensor_core_ops = {
 
 static const struct v4l2_subdev_video_ops sensor_video_ops = {
 	.s_stream = sensor_s_stream,
+	.g_pixelaspect = imx319_g_pixelaspect,
 
 };
 

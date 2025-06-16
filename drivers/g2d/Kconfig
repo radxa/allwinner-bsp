@@ -8,32 +8,38 @@ config AW_G2D
 	default n
 	help
 	  Enable sunxi platform 2D Graphics engine
+
 choice
 	prompt "G2D driver version"
 	depends on AW_G2D
 
 config G2D_LEGACY
+	depends on AW_G2D
 	bool "legacy version"
 
 config G2D_RCQ
+	depends on AW_G2D
 	bool "RCQ version"
 
+config G2D200
+	depends on AW_G2D
+	bool "sunxi g2d200 version"
+
+endchoice
+
 config G2D_MIXER
-	depends on G2D_RCQ
+	depends on G2D_RCQ || G2D200
 	bool "sunxi g2d mixer module"
 	default y
 	help
 	  Choose Y to enable mixer module of g2d
 
 config G2D_ROTATE
-	depends on G2D_RCQ
+	depends on G2D_RCQ || G2D200
 	bool "sunxi g2d rotate module"
 	default y
 	help
 	  Choose Y to enable rotate module of g2d
-
-
-endchoice
 
 config G2D_SYNCFENCE
 	depends on AW_G2D
@@ -49,5 +55,12 @@ config G2D_USE_HWSPINLOCK
 	default n
 	help
 	  Choose Y to use hwspinlock by sunxi G2D
+
+config G2D_BUF_CACHED
+	depends on G2D_RCQ || G2D200
+	bool "Caching dma-buf mapping with LRU cache algorithm"
+	default n
+	help
+	  Choose Y to enable LRU cache for dma-buf mapping
 
 endmenu

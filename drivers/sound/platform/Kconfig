@@ -268,4 +268,10 @@ config SND_SOC_SUNXI_DYNAMIC_DEBUG
 	help
 	  Enable audio dynamic debug
 
+config SND_SOC_SUNXI_PULSEAUDIO
+	bool "Enable pulseaudio dedicated pins"
+	depends on SND_SOC_SUNXI_COMPONENTS
+	help
+	  Enable pulseaudio Headphone Jack and Headset Mic Jack.
+
 endmenu

@@ -205,6 +205,7 @@ __s32 g2d_bsp_open(void)
 	write_wvalue(G2D_SCLK_GATE, 0x3);
 	write_wvalue(G2D_HCLK_GATE, 0x3);
 	write_wvalue(G2D_AHB_RESET, 0x3);
+	write_wvalue(G2D_MCLK_GATE, 0x3);
 	return 0;
 }
 
@@ -213,6 +214,7 @@ __s32 g2d_bsp_close(void)
 	write_wvalue(G2D_AHB_RESET, 0x0);
 	write_wvalue(G2D_HCLK_GATE, 0x0);
 	write_wvalue(G2D_SCLK_GATE, 0x0);
+	write_wvalue(G2D_MCLK_GATE, 0x0);
 	return 0;
 }
 
@@ -2212,6 +2214,10 @@ __s32 g2d_bsp_bitblt(g2d_image_enh *src, g2d_image_enh *dst, __u32 flag)
 		write_wvalue(ROT_ILADD2, addr2 & 0xffffffff);
 		write_wvalue(ROT_IHADD2, (addr2 >> 32) & 0xff);
 
+		if (addr0 % 4 != 0 || addr1 % 4 != 0 || addr2 % 4 != 0) {
+			G2D_ERR("rotate input addr should be 4 bytes align\n");
+			return -1;
+		}
 		if (((flag & 0xf00) == G2D_ROT_90) | ((flag & 0xf00) ==
 							G2D_ROT_270)) {
 			dst->clip_rect.w = src->clip_rect.h;
@@ -2280,6 +2286,10 @@ __s32 g2d_bsp_bitblt(g2d_image_enh *src, g2d_image_enh *dst, __u32 flag)
 		pitch2 = cal_align(vcnt * cw, dst->align[2]);
 		write_wvalue(ROT_OPITCH2, pitch2);
 
+		if (pitch0 % 8 != 0 || pitch1 % 8 != 0 || pitch2 % 8 != 0) {
+			G2D_ERR("rotate output pitch should be 8 bytes align\n");
+			return -1;
+		}
 		G2D_INFO_MSG("ROT_OutPITCH: %d, %d, %d\n",
 				pitch0, pitch1, pitch2);
 		G2D_INFO_MSG("outClipRectX:  %d\n", dst->clip_rect.x);
@@ -2306,6 +2316,10 @@ __s32 g2d_bsp_bitblt(g2d_image_enh *src, g2d_image_enh *dst, __u32 flag)
 		G2D_INFO_MSG("DST_ADDR1: 0x%x\n", dst->laddr[1]);
 		G2D_INFO_MSG("DST_ADDR2: 0x%x\n", dst->laddr[2]);
 
+		if (addr0 % 4 != 0 || addr1 % 4 != 0 || addr2 % 4 != 0) {
+			G2D_ERR("rotate output addr should be 4 bytes align\n");
+			return -1;
+		}
 		/* start the module */
 		rot_irq_enable();
 		tmp = read_wvalue(ROT_CTL);

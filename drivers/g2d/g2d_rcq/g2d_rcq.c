@@ -38,7 +38,7 @@ void *g2d_top_reg_memory_alloc(__u32 size, void *phy_addr,
 	void *viraddr = NULL;
 	if (p_rcq_info->vir_addr) {
 
-		*(dma_addr_t *)phy_addr = (dma_addr_t)p_rcq_info->phy_addr +
+		*(dma_addr_t *)phy_addr = (dma_addr_t)(uintptr_t)p_rcq_info->phy_addr +
 					  p_rcq_info->rcq_byte_used;
 
 		viraddr =
@@ -53,12 +53,12 @@ void *g2d_top_reg_memory_alloc(__u32 size, void *phy_addr,
 				    p_rcq_info->rcq_reg_mem_size,
 				    p_rcq_info->rcq_byte_used);
 			viraddr = NULL;
-			*(dma_addr_t *)phy_addr = (dma_addr_t)NULL;
+			*(dma_addr_t *)phy_addr = (dma_addr_t)(uintptr_t)NULL;
 		}
 		return viraddr;
 	} else {
 		G2D_WARN("Null pointer\n");
-		*(dma_addr_t *)phy_addr = (dma_addr_t)NULL;
+		*(dma_addr_t *)phy_addr = (dma_addr_t)(uintptr_t)NULL;
 		return NULL;
 	}
 }
@@ -67,7 +67,7 @@ void g2d_top_mem_pool_free(struct g2d_rcq_mem_info *p_rcq_info)
 {
 	if (p_rcq_info && p_rcq_info->vir_addr) {
 		g2d_free((void *)p_rcq_info->vir_addr,
-			 (void *)p_rcq_info->phy_addr,
+			 (uintptr_t)p_rcq_info->phy_addr,
 			 p_rcq_info->rcq_reg_mem_size);
 	}
 }

@@ -880,8 +880,7 @@ static long sunxi_efuse_ioctl(struct file *file, unsigned int ioctl_num,
 		err = nfcr->ret;
 		if (!err) {
 			addr = (uintptr_t)nfcr->key_store.key_data;
-			if ((nfcr->key_store.offset >= 0) &&
-					(nfcr->key_store.offset < sunxi_sid_nonsec_max_offset)) {
+			if ((nfcr->key_store.offset >= 0)) {
 				if (copy_to_user(
 					(void __user *)addr,
 					(nfcr->temp_data),
@@ -890,16 +889,6 @@ static long sunxi_efuse_ioctl(struct file *file, unsigned int ioctl_num,
 					pr_err("copy_to_user: err:%d\n", err);
 					goto _out;
 				}
-			} else {
-				if (copy_to_user(
-					(void __user *)addr,
-					(nfcr->temp_data + nfcr->key_store.offset),
-					nfcr->key_store.len)) {
-					err = -EFAULT;
-					pr_err("copy_to_user: err:%d\n", err);
-					goto _out;
-				}
-
 			}
 		}
 		break;
@@ -1046,18 +1035,10 @@ static void sunxi_efuse_work(struct work_struct *data)
 		}
 #if IS_ENABLED(CONFIG_AW_SMC)
 		else {
-			fcpt->ret =
-				(((nfcr->key_store.offset +
-				   nfcr->key_store.len) >
-				  (arm_svc_efuse_read(
-					  virt_to_phys(
-						  (const volatile void *)
-							  fcpt->key_store.name),
-					  virt_to_phys(
-						  (const volatile void *)
-							  fcpt->temp_data)))) ?
-					 -1 :
-					 0);
+			uint64_t name_pa = virt_to_phys((const volatile void *)fcpt->key_store.name);
+			uint64_t data_pa = virt_to_phys((const volatile void *)fcpt->temp_data);
+			fcpt->ret = arm_svc_efuse_read(name_pa, data_pa);
+			fcpt->ret = (nfcr->key_store.len > fcpt->ret) ? -1 : 0;
 		}
 #endif
 		break;
@@ -1160,4 +1141,4 @@ module_exit(sunxi_sid_exit);
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("weidonghui <weidonghui@allwinnertech.com>");
 MODULE_DESCRIPTION("sunxi sid driver");
-MODULE_VERSION("1.3.2");
+MODULE_VERSION("1.3.3");

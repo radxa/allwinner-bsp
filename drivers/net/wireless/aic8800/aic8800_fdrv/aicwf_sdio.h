@@ -15,6 +15,9 @@
 #include <linux/ieee80211.h>
 #include <linux/semaphore.h>
 #include "rwnx_cmds.h"
+#ifdef CONFIG_PREALLOC_RX_SKB
+#include "aicwf_rx_prealloc.h"
+#endif
 #define AICWF_SDIO_NAME                 "aicwf_sdio"
 #define SDIOWIFI_FUNC_BLOCKSIZE         512
 
@@ -86,6 +89,7 @@ struct aic_sdio_reg {
 struct aic_sdio_dev {
 	struct rwnx_hw *rwnx_hw;
 	struct sdio_func *func;
+	struct sdio_func *func2;
 	struct device *dev;
 	struct aicwf_bus *bus_if;
 	struct rwnx_cmd_mgr cmd_mgr;
@@ -108,6 +112,9 @@ struct aic_sdio_dev {
 	atomic_t is_bus_suspend;
 };
 int aicwf_sdio_writeb(struct aic_sdio_dev *sdiodev, uint regaddr, u8 val);
+int aicwf_sdio_readb(struct aic_sdio_dev *sdiodev, uint regaddr, u8 *val);
+int aicwf_sdio_func2_readb(struct aic_sdio_dev *sdiodev, uint regaddr, u8 *val);
+int aicwf_sdio_func2_writeb(struct aic_sdio_dev *sdiodev, uint regaddr, u8 val);
 void aicwf_sdio_hal_irqhandler(struct sdio_func *func);
 
 #if defined(CONFIG_SDIO_PWRCTRL)
@@ -120,7 +127,11 @@ int aicwf_sdiov3_func_init(struct aic_sdio_dev *sdiodev);
 void aicwf_sdio_func_deinit(struct aic_sdio_dev *sdiodev);
 int aicwf_sdio_flow_ctrl(struct aic_sdio_dev *sdiodev);
 int aicwf_sdio_flow_ctrl_msg(struct aic_sdio_dev *sdiodev);
+#ifdef CONFIG_PREALLOC_RX_SKB
+int aicwf_sdio_recv_pkt(struct aic_sdio_dev *sdiodev, struct rx_buff *rxbbuf, u32 size);
+#else
 int aicwf_sdio_recv_pkt(struct aic_sdio_dev *sdiodev, struct sk_buff *skbbuf, u32 size);
+#endif
 int aicwf_sdio_send_pkt(struct aic_sdio_dev *sdiodev, u8 *buf, uint count);
 void *aicwf_sdio_bus_init(struct aic_sdio_dev *sdiodev);
 void aicwf_sdio_release(struct aic_sdio_dev *sdiodev);

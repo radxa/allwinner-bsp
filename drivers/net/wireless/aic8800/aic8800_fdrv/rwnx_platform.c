@@ -231,6 +231,7 @@ typedef struct {
 	txpwr_idx_conf_t txpwr_idx;
 	txpwr_lvl_conf_v2_t txpwr_lvl_v2;
 	txpwr_lvl_conf_v3_t txpwr_lvl_v3;
+	txpwr_lvl_adj_conf_t txpwr_lvl_adj;
 	txpwr_ofst_conf_t txpwr_ofst;
 	txpwr_ofst2x_conf_t txpwr_ofst2x;
 	xtal_cap_conf_t xtal_cap;
@@ -320,6 +321,11 @@ void get_userconfig_txpwr_lvl_v2(txpwr_lvl_conf_v2_t *txpwr_lvl_v2)
 void get_userconfig_txpwr_lvl_v3(txpwr_lvl_conf_v3_t *txpwr_lvl_v3)
 {
 	memcpy(txpwr_lvl_v3, &(nvram_info.txpwr_lvl_v3), sizeof(txpwr_lvl_conf_v3_t));
+}
+
+void get_userconfig_txpwr_lvl_adj(txpwr_lvl_adj_conf_t *txpwr_lvl_adj)
+{
+	memcpy(txpwr_lvl_adj, &(nvram_info.txpwr_lvl_adj), sizeof(txpwr_lvl_adj_conf_t));
 }
 
 void get_userconfig_txpwr_idx(txpwr_idx_conf_t *txpwr_idx)
@@ -477,6 +483,17 @@ static const struct parse_match_t parse_match_tab[] = {
 	{"lvl_11ax_mcs9_5g",      offsetof(nvram_info_t, txpwr_lvl_v3.pwrlvl_11ax_5g) + 9},
 	{"lvl_11ax_mcs10_5g",     offsetof(nvram_info_t, txpwr_lvl_v3.pwrlvl_11ax_5g) + 10},
 	{"lvl_11ax_mcs11_5g",     offsetof(nvram_info_t, txpwr_lvl_v3.pwrlvl_11ax_5g) + 11},
+
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.enable,                       "lvl_adj_enable"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_2g4[0],        "lvl_adj_2g4_chan_1_4"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_2g4[1],        "lvl_adj_2g4_chan_5_9"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_2g4[2],        "lvl_adj_2g4_chan_10_13"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_5g[0],         "lvl_adj_5g__chan_42"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_5g[1],         "lvl_adj_5g__chan_58"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_5g[2],         "lvl_adj_5g__chan_106"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_5g[3],         "lvl_adj_5g__chan_122"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_5g[4],         "lvl_adj_5g__chan_138"),
+	MATCH_NODE(nvram_info_t, txpwr_lvl_adj.pwrlvl_adj_tbl_5g[5],         "lvl_adj_5g__chan_155"),
 
 	MATCH_NODE(nvram_info_t, txpwr_ofst.enable,          "ofst_enable"),
 	MATCH_NODE(nvram_info_t, txpwr_ofst.chan_1_4,        "ofst_chan_1_4"),

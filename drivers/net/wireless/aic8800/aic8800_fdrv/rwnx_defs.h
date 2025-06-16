@@ -31,6 +31,9 @@
 #include "rwnx_cmds.h"
 #include "rwnx_gki.h"
 #include "aic_bsp_export.h"
+#ifdef CONFIG_FILTER_TCP_ACK
+#include "aicwf_tcp_ack.h"
+#endif
 
 #ifdef AICWF_SDIO_SUPPORT
 #include "aicwf_sdio.h"
@@ -454,6 +457,15 @@ enum rwnx_drv_connect_status {
 	RWNX_DRV_STATUS_DISCONNECTING,
 	RWNX_DRV_STATUS_CONNECTING,
 	RWNX_DRV_STATUS_CONNECTED,
+	RWNX_DRV_STATUS_ROAMING,
+};
+
+static const char *const s_conn_state[] = {
+	"RWNX_DRV_STATUS_DISCONNECTED",
+	"RWNX_DRV_STATUS_DISCONNECTING",
+	"RWNX_DRV_STATUS_CONNECTING",
+	"RWNX_DRV_STATUS_CONNECTED",
+	"RWNX_DRV_STATUS_ROAMING",
 };
 
 struct rwnx_hw {
@@ -478,6 +490,11 @@ struct rwnx_hw {
 	u8 cur_chanctx;
 
 	u8 monitor_vif; /* FW id of the monitor interface, RWNX_INVALID_VIF if no monitor vif at fw level */
+
+#ifdef CONFIG_FILTER_TCP_ACK
+	/* tcp ack management */
+	struct tcp_ack_manage ack_m;
+#endif
 
 	/* RoC Management */
 	struct rwnx_roc_elem *roc_elem;             /* Information provided by cfg80211 in its remain on channel request */
@@ -520,7 +537,12 @@ struct rwnx_hw {
 	struct rwnx_debugfs     debugfs;
 	struct rwnx_stats       stats;
 
+#ifdef CONFIG_PREALLOC_TXQ
+	struct rwnx_txq *txq;
+#else
 	struct rwnx_txq txq[NX_NB_TXQ];
+#endif
+
 	struct rwnx_hwq hwq[NX_TXQ_CNT];
 
 	u64 avail_idx_map;
@@ -606,5 +628,7 @@ static inline uint8_t master_vif_idx(struct rwnx_vif *vif)
 
 void rwnx_external_auth_enable(struct rwnx_vif *vif);
 void rwnx_external_auth_disable(struct rwnx_vif *vif);
+
+void rwnx_set_conn_state(atomic_t *drv_conn_state, int state);
 
 #endif /* _RWNX_DEFS_H_ */

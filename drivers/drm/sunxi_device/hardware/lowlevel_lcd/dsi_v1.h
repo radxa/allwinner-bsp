@@ -295,8 +295,10 @@ s32 dsi_mode_switch(struct sunxi_dsi_lcd *dsi, __u32 cmd_en, __u32 lp_en);
 s32 dsi_get_status(struct sunxi_dsi_lcd *dsi);
 s32 dsi_get_fifo_under_flow(struct sunxi_dsi_lcd *dsi);
 void sunxi_dsi_vrr_irq(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings, bool enable);
+void sunxi_dsi_vfp_vrr_irq(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings);
 int sunxi_dsi_updata_vt(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings,
 				u32 vrr_setp);
+int sunxi_dsi_updata_vt_2(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings);
 s32 dsc_set_reg_base(struct sunxi_dsi_lcd *dsi, uintptr_t base);
 void dsc_config_pps(struct sunxi_dsi_lcd *dsi, const struct drm_dsc_config *dsc_cfg);
 void dec_dsc_config(struct sunxi_dsi_lcd *dsi, struct disp_video_timings *timings);

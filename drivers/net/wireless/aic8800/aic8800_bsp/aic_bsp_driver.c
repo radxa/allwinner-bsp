@@ -636,24 +636,46 @@ err:
 
 int aicbt_patch_info_unpack(struct aicbt_patch_table *head, struct aicbt_patch_info_t *patch_info)
 {
-	struct aicbt_patch_table *p;
-	int ret = -1;
+	uint8_t *patch_info_array = (uint8_t*)patch_info;
+	int base_len = 0;
+	int memcpy_len = 0;
 
-	for (p = head; p != NULL; p = p->next) {
-		if (AICBT_PT_INF == p->type) {
-			patch_info->info_len = p->len;
-			if (patch_info->info_len > 0) {
-				memcpy(&patch_info->adid_addrinf, p->data, patch_info->info_len * sizeof(uint32_t) * 2);
-				ret = 0;
+	if (AICBT_PT_INF == head->type) {
+		base_len = ((offsetof(struct aicbt_patch_info_t, ext_patch_nb_addr) - offsetof(struct aicbt_patch_info_t, adid_addrinf))/sizeof(uint32_t))/2;
+		printk("%s head->len:%d base_len:%d \r\n", __func__, head->len, base_len);
+
+		if (head->len > base_len){
+			patch_info->info_len = base_len;
+			memcpy_len = patch_info->info_len + 1;//include ext patch nb
+		} else {
+			patch_info->info_len = head->len;
+			memcpy_len = patch_info->info_len;
+		}
+		printk("%s memcpy_len:%d \r\n", __func__, memcpy_len);
+
+		if (patch_info->info_len == 0)
+			return 0;
+
+		memcpy(((patch_info_array) + sizeof(patch_info->info_len)),
+			head->data,
+			memcpy_len * sizeof(uint32_t) * 2);
+		printk("%s adid_addrinf:%x addr_adid:%x \r\n", __func__,
+			((struct aicbt_patch_info_t *)patch_info_array)->adid_addrinf,
+			((struct aicbt_patch_info_t *)patch_info_array)->addr_adid);
+
+		if (patch_info->ext_patch_nb > 0){
+			int index = 0;
+			patch_info->ext_patch_param = (uint32_t *)(head->data + ((memcpy_len) * 2));
+
+			for(index = 0; index < patch_info->ext_patch_nb; index++){
+				printk("%s id:%x addr:%x \r\n", __func__,
+					*(patch_info->ext_patch_param + (index * 2)),
+					*(patch_info->ext_patch_param + (index * 2) + 1));
 			}
 		}
 
-		if (AICBT_PT_VER == p->type) {
-			printk("%s bt patch version: %s\n", __func__, (char *)p->data);
-		}
 	}
-
-	return ret;
+	return 0;
 }
 
 int aicbt_patch_table_load(struct priv_dev *aicdev, struct aicbt_info_t *aicbt_info, struct aicbt_patch_table *head)
@@ -681,6 +703,7 @@ int aicbt_patch_table_load(struct priv_dev *aicdev, struct aicbt_info_t *aicbt_i
 		}
 
 		if (AICBT_PT_VER == p->type) {
+			printk("aicbsp: bt patch version: %s\n", (char *)p->data);
 			continue;
 		}
 
@@ -694,6 +717,33 @@ int aicbt_patch_table_load(struct priv_dev *aicdev, struct aicbt_info_t *aicbt_i
 			udelay(500);
 	}
 	return 0;
+}
+
+int aicbt_ext_patch_data_load(struct priv_dev *aicdev, struct aicbt_patch_info_t *patch_info)
+{
+	int ret = 0;
+	uint32_t ext_patch_nb = patch_info->ext_patch_nb;
+	char ext_patch_file_name[50];
+	int index = 0;
+	uint32_t id = 0;
+	uint32_t addr = 0;
+
+	if (ext_patch_nb > 0) {
+		for (index = 0; index < patch_info->ext_patch_nb; index++) {
+			id = *(patch_info->ext_patch_param + (index * 2));
+			addr = *(patch_info->ext_patch_param + (index * 2) + 1);
+			memset(ext_patch_file_name, 0, sizeof(ext_patch_file_name));
+			sprintf(ext_patch_file_name,"%s%d.bin", aicbsp_firmware_list[aicbsp_info.cpmode].bt_ext_patch, id);
+			printk("%s ext_patch_file_name:%s ext_patch_id:%x ext_patch_addr:%x \r\n",
+					__func__, ext_patch_file_name, id, addr);
+
+			if (rwnx_plat_bin_fw_upload_android(aicdev, addr, ext_patch_file_name)) {
+				ret = -1;
+				break;
+			}
+		}
+	}
+	return ret;
 }
 
 int aicbsp_system_reboot(struct priv_dev *aicdev)
@@ -732,6 +782,26 @@ int aicbsp_driver_fw_init(struct priv_dev *aicdev)
 
 err:
 	pr_err("%s no matched chip found\n", __func__);
+	return -1;
+}
+
+int aicbsp_driver_btmode_reinit(struct aicbt_info_t *aicbt_info)
+{
+	if (aicbsp_info.btmode >=  AICBT_BTMODE_BT_ONLY_SW && aicbsp_info.btmode != aicbt_info->btmode) {
+		aicbt_info->btmode = aicbsp_info.btmode;
+		printk("Using Android solution btmode = 0x%x\n", aicbt_info->btmode);
+		return 0;
+	}
+	return -1;
+}
+
+int aicbsp_driver_lpm_enable_reinit(struct aicbt_info_t *aicbt_info)
+{
+	if (aicbsp_info.lpm_enable >=  0 && aicbsp_info.lpm_enable != aicbt_info->lpm_enable) {
+		aicbt_info->lpm_enable = aicbsp_info.lpm_enable;
+		printk("Using Android solution lpm_enable = 0x%x\n", aicbt_info->lpm_enable);
+		return 0;
+	}
 	return -1;
 }
 

@@ -651,6 +651,7 @@ static int panel_dsi_parse_dt(struct panel_dsi *dsi_panel)
 	}
 
 	of_property_read_u32(np, "dsc,vrr-setp", &dsi_panel->vrr_setp);
+	of_property_read_u32(np, "pll-ss-permille", &dsi_panel->pll_ss_permille);
 
 	return 0;
 }

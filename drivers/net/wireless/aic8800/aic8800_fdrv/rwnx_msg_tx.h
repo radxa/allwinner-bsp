@@ -80,7 +80,7 @@ int rwnx_send_me_rc_set_rate(struct rwnx_hw *rwnx_hw,
 							 u8 sta_idx,
 							 u16 rate_idx);
 int rwnx_send_me_set_ps_mode(struct rwnx_hw *rwnx_hw, u8 ps_mode);
-int rwnx_send_me_set_lp_level(struct rwnx_hw *rwnx_hw, u8 lp_level);
+int rwnx_send_me_set_lp_level(struct rwnx_hw *rwnx_hw, u8 lp_level, u8 disable_filter);
 int rwnx_send_sm_connect_req(struct rwnx_hw *rwnx_hw,
 							 struct rwnx_vif *rwnx_vif,
 							 struct cfg80211_connect_params *sme,
@@ -156,6 +156,7 @@ int rwnx_send_dbg_mem_block_write_req(struct rwnx_hw *rwnx_hw, u32 mem_addr,
 int rwnx_send_dbg_start_app_req(struct rwnx_hw *rwnx_hw, u32 boot_addr,
 								u32 boot_type);
 int rwnx_send_cfg_rssi_req(struct rwnx_hw *rwnx_hw, u8 vif_index, int rssi_thold, u32 rssi_hyst);
+int rwnx_send_disable_agg_req(struct rwnx_hw *rwnx_hw, u8_l agg_disable, u8_l agg_disable_rx, u8_l sta_idx);
 int rwnx_send_coex_req(struct rwnx_hw *rwnx_hw, u8_l disable_coexnull, u8_l enable_nullcts);
 int rwnx_send_get_sta_info_req(struct rwnx_hw *rwnx_hw, u8_l sta_idx, struct mm_get_sta_info_cfm *cfm);
 int rwnx_send_set_stack_start_req(struct rwnx_hw *rwnx_hw, u8_l on, u8_l efuse_valid, u8_l set_vendor_info,
@@ -163,8 +164,17 @@ int rwnx_send_set_stack_start_req(struct rwnx_hw *rwnx_hw, u8_l on, u8_l efuse_v
 int rwnx_send_txop_req(struct rwnx_hw *rwnx_hw, uint16_t *txop, u8_l long_nav_en, u8_l cfe_en);
 int rwnx_send_get_fw_version_req(struct rwnx_hw *rwnx_hw, struct mm_get_fw_version_cfm *cfm);
 int rwnx_send_txpwr_idx_req(struct rwnx_hw *rwnx_hw);
+int rwnx_send_txpwr_lvl_req(struct rwnx_hw *rwnx_hw);
+int rwnx_send_txpwr_lvl_v3_req(struct rwnx_hw *rwnx_hw);
+int rwnx_send_txpwr_lvl_adj_req(struct rwnx_hw *rwnx_hw);
 int rwnx_send_txpwr_ofst_req(struct rwnx_hw *rwnx_hw);
 int rwnx_send_txpwr_ofst2x_req(struct rwnx_hw *rwnx_hw);
+int rwnx_send_vendor_hwconfig_req(struct rwnx_hw *rwnx_hw, uint32_t hwconfig_id, int32_t *param, int32_t *param_out);
+#ifdef CONFIG_APF
+int rwnx_send_set_apf_prog_req(struct rwnx_hw *rwnx_hw, u8_l *program, u32_l program_len);
+int rwnx_send_get_apf_prog_req(struct rwnx_hw *rwnx_hw, u8_l *program, u32_l program_len);
+#endif
+
 #ifdef CONFIG_USB_BT
 int rwnx_send_reboot(struct rwnx_hw *rwnx_hw);
 #endif // CONFIG_USB_BT

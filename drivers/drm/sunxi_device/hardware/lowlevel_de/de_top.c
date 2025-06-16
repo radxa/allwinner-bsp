@@ -116,6 +116,7 @@ struct de_top_desc {
 	 * when it is greater than 0, it is a valid data segment.
 	 */
 	u32 de_cur_line;
+	bool filed_reverse;
 	/* compatible ops */
 	enum de_irq_state (*query_state_with_clear)(struct de_top_handle *hdl,
 			    u32 disp, enum de_irq_state irq_state);
@@ -259,6 +260,7 @@ static struct de_top_desc de355 = {
 	.display_config = de_top_display_config_v2,
 	.check_finish = de_top_check_display_rcq_update_finish_with_clear,
 	.set_chn2core_mux = de_top_set_chn2core_mux_v2,
+	.filed_reverse = true,
 };
 
 static struct de_top_desc de352 = {
@@ -294,6 +296,7 @@ static struct de_top_desc de352 = {
 	.display_config = de_top_display_config_v2,
 	.check_finish = de_top_check_display_rcq_update_finish_with_clear,
 	.set_chn2core_mux = de_top_set_chn2core_mux_v2,
+	.filed_reverse = true,
 };
 
 static struct de_top_desc de210 = {
@@ -725,6 +728,23 @@ set_enable:
 	return 0;
 }
 
+static int de_top_set_filed_reverse(struct de_top_handle *hdl, u32 disp, u32 interlaced)
+{
+	u8 __iomem *de_base = hdl->cinfo.de_reg_base;
+	u32 offset = hdl->private->dsc->glb_ctl_offset;
+	u8 __iomem *reg_base = de_base + DE_REG_OFFSET(offset, disp, 0x40);
+	u32 reg_val;
+	u32 shift = 9;
+
+	if (hdl->private->dsc->filed_reverse) {
+		reg_val = readl(reg_base);
+		reg_val = SET_BITS(shift, 1, reg_val, interlaced);
+		writel(reg_val, reg_base);
+	}
+
+	return 0;
+}
+
 static int de_top_set_out_size(struct de_top_handle *hdl, u32 disp, u32 width, u32 height)
 {
 	u8 __iomem *de_base = hdl->cinfo.de_reg_base;
@@ -839,6 +859,8 @@ static int de_top_display_config_v2(struct de_top_handle *hdl, const struct de_t
 		return 0;
 	de_top_set_out_size(hdl, id, cfg->w, cfg->h);
 	de_top_set_pixel_mode(hdl, id, cfg->pixel_mode);
+	if ((cfg->device_index == 3) || (cfg->device_index == 4))
+		de_top_set_filed_reverse(hdl, id, cfg->interlaced);
 	de_top_set_de2tcon_mux(hdl, id, cfg->device_index);
 	de_top_set_rcq_head(hdl, id, cfg->rcq_header_addr, cfg->rcq_header_byte);
 	return 0;

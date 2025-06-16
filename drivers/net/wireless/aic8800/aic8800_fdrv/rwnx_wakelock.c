@@ -52,6 +52,19 @@ void rwnx_wakeup_lock_timeout(struct wakeup_source *ws, unsigned int msec)
 	__pm_wakeup_event(ws, msec);
 }
 
+int aicwf_wakeup_lock_status(struct rwnx_hw *rwnx_hw)
+{
+	if (rwnx_hw->ws_tx && rwnx_hw->ws_tx->active)
+		return -1;
+	if (rwnx_hw->ws_rx && rwnx_hw->ws_rx->active)
+		return -1;
+	if (rwnx_hw->ws_pwrctrl && rwnx_hw->ws_pwrctrl->active)
+		return -1;
+	if (rwnx_hw->ws_irqrx && rwnx_hw->ws_irqrx->active)
+		return -1;
+	return 0;
+}
+
 void aicwf_wakeup_lock_init(struct rwnx_hw *rwnx_hw)
 {
 	rwnx_hw->ws_tx = rwnx_wakeup_init("rwnx_tx_wakelock");

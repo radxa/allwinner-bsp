@@ -19,6 +19,7 @@
 #include <linux/types.h>
 
 void g2d_top_set_base(unsigned long base);
+__u32 g2d_ip_version(void);
 __u32 g2d_top_get_rcq_frame_cnt(void);
 __s32 g2d_top_rcq_cfg_irq_query(void);
 __s32 g2d_top_rcq_task_irq_query(void);

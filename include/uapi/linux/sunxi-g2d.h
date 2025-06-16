@@ -25,7 +25,7 @@
 #include <linux/ioctl.h>
 
 
-/* data format */
+/* g2d data format for interface 2.0 */
 typedef enum {
 	G2D_FORMAT_ARGB8888,
 	G2D_FORMAT_ABGR8888,
@@ -47,10 +47,14 @@ typedef enum {
 	G2D_FORMAT_ABGR1555,
 	G2D_FORMAT_RGBA5551,
 	G2D_FORMAT_BGRA5551,
-	G2D_FORMAT_ARGB2101010,
+	G2D_FORMAT_ARGB2101010 = 0x14,
 	G2D_FORMAT_ABGR2101010,
 	G2D_FORMAT_RGBA1010102,
 	G2D_FORMAT_BGRA1010102,
+	G2D_FORMAT_ARGB8685 = 0x18,
+	G2D_FORMAT_ABGR8565,
+	G2D_FORMAT_RGBA5658,
+	G2D_FORMAT_BGRA5658,
 
 	/* invailed for UI channel */
 	G2D_FORMAT_IYUV422_V0Y1U0Y0 = 0x20,
@@ -72,16 +76,25 @@ typedef enum {
 
 	G2D_FORMAT_Y8 = 0x30,
 
-	/* YUV 10bit format */
+	/* YUV 10bit format , only for rotate/flip*/
+	G2D_FORMAT_YUV444UVC_V1U1V0U0 = 0x31, /* NV24 */
+	G2D_FORMAT_YUV444UVC_U1V1U0V0 = 0x32, /* NV42 */
+	G2D_FORMAT_YUV444_PLANAR = 0x33, /* I444 Y...U...V... */
 	G2D_FORMAT_YVU10_P010 = 0x34,
+	G2D_FORMAT_YUV444_PACKED = 0x35, /* V1U1Y1V0U0Y0 */
 
 	G2D_FORMAT_YVU10_P210 = 0x36,
 
 	G2D_FORMAT_YVU10_444 = 0x38,
 	G2D_FORMAT_YUV10_444 = 0x39,
-	G2D_FORMAT_MAX,
+
+	/* YUV444 format, only for g2d200-mixer */
+	G2D_FORMAT_YVU444_PLANAR = 0x40, /* YV24 Y...V...U... */
+
+	G2D_FORMAT_MAX = 0xff,
 } g2d_fmt_enh;
-/* mixer data format */
+
+/* g2d data format for interface 1.0 */
 typedef enum {
 	/* share data format */
 	G2D_FMT_ARGB_AYUV8888	= (0x0),
@@ -107,61 +120,61 @@ typedef enum {
 	G2D_FMT_RGB565			= (0x10),
 	G2D_FMT_BGR565			= (0x11),
 
-	G2D_FMT_IYUV422			= (0x12),
+	G2D_FMT_IYUV422			= (0x12),	/* Interleaved YUV422 */
 
-	G2D_FMT_8BPP_MONO		= (0x13),
-	G2D_FMT_4BPP_MONO		= (0x14),
-	G2D_FMT_2BPP_MONO		= (0x15),
-	G2D_FMT_1BPP_MONO		= (0x16),
+	G2D_FMT_8BPP_MONO		= (0x13),	/* 8bit per pixel mono */
+	G2D_FMT_4BPP_MONO		= (0x14),	/* 4bit per pixel mono */
+	G2D_FMT_2BPP_MONO		= (0x15),	/* 2bit per pixel mono */
+	G2D_FMT_1BPP_MONO		= (0x16),	/* 1bit per pixel mono */
 
-	G2D_FMT_PYUV422UVC		= (0x17),
-	G2D_FMT_PYUV420UVC		= (0x18),
-	G2D_FMT_PYUV411UVC		= (0x19),
+	G2D_FMT_PYUV422UVC		= (0x17),	/* Planar UV combined only */
+	G2D_FMT_PYUV420UVC		= (0x18),	/* Planar UV combined only */
+	G2D_FMT_PYUV411UVC		= (0x19),	/* Planar UV combined only */
 
 	/* just for output format */
-	G2D_FMT_PYUV422			= (0x1A),
-	G2D_FMT_PYUV420			= (0x1B),
-	G2D_FMT_PYUV411			= (0x1C),
+	G2D_FMT_PYUV422			= (0x1A),	/* Planar YUV422 */
+	G2D_FMT_PYUV420			= (0x1B),	/* Planar YUV422 */
+	G2D_FMT_PYUV411			= (0x1C),	/* Planar YUV422 */
 
 	/* just for input format */
-	G2D_FMT_8BPP_PALETTE	= (0x1D),
-	G2D_FMT_4BPP_PALETTE	= (0x1E),
-	G2D_FMT_2BPP_PALETTE	= (0x1F),
-	G2D_FMT_1BPP_PALETTE	= (0x20),
+	G2D_FMT_8BPP_PALETTE	= (0x1D),	/* 8bit per pixel palette only for input */
+	G2D_FMT_4BPP_PALETTE	= (0x1E),	/* 4bit per pixel palette only for input */
+	G2D_FMT_2BPP_PALETTE	= (0x1F),	/* 2bit per pixel palette only for input */
+	G2D_FMT_1BPP_PALETTE	= (0x20),	/* 1bit per pixel palette only for input */
 
-	G2D_FMT_PYUV422UVC_MB16	= (0x21),
-	G2D_FMT_PYUV420UVC_MB16	= (0x22),
-	G2D_FMT_PYUV411UVC_MB16	= (0x23),
-	G2D_FMT_PYUV422UVC_MB32	= (0x24),
-	G2D_FMT_PYUV420UVC_MB32	= (0x25),
-	G2D_FMT_PYUV411UVC_MB32	= (0x26),
-	G2D_FMT_PYUV422UVC_MB64	= (0x27),
-	G2D_FMT_PYUV420UVC_MB64	= (0x28),
-	G2D_FMT_PYUV411UVC_MB64	= (0x29),
-	G2D_FMT_PYUV422UVC_MB128 = (0x2A),
-	G2D_FMT_PYUV420UVC_MB128 = (0x2B),
-	G2D_FMT_PYUV411UVC_MB128 = (0x2C),
+	G2D_FMT_PYUV422UVC_MB16	= (0x21),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV420UVC_MB16	= (0x22),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV411UVC_MB16	= (0x23),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV422UVC_MB32	= (0x24),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV420UVC_MB32	= (0x25),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV411UVC_MB32	= (0x26),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV422UVC_MB64	= (0x27),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV420UVC_MB64	= (0x28),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV411UVC_MB64	= (0x29),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV422UVC_MB128 = (0x2A),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV420UVC_MB128 = (0x2B),	/* 16x16 tile base planar uv combined only for input */
+	G2D_FMT_PYUV411UVC_MB128 = (0x2C),	/* 16x16 tile base planar uv combined only for input */
 
 } g2d_data_fmt;
 
 /* pixel sequence in double word */
 typedef enum {
-	G2D_SEQ_NORMAL = 0x0,
+	G2D_SEQ_NORMAL = 0x0,	/* normal sequence */
 
 	/* for interleaved yuv422 */
-	G2D_SEQ_VYUY   = 0x1,
-	G2D_SEQ_YVYU   = 0x2,
+	G2D_SEQ_VYUY   = 0x1,	/* pixel 0 is in the low 16 bits */
+	G2D_SEQ_YVYU   = 0x2,	/* pixel 1 is in the low 16 bits */
 
 	/* for uv_combined yuv420 */
-	G2D_SEQ_VUVU   = 0x3,
+	G2D_SEQ_VUVU   = 0x3,	/* Planar VU combined only */
 
 	/* for 16bpp rgb */
 	G2D_SEQ_P10    = 0x4,
 	G2D_SEQ_P01    = 0x5,
 
 	/* planar format or 8bpp rgb */
-	G2D_SEQ_P3210  = 0x6,
-	G2D_SEQ_P0123  = 0x7,
+	G2D_SEQ_P3210  = 0x6,	/* pixel 0 is in the low 8 bits */
+	G2D_SEQ_P0123  = 0x7,	/* pixel 1 is in the low 8 bits */
 
 	/* for 4bpp rgb */
 	G2D_SEQ_P76543210  = 0x8,			/* 7,6,5,4,3,2,1,0 */
@@ -202,25 +215,30 @@ typedef enum {
 	G2D_SEQ_1BPP_LITTER_LITTER = 0x13,
 } g2d_pixel_seq;
 
-/*  */
 typedef enum {
-	G2D_BLT_NONE_H = 0x0,
-	G2D_BLT_BLACKNESS,
-	G2D_BLT_NOTMERGEPEN,
-	G2D_BLT_MASKNOTPEN,
-	G2D_BLT_NOTCOPYPEN,
-	G2D_BLT_MASKPENNOT,
-	G2D_BLT_NOT,
-	G2D_BLT_XORPEN,
-	G2D_BLT_NOTMASKPEN,
-	G2D_BLT_MASKPEN,
-	G2D_BLT_NOTXORPEN,
-	G2D_BLT_NOP,
-	G2D_BLT_MERGENOTPEN,
-	G2D_BLT_COPYPEN,
-	G2D_BLT_MERGEPENNOT,
-	G2D_BLT_MERGEPEN,
-	G2D_BLT_WHITENESS,
+	G2D_BLT_NONE_H = 0x0,	/* single source operation */
+	/* rop2 */
+	/* Fill the target rectangular area with the color associated with index 0 of the physical color palette.
+	 * For the default physical color palette, this color is black. */
+	G2D_BLT_BLACKNESS,	/* blackness */
+	G2D_BLT_NOTMERGEPEN,	/* dst = ~(dst + src) */
+	G2D_BLT_MASKNOTPEN,	/* dst = ~src & dst */
+	G2D_BLT_NOTCOPYPEN,	/* dst = ~src */
+	G2D_BLT_MASKPENNOT,	/* dst = src & ~dst */
+	G2D_BLT_NOT,	/* dst = ~dst */
+	G2D_BLT_XORPEN,	/* dst = src ^ dst */
+	G2D_BLT_NOTMASKPEN,	/* dst = ~(src & dst) */
+	G2D_BLT_MASKPEN,	/* dst = src & dst */
+	G2D_BLT_NOTXORPEN,	/* dst = ~(src ^ dst) */
+	G2D_BLT_NOP,	/* dst = dst */
+	G2D_BLT_MERGENOTPEN,	/* dst = ~src + dst */
+	G2D_BLT_COPYPEN,	/* dst = src */
+	G2D_BLT_MERGEPENNOT,	/* dst = src + ~dst */
+	G2D_BLT_MERGEPEN,	/* dst = src + dst */
+	G2D_BLT_WHITENESS,	/* whiteness */
+
+	/* Fill the target rectangular area with the color associated with index 0 of the physical color palette.
+	 * For the default physical color palette, this color is white. */
 	G2D_BLT_EXTRACT = 0x000000ff,
 
 	G2D_ROT_90  = 0x00000100,
@@ -229,6 +247,8 @@ typedef enum {
 	G2D_ROT_0   = 0x00000400,
 	G2D_ROT_H = 0x00001000,
 	G2D_ROT_V = 0x00002000,
+	G2D_ROT_90_H  = 0x00001100,
+	G2D_ROT_90_V  = 0x00002100,
 
 /*	G2D_SM_TDLR_1  =    0x10000000, */
 	G2D_SM_DTLR_1 = 0x10000000,
@@ -238,46 +258,47 @@ typedef enum {
 
 /* ROP3 command */
 typedef enum {
-	G2D_ROP3_BLACKNESS = 0x00,
-	G2D_ROP3_NOTSRCERASE = 0x11,
-	G2D_ROP3_NOTSRCCOPY = 0x33,
-	G2D_ROP3_SRCERASE = 0x44,
-	G2D_ROP3_DSTINVERT = 0x55,
-	G2D_ROP3_PATINVERT = 0x5A,
-	G2D_ROP3_SRCINVERT = 0x66,
-	G2D_ROP3_SRCAND = 0x88,
-	G2D_ROP3_MERGEPAINT = 0xBB,
-	G2D_ROP3_MERGECOPY = 0xC0,
-	G2D_ROP3_SRCCOPY = 0xCC,
-	G2D_ROP3_SRCPAINT = 0xEE,
-	G2D_ROP3_PATCOPY = 0xF0,
-	G2D_ROP3_PATPAINT = 0xFB,
-	G2D_ROP3_WHITENESS = 0xFF,
+	G2D_ROP3_BLACKNESS = 0x00,	/* dst = BLACK */
+	G2D_ROP3_NOTSRCERASE = 0x11,	/* dst = (NOT src) AND (NOT dst) */
+	G2D_ROP3_NOTSRCCOPY = 0x33,	/* dst = (NOT src) */
+	G2D_ROP3_SRCERASE = 0x44,	/* dst = src AND (NOT dst ) */
+	G2D_ROP3_DSTINVERT = 0x55,	/* dst = (NOT dst) */
+	G2D_ROP3_PATINVERT = 0x5A,	/* dst = pattern XOR dst */
+	G2D_ROP3_SRCINVERT = 0x66,	/* dst = src XOR dst */
+	G2D_ROP3_SRCAND = 0x88,	/* dst = src AND dst */
+	G2D_ROP3_MERGEPAINT = 0xBB,	/* dst = (NOT src) OR dst */
+	G2D_ROP3_MERGECOPY = 0xC0,	/* dst = (src AND pattern) */
+	G2D_ROP3_SRCCOPY = 0xCC,	/* dst = src */
+	G2D_ROP3_SRCPAINT = 0xEE,	/* dst = src OR dst */
+	G2D_ROP3_PATCOPY = 0xF0,	/* dst = pattern */
+	G2D_ROP3_PATPAINT = 0xFB,	/* dst = (~src OR pattern) OR DST */
+	G2D_ROP3_WHITENESS = 0xFF,	/* dst = WHITE */
 } g2d_rop3_cmd_flag;
 
 typedef enum {
-	G2D_FIL_NONE			= 0x00000000,
-	G2D_FIL_PIXEL_ALPHA		= 0x00000001,
-	G2D_FIL_PLANE_ALPHA		= 0x00000002,
-	G2D_FIL_MULTI_ALPHA		= 0x00000004,
+	G2D_FIL_NONE			= 0x00000000,	/* fill */
+	G2D_FIL_PIXEL_ALPHA		= 0x00000001,	/*  point alpha for filling area and target */
+	G2D_FIL_PLANE_ALPHA		= 0x00000002,	/* plane alpha for filling area and target */
+	G2D_FIL_MULTI_ALPHA		= 0x00000004,	/* alpha value of filling area * plane alpha value, then alpha for the target */
 } g2d_fillrect_flags;
 
 typedef enum {
-	G2D_BLT_NONE			= 0x00000000,
-	G2D_BLT_PIXEL_ALPHA		= 0x00000001,
-	G2D_BLT_PLANE_ALPHA		= 0x00000002,
-	G2D_BLT_MULTI_ALPHA		= 0x00000004,
-	G2D_BLT_SRC_COLORKEY	= 0x00000008,
-	G2D_BLT_DST_COLORKEY	= 0x00000010,
-	G2D_BLT_FLIP_HORIZONTAL	= 0x00000020,
-	G2D_BLT_FLIP_VERTICAL	= 0x00000040,
-	G2D_BLT_ROTATE90		= 0x00000080,
-	G2D_BLT_ROTATE180		= 0x00000100,
-	G2D_BLT_ROTATE270		= 0x00000200,
-	G2D_BLT_MIRROR45		= 0x00000400,
-	G2D_BLT_MIRROR135		= 0x00000800,
+	G2D_BLT_NONE			= 0x00000000,	/* copy */
+	G2D_BLT_PIXEL_ALPHA		= 0x00000001,	/* Point alpha */
+	G2D_BLT_PLANE_ALPHA		= 0x00000002,	/* Plane alpha */
+	G2D_BLT_MULTI_ALPHA		= 0x00000004,	/* Blend alpha */
+	G2D_BLT_SRC_COLORKEY	= 0x00000008,	/* Source colorkey */
+	G2D_BLT_DST_COLORKEY	= 0x00000010,	/* Destination colorkey */
+	G2D_BLT_FLIP_HORIZONTAL	= 0x00000020,	/* Horizontal flip */
+	G2D_BLT_FLIP_VERTICAL	= 0x00000040,	/* Vertical flip */
+	G2D_BLT_ROTATE90		= 0x00000080,	/* Rotate 90 degrees */
+	G2D_BLT_ROTATE180		= 0x00000100,	/* Rotate 180 degrees */
+	G2D_BLT_ROTATE270		= 0x00000200,	/* Rotate 270 degrees */
+	G2D_BLT_MIRROR45		= 0x00000400,	/* Mirror 45 degrees */
+	G2D_BLT_MIRROR135		= 0x00000800,	/* Mirror 135 degrees */
 	G2D_BLT_SRC_PREMULTIPLY	= 0x00001000,
 	G2D_BLT_DST_PREMULTIPLY	= 0x00002000,
+	G2D_BLT_USE_DMABUFHEAP	= 0x80000000,	/* set G2D_BLT_USE_DMABUFHEAP mask to use dmabufheap for g2d-interface v1.0 */
 } g2d_blt_flags;
 
 /* BLD LAYER ALPHA MODE */
@@ -295,7 +316,7 @@ typedef struct {
 	__u32		h;		/* rectangle height */
 } g2d_rect;
 
-/* g2d color gamut */
+/* g2d color gamut defines the color space selected when performing bit operations */
 typedef enum {
 	G2D_BT601,
 	G2D_BT709,
@@ -332,24 +353,25 @@ typedef struct {
 typedef struct {
 	int		 bbuff;
 	__u32		 color;
-	g2d_fmt_enh	 format;
-	__u32		 laddr[3];
-	__u32		 haddr[3];
-	__u32		 width;
-	__u32		 height;
-	__u32		 align[3];
+	g2d_fmt_enh	 format;	/* pixel format */
+	__u32		 laddr[3];	/* low address for three planes */
+	__u32		 haddr[3];	/* high address for three planes */
+	__u32		 width;	/* image window width */
+	__u32		 height;	/* image window height */
+	__u32		 align[3];	/* image windows alignment, y/u/v planes*/
 
-	g2d_rect	 clip_rect;
-	g2d_size	 resize;
-	g2d_coor	 coor;
+	g2d_rect	 clip_rect;	/* roi */
+	g2d_size	 resize;	/* image size after down_sampling */
+	g2d_coor	 coor;	/* top-left corner coordinates placed in the dst_image window
+						 * after src_image has been processed */
 
-	g2d_color_gmt	 gamut;
+	g2d_color_gmt	 gamut;	/* color space */
 /*	__u32		 gamut; */
-	int		 bpremul;
+	int		 bpremul;	/* alpha premutiled or not */
 	__u8		 alpha;
-	g2d_alpha_mode_enh mode;
+	g2d_alpha_mode_enh mode;	/* alpha mode */
 	int		 fd;
-	__u32 use_phy_addr;
+	__u32 use_phy_addr;	/* use phy_addr or not */
 	enum color_range color_range;
 } g2d_image_enh;
 
@@ -403,6 +425,13 @@ typedef struct {
 } g2d_blt_h;
 
 typedef struct {
+	bool    is_lbc;
+	__u32	lbc_cmp_ratio;
+	bool	enc_is_lossy;
+	bool	dec_is_lossy;
+} g2d_lbc_para;
+
+typedef struct {
 	g2d_blt_h blt;
 	__u32	lbc_cmp_ratio;
 	bool	enc_is_lossy;
@@ -438,25 +467,30 @@ typedef struct {
 typedef enum {
 	G2D_BLD_CLEAR = 0x00000001,
 	G2D_BLD_COPY = 0x00000002,
-	G2D_BLD_DST = 0x00000003,
-	G2D_BLD_SRCOVER = 0x00000004,
-	G2D_BLD_DSTOVER = 0x00000005,
-	G2D_BLD_SRCIN = 0x00000006,
-	G2D_BLD_DSTIN = 0x00000007,
-	G2D_BLD_SRCOUT = 0x00000008,
-	G2D_BLD_DSTOUT = 0x00000009,
-	G2D_BLD_SRCATOP = 0x0000000a,
-	G2D_BLD_DSTATOP = 0x0000000b,
-	G2D_BLD_XOR = 0x0000000c,
+	G2D_BLD_SRC = 0x00000003,	/* result = source */
+	G2D_BLD_DST = 0x00000003,	/* result = destination */
+	G2D_BLD_SRCOVER = 0x00000004,	/* result = (1 - Ad) * source + destination */
+	G2D_BLD_DSTOVER = 0x00000005,	/*  result = Ad * source*/
+	G2D_BLD_SRCIN = 0x00000006,	/* result = Ad * source */
+	G2D_BLD_DSTIN = 0x00000007,	/* result = As * destination */
+	G2D_BLD_SRCOUT = 0x00000008,	/* result = (1 - Ad) * source */
+	G2D_BLD_DSTOUT = 0x00000009,	/* result = (1 - As) * destination */
+	G2D_BLD_SRCATOP = 0x0000000a,	/* result = (1 - As) * destination + Ad * source */
+	G2D_BLD_DSTATOP = 0x0000000b,	/* result = As * destination + (1 - Ad) * source */
+	G2D_BLD_XOR = 0x0000000c,	/* result = (1 - As) * destination + (1 - Ad) * source */
+	/* when the pixel value matches destination images,
+	 * it displays the pixel from source image */
 	G2D_CK_SRC = 0x00010000,
+	/* when the pixel value matches source images,
+	 * it displays the pixel from destination image */
 	G2D_CK_DST = 0x00020000,
 } g2d_bld_cmd_flag;
 
 typedef struct {
-	__u32		*pbuffer;
-	__u32		 size;
+	__u32		*pbuffer;	/* lookup table array pointer */
+	__u32		 size;	/* lookup table array length */
 
-} g2d_palette;
+} g2d_palette;	/* lookup table array */
 
 
 
@@ -467,6 +501,8 @@ typedef struct {
 
 /* CK PARA struct */
 typedef struct {
+	/* when match_rule is false,
+	 * min_color <= color <= max_color indicates that the matching conditions are met */
 	bool match_rule;
 /*	int match_rule; */
 	__u32 max_color;
@@ -486,12 +522,13 @@ typedef enum {
 	OP_BLEND = 0x4,
 	OP_MASK = 0x8,
 	OP_SPLIT_MEM = 0x10,
+	OP_ROTATE = 0x20,
 } g2d_operation_flag;
 
 /**
  * mixer_para
  */
-struct mixer_para {
+typedef struct mixer_para{
 	g2d_operation_flag op_flag;
 	g2d_blt_flags_h flag_h;
 	g2d_rop3_cmd_flag back_flag;
@@ -502,7 +539,8 @@ struct mixer_para {
 	g2d_image_enh ptn_image_h;
 	g2d_image_enh mask_image_h;
 	g2d_ck ck_para;
-};
+	g2d_lbc_para lbc_para;
+} mixer_para;
 
 struct g2d_hardware_version {
 	uint32_t g2d_version;
@@ -516,14 +554,41 @@ struct g2d_hardware_version {
 #define SUNXI_G2D_IOWR(nr, size)  _IOWR(SUNXI_G2D_IOC_MAGIC, nr, size)
 
 typedef enum {
+	/* G2D_CMD_BITBLT iotcl call implements the operation of two layers,
+	 * such as copying the source to the target,
+	 * rotating the source into the target,
+	 * doing alpha blending/colorkey on the source and target
+	 * and then copying to the target. */
 	G2D_CMD_BITBLT			=	0x50,
+	/* G2D_CMD_FILLRECT iotcl call implements Drawing points, lines,
+	 * and filling rectangles with a single color,
+	 * while also being able to apply alpha blending
+	 * between the fill color and the targe */
 	G2D_CMD_FILLRECT		=	0x51,
+	/* G2D_CMD_STRETCHBLT iotcl call implements operations between two layers,
+	 * such as scaling the source to the target size
+	 * and then copying it to the target,
+	 * scaling the source to the target size, rotating it, and then placing it in the target,
+	 * scaling the source to the target size
+	 * and then performing alpha blending/colorkey with the target before copying to the target */
 	G2D_CMD_STRETCHBLT		=	0x52,
+	/* G2D_CMD_PALETTE_TBL iotcl call implements writing the lookup table to hardware SDRAM,
+	 * and this command is only needed when the data format set to palette mode
+	 * in the preceding interface */
 	G2D_CMD_PALETTE_TBL		=	0x53,
+
 	G2D_CMD_QUEUE			=	0x54,
+
+	/* G2D_CMD_BITBLT_H iotcl call implements performing operations on a single image,
+	 * such as cropping, concatenation, scaling, format conversion and so on */
 	G2D_CMD_BITBLT_H		=	0x55,
+	/* G2D_CMD_FILLRECT_H ioctl call implements filling a colored rectangle onto the target image */
 	G2D_CMD_FILLRECT_H		=	0x56,
+	/* G2D_CMD_BLD_H ioctl call implements the Porter-Duff blending operation between two images */
 	G2D_CMD_BLD_H			=	0x57,
+	/* G2D_CMD_MASK_H ioctl call implements perform operations on src, pattern,
+	 * and dst based on a mask image and raster operation code,
+	 * and save the result to dst */
 	G2D_CMD_MASK_H			=	0x58,
 
 	G2D_CMD_MEM_REQUEST		=	0x59,
@@ -531,12 +596,25 @@ typedef enum {
 	G2D_CMD_MEM_GETADR		=	0x5B,
 	G2D_CMD_MEM_SELIDX		=	0x5C,
 	G2D_CMD_MEM_FLUSH_CACHE		=	0x5D,
+
 	G2D_CMD_INVERTED_ORDER		=	0x5E,
+
+	/* G2D_CMD_MIXER_TASK ioctl call creates and executes a batch processing task,
+	 * allowing multiple mixer tasks to be submitted at once.
+	 * Upon completion of all tasks, a hardware interrupt is triggered */
 	G2D_CMD_MIXER_TASK		=	0x5F,
+
 	G2D_CMD_LBC_ROT			=	0x60,
+	/* G2D_CMD_CREATE_TASK ioctl call creates a batch processing task
+	 * that allows multiple mixer tasks to be submitted at once,
+	 * but does not execute them */
 	G2D_CMD_CREATE_TASK = SUNXI_G2D_IOW(0x1, struct mixer_para),
+	/* G2D_CMD_TASK_APPLY ioctl call executes a pre-created batch processing task
+	 * and triggers a hardware interrupt upon completion */
 	G2D_CMD_TASK_APPLY = SUNXI_G2D_IOW(0x2, unsigned int),
+	/* G2D_CMD_TASK_DESTROY ioctl call destroys a pre-created batch processing task */
 	G2D_CMD_TASK_DESTROY = SUNXI_G2D_IOW(0x3, unsigned int),
+	/* G2D_CMD_TASK_GET_PARA ioctl call retrieves the parameters of a previously created batch processing task */
 	G2D_CMD_TASK_GET_PARA = SUNXI_G2D_IOR(0x4, struct mixer_para),
 	/* qurey g2d hardware version and soc chip version */
 	G2D_CMD_QUERY_VERSION = _IOR(SUNXI_G2D_IOC_MAGIC, 0x9F, struct g2d_hardware_version),

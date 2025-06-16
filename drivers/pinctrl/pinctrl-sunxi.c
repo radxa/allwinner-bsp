@@ -46,7 +46,7 @@
 #include "core.h"
 #include "pinctrl-sunxi.h"
 
-#define SUNXI_PINCTRL_CORE_VERSION	"1.4.8"
+#define SUNXI_PINCTRL_CORE_VERSION	"1.4.9"
 #define SUNXI_PINCTRL_I2S0_ROUTE_PAD
 /* Indexed by `enum sunxi_pinctrl_hw_type` */
 struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
@@ -302,6 +302,33 @@ struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
 		.pio_pow_ctrl_reg	= 0x350,
 		.power_mode_reverse	= false,
 		.power_mode_detect	= true,
+	},
+	/* SUNXI_PCTL_HW_TYPE_10 */
+	{
+		.initial_bank_offset	= 0x80,
+		.mux_regs_offset	= 0x0,
+		.data_regs_offset	= 0x10,
+		.data_set_regs_offset	= 0x14,
+		.data_clr_regs_offset	= 0x18,
+		.dlevel_regs_offset	= 0x20,
+		.bank_mem_size		= 0x80,
+		.pull_regs_offset	= 0x30,
+		.dlevel_pins_per_reg	= 8,
+		.dlevel_pins_bits	= 4,
+		.dlevel_pins_mask	= 0xF,
+		.irq_mux_val		= 0xE,
+		.irq_cfg_reg		= 0xC0,
+		.irq_ctrl_reg		= 0xD0,
+		.irq_status_reg		= 0xD4,
+		.irq_debounce_reg	= 0xD8,
+		.irq_mem_base		= 0xC0,
+		.irq_mem_size		= 0x80,
+		.irq_mem_used		= 0x20,
+		.power_mode_sel_reg	= 0x40,
+		.power_mode_ctrl_reg	= 0x48,
+		.power_mode_val_reg	= 0x48,
+		.pio_pow_ctrl_reg	= 0x70,
+		.auto_power_detect_mode_reverse = true,
 	},
 };
 EXPORT_SYMBOL_GPL(sunxi_pinctrl_hw_info);
@@ -1263,6 +1290,7 @@ static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin,
 	void __iomem *pow_val_addr = pctl->membase + sunxi_pinctrl_hw_info[hw_type].power_mode_val_reg;
 	u32 pio_pow_ctrl_reg = sunxi_pinctrl_hw_info[hw_type].pio_pow_ctrl_reg;
 	u32 power_mode_val_reg = sunxi_pinctrl_hw_info[hw_type].power_mode_val_reg;
+	bool auto_power_detect_mode_reverse = sunxi_pinctrl_hw_info[hw_type].auto_power_detect_mode_reverse;
 
 	current_mV = readl(pctl->membase + pio_pow_ctrl_reg);
 	current_mV = current_mV == 0 ? 1800 : 3300;
@@ -1281,8 +1309,17 @@ static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin,
 		sunxi_debug(NULL, "pf-switch-increase: Wait for voltage increase done[0x%x=0x%x] pf[0x%x=0x%x]\n",
 				power_mode_val_reg, readl(pctl->membase + power_mode_val_reg),
 				pio_pow_ctrl_reg, readl(pctl->membase + pio_pow_ctrl_reg));
-		if (!(readl(pow_val_addr) & BIT(bank * 2)))
-			panic("PF voltage switching failed, please be aware!");
+
+		/* Increase the voltage, reg value should be 3.3v */
+		if (auto_power_detect_mode_reverse) {
+			/* 0 --> 3.3	1 --> 1.8 */
+			if (readl(pow_val_addr) & BIT(bank * 2))
+				panic("PF voltage switching failed, please be aware!");
+		} else {
+			/* 0 --> 1.8	1 --> 3.3 */
+			if (!(readl(pow_val_addr) & BIT(bank * 2)))
+				panic("PF voltage switching failed, please be aware!");
+		}
 	} else if (current_mV > target_mV) { /* Decrease the voltage */
 		raw_spin_lock_irqsave(&pctl->lock, flags);
 		/* Decrease the voltage */
@@ -1298,8 +1335,16 @@ static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin,
 				power_mode_val_reg, readl(pctl->membase + power_mode_val_reg),
 				pio_pow_ctrl_reg, readl(pctl->membase + pio_pow_ctrl_reg));
 
-		if (readl(pow_val_addr) & BIT(bank * 2))
-			panic("PF voltage switching failed, please be aware!");
+		/* Decrease the voltage, reg value should be 1.8v */
+		if (auto_power_detect_mode_reverse) {
+			/* 0 --> 3.3	1 --> 1.8 */
+			if (!(readl(pow_val_addr) & BIT(bank * 2)))
+				panic("PF voltage switching failed, please be aware!");
+		} else {
+			/* 0 --> 1.8	1 --> 3.3 */
+			if (readl(pow_val_addr) & BIT(bank * 2))
+				panic("PF voltage switching failed, please be aware!");
+		}
 	}
 	sunxi_debug(NULL, "pf-switch to %d from %d ok\n", target_mV, current_mV);
 }

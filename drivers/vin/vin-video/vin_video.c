@@ -59,6 +59,9 @@
 #define VIN_MINOR_VERSION 1
 #define VIN_RELEASE       0
 
+#define MIN_IN_WIDTH			192
+#define MIN_IN_HEIGHT			128
+
 #define VIN_VERSION \
 		KERNEL_VERSION(VIN_MAJOR_VERSION, VIN_MINOR_VERSION, VIN_RELEASE)
 
@@ -739,9 +742,15 @@ static int vidioc_enum_framesizes(struct file *file, void *fh,
 				enum_frame_size, NULL, &fse);
 	if (ret < 0)
 		return -1;
-	fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
-	fsize->discrete.width = fse.max_width;
-	fsize->discrete.height = fse.max_height;
+
+	fsize->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
+	fsize->stepwise.min_width = MIN_IN_WIDTH;
+	fsize->stepwise.min_height = MIN_IN_HEIGHT;
+	fsize->stepwise.step_width = 2;
+	fsize->stepwise.max_width = fse.max_width;
+	fsize->stepwise.max_height = fse.max_height;
+	fsize->stepwise.step_height = 2;
+
 	return 0;
 }
 
@@ -1042,6 +1051,7 @@ static int vidioc_try_fmt_vid_cap_mplane(struct file *file, void *priv,
 	f->fmt.pix_mp.width = mf.width;
 	f->fmt.pix_mp.height = mf.height;
 	f->fmt.pix_mp.colorspace = mf.colorspace;
+	f->fmt.pix_mp.field = V4L2_FIELD_NONE;
 	return 0;
 }
 
@@ -1054,12 +1064,13 @@ static int __vin_set_fmt(struct vin_core *vinc, struct v4l2_format *f)
 	struct vin_fmt *ffmt = NULL;
 	struct mbus_framefmt_res *res = (void *)mf.reserved;
 	__maybe_unused struct vin_md *vind = dev_get_drvdata(vinc->v4l2_dev->dev);
-	int ret = 0;
+	int ret = 0, i;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 	struct v4l2_subdev_state state;
 #endif
 	struct v4l2_subdev_pad_config cfg;
 	struct v4l2_subdev_selection sel;
+	struct v4l2_pix_format_mplane *pixm = &f->fmt.pix_mp;
 
 	if (vin_streaming(cap)) {
 		vin_err("%s device busy\n", __func__);
@@ -1248,6 +1259,14 @@ static int __vin_set_fmt(struct vin_core *vinc, struct v4l2_format *f)
 	cap->frame.offs_v = (mf.height - f->fmt.pix_mp.height) / 2;
 	cap->frame.o_width = f->fmt.pix_mp.width;
 	cap->frame.o_height = f->fmt.pix_mp.height;
+
+	pixm->colorspace = vinc->vid_cap.frame.fmt.color;
+	pixm->num_planes = vinc->vid_cap.frame.fmt.memplanes;
+
+	for (i = 0; i < pixm->num_planes; ++i) {
+		pixm->plane_fmt[i].bytesperline = f->fmt.pix_mp.width * cap->frame.fmt.depth[i] / 8;
+		pixm->plane_fmt[i].sizeimage = f->fmt.pix_mp.width * f->fmt.pix_mp.height * cap->frame.fmt.depth[i] / 8;
+	}
 
 out:
 	return ret;
@@ -2317,6 +2336,7 @@ static int vidioc_g_input(struct file *file, void *priv, unsigned int *i)
 
 static int __vin_actuator_set_power(struct v4l2_subdev *sd, int on)
 {
+#if 0 /* need to review */
 	int *use_count;
 	int ret;
 
@@ -2331,6 +2351,22 @@ static int __vin_actuator_set_power(struct v4l2_subdev *sd, int on)
 	ret = v4l2_subdev_call(sd, core, ioctl, ACT_SOFT_PWDN, 0);
 
 	return ret != -ENOIOCTLCMD ? ret : 0;
+#else
+	int use_count;
+	int ret;
+
+	if (sd == NULL)
+		return -ENXIO;
+
+	use_count = &sd->entity.use_count;
+	if (on && (use_count)++ > 0)
+		return 0;
+	else if (!on && (use_count == 0 || --(use_count) > 0))
+		return 0;
+	ret = v4l2_subdev_call(sd, core, ioctl, ACT_SOFT_PWDN, 0);
+
+	return ret != -ENOIOCTLCMD ? ret : 0;
+#endif
 }
 
 static int __vin_s_input(struct vin_core *vinc, unsigned int i)
@@ -2481,6 +2517,26 @@ static const char *const sensor_info_type[] = {
 	"RAW",
 	NULL,
 };
+
+static int vidioc_g_pixelaspect(struct file *file, void *fh,
+				    int buf_type, struct v4l2_fract *fract)
+{
+	struct vin_core *vinc = video_drvdata(file);
+	struct v4l2_fract sensor_fract;
+	int ret = 0;
+
+	ret = v4l2_subdev_call(vinc->vid_cap.pipe.sd[VIN_IND_SENSOR], video,
+				g_pixelaspect, &sensor_fract);
+	if (ret < 0) {
+		vin_warn("sensor g_pixelaspect fail!\n");
+		return ret;
+	}
+
+	fract->numerator = sensor_fract.numerator;
+	fract->denominator = sensor_fract.denominator;
+
+	return 0;
+}
 
 static int vidioc_g_parm(struct file *file, void *priv,
 			 struct v4l2_streamparm *parms)
@@ -2761,68 +2817,105 @@ static int vidioc_set_isp_debug(struct file *file, struct v4l2_fh *fh,
 static int vidioc_vin_ptn_config(struct file *file, struct v4l2_fh *fh,
 			struct vin_pattern_config *ptn)
 {
-#ifdef SUPPORT_PTN
+	/* SUPPORT_PTN */
 	struct vin_core *vinc = video_drvdata(file);
-	struct csi_dev *csi = v4l2_get_subdevdata(vinc->vid_cap.pipe.sd[VIN_IND_CSI]);
+	struct isp_dev *isp = v4l2_get_subdevdata(vinc->vid_cap.pipe.sd[VIN_IND_ISP]);
 	int ret = 0;
-
-	if (!csi)
-		return -ENODEV;
+	int i;
+	printk("vidioc_vin_ptn_config work!\n");
 
 	if (ptn->ptn_en) {
 		vinc->ptn_cfg.ptn_en = 1;
 		vinc->ptn_cfg.ptn_w = ptn->ptn_w;
 		vinc->ptn_cfg.ptn_h = ptn->ptn_h;
-		vinc->ptn_cfg.ptn_mode = 5;
-		vinc->ptn_cfg.ptn_buf.size = ptn->ptn_size;
+		vinc->ptn_cfg.ptn_mode = 12;
+		vinc->ptn_cfg.ptn_buf.size = ptn->ptn_size + 64; /* read 16word for vblanks */
+		/* ptn_type: 0:recycle the first picture 1:recycle all picture */
 		vinc->ptn_cfg.ptn_type = ptn->ptn_type;
 		sunxi_isp_ptn(vinc->vid_cap.pipe.sd[VIN_IND_ISP], vinc->ptn_cfg.ptn_type);
+		isp->ptn_cfg = &vinc->ptn_cfg;
 		switch (ptn->ptn_fmt) {
+		/* the data needs to be converted to 10bit format */
 		case V4L2_PIX_FMT_SBGGR8:
 		case V4L2_PIX_FMT_SGBRG8:
 		case V4L2_PIX_FMT_SGRBG8:
 		case V4L2_PIX_FMT_SRGGB8:
 			vinc->ptn_cfg.ptn_dw = 0;
+			vinc->ptn_cfg.ptn_size = ptn->ptn_w * ptn->ptn_h * 2;
 			break;
 		case V4L2_PIX_FMT_SBGGR10:
 		case V4L2_PIX_FMT_SGBRG10:
 		case V4L2_PIX_FMT_SGRBG10:
 		case V4L2_PIX_FMT_SRGGB10:
 			vinc->ptn_cfg.ptn_dw = 1;
+			vinc->ptn_cfg.ptn_size = ptn->ptn_w * ptn->ptn_h * 2;
 			break;
 		case V4L2_PIX_FMT_SBGGR12:
 		case V4L2_PIX_FMT_SGBRG12:
 		case V4L2_PIX_FMT_SGRBG12:
 		case V4L2_PIX_FMT_SRGGB12:
 			vinc->ptn_cfg.ptn_dw = 2;
+			vinc->ptn_cfg.ptn_size = ptn->ptn_w * ptn->ptn_h * 2;
 			break;
 		default:
 			vinc->ptn_cfg.ptn_dw = 0;
+			vinc->ptn_cfg.ptn_size = ptn->ptn_w * ptn->ptn_h * 2;
 			break;
 		}
+
+		if (vinc->ptn_cfg.ptn_buf.size < vinc->ptn_cfg.ptn_size) {
+			vin_err("ptn need size is 0x%x, but intput picture size is 0x%x\n", (unsigned int)vinc->ptn_cfg.ptn_size, (unsigned int)vinc->ptn_cfg.ptn_buf.size);
+			vinc->ptn_cfg.ptn_en = 0;
+			return -EINVAL;
+		}
+		vinc->ptn_cfg.ptn_cnt = vinc->ptn_cfg.ptn_buf.size / vinc->ptn_cfg.ptn_size;
+		vin_print("ptn_cnt is %d\n", vinc->ptn_cfg.ptn_cnt);
+
+		/* 1080P:ptn_gen_dly:0xf:2fps 0x4:8fps 0x2:15fps 0x1:27fps 0x0:125fsp */
+		if (ptn->ptn_w >= 2560)
+			vinc->ptn_cfg.ptn_gen_dly = 0x1;
+		else if (ptn->ptn_w >= 1920)
+			vinc->ptn_cfg.ptn_gen_dly = 0x0;
+		else if (ptn->ptn_w >= 1280)
+			vinc->ptn_cfg.ptn_gen_dly = 0x4;
+		else if (ptn->ptn_w >= 640)
+			vinc->ptn_cfg.ptn_gen_dly = 0x8;
+		else
+			vinc->ptn_cfg.ptn_gen_dly = 0xf;
 
 		if (ptn->ptn_addr) {
 			if (vinc->ptn_cfg.ptn_buf.vir_addr == NULL)
 				os_mem_alloc(&vinc->pdev->dev, &vinc->ptn_cfg.ptn_buf);
 			if (vinc->ptn_cfg.ptn_buf.vir_addr == NULL) {
 				vin_err("ptn buffer 0x%x alloc failed!\n", ptn->ptn_size);
+				vinc->ptn_cfg.ptn_en = 0;
 				return -ENOMEM;
 			}
 
-			ret = copy_from_user(vinc->ptn_cfg.ptn_buf.vir_addr, (void *)ptn->ptn_addr, ptn->ptn_size);
-			if (ret < 0) {
-				vin_err("copy ptn buffer from usr error!\n");
-				return ret;
+			vin_print("ptn dma_addr is 0x%p, size is 0x%x\n", vinc->ptn_cfg.ptn_buf.dma_addr, (unsigned int)vinc->ptn_cfg.ptn_buf.size);
+
+			for (i = 0; i < vinc->ptn_cfg.ptn_cnt; i++) {
+				ret = copy_from_user(vinc->ptn_cfg.ptn_buf.vir_addr + vinc->ptn_cfg.ptn_size * i, (void *)ptn->ptn_addr + vinc->ptn_cfg.ptn_size * i, vinc->ptn_cfg.ptn_size);
+				if (ret < 0) {
+					vin_err("copy ptn buffer from usr error!\n");
+					vinc->ptn_cfg.ptn_en = 0;
+					return ret;
+				}
 			}
 		}
 		/*set ptn driver output size*/
-		v4l2_subdev_call(vinc->vid_cap.pipe.sd[VIN_IND_SENSOR],
+		if (vinc->vid_cap.pipe.sd[VIN_IND_SENSOR]) {
+			ret = v4l2_subdev_call(vinc->vid_cap.pipe.sd[VIN_IND_SENSOR],
 						core, ioctl, SET_PTN, ptn);
+			if (ret)
+				vin_err("set %s ptn size fail", vinc->vid_cap.pipe.sd[VIN_IND_SENSOR]->name);
+		}
 	} else {
 		vinc->ptn_cfg.ptn_en = 0;
-		os_mem_free(&vinc->pdev->dev, &vinc->ptn_cfg.ptn_buf);
+		if (vinc->ptn_cfg.ptn_buf.vir_addr)
+			os_mem_free(&vinc->pdev->dev, &vinc->ptn_cfg.ptn_buf);
 	}
-#endif
+// #endif
 	return 0;
 }
 
@@ -4289,6 +4382,7 @@ static const struct v4l2_ioctl_ops vin_ioctl_ops = {
 	.vidioc_s_input = vidioc_s_input,
 	.vidioc_streamon = vidioc_streamon,
 	.vidioc_streamoff = vidioc_streamoff,
+	.vidioc_g_pixelaspect = vidioc_g_pixelaspect,
 	.vidioc_g_parm = vidioc_g_parm,
 	.vidioc_s_parm = vidioc_s_parm,
 	.vidioc_g_selection = vidioc_g_selection,

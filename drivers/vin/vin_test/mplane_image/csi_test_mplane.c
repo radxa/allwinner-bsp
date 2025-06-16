@@ -60,6 +60,7 @@
 #define SET_PHY2VIR 0
 #define USE_LARGE_MODE 0
 #define	BK_INT_POOL 0
+#define PATTERN_MODE 0
 
 #ifdef DEBUG
 #define ASSERT(f)	assert(f)
@@ -1195,6 +1196,31 @@ static int video_get_control(int cmd)
 	return control.value;
 }
 
+#if PATTERN_MODE
+static void *read_bin_file(char *path, int *length)
+{
+	FILE *pfile;
+	void *buf;
+	int i;
+
+	pfile = fopen(path, "rb");
+	if (pfile == NULL) {
+		printf("open %s fail\n", path);
+		return NULL;
+	}
+	printf("open %s ok\n", path);
+	fseek(pfile, 0, SEEK_END);
+	*length = ftell(pfile);
+	buf = (void *)malloc((*length + 1) * sizeof(char));
+	rewind(pfile);
+	*length = fread(buf, 1, *length, pfile);
+	printf("%s size = %d, buf_addr 0x%x\n", path, *length, buf);
+	fclose(pfile);
+
+	return buf;
+}
+#endif
+
 static int main_test(int sel, int mode)
 {
 	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -1207,6 +1233,28 @@ static int main_test(int sel, int mode)
 
 	if (-1 == camera_init(sel, mode))
 		return -1;
+
+#if PATTERN_MODE
+	int buf_len;
+	void *ptn_vaddr = NULL;
+	struct vin_pattern_config ptn_cfg;
+
+	ptn_vaddr = read_bin_file("./1080p_raw10_20.bin", &buf_len);
+	memset(&ptn_cfg, 0, sizeof(ptn_cfg));
+	ptn_cfg.ptn_en = 1;
+	ptn_cfg.ptn_addr = ptn_vaddr;
+	ptn_cfg.ptn_size = buf_len;
+	ptn_cfg.ptn_w = input_size.width;
+	ptn_cfg.ptn_h = input_size.height;
+	ptn_cfg.ptn_fmt = V4L2_PIX_FMT_SBGGR10;
+	ptn_cfg.ptn_type = 1;
+	if (-1 == ioctl(fd, VIDIOC_VIN_PTN_CFG, &ptn_cfg)) {
+		printf("VIDIOC_VIN_PTN_CFG failed\n");
+	}
+	if (ptn_vaddr)
+		free(ptn_vaddr);
+#endif
+
 	if (-1 == camera_fmt_set(mode))
 		return -1;
 	if (-1 == req_frame_buffers())

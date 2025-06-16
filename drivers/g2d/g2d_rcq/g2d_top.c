@@ -28,6 +28,13 @@ void g2d_top_set_base(unsigned long base)
 	mixer_glb = (struct g2d_mixer_glb_reg *)(base + 0x0100);
 }
 
+__u32 g2d_ip_version(void)
+{
+	__u32 reg_val;
+	reg_val = g2d_top->version.dwval;
+	return reg_val;
+}
+
 void g2d_mixer_scan_order_fun(__u32 scan_order)
 {
 	mixer_glb->mixer_ctrl.bits.scan_order = scan_order;
@@ -60,6 +67,7 @@ __s32 g2d_bsp_open(void)
 	g2d_top->hclk_gate.bits.rot_hclk_gate = 1;
 	g2d_top->ahb_rst.bits.mixer_ahb_rst = 1;
 	g2d_top->ahb_rst.bits.rot_ahb_rst = 1;
+	g2d_top->mclk_gate.bits.mclk_gate = 1;
 	return 0;
 }
 
@@ -71,6 +79,7 @@ __s32 g2d_bsp_close(void)
 	g2d_top->hclk_gate.bits.rot_hclk_gate = 0;
 	g2d_top->ahb_rst.bits.mixer_ahb_rst = 0;
 	g2d_top->ahb_rst.bits.rot_ahb_rst = 0;
+	g2d_top->mclk_gate.bits.mclk_gate = 0;
 	return 0;
 }
 

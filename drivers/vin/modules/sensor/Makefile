@@ -67,3 +67,4 @@ obj-$(CONFIG_SENSOR_THINE244_SERDES)			+= thine244_serdes/
 obj-$(CONFIG_SENSOR_MAX96724_SERDES)			+= max96724_mipi.o
 obj-$(CONFIG_SENSOR_TD104)			+= td104/
 obj-$(CONFIG_SENSOR_RK628F)			+= rk628f/
+obj-$(CONFIG_SENSOR_PTN)			+= pattern_source.o

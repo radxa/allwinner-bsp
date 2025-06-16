@@ -170,6 +170,7 @@ struct isp_dev {
 	char wdr_mode;
 	char sensor_lp_mode;
 	char ptn_type;
+	struct vin_ptn_cfg *ptn_cfg;
 	char large_image;/* 2:get merge yuv, 1: get pattern raw (save in kernel), 0: normal */
 #ifdef SUPPORT_PTN
 	char load_shadow[ISP_LOAD_DRAM_SIZE*3];

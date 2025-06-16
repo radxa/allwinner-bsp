@@ -8,6 +8,11 @@ CONFIG_SDIO_PWRCTRL ?= y
 endif
 CONFIG_VRF_DCDC_MODE ?=y
 CONFIG_OOB ?= n
+CONFIG_DPD = y
+CONFIG_FORCE_DPD_CALIB = y
+CONFIG_AMSDU_RX = y
+CONFIG_PREALLOC_TXQ = y
+CONFIG_SDIO_F1_FLAG = y
 
 ccflags-$(CONFIG_AIC_INTF_SDIO) += -DAICWF_SDIO_SUPPORT
 ccflags-$(CONFIG_AIC_INTF_USB)  += -DAICWF_USB_SUPPORT
@@ -16,6 +21,11 @@ ccflags-$(CONFIG_PLATFORM_ALLWINNER) += -DCONFIG_PLATFORM_ALLWINNER
 ccflags-$(CONFIG_SDIO_PWRCTRL) += -DCONFIG_SDIO_PWRCTRL
 ccflags-$(CONFIG_VRF_DCDC_MODE) += -DCONFIG_VRF_DCDC_MODE
 ccflags-$(CONFIG_OOB) += -DCONFIG_OOB
+ccflags-$(CONFIG_DPD)  += -DCONFIG_DPD
+ccflags-$(CONFIG_FORCE_DPD_CALIB) += -DCONFIG_FORCE_DPD_CALIB -DCONFIG_DPD
+ccflags-$(CONFIG_AMSDU_RX) += -DCONFIG_AMSDU_RX
+ccflags-$(CONFIG_PREALLOC_TXQ) += -DCONFIG_PREALLOC_TXQ
+ccflags-$(CONFIG_SDIO_F1_FLAG) += -DCONFIG_SDIO_F1_FLAG
 
 obj-m := aic8800_bsp.o
 aic8800_bsp-y := \
@@ -28,6 +38,7 @@ aic8800_bsp-y := \
 
 aic8800_bsp-$(CONFIG_AIC_INTF_SDIO) += aicsdio.o
 aic8800_bsp-$(CONFIG_AIC_INTF_USB)  += aicusb.o
+aic8800_bsp-$(CONFIG_PREALLOC_TXQ)  += aic_bsp_txq_prealloc.o
 
 # bind verify for vendor modules
 #$(obj)/aic_bsp_helper.o: $(srctree)/$(src)/aic_bsp_helper.c

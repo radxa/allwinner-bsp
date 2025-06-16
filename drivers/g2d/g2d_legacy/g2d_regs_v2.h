@@ -47,6 +47,9 @@
 #define G2D_AHB_RESET  (0x08 + G2D_TOP)
 #define G2D_SCLK_DIV   (0x0C + G2D_TOP)
 #define G2D_IP_VERSION (0x10 + G2D_TOP)
+/* be sure 0x18+ G2D_TOP does not exist,
+ * otherwise only for G2D_MCLK_GATE*/
+#define G2D_MCLK_GATE  (0x18 + G2D_TOP)
 
 /* MIXER GLB register */
 #define G2D_MIXER_CTL  (0x00 + G2D_MIXER)

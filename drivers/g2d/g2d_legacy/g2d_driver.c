@@ -18,7 +18,7 @@
 #include <uapi/linux/sunxi-g2d.h>
 
 #define CREATE_TRACE_POINTS
-#include "g2d_trace.h"
+#include "../g2d_trace.h"
 
 #if IS_ENABLED(CONFIG_G2D_SYNCFENCE)
 extern int syncfence_init(void);
@@ -252,7 +252,7 @@ static int g2d_dma_map(int fd, struct dmabuf_item *item)
 		G2D_WARN("dma_buf_attach failed\n");
 		goto err_buf_put;
 	}
-	sgt = dma_buf_map_attachment(attachment, DMA_TO_DEVICE);
+	sgt = dma_buf_map_attachment(attachment, DMA_BIDIRECTIONAL);
 	if (IS_ERR_OR_NULL(sgt)) {
 		G2D_WARN("dma_buf_map_attachment failed\n");
 		goto err_buf_detach;
@@ -278,7 +278,7 @@ exit:
 static void g2d_dma_unmap(struct dmabuf_item *item)
 {
 	G2D_TRACE_BEGIN("g2d_dma_unmap");
-	dma_buf_unmap_attachment(item->attachment, item->sgt, DMA_TO_DEVICE);
+	dma_buf_unmap_attachment(item->attachment, item->sgt, DMA_BIDIRECTIONAL);
 	dma_buf_detach(item->buf, item->attachment);
 	dma_buf_put(item->buf);
 	G2D_TRACE_END("");
@@ -691,8 +691,10 @@ int g2d_wait_cmd_finish(void)
 
 int g2d_blit(g2d_blt *para)
 {
-	__s32 err = 0;
+	__s32 ret = 0;
 	__u32 tmp_w, tmp_h;
+	struct dmabuf_item *src_item = NULL;
+	struct dmabuf_item *dst_item = NULL;
 
 	if ((para->flag & G2D_BLT_ROTATE90) ||
 			(para->flag & G2D_BLT_ROTATE270)) {
@@ -721,6 +723,23 @@ int g2d_blit(g2d_blt *para)
 		G2D_WARN("invalid blit parameter setting");
 		return -EINVAL;
 	}
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		src_item = kmalloc(sizeof(*src_item),
+				   GFP_KERNEL | __GFP_ZERO);
+		if (src_item == NULL) {
+			pr_err("[G2D]malloc memory of size %u fail!\n",
+				   (unsigned int)sizeof(*src_item));
+			goto EXIT;
+		}
+		dst_item = kmalloc(sizeof(*dst_item),
+				   GFP_KERNEL | __GFP_ZERO);
+		if (dst_item == NULL) {
+			pr_err("[G2D]malloc memory of size %u fail!\n",
+				(unsigned int)sizeof(*dst_item));
+			goto FREE_SRC;
+		}
+	}
+
 	if (((para->src_rect.x < 0) &&
 				((-para->src_rect.x) < para->src_rect.w))) {
 		para->src_rect.w = para->src_rect.w + para->src_rect.x;
@@ -759,19 +778,47 @@ int g2d_blit(g2d_blt *para)
 	 * it use (y + height) rather than (y) on inverted
 	 * order mode, so here adjust it before pass it to hardware.
 	 */
+
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		ret = g2d_dma_map(para->src_image.addr[0], src_item);
+		if (ret != 0) {
+			pr_err("[G2D]map cur_item fail!\n");
+			goto FREE_DST;
+		}
+		para->src_image.addr[0] = src_item->dma_addr;
+
+		ret = g2d_dma_map(para->dst_image.addr[0], dst_item);
+		if (ret != 0) {
+			pr_err("[G2D]map dst_item fail!\n");
+			goto SRC_DMA_UNMAP;
+		}
+		para->dst_image.addr[0] = dst_item->dma_addr;
+	}
+
 	mutex_lock(&global_lock);
 	if (scan_order > G2D_SM_TDRL)
 		para->dst_y += para->src_rect.h;
 	mutex_unlock(&global_lock);
 
-	err = mixer_blt(para, scan_order);
+	ret = mixer_blt(para, scan_order);
 
-	return err;
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		g2d_dma_unmap(dst_item);
+SRC_DMA_UNMAP:
+		g2d_dma_unmap(src_item);
+FREE_DST:
+		kfree(dst_item);
+FREE_SRC:
+		kfree(src_item);
+	}
+EXIT:
+	return ret;
 }
 
 int g2d_fill(g2d_fillrect *para)
 {
-	__s32 err = 0;
+	__s32 ret = 0;
+	struct dmabuf_item *dst_item = NULL;
 
 	/* check the parameter valid */
 	if (((para->dst_rect.x < 0) &&
@@ -785,6 +832,17 @@ int g2d_fill(g2d_fillrect *para)
 		G2D_WARN("invalid fillrect parameter setting");
 		return -EINVAL;
 	}
+
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		dst_item = kmalloc(sizeof(*dst_item),
+				   GFP_KERNEL | __GFP_ZERO);
+		if (dst_item == NULL) {
+			pr_err("[G2D]malloc memory of size %u fail!\n",
+				(unsigned int)sizeof(*dst_item));
+			goto EXIT;
+		}
+	}
+
 	if (((para->dst_rect.x < 0) &&
 				((-para->dst_rect.x) < para->dst_rect.w))) {
 		para->dst_rect.w = para->dst_rect.w + para->dst_rect.x;
@@ -802,14 +860,32 @@ int g2d_fill(g2d_fillrect *para)
 		para->dst_rect.h = para->dst_image.h - para->dst_rect.y;
 
 	g2d_ext_hd.finish_flag = 0;
-	err = mixer_fillrectangle(para);
 
-	return err;
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		ret = g2d_dma_map(para->dst_image.addr[0], dst_item);
+		if (ret != 0) {
+			pr_err("[G2D]map dst_item fail!\n");
+			goto FREE_DST;
+		}
+		para->dst_image.addr[0] = dst_item->dma_addr;
+	}
+
+	ret = mixer_fillrectangle(para);
+
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		g2d_dma_unmap(dst_item);
+FREE_DST:
+		kfree(dst_item);
+	}
+EXIT:
+	return ret;
 }
 
 int g2d_stretchblit(g2d_stretchblt *para)
 {
-	__s32 err = 0;
+	__s32 ret = 0;
+	struct dmabuf_item *src_item = NULL;
+	struct dmabuf_item *dst_item = NULL;
 
 	/* check the parameter valid */
 	if (((para->src_rect.x < 0) &&
@@ -831,6 +907,24 @@ int g2d_stretchblit(g2d_stretchblt *para)
 		G2D_WARN("invalid stretchblit parameter setting");
 		return -EINVAL;
 	}
+
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		src_item = kmalloc(sizeof(*src_item),
+				   GFP_KERNEL | __GFP_ZERO);
+		if (src_item == NULL) {
+			pr_err("[G2D]malloc memory of size %u fail!\n",
+				   (unsigned int)sizeof(*src_item));
+			goto EXIT;
+		}
+		dst_item = kmalloc(sizeof(*dst_item),
+				   GFP_KERNEL | __GFP_ZERO);
+		if (dst_item == NULL) {
+			pr_err("[G2D]malloc memory of size %u fail!\n",
+				(unsigned int)sizeof(*dst_item));
+			goto FREE_SRC;
+		}
+	}
+
 	if (((para->src_rect.x < 0) &&
 				((-para->src_rect.x) < para->src_rect.w))) {
 		para->src_rect.w = para->src_rect.w + para->src_rect.x;
@@ -867,6 +961,22 @@ int g2d_stretchblit(g2d_stretchblt *para)
 
 	g2d_ext_hd.finish_flag = 0;
 
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		ret = g2d_dma_map(para->src_image.addr[0], src_item);
+		if (ret != 0) {
+			pr_err("[G2D]map cur_item fail!\n");
+			goto FREE_DST;
+		}
+		para->src_image.addr[0] = src_item->dma_addr;
+
+		ret = g2d_dma_map(para->dst_image.addr[0], dst_item);
+		if (ret != 0) {
+			pr_err("[G2D]map dst_item fail!\n");
+			goto SRC_DMA_UNMAP;
+		}
+		para->dst_image.addr[0] = dst_item->dma_addr;
+	}
+
 	/* Add support inverted order copy, however,
 	 * hardware have a bug when reciving y coordinate,
 	 * it use (y + height) rather than (y) on inverted
@@ -878,9 +988,19 @@ int g2d_stretchblit(g2d_stretchblt *para)
 		para->dst_rect.y += para->src_rect.h;
 	mutex_unlock(&global_lock);
 
-	err = mixer_stretchblt(para, scan_order);
+	ret = mixer_stretchblt(para, scan_order);
 
-	return err;
+	if (para->flag & G2D_BLT_USE_DMABUFHEAP) {
+		g2d_dma_unmap(dst_item);
+SRC_DMA_UNMAP:
+		g2d_dma_unmap(src_item);
+FREE_DST:
+		kfree(dst_item);
+FREE_SRC:
+		kfree(src_item);
+	}
+EXIT:
+	return ret;
 }
 
 #ifdef G2D_V2X_SUPPORT
@@ -1500,17 +1620,23 @@ int g2d_ioctl_mutex_lock(void)
 {
 #if IS_ENABLED(CONFIG_G2D_USE_HWSPINLOCK)
 	int ret;
+	int i;
 	if (hwlock) {
-		ret =  __hwspin_lock_timeout(hwlock, 100, HWLOCK_RAW, &hwspinlock_flag);
-		if (ret) {
-			G2D_ERR("Hwspinlock is already taken\n");
-			hwspin_lock_free(hwlock);
+		for (i = 0; i < 200; i++) {
+			ret =  __hwspin_trylock(hwlock, HWLOCK_RAW, &hwspinlock_flag);
+			if (ret != 0) {
+				msleep(3);
+				continue;
+			} else
+				break;
+		}
+		if (ret != 0) {
+			G2D_ERR("try to get hwspinlock filed 200 times\n");
 			return -1;
 		}
 	}
 	enable_irq(para.irq);
 #endif
-
 	if (!mutex_trylock(&para.mutex))
 		mutex_lock(&para.mutex);
 	return 0;
@@ -1894,8 +2020,8 @@ static int g2d_probe(struct platform_device *pdev)
 #endif
 #if IS_ENABLED(CONFIG_G2D_USE_HWSPINLOCK)
 	if (hwlock) {
-		ret =  __hwspin_lock_timeout(hwlock, 100, HWLOCK_RAW, &hwspinlock_flag);
-		if (ret) {
+		ret =  __hwspin_lock_timeout(hwlock, 1000, HWLOCK_RAW, &hwspinlock_flag);
+		if (ret != 0) {
 			pr_err("G2D: Hwspinlock is already taken \n");
 			hwspin_lock_free(hwlock);
 			return -1;
@@ -2106,7 +2232,11 @@ int __init g2d_module_init(void)
 		return -1;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	g2d_class = class_create(THIS_MODULE, "g2d");
+#else
+	g2d_class = class_create("g2d");
+#endif
 	if (IS_ERR(g2d_class)) {
 		G2D_ERR("create class error\n");
 		return -1;

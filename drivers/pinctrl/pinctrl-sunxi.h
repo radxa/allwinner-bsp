@@ -146,6 +146,7 @@ enum sunxi_pinctrl_hw_type {
 	SUNXI_PCTL_HW_TYPE_7,  /* chips: sun55iw6-prcm */
 	SUNXI_PCTL_HW_TYPE_8,  /* chips: sun300iw1-r */
 	SUNXI_PCTL_HW_TYPE_9,  /* chips: sun8iw20 */
+	SUNXI_PCTL_HW_TYPE_10, /* chips: sun60iw2 B-Version IC */
 	/* Add new types here ... */
 	SUNXI_PCTL_HW_TYPE_CNT,
 };
@@ -179,6 +180,7 @@ struct sunxi_pinctrl_hw_info {
 	u32 mode_val_vccio_bit;
 	u32 pio_pow_ctrl_reg;
 	bool power_mode_reverse;  /* true: GPIO_POW_VAL and GPIO_POW_MID_SEL bit reverse, A523 SOC, for example */
+	bool auto_power_detect_mode_reverse;  /* true: GPIO_PWR_VAL bit reverse, for example A733-B SoC */
 	bool power_mode_detect;  /* true: Config voltage withstand by reading power_mode_val_reg */
 	bool data_reg_irregular;
 	bool data_set_mode_select; /* true: change the value of pin by data_set and data_cle reg */

@@ -47,45 +47,25 @@ u16 tx_legrates_lut_rate[] = {
 	540
 };
 
-
-u16 legrates_lut_rate[] = {
-	10,
-	20,
-	55,
-	110,
-	0,
-	0,
-	0,
-	0,
-	480,
-	240,
-	120,
-	60,
-	540,
-	360,
-	180,
-	90
+struct rwnx_legrate legrates_lut[] = {
+	[0] = { .idx = 0, .rate = 10},
+	[1] = { .idx = 1, .rate = 20},
+	[2] = { .idx = 2, .rate = 55},
+	[3] = { .idx = 3, .rate = 110},
+	[4] = { .idx = -1, .rate = 0},
+	[5] = { .idx = -1, .rate = 0},
+	[6] = { .idx = -1, .rate = 0},
+	[7] = { .idx = -1, .rate = 0},
+	[8] = { .idx = 10, .rate = 480},
+	[9] = { .idx = 8, .rate = 240},
+	[10] = { .idx = 6, .rate = 120},
+	[11] = { .idx = 4, .rate = 60},
+	[12] = { .idx = 11, .rate = 540},
+	[13] = { .idx = 9, .rate = 360},
+	[14] = { .idx = 7, .rate = 180},
+	[15] = { .idx = 5, .rate = 90},
 };
 
-
-const u8 legrates_lut[] = {
-	0,                          /* 0 */
-	1,                          /* 1 */
-	2,                          /* 2 */
-	3,                          /* 3 */
-	-1,                         /* 4 */
-	-1,                         /* 5 */
-	-1,                         /* 6 */
-	-1,                         /* 7 */
-	10,                         /* 8 */
-	8,                          /* 9 */
-	6,                          /* 10 */
-	4,                          /* 11 */
-	11,                         /* 12 */
-	9,                          /* 13 */
-	7,                          /* 14 */
-	5                           /* 15 */
-};
 
 struct vendor_radiotap_hdr {
 	u8 oui[3];
@@ -282,7 +262,7 @@ static void rwnx_rx_statistic(struct rwnx_hw *rwnx_hw, struct hw_rxhdr *hw_rxhdr
 			break;
 		}
 	} else {
-		int idx = legrates_lut[rxvect->leg_rate];
+		int idx = legrates_lut[rxvect->leg_rate].idx;
 		if (idx < 4) {
 			rate_idx = idx * 2 + rxvect->pre_type;
 		} else {
@@ -385,6 +365,9 @@ static void rwnx_rx_data_skb_forward(struct rwnx_hw *rwnx_hw, struct rwnx_vif *r
 	rx_skb->protocol = eth_type_trans(rx_skb, rwnx_vif->ndev);
 	memset(rx_skb->cb, 0, sizeof(rx_skb->cb));
 	REG_SW_SET_PROFILING(rwnx_hw, SW_PROF_IEEE80211RX);
+#ifdef CONFIG_FILTER_TCP_ACK
+	filter_rx_tcp_ack(rwnx_hw,rx_skb->data, cpu_to_le16(rx_skb->len));
+#endif
 	#ifdef CONFIG_RX_NETIF_RECV_SKB
 	local_bh_disable();
 	netif_receive_skb(rx_skb);
@@ -477,7 +460,7 @@ static bool rwnx_rx_data_skb(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 		if (!is_multicast_ether_addr(eth->h_dest)) {
 			/* unicast pkt for STA inside the BSS, no need to forward to upper
 			   layer simply resend on wireless interface */
-			if (rxhdr->flags_dst_idx != RWNX_INVALID_STA) {
+			if (flags_dst_idx != RWNX_INVALID_STA) {
 				forward = false;
 				resend = true;
 			}
@@ -531,6 +514,9 @@ static bool rwnx_rx_data_skb(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 #endif
 			memset(rx_skb->cb, 0, sizeof(rx_skb->cb));
 			REG_SW_SET_PROFILING(rwnx_hw, SW_PROF_IEEE80211RX);
+#ifdef CONFIG_FILTER_TCP_ACK
+			filter_rx_tcp_ack(rwnx_hw,rx_skb->data, cpu_to_le16(rx_skb->len));
+#endif
 			#ifdef CONFIG_RX_NETIF_RECV_SKB
 			local_bh_disable();
 			netif_receive_skb(rx_skb);
@@ -644,18 +630,20 @@ static void rwnx_rx_mgmt(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 static void rwnx_rx_mgmt_any(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 							 struct hw_rxhdr *hw_rxhdr)
 {
-	struct rwnx_vif *rwnx_vif;
+	struct rwnx_vif *rwnx_vif, *tmp;
 	int vif_idx = hw_rxhdr->flags_vif_idx;
 #ifdef CREATE_TRACE_POINTS
 	trace_mgmt_rx(hw_rxhdr->phy_info.phy_prim20_freq, vif_idx,
 				  hw_rxhdr->flags_sta_idx, (struct ieee80211_mgmt *)skb->data);
 #endif
 	if (vif_idx == RWNX_INVALID_VIF) {
-		list_for_each_entry(rwnx_vif, &rwnx_hw->vifs, list) {
+		spin_lock_bh(&rwnx_hw->cb_lock);
+		list_for_each_entry_safe(rwnx_vif, tmp, &rwnx_hw->vifs, list) {
 			if (!rwnx_vif->up)
 				continue;
 			rwnx_rx_mgmt(rwnx_hw, rwnx_vif, skb, hw_rxhdr);
 		}
+		spin_unlock_bh(&rwnx_hw->cb_lock);
 	} else {
 		rwnx_vif = rwnx_rx_get_vif(rwnx_hw, vif_idx);
 		if (rwnx_vif)
@@ -860,7 +848,7 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw,
 		struct ieee80211_supported_band *band =
 				rwnx_hw->wiphy->bands[phy_info->phy_band];
 		rtap->it_present |= cpu_to_le32(1 << IEEE80211_RADIOTAP_RATE);
-		BUG_ON((rate_idx = legrates_lut[rxvect->leg_rate]) == -1);
+		BUG_ON((rate_idx = legrates_lut[rxvect->leg_rate].idx) == -1);
 		if (phy_info->phy_band == NL80211_BAND_5GHZ)
 			rate_idx -= 4;  /* rwnx_ratetable_5ghz[0].hw_value == 4 */
 		*pos = DIV_ROUND_UP(band->bitrates[rate_idx].bitrate, 5);
@@ -1095,6 +1083,10 @@ static int rwnx_rx_monitor(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 	skb->pkt_type = PACKET_OTHERHOST;
 	skb->protocol = htons(ETH_P_802_2);
 
+#ifdef CONFIG_FILTER_TCP_ACK
+	filter_rx_tcp_ack(rwnx_hw,skb->data, cpu_to_le16(skb->len));
+#endif
+
 	local_bh_disable();
 	netif_receive_skb(skb);
 	local_bh_enable();
@@ -1286,6 +1278,13 @@ void reord_deinit_sta(struct aicwf_rx_priv *rx_priv, struct reord_ctrl_info *reo
 	for (i = 0; i < 8; i++) {
 		struct recv_msdu *req, *next;
 		preorder_ctrl = &reord_info->preorder_ctrl[i];
+		if(preorder_ctrl->enable){
+			preorder_ctrl->enable = false;
+			if (timer_pending(&preorder_ctrl->reord_timer)) {
+				ret = del_timer_sync(&preorder_ctrl->reord_timer);
+			}
+			cancel_work_sync(&preorder_ctrl->reord_timer_work);
+		}
 		spin_lock_irqsave(&preorder_ctrl->reord_list_lock, flags);
 		list_for_each_entry_safe(req, next, &preorder_ctrl->reord_list, reord_pending_list) {
 			list_del_init(&req->reord_pending_list);
@@ -1295,13 +1294,11 @@ void reord_deinit_sta(struct aicwf_rx_priv *rx_priv, struct reord_ctrl_info *reo
 			reord_rxframe_free(&rx_priv->freeq_lock, &rx_priv->rxframes_freequeue, &req->rxframe_list);
 		}
 		spin_unlock_irqrestore(&preorder_ctrl->reord_list_lock, flags);
-		if (timer_pending(&preorder_ctrl->reord_timer)) {
-			ret = del_timer_sync(&preorder_ctrl->reord_timer);
-		}
-		cancel_work_sync(&preorder_ctrl->reord_timer_work);
 	}
 
+	spin_lock_bh(&rx_priv->stas_reord_lock);
 	list_del(&reord_info->list);
+	spin_unlock_bh(&rx_priv->stas_reord_lock);
 	kfree(reord_info);
 }
 
@@ -1355,7 +1352,7 @@ int reord_single_frame_ind(struct aicwf_rx_priv *rx_priv, struct recv_msdu *prfr
 		memset(rx_skb->cb, 0, sizeof(rx_skb->cb));
 
 #ifdef CONFIG_FILTER_TCP_ACK
-		filter_rx_tcp_ack(rwnx_vif->rwnx_hw, rx_skb->data, cpu_to_le16(skb->len));
+		filter_rx_tcp_ack(rwnx_vif->rwnx_hw, rx_skb->data, cpu_to_le16(rx_skb->len));
 #endif
 
 #ifdef CONFIG_RX_NETIF_RECV_SKB /* AIDEN test */
@@ -1580,7 +1577,7 @@ int reord_process_unit(struct aicwf_rx_priv *rx_priv, struct sk_buff *skb, u16 s
 
 	spin_lock_bh(&preorder_ctrl->reord_list_lock);
 	if (reord_need_check(preorder_ctrl, pframe->seq_num)) {
-#if 0
+#if 1
 		if (pframe->rx_data[42] == 0x80) {//this is rtp package
 			if (pframe->seq_num == preorder_ctrl->ind_sn) {
 				//printk("%s pframe->seq_num1:%d \r\n", __func__, pframe->seq_num);
@@ -1752,7 +1749,7 @@ void rwnx_rxdata_process_amsdu(struct rwnx_hw *rwnx_hw, struct sk_buff *skb, u8 
 			}
 			//printk("sublen = %d, %x, %x, %x, %x\r\n", sublen,skb->data[0], skb->data[1], skb->data[12], skb->data[13]);
 #if 1
-			sub_skb = __dev_alloc_skb(sublen - 6 + 12, GFP_KERNEL);
+			sub_skb = __dev_alloc_skb(sublen - 6 + 12, GFP_ATOMIC);
 			if (!sub_skb) {
 				printk("sub_skb alloc fail:%d\n", sublen);
 				break;

@@ -629,8 +629,16 @@ static int sunxi_mmc_oclk_onoff(struct sunxi_mmc_host *host, u32 oclk_en)
 	}
 
 	np = mmc->parent->of_node;
+#if (defined(CONFIG_ARCH_SUN55IW3) || defined(CONFIG_ARCH_SUN60IW2)\
+		|| defined(CONFIG_ARCH_SUN55IW6) || defined(CONFIG_ARCH_SUN65IW1)\
+		|| defined(CONFIG_ARCH_SUN8IW22))
+	/* use clk always on, to fix sample bug */
+	if (of_find_property(np, "sunxi-power-save-mode", &len) && host->phy_index != 2)
+		pwr_save = 1;
+#else
 	if (of_find_property(np, "sunxi-power-save-mode", &len))
 		pwr_save = 1;
+#endif
 	return __sunxi_mmc_do_oclk_onoff(host, oclk_en, pwr_save, 1);
 }
 static int sunxi_mmc_clk_set_rate_for_sdmmc_v4p5x(struct sunxi_mmc_host *host,

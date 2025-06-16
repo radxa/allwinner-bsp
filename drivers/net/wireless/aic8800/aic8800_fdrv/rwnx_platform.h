@@ -113,6 +113,7 @@ void rwnx_platform_unregister_drv(void);
 
 void get_userconfig_txpwr_lvl_v2(txpwr_lvl_conf_v2_t *txpwr_lvl_v2);
 void get_userconfig_txpwr_lvl_v3(txpwr_lvl_conf_v3_t *txpwr_lvl_v3);
+void get_userconfig_txpwr_lvl_adj(txpwr_lvl_adj_conf_t *txpwr_lvl_adj);
 void get_userconfig_txpwr_idx(txpwr_idx_conf_t *txpwr_idx);
 void get_userconfig_txpwr_ofst(txpwr_ofst_conf_t *txpwr_ofst);
 void get_userconfig_txpwr_ofst2x(txpwr_ofst2x_conf_t *txpwr_ofst2x);

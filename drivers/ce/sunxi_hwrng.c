@@ -40,30 +40,39 @@ int ce_get_hardware_random(u8 *dst, u32 rng_len, u32 flag);
 
 static int sunxi_trng_read(struct hwrng *rng, void *buf, size_t max, bool wait)
 {
-	int currsize = 0;
-	u32 ret = -1;
-	u8 tmp[SUNXI_TRNG_MAX_LEN];
+	int size = 0;
+	u32 err = 0;
+	u8 *tmp = NULL;
 
-	memset(tmp, 0x0, sizeof(tmp));
+	tmp = kzalloc(SUNXI_TRNG_MAX_LEN, GFP_KERNEL);
+	if (!tmp) {
+		SS_ERR("kzalloc fail\n");
+		return -ENOMEM;
+	}
 
 	do {
-		ret = ce_get_hardware_random(tmp, SUNXI_TRNG_MAX_LEN, 1);
-		if (ret) {
-			SS_ERR("do_rng_crypto: %d!\n", ret);
-			return ret;
+		err = ce_get_hardware_random(tmp, SUNXI_TRNG_MAX_LEN, 1);
+		if (err) {
+			SS_ERR("do_rng_crypto: %d!\n", err);
+			size = err;
+			goto err0;
 		}
 
-		if ((max - currsize) < SUNXI_TRNG_MAX_LEN) {
-			memcpy((buf + currsize), tmp, (max - currsize));
-			return max;
+		if ((max - size) < SUNXI_TRNG_MAX_LEN) {
+			memcpy((buf + size), tmp, (max - size));
+			size = max;
+			goto err0;
 		} else {
-			memcpy((buf + currsize), tmp, SUNXI_TRNG_MAX_LEN);
-			currsize = currsize + SUNXI_TRNG_MAX_LEN;
+			memcpy((buf + size), tmp, SUNXI_TRNG_MAX_LEN);
+			size = size + SUNXI_TRNG_MAX_LEN;
 		}
 
-	} while (currsize < max);
+	} while (size < max);
 
-	return currsize;
+err0:
+	kfree(tmp);
+
+	return size;
 }
 
 int sunxi_register_hwrng(sunxi_ce_cdev_t *ce_dev)

@@ -878,6 +878,7 @@ int rwnx_txq_queue_skb(struct sk_buff *skb, struct rwnx_txq *txq,
 #endif
 	/* Flowctrl corresponding netdev queue if needed */
 #ifdef CONFIG_RWNX_FULLMAC
+#ifndef CONFIG_ONE_TXQ
 	/* If too many buffer are queued for this TXQ stop netdev queue */
 	if ((txq->ndev_idx != NDEV_NO_TXQ) &&
 		(skb_queue_len(&txq->sk_list) > RWNX_NDEV_FLOW_CTRL_STOP)) {
@@ -887,6 +888,7 @@ int rwnx_txq_queue_skb(struct sk_buff *skb, struct rwnx_txq *txq,
 		trace_txq_flowctrl_stop(txq);
 #endif
 	}
+#endif /* CONFIG_ONE_TXQ */
 #else /* ! CONFIG_RWNX_FULLMAC */
 
 	if (!retry && ++txq->hwq->len == txq->hwq->len_stop) {
@@ -1316,7 +1318,7 @@ void rwnx_hwq_process(struct rwnx_hw *rwnx_hw, struct rwnx_hwq *hwq)
 			}
 			/* for u-apsd need to complete the SP to send EOSP frame */
 		}
-
+#ifndef CONFIG_ONE_TXQ
 		/* restart netdev queue if number of queued buffer is below threshold */
 		if (unlikely(txq->status & RWNX_TXQ_NDEV_FLOW_CTRL) &&
 			(skb_queue_len(&txq->sk_list) < RWNX_NDEV_FLOW_CTRL_RESTART)) {
@@ -1326,6 +1328,7 @@ void rwnx_hwq_process(struct rwnx_hw *rwnx_hw, struct rwnx_hwq *hwq)
 			trace_txq_flowctrl_restart(txq);
 #endif
 		}
+#endif /* CONFIG_ONE_TXQ */
 #endif /* CONFIG_RWNX_FULLMAC */
 	}
 

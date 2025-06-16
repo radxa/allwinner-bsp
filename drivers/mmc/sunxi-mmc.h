@@ -48,7 +48,7 @@
 #define __SUNXI_MMC_H__
 
 #define DRIVER_NAME "sunxi-mmc"
-#define DRIVER_RIVISION "v5.59 2025-01-21 15:50"
+#define DRIVER_RIVISION "v5.59 2025-01-21 15:50  -- v5.66 2025-04-02 16:14"
 #define DRIVER_VERSION "SD/MMC/SDIO Host Controller Driver(" DRIVER_RIVISION ")"
 
 #if defined CONFIG_AW_FPGA_S4 || defined CONFIG_AW_FPGA_V7 || defined CONFIG_AW_FPGA_UV440

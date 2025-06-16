@@ -1024,6 +1024,26 @@ static void __vin_pattern_config(struct vin_md *vind, struct vin_core *vinc, int
 		csic_ptn_generation_en(vind->id, 0);
 	}
 #endif
+	if (vinc->ptn_cfg.ptn_en && on) {
+		if (vinc->mipi_sel == 0xff) {
+			printk("vinc->csi_sel = %d\n", vinc->csi_sel);
+			if (vinc->csi_sel == 1)
+				csic_ptn_control(vind->id, vinc->ptn_cfg.ptn_mode, vinc->ptn_cfg.ptn_dw, NCSIC1, vinc->ptn_cfg.ptn_gen_dly);
+			else if (vinc->csi_sel == 2)
+				csic_ptn_control(vind->id, vinc->ptn_cfg.ptn_mode, vinc->ptn_cfg.ptn_dw, NCSIC2, vinc->ptn_cfg.ptn_gen_dly);
+			else if (vinc->csi_sel == 3)
+				csic_ptn_control(vind->id, vinc->ptn_cfg.ptn_mode, vinc->ptn_cfg.ptn_dw, NCSIC3, vinc->ptn_cfg.ptn_gen_dly);
+			else
+				vin_err("now not support parser%d ptn\n", vinc->csi_sel);
+		} else
+			csic_ptn_control(vind->id, vinc->ptn_cfg.ptn_mode, vinc->ptn_cfg.ptn_dw, COMBO, vinc->ptn_cfg.ptn_gen_dly);
+		csic_ptn_length(vind->id, vinc->ptn_cfg.ptn_size);
+		csic_ptn_addr(vind->id, (unsigned long)vinc->ptn_cfg.ptn_buf.dma_addr);
+		csic_ptn_size(vind->id, vinc->ptn_cfg.ptn_w, vinc->ptn_cfg.ptn_h);
+		vin_print("ptn en, size = 0x%x\n", vinc->ptn_cfg.ptn_size);
+	} else {
+		csic_ptn_generation_en(vind->id, 0);
+	}
 }
 
 static void __vin_pattern_onoff(struct vin_md *vind, struct vin_core *vinc, int on)
@@ -1042,6 +1062,23 @@ static void __vin_pattern_onoff(struct vin_md *vind, struct vin_core *vinc, int 
 		}
 	}
 #endif
+	if (vinc->ptn_cfg.ptn_en) {
+#if VIN_FALSE
+		if (vinc->ptn_cfg.ptn_type > 0) {
+			ptn_on_cnt++;
+			if (ptn_on_cnt%vinc->ptn_cfg.ptn_type == 0) {
+				ptn_on_cnt = 0;
+				ptn_frame_cnt = 0;
+				csic_ptn_generation_en(vind->id, on);
+			}
+		} else {
+			csic_ptn_generation_en(vind->id, on);
+		}
+#else
+		vin_print("ptn %s\n", on ? "start" : "end");
+		csic_ptn_generation_en(vind->id, on);
+#endif
+	}
 }
 
 static int __vin_subdev_set_power(struct v4l2_subdev *sd, unsigned int idx, int on)

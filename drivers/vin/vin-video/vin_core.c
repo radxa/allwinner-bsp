@@ -426,7 +426,9 @@ static struct vin_fmt vin_formats[] = {
 		.colplanes	= 1,
 		.mbus_code	= MEDIA_BUS_FMT_SRGGB12_1X12,
 		.flags		= VIN_FMT_RAW,
-	}, {
+	},
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	{
 		.name		= "RAW Bayer BGGR 14bit",
 		.fourcc		= V4L2_PIX_FMT_SBGGR14,
 		.depth		= { 16 },
@@ -458,7 +460,9 @@ static struct vin_fmt vin_formats[] = {
 		.colplanes	= 1,
 		.mbus_code	= MEDIA_BUS_FMT_SRGGB14_1X14,
 		.flags		= VIN_FMT_RAW,
-       }, {
+       },
+#endif
+		{
 		.name		= "RAW Bayer BGGR 16bit",
 		.fourcc		= V4L2_PIX_FMT_SBGGR16,
 		.depth		= { 16 },

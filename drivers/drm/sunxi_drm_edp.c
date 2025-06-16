@@ -1317,6 +1317,20 @@ s32 edp_lane_para_parse(struct device *dev)
 			lane_para->lane_remap[i] = i;
 	}
 
+	ret = of_property_read_u32_array(dev->of_node, "lane_sw", prop_val, prop_len);
+	if (ret == 0) {
+		for (i = 0; i < 4; i++)
+			lane_para->lane_sw[i] = prop_val[i];
+		edp_core->force_level = true;
+	}
+
+	ret = of_property_read_u32_array(dev->of_node, "lane_pre", prop_val, prop_len);
+	if (ret == 0) {
+		for (i = 0; i < 4; i++)
+			lane_para->lane_pre[i] = prop_val[i];
+		edp_core->force_level = true;
+	}
+
 	return RET_OK;
 }
 
@@ -4204,7 +4218,7 @@ s32 drm_edp_output_enable(struct sunxi_drm_edp *drm_edp)
 
 	ret = edp_main_link_setup(edp_hw, edp_core,
 				  edp_debug->bypass_training ? true : false,
-				  (edp_debug->lane_debug_en && edp_debug->force_level) ? true : false);
+				  ((edp_debug->lane_debug_en && edp_debug->force_level) || edp_core->force_level) ? true : false);
 	if (ret < 0)
 		goto OUT;
 
@@ -4477,7 +4491,7 @@ s32 drm_dp_output_enable(struct sunxi_drm_edp *drm_edp)
 
 	ret = edp_main_link_setup(edp_hw, edp_core,
 				  edp_debug->bypass_training ? true : false,
-				  (edp_debug->lane_debug_en && edp_debug->force_level) ? true : false);
+				  ((edp_debug->lane_debug_en && edp_debug->force_level) || edp_core->force_level) ? true : false);
 	if (ret < 0)
 		return RET_FAIL;
 

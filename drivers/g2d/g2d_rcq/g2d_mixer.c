@@ -917,6 +917,7 @@ OUT:
 	return ret;
 }
 
+#ifdef G2D_RCQ_DEBUG
 static __s32 g2d_mixer_rcq_debug(struct g2d_mixer_task *p_task)
 {
 	struct g2d_reg_block **p_reg_blks;
@@ -992,6 +993,7 @@ static __s32 g2d_mixer_rcq_debug(struct g2d_mixer_task *p_task)
 OUT:
 	return ret;
 }
+#endif
 
 static __s32 g2d_mixer_apply(struct g2d_mixer_task *p_task)
 {
@@ -1012,8 +1014,10 @@ static __s32 g2d_mixer_apply(struct g2d_mixer_task *p_task)
 	g2d_mixer_start(0);
 #endif
 
+#ifdef G2D_RCQ_DEBUG
 	if (dbg_info > 1)
 		g2d_mixer_rcq_debug(p_task);
+#endif
 
 #if G2D_MIXER_RCQ_USED == 1
 	g2d_top_rcq_irq_en(1);

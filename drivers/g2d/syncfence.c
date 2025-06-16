@@ -59,7 +59,7 @@ struct syncfence {
 };
 
 static LIST_HEAD(timeline_list_head);
-static DEFINE_SPINLOCK(timeline_list_lock);
+static spinlock_t timeline_list_lock;
 
 static const struct dma_fence_ops timeline_fence_ops;
 
@@ -401,6 +401,7 @@ int syncfence_init(void)
 	result = misc_register(&syncfence_device);
 	if (result)
 		pr_err("Error %d adding syncfence", result);
+	spin_lock_init(&timeline_list_lock);
 	return 0;
 }
 

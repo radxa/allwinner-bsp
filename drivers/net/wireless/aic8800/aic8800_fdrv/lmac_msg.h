@@ -20,6 +20,8 @@
 // for MAC related elements (mac_addr, mac_ssid...)
 #include "lmac_mac.h"
 
+#define LMAC_MSG_MAX_LEN  1024
+
 /*
  ****************************************************************************************
  */
@@ -377,8 +379,8 @@ enum mm_msg_tag {
 
 	MM_APM_STALOSS_IND,
 
-	MM_SET_TXOP_REQ,
-	MM_SET_TXOP_CFM,
+	MM_SET_VENDOR_HWCONFIG_REQ,
+	MM_SET_VENDOR_HWCONFIG_CFM,
 
 	MM_GET_FW_VERSION_REQ,
 	MM_GET_FW_VERSION_CFM,
@@ -390,6 +392,20 @@ enum mm_msg_tag {
 	MM_GET_WIFI_DISABLE_CFM,
 
 	MM_CFG_RSSI_CFM,
+
+	MM_SET_VENDOR_SWCONFIG_REQ,
+	MM_SET_VENDOR_SWCONFIG_CFM,
+
+	MM_SET_TXPWR_LVL_ADJ_REQ,
+	MM_SET_TXPWR_LVL_ADJ_CFM,
+
+	MM_RADAR_DETECT_IND,
+
+	MM_SET_APF_PROG_REQ,
+	MM_SET_APF_PROG_CFM,
+
+	MM_GET_APF_PROG_REQ,
+	MM_GET_APF_PROG_CFM,
 
 	/// MAX number of messages
 	MM_MAX,
@@ -1157,6 +1173,7 @@ struct mm_set_arpoffload_en_cfm {
 struct mm_set_agg_disable_req {
 	u8_l disable;
 	u8_l staidx;
+	u8_l disable_rx;
 };
 
 struct mm_set_coex_req {
@@ -1245,12 +1262,24 @@ typedef struct {
 	s8_l pwrlvl_11ax_5g[12];
 } txpwr_lvl_conf_v3_t;
 
+typedef struct
+{
+	u8_l enable;
+	s8_l pwrlvl_adj_tbl_2g4[3];
+	s8_l pwrlvl_adj_tbl_5g[6];
+} txpwr_lvl_adj_conf_t;
+
 struct mm_set_txpwr_lvl_req {
 	union {
 		txpwr_idx_conf_t txpwr_lvl;
 		txpwr_lvl_conf_v2_t txpwr_lvl_v2;
 		txpwr_lvl_conf_v3_t txpwr_lvl_v3;
 	};
+};
+
+struct mm_set_txpwr_lvl_adj_req
+{
+    txpwr_lvl_adj_conf_t txpwr_lvl_adj;
 };
 
 typedef struct {
@@ -1270,6 +1299,28 @@ typedef struct {
 	u8_l xtal_cap_fine;
 } xtal_cap_conf_t;
 
+/*
+ * pwrofst2x_tbl_2g4[3][3]:
+ * +---------------+----------+----------+----------+
+ * | RateTyp\ChGrp |  CH_1_4  |  CH_5_9  | CH_10_13 |
+ * +---------------+----------+----------+----------+
+ * | DSSS          |  [0][0]  |  [0][1]  |  [0][2]  |
+ * +---------------+----------+----------+----------+
+ * | OFDM_HIGHRATE |  [1][0]  |  [1][1]  |  [1][2]  |
+ * +---------------+----------+----------+----------+
+ * | OFDM_LOWRATE  |  [2][0]  |  [2][1]  |  [2][2]  |
+ * +---------------+----------+----------+----------+
+ * pwrofst2x_tbl_5g[3][6]:
+ * +---------------+--------------+--------------+----------------+----------------+----------------+----------------+
+ * | RateTyp\ChGrp | CH_42(36~50) | CH_58(51~64) | CH_106(98~114) | CH_122(115~130)| CH_138(131~146)| CH_155(147~166)|
+ * +---------------+--------------+--------------+----------------+----------------+----------------+----------------+
+ * | OFDM_LOWRATE  |    [0][0]    |    [0][1]    |     [0][2]     |     [0][3]     |     [0][4]     |     [0][5]     |
+ * +---------------+--------------+--------------+----------------+----------------+----------------+----------------+
+ * | OFDM_HIGHRATE |    [1][0]    |    [1][1]    |     [1][2]     |     [1][3]     |     [1][4]     |     [1][5]     |
+ * +---------------+--------------+--------------+----------------+----------------+----------------+----------------+
+ * | OFDM_MIDRATE  |    [2][0]    |    [2][1]    |     [2][2]     |     [2][3]     |     [2][4]     |     [2][5]     |
+ * +---------------+--------------+--------------+----------------+----------------+----------------+----------------+
+ */
 typedef struct {
 	int8_t enable;
 	int8_t pwrofst2x_tbl_2g4[3][3];
@@ -1773,6 +1824,119 @@ struct mm_apm_staloss_ind {
 	u8_l mac_addr[6];
 };
 
+enum vendor_hwconfig_tag{
+	ACS_TXOP_REQ = 0,
+	CHANNEL_ACCESS_REQ,
+	MAC_TIMESCALE_REQ,
+	CCA_THRESHOLD_REQ,
+	BWMODE_REQ,
+	CHIP_TEMP_GET_REQ,
+	AP_PS_LEVEL_SET_REQ,
+	CUSTOMIZED_FREQ_REQ,
+	WAKEUP_INFO_REQ,
+	KEEPALIVE_PKT_REQ,
+};
+enum {
+	BWMODE20M = 0,
+	BWMODE10M,
+	BWMODE5M,
+};
+struct mm_set_acs_txop_req
+{
+	u32_l hwconfig_id;
+	u16_l txop_bk;
+	u16_l txop_be;
+	u16_l txop_vi;
+	u16_l txop_vo;
+};
+struct mm_set_channel_access_req
+{
+	u32_l hwconfig_id;
+	u32_l edca[4];
+	u8_l  vif_idx;
+	u8_l  retry_cnt;
+	u8_l  rts_en;
+	u8_l  long_nav_en;
+	u8_l  cfe_en;
+	u8_l  rc_retry_cnt[3];
+	s8_l  ccademod_th;
+	u8_l  remove_1m2m;
+};
+struct mm_set_mac_timescale_req
+{
+	u32_l hwconfig_id;
+	u8_l  sifsA_time;
+	u8_l  sifsB_time;
+	u8_l  slot_time;
+	u8_l  rx_startdelay_ofdm;
+	u8_l  rx_startdelay_long;
+	u8_l  rx_startdelay_short;
+};
+struct mm_set_cca_threshold_req
+{
+	u32_l hwconfig_id;
+	u8_l  auto_cca_en;
+	s8_l  cca20p_rise_th;
+	s8_l  cca20s_rise_th;
+	s8_l  cca20p_fall_th;
+	s8_l  cca20s_fall_th;
+
+};
+struct mm_set_bwmode_req
+{
+	u32_l hwconfig_id;
+	u8_l bwmode;
+};
+
+struct mm_get_chip_temp_req
+{
+	u32_l hwconfig_id;
+};
+
+struct mm_get_chip_temp_cfm
+{
+	/// Temp degree val
+	s8_l degree;
+};
+
+struct mm_set_ap_ps_level_req
+{
+	u32_l hwconfig_id;
+	u8 ap_ps_level;
+};
+
+struct mm_set_vendor_hwconfig_cfm
+{
+	u32_l hwconfig_id;
+	union {
+		struct mm_get_chip_temp_cfm chip_temp_cfm;
+	};
+};
+
+struct mm_set_customized_freq_req
+{
+	u32_l hwconfig_id;
+	u16_l raw_freq[4];
+	u16_l map_freq[4];
+};
+
+struct mm_set_wakeup_info_req
+{
+	u32_l hwconfig_id;
+	u16_l offset;
+	u8_l  length;
+	u8_l  mask_and_patten[];
+
+};
+struct mm_set_keepalive_req
+{
+	u32_l hwconfig_id;
+	u16_l code;
+	u16_l length;
+	u32_l intv;
+	u8_l payload[];
+};
+
 struct mm_set_txop_req {
 	u16_l txop_bk;
 	u16_l txop_be;
@@ -1781,6 +1945,22 @@ struct mm_set_txop_req {
 	u8_l  long_nav_en;
 	u8_l  cfe_en;
 };
+
+#ifdef CONFIG_APF
+struct mm_set_apf_prog_req {
+	u32_l program_len;
+	u32_l offset;
+	u8_l program[LMAC_MSG_MAX_LEN];
+};
+
+struct mm_get_apf_prog_req {
+	u16_l offset;
+};
+
+struct mm_get_apf_prog_cfm {
+	u8_l program[LMAC_MSG_MAX_LEN];
+};
+#endif
 
 struct mm_get_fw_version_cfm {
 	u8_l fw_version_len;
@@ -1884,6 +2064,7 @@ struct me_set_ps_mode_req {
 struct me_set_lp_level_req {
 	/// Low Power level
 	u8_l lp_level;
+	u8_l disable_filter;
 };
 
 

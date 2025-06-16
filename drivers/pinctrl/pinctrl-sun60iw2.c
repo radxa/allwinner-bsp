@@ -10,9 +10,12 @@
 #include <linux/of_device.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/io.h>
+#include <sunxi-sid.h>
 #include "pinctrl-sunxi.h"
 
-#define SUNXI_PINCTRL_VERSION	"0.6.7"
+#define SUNXI_PINCTRL_VERSION	"0.6.8"
+
+#define SUNXI_SOC_VER_B 	(0x1)
 
 static const struct sunxi_desc_pin sun60iw2_pins[] = {
 #if IS_ENABLED(CONFIG_AW_FPGA_S4) || IS_ENABLED(CONFIG_AW_FPGA_V7)
@@ -2584,12 +2587,36 @@ static const struct sunxi_pinctrl_desc sun60iw2_pinctrl_data = {
 	.hw_type = SUNXI_PCTL_HW_TYPE_4,
 };
 
+static const struct sunxi_pinctrl_desc sun60iw2_b_pinctrl_data = {
+	.pins = sun60iw2_pins,
+	.npins = ARRAY_SIZE(sun60iw2_pins),
+	.banks = ARRAY_SIZE(sun60iw2_bank_base),
+	.bank_base = sun60iw2_bank_base,
+	.irq_banks = ARRAY_SIZE(sun60iw2_irq_bank_map),
+	.irq_bank_map = sun60iw2_irq_bank_map,
+	.pf_power_source_switch = true,
+	.auto_power_source_switch = true,
+	.hw_type = SUNXI_PCTL_HW_TYPE_10,
+};
+
 static void *mem;
 static int mem_size;
+
+static const struct sunxi_pinctrl_desc *sun60iw2_get_soc_ver(void)
+{
+	unsigned int ver;
+
+	ver = sunxi_get_soc_ver();
+	if (ver == SUNXI_SOC_VER_B)
+		return &sun60iw2_b_pinctrl_data;
+	else
+		return &sun60iw2_pinctrl_data;
+}
 
 static int sun60iw2_pinctrl_probe(struct platform_device *pdev)
 {
 	struct resource *res;
+	struct sunxi_pinctrl_desc const *desc = sun60iw2_get_soc_ver();
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
@@ -2604,7 +2631,7 @@ static int sun60iw2_pinctrl_probe(struct platform_device *pdev)
 
 	sunxi_info(NULL, "sunxi pinctrl version: %s\n", SUNXI_PINCTRL_VERSION);
 
-	return sunxi_bsp_pinctrl_init(pdev, &sun60iw2_pinctrl_data);
+	return sunxi_bsp_pinctrl_init(pdev, desc);
 }
 
 static int __maybe_unused sun60iw2_pinctrl_suspend_noirq(struct device *dev)
@@ -2621,7 +2648,7 @@ static int __maybe_unused sun60iw2_pinctrl_suspend_noirq(struct device *dev)
 
 static int __maybe_unused sun60iw2_pinctrl_resume_noirq(struct device *dev)
 {
-	struct sunxi_pinctrl_desc const *desc = &sun60iw2_pinctrl_data;
+	struct sunxi_pinctrl_desc const *desc = sun60iw2_get_soc_ver();
 	struct sunxi_pinctrl *pctl = dev_get_drvdata(dev);
 	unsigned long flags;
 	int idx, bank;

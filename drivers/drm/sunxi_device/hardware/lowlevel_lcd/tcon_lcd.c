@@ -1105,6 +1105,36 @@ int sunxi_tcon_updata_vt(struct sunxi_tcon_lcd *tcon, struct disp_video_timings 
 	return 0;
 }
 
+int sunxi_tcon_updata_vt_2(struct sunxi_tcon_lcd *tcon, struct disp_video_timings *timings)
+{
+	struct disp_video_timings timing_t;
+	static u32 vrr_flag = 1;
+
+	tcon_lcd_get_timing(tcon, &timing_t);
+	if (timings->ver_total_time == timing_t.ver_total_time)
+		return 0;
+
+	if (timings->ver_total_time > timing_t.ver_total_time) {
+		if (vrr_flag == 1) {
+			tcon->reg->tcon0_basic2.bits.vt = (timing_t.ver_total_time + 1024) * 2;
+			vrr_flag = 2;
+		} else {
+			tcon->reg->tcon0_basic2.bits.vt = timings->ver_total_time * 2;
+			vrr_flag = 1;
+		}
+	} else {
+		if (vrr_flag == 1) {
+			tcon->reg->tcon0_basic2.bits.vt = (timings->ver_total_time + 1024) * 2;
+			vrr_flag = 2;
+		} else {
+			tcon->reg->tcon0_basic2.bits.vt = timings->ver_total_time * 2;
+			vrr_flag = 1;
+		}
+	}
+
+	return 0;
+}
+
 bool tcon_lcd_vrr_irq(struct sunxi_tcon_lcd *tcon, bool enable)
 {
 	struct disp_video_timings timing_t;

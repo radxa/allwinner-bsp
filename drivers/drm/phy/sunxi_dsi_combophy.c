@@ -49,6 +49,7 @@ struct sunxi_dsi_combophy {
 	struct reset_control *phy_rst;
 	struct ccu_common               **ccu_clks;
 	struct clk_hw_onecell_data      *hw_clks;
+	struct device *dev;
 
 	struct mutex lock;
 };
@@ -429,11 +430,29 @@ static int sunxi_dsi_combophy_configure(struct phy *phy, union phy_configure_opt
 	return 0;
 }
 
+static int displl_set_spread_spectrum(struct phy *phy, int precent)
+{
+	struct sunxi_dsi_combophy *cphy = phy_get_drvdata(phy);
+	u32 dcxo_rate = 0;
+	struct clk *clk_dcxo = NULL;
+
+	clk_dcxo = devm_clk_get(cphy->dev, "clk_dcxo");
+	if (IS_ERR_OR_NULL(clk_dcxo))
+		dcxo_rate = 24000000;
+	else
+		dcxo_rate = clk_get_rate(clk_dcxo);
+
+	phy_displl_ssc(&cphy->dphy_lcd, precent, dcxo_rate);
+
+	return 0;
+}
+
 static const struct phy_ops sunxi_dsi_combophy_ops = {
 	.power_on = sunxi_dsi_combophy_power_on,
 	.power_off = sunxi_dsi_combophy_power_off,
 	.set_mode = sunxi_dsi_combophy_set_mode,
 	.configure = sunxi_dsi_combophy_configure,
+	.set_speed = displl_set_spread_spectrum,
 };
 static int sunxi_cphy_bind(struct device *dev, struct device *master, void *data)
 {
@@ -524,7 +543,7 @@ static int sunxi_dsi_combophy_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to create PHY\n");
 		return PTR_ERR(cphy->phy);
 	}
-
+	cphy->dev = dev;
 	cphy->id = cphy_data->id;
 	cphy->dphy_lcd.dphy_index = cphy->id;
 	cphy->dphy_lcd.phy_config = (struct combophy_config *)&cphy_data->phy_config[0];

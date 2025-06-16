@@ -3191,9 +3191,12 @@ static int sunxi_cadence_combo0_usb_phy_set_mode(struct phy *phy, enum phy_mode 
 	case PHY_MODE_USB_OTG:
 		if (sunxi_cphy->phy_switcher_quirk)
 			break;
-		if ((combo0->orientation != orientation) || (combo0->state != state))
-			combo0_usb_param_config(combo0);
+		if ((combo0->orientation != orientation) || (combo0->state != state)) {
+			combo0->orientation = orientation;
+			combo0->state = state;
 
+			combo0_usb_param_config(combo0);
+		}
 		combo0->orientation = orientation;
 		combo0->state = state;
 		break;
