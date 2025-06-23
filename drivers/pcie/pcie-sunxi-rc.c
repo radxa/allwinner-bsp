@@ -38,34 +38,7 @@
 #include "pci.h"
 #include "pcie-sunxi.h"
 #include "pcie-sunxi-dma.h"
-#include "../bus/sunxi_nsi.h"
-
-void sunxi_pcie_host_change_nsi_port_bwl(struct sunxi_pcie *pci, int gen)
-{
-#if IS_ENABLED(CONFIG_AW_NSI)
-	int i, bwl;
-	for (i = 0; i < MBUS_PMU_MAX; i++) {
-		if (strstr(get_name(i), "pcie")) {
-			switch (gen) {
-			case 1:
-				bwl = 200;
-				break;
-			case 2:
-				bwl = 400;
-				break;
-			case 3:
-				bwl = 700;
-				break;
-			}
-			nsi_port_set_abs_bwlen(i, false);
-			nsi_port_set_abs_bwl(i, bwl);
-			nsi_port_set_abs_bwlen(i, true);
-			sunxi_info(pci->dev, "change nsi abs bwl %d\n", bwl);
-			break;
-		}
-	}
-#endif
-}
+#include "../drivers/bus/sunxi-nsi.h"
 
 static bool sunxi_pcie_host_is_link_up(struct sunxi_pcie_port *pp)
 {
