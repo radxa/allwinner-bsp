@@ -1,0 +1,3 @@
+source "bsp/drivers/net/wireless/aic8800/usb/aic8800_fdrv/Kconfig"
+source "bsp/drivers/net/wireless/aic8800/usb/aic_load_fw/Kconfig"
+source "bsp/drivers/net/wireless/aic8800/usb/aic_btusb/Kconfig"

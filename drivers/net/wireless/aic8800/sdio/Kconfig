@@ -1,0 +1,10 @@
+config AIC_FW_PATH
+	depends on AIC_WLAN_SUPPORT
+	string "Firmware & config file path"
+	default "/vendor/etc/firmware"
+	#default "/lib/firmware/aic8800_sdio"
+	help
+	  Path to the firmware & config file.
+
+source "bsp/drivers/net/wireless/aic8800/sdio/aic8800_fdrv/Kconfig"
+source "bsp/drivers/net/wireless/aic8800/sdio/aic8800_btlpm/Kconfig"
