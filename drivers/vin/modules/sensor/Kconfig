@@ -152,6 +152,10 @@ config SENSOR_IMX326
 	tristate "use imx326 driver"
 	default n
 
+config SENSOR_IMX415
+	tristate "use imx415 driver"
+	default n
+
 config SENSOR_IMX477
 	tristate "use imx477 driver"
 	default n

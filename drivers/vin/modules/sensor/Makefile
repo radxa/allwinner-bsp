@@ -36,6 +36,7 @@ obj-$(CONFIG_SENSOR_IMX291)			+= imx291_mipi.o
 obj-$(CONFIG_SENSOR_IMX317)			+= imx317_mipi.o
 obj-$(CONFIG_SENSOR_IMX335)			+= imx335_mipi.o
 obj-$(CONFIG_SENSOR_IMX326)			+= imx326_mipi.o
+obj-$(CONFIG_SENSOR_IMX415)			+= imx415_mipi.o
 obj-$(CONFIG_SENSOR_IMX477)			+= imx477_mipi.o
 obj-$(CONFIG_SENSOR_OV2710)			+= ov2710_mipi.o
 obj-$(CONFIG_SENSOR_OV2718)			+= ov2718_mipi.o
