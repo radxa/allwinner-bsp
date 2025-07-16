@@ -2677,7 +2677,7 @@
 			#thermal-sensor-cells = <1>;
 		};
 
-		ths1: ths0@2009400 {
+		ths1: ths1@2009400 {
 			compatible = "allwinner,sun55iw3p1-ths1";
 			reg = <0x0 0x02009400 0x0 0x400>;
 			clocks = <&ccu CLK_THS>, <&ccu CLK_GPADC1_24M>;
