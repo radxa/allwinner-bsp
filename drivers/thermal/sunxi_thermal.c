@@ -23,6 +23,8 @@
 #include "sunxi_critical_handler.h"
 #endif
 
+#include "../../../drivers/thermal/thermal_hwmon.h"
+
 #define FT_TEMP_MASK				GENMASK(11, 0)
 #define TEMP_CALIB_MASK				GENMASK(11, 0)
 #define CALIBRATE_DEFAULT			0x800
@@ -940,6 +942,10 @@ static int sunxi_ths_register(struct ths_device *tmdev)
 							     &ths_ops);
 		if (IS_ERR(tmdev->sensor[i].tzd))
 			return PTR_ERR(tmdev->sensor[i].tzd);
+
+		if (devm_thermal_add_hwmon_sysfs(tmdev->sensor[i].tzd))
+			dev_warn(tmdev->dev,
+				 "Failed to add hwmon sysfs attributes\n");
 	}
 
 	return 0;
@@ -959,6 +965,10 @@ static int sunxi_ths_register(struct ths_device *tmdev)
 							&ths_ops);
 		if (IS_ERR(tmdev->sensor[i].tzd))
 			return PTR_ERR(tmdev->sensor[i].tzd);
+
+		if (devm_thermal_add_hwmon_sysfs(tmdev->sensor[i].tzd))
+			dev_warn(tmdev->dev,
+				 "Failed to add hwmon sysfs attributes\n");
 	}
 
 	return 0;
