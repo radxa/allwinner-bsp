@@ -15,6 +15,17 @@ config TYPEC_HUSB311
 
 	  If unsure, say N.
 
+config TYPEC_ET7304
+	tristate "Etek ET7304 Type-C chip driver"
+	depends on USB_SUNXI_TYPEC
+	depends on I2C
+	help
+	  Etek ET7304 Type-C chip driver that works with
+	  Type-C Port Controller Manager to provide USB PD and USB
+	  Type-C functionalities.
+
+	  If unsure, say N.
+
 endif # TYPEC_TCPCI
 
 endif # TYPEC_TCPM
