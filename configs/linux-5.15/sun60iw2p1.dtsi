@@ -3720,6 +3720,8 @@
 		sunxi_drm: sunxi-drm {
 			compatible = "allwinner,sunxi-drm";
 			fb_base = <0>;
+			quirk-prefer-fhd;
+			quirk-prefer-large-60;
 			status = "okay";
 		};
 
