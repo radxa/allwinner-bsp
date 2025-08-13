@@ -3771,6 +3771,9 @@ static bool sunxi_edp_is_support_backlight(void *data)
 {
 	struct sunxi_drm_edp *drm_edp = (struct sunxi_drm_edp *)data;
 
+	if(IS_ERR_OR_NULL(drm_edp) || IS_ERR_OR_NULL(drm_edp->desc))
+		return false;
+
 	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_eDP)
 		return general_panel_edp_is_support_backlight(drm_edp->sdrm.panel);
 	else
@@ -3781,6 +3784,9 @@ static int sunxi_edp_get_backlight_value(void *data)
 {
 	struct sunxi_drm_edp *drm_edp = (struct sunxi_drm_edp *)data;
 
+	if(IS_ERR_OR_NULL(drm_edp) || IS_ERR_OR_NULL(drm_edp->desc))
+		return 0;
+
 	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_eDP)
 		return general_panel_edp_get_backlight_value(drm_edp->sdrm.panel);
 	else
@@ -3790,6 +3796,9 @@ static int sunxi_edp_get_backlight_value(void *data)
 static void sunxi_edp_set_backlight_value(void *data, int brightness)
 {
 	struct sunxi_drm_edp *drm_edp = (struct sunxi_drm_edp *)data;
+
+	if(IS_ERR_OR_NULL(drm_edp) || IS_ERR_OR_NULL(drm_edp->desc))
+		return;
 
 	if (drm_edp->desc->connector_type == DRM_MODE_CONNECTOR_eDP)
 		general_panel_edp_set_backlight_value(drm_edp->sdrm.panel, brightness);
