@@ -4873,7 +4873,7 @@
 		i2s3_mach:i2s3_mach{
 			compatible = "allwinner,sunxi-snd-mach";
 			/* card name. hdmi: "sndhdmi"; edp: "sndedp" */
-			soundcard-mach,name		= "sndhdmi";
+			soundcard-mach,name		= "allwinner-hdmi";
 			soundcard-mach,format		= "i2s";
 			soundcard-mach,slot-num		= <2>;
 			soundcard-mach,slot-width	= <32>;
