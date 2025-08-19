@@ -542,38 +542,6 @@ int de_top_set_chn_mux(struct de_top_handle *hdl, u32 disp, u32 port, u32 chn_ty
 	return hdl->private->dsc->set_chn2core_mux(hdl, disp, chn_type_id, is_video);
 }
 
-static bool de_top_check_another_rtmx_enabled(struct de_top_handle *hdl, u32 mdisp)
-{
-	u8 __iomem *de_base = hdl->cinfo.de_reg_base;
-	u8 __iomem *reg_base;
-	u32 offset;
-	bool en = false;
-	int i;
-
-	offset = hdl->private->dsc->glb_ctl_offset;
-	for (i = 0; i < 2; i++) {
-		if (mdisp == i)
-			continue;
-
-		reg_base = de_base + DE_REG_OFFSET(offset, i, 0x40);
-		en |= readl(reg_base) & 0x1;
-	}
-
-	return en;
-}
-
-static bool de_top_rtmx_is_enabled(struct de_top_handle *hdl, u32 mdisp)
-{
-	u8 __iomem *de_base = hdl->cinfo.de_reg_base;
-	u8 __iomem *reg_base;
-	u32 offset;
-
-	offset = hdl->private->dsc->glb_ctl_offset;
-	reg_base = de_base + DE_REG_OFFSET(offset, mdisp, 0x40);
-
-	return readl(reg_base) & 0x1;
-}
-
 static int de_top_set_rtmx_enable(struct de_top_handle *hdl, u32 disp, u8 en)
 {
 	u8 __iomem *de_base = hdl->cinfo.de_reg_base;
@@ -587,9 +555,6 @@ static int de_top_set_rtmx_enable(struct de_top_handle *hdl, u32 disp, u8 en)
 	u8 __iomem *reg_base2;
 	u32 offset2;
 	bool busy;
-	unsigned long flag;
-	bool is_dual = false, unplug = false;
-	int i, j;
 
 	if (hdl->private->dsc->version == 0x350) {
 		ic_ver = sunxi_get_soc_ver();
@@ -601,76 +566,13 @@ static int de_top_set_rtmx_enable(struct de_top_handle *hdl, u32 disp, u8 en)
 			writel(0x6000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, disp, 0x4));
 	} else if (hdl->private->dsc->version == 0x352 || hdl->private->dsc->version == 0x355) {
 		/*
-		 * sun60iw2 & sun65iw1 all linebufs have 0x3000, and the maximum size of a single de is 0x3000.
-		 * current policy: single display configuration 0x3000,
-		 * dual display config primary display 0x2000, secondary display 0x1000.
+		 * sun60iw2 & sun65iw1 all linebufs have 0x3000, and the maximum size of a single de is 0x2000.
+		 * primary display 0x2000, secondary display 0x1000.
 		 */
-		if (de_top_check_another_rtmx_enabled(hdl, disp) && en)
-			is_dual = true;
-
-		if (de_top_rtmx_is_enabled(hdl, 0) && de_top_rtmx_is_enabled(hdl, 1) && !en) {
-			/* delay to device disabled */
-			unplug = true;
-			goto set_enable;
-		}
-
-		if (is_dual) {
-			for (j = 0; j < 2; j++) {
-				if (de_top_rtmx_is_enabled(hdl, j)) {
-					/* need wait de not busy signal */
-					offset2 = DE_REG_OFFSET(hdl->private->dsc->busy_offset, j, 0x40);
-					reg_base2 = de_base + offset2;
-					i = 0;
-					do {
-						local_irq_save(flag);
-						busy = !!(readl(reg_base2) & 0x10);
-						if (!busy) {
-							if (j == 0)
-								writel(0x2000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, j, 0x4));
-							else if (j == 1)
-								writel(0x1000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, j, 0x4));
-							local_irq_restore(flag);
-							break;
-						}
-						local_irq_restore(flag);
-						usleep_range(5, 10);
-						i++;
-					} while (i < 10000);
-				} else {
-					if (j == 0)
-						writel(0x2000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, j, 0x4));
-					else if (j == 1)
-						writel(0x1000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, j, 0x4));
-				}
-			}
-		} else {
-			/* one device has been enabled */
-			for (j = 0; j < 2; j++) {
-				if (de_top_rtmx_is_enabled(hdl, j)) {
-					/* need wait de not busy signal */
-					offset2 = DE_REG_OFFSET(hdl->private->dsc->busy_offset, j, 0x40);
-					reg_base2 = de_base + offset2;
-					i = 0;
-					do {
-						local_irq_save(flag);
-						busy = !!(readl(reg_base2) & 0x10);
-						if (!busy) {
-							writel(0x3000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, j, 0x4));
-							local_irq_restore(flag);
-							break;
-						}
-						local_irq_restore(flag);
-						usleep_range(5, 10);
-						i++;
-					} while (i < 10000);
-					break;
-				}
-			}
-
-			if (!de_top_rtmx_is_enabled(hdl, 0) && !de_top_rtmx_is_enabled(hdl, 1) && en) {
-				writel(0x3000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, disp, 0x4));
-			}
-		}
+		if (disp == 0)
+			writel(0x2000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, disp, 0x4));
+		else if (disp == 1)
+			writel(0x1000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, disp, 0x4));
 	}
 /*
 	if (hdl->private->dsc->reserve_ctl_offset) {
@@ -679,7 +581,6 @@ static int de_top_set_rtmx_enable(struct de_top_handle *hdl, u32 disp, u8 en)
 		reg_val = SET_BITS(8, 1, reg_val, 1);
 		writel(reg_val, reg_base);
 	}*/
-set_enable:
 
 	offset = hdl->private->dsc->glb_ctl_offset;
 	reg_base = de_base + DE_REG_OFFSET(offset, disp, 0x40);
@@ -700,30 +601,6 @@ set_enable:
 	if (hdl->private->dsc->support_rcq_gate)
 		reg_val = SET_BITS(16, 1, reg_val, en ? 1 : 0);
 	writel(reg_val, reg_base);
-
-	if (unplug) {
-		for (j = 0; j < 2; j++) {
-			if (de_top_rtmx_is_enabled(hdl, j)) {
-				/* need wait de not busy signal */
-				offset2 = DE_REG_OFFSET(hdl->private->dsc->busy_offset, j, 0x40);
-				reg_base2 = de_base + offset2;
-				i = 0;
-				do {
-					local_irq_save(flag);
-					busy = !!(readl(reg_base2) & 0x10);
-					if (!busy) {
-						writel(0x3000, de_base + DE_REG_OFFSET(DE_BUF_DEPTH_OFFSET, j, 0x4));
-						local_irq_restore(flag);
-						break;
-					}
-					local_irq_restore(flag);
-					usleep_range(5, 10);
-					i++;
-				} while (i < 10000);
-				break;
-			}
-		}
-	}
 
 	return 0;
 }
