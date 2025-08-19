@@ -26,17 +26,25 @@
 #define PWM_PCCREF	(0x003c)
 
 #define PWM_PCGR	(0x0040)
-
+#define PWM_PDZCR01	(0x0060)
+#define PWM_PDZCR23	(0x0064)
+#define PWM_PDZCR45	(0x0068)
 #define	PWM_PDZCR67	(0x006c)
 #define	PWM_PDZCR89	(0x0070)
 #define	PWM_PDZCRAB	(0x0074)
 #define	PWM_PDZCRCD	(0x0078)
 #define	PWM_PDZCREF	(0x007c)
 
+#define PWM_PER		(0x0080)
 #define PWM_PGR0	(0x0090)
 #define PWM_PGR1	(0x0094)
+#define PWM_PGR2	(0x0098)
+#define PWM_PGR3	(0x009c)
 
 #define PWM_CER         (0x00c0)
+#define PWM_PCR         (0x0100 + 0x0000)
+#define PWM_PPR         (0x0100 + 0x0004)
+#define PWM_PCNTR       (0x0100 + 0x0008)
 #define PPCNTP_BASE     (0x0100 + 0x000c)
 #define PWM_CCR_BASE    (0x0100 + 0x0010)
 #define PWM_CRLR_BASE   (0x0100 + 0x0014)

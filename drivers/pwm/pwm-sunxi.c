@@ -61,6 +61,25 @@
 #define SET_BITS(shift, width, reg, val) \
 	    (((reg) & CLRMASK(width, shift)) | (val << (shift)))
 
+#define PWM_CHAN_NUM	10
+static u32 pwm_pm_regs_offset[] = {
+	PWM_PIER,
+	PWM_CIER,
+	PWM_PCCR01,
+	PWM_PCCR23,
+	PWM_PCCR45,
+	PWM_PCCR67,
+	PWM_PCCR89,
+	PWM_PCGR,
+	PWM_PDZCR01,
+	PWM_PDZCR23,
+	PWM_PDZCR45,
+	PWM_PDZCR67,
+	PWM_PDZCR89,
+	PWM_PER,
+	PWM_CER,
+};
+
 struct sunxi_pwm_config {
 	unsigned int dead_time;
 	unsigned int bind_pwm;
@@ -122,6 +141,11 @@ struct sunxi_pwm_chip {
 	bool status;
 	bool channel_polarity_flag[PWM_NUM_MAX]; /* init set pwm polarity flag  */
 	bool resume_polarity_flag[PWM_NUM_MAX]; /* resmue set pwm polarity flag */
+	u32 pm_regs_backup[ARRAY_SIZE(pwm_pm_regs_offset)];
+	u32 pcr_regs_backup[PWM_CHAN_NUM];
+	u32 ppr_regs_backup[PWM_CHAN_NUM];
+	u32 ccr_regs_backup[PWM_CHAN_NUM];
+	u32 pcntr_regs_backup[PWM_CHAN_NUM];
 	spinlock_t lock;
 };
 
@@ -337,16 +361,31 @@ static inline void sunxi_pwm_save_regs(struct sunxi_pwm_chip *chip)
 {
 	int i;
 
-	for (i = 0; i < chip->data->pm_regs_num; i++)
-		chip->regs_backup[i] = readl(chip->base + chip->pm_regs_offset[i]);
+	for (i = 0; i < ARRAY_SIZE(pwm_pm_regs_offset); i++)
+		chip->pm_regs_backup[i] = readl(chip->base + pwm_pm_regs_offset[i]);
+
+	for (i = 0; i < PWM_CHAN_NUM; i++) {
+		chip->pcr_regs_backup[i] = readl(chip->base + PWM_PCR + chip->data->pwm_reg_uniform_offset * i);
+		chip->ppr_regs_backup[i] = readl(chip->base + PWM_PPR + chip->data->pwm_reg_uniform_offset * i);
+		chip->ccr_regs_backup[i] = readl(chip->base + PWM_CCR_BASE + chip->data->pwm_reg_uniform_offset * i);
+		chip->pcntr_regs_backup[i] = readl(chip->base + PWM_PCNTR + chip->data->pwm_reg_uniform_offset * i);
+	}
+
 }
 
 static inline void sunxi_pwm_restore_regs(struct sunxi_pwm_chip *chip)
 {
 	int i;
 
-	for (i = 0; i < chip->data->pm_regs_num; i++)
-		writel(chip->regs_backup[i], chip->base + chip->pm_regs_offset[i]);
+	for (i = 0; i < ARRAY_SIZE(pwm_pm_regs_offset); i++)
+		writel(chip->pm_regs_backup[i], chip->base + pwm_pm_regs_offset[i]);
+
+	for (i = 0; i < PWM_CHAN_NUM; i++) {
+		writel(chip->pcr_regs_backup[i], chip->base + PWM_PCR + chip->data->pwm_reg_uniform_offset * i);
+		writel(chip->ppr_regs_backup[i], chip->base + PWM_PPR + chip->data->pwm_reg_uniform_offset * i);
+		writel(chip->ccr_regs_backup[i], chip->base + PWM_CCR_BASE + chip->data->pwm_reg_uniform_offset * i);
+		writel(chip->pcntr_regs_backup[i], chip->base + PWM_PCNTR + chip->data->pwm_reg_uniform_offset * i);
+	}
 }
 
 static inline struct sunxi_pwm_chip *to_sunxi_pwm_chip(struct pwm_chip *pwm_chip)
