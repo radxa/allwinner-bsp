@@ -196,6 +196,21 @@
 #define SMLH_LINK_UP			BIT(0)
 #define PCIE_LINK_INT_EN		(BIT(0) | BIT(1))
 
+#define SII_INT_MASK0			0x0e00
+#define SII_INT_STAS0			0x0e08
+	#define INTX_TX_DEASSERT_MASK	GENMASK(28, 25)
+	#define INTX_TX_DEASSERT_SHIFT	25
+	#define INTX_TX_DEASSERT(x)		BIT((x) + INTX_TX_DEASSERT_SHIFT)
+	#define INTX_TX_ASSERT_MASK		GENMASK(24, 21)
+	#define INTX_TX_ASSERT_SHIFT	21
+	#define INTX_TX_ASSERT(x)		BIT((x) + INTX_TX_ASSERT_SHIFT)
+	#define INTX_RX_DEASSERT_MASK	GENMASK(12, 9)
+	#define INTX_RX_DEASSERT_SHIFT	9
+	#define INTX_RX_DEASSERT(x)		BIT((x) + INTX_RX_DEASSERT_SHIFT)
+	#define INTX_RX_ASSERT_MASK		GENMASK(8, 5)
+	#define INTX_RX_ASSERT_SHIFT	5
+	#define INTX_RX_ASSERT(x)		BIT((x) + INTX_RX_ASSERT_SHIFT)
+
 #define PCIE_PHY_CFG			0x800
 #define SYS_CLK				0
 #define PAD_CLK				1
@@ -288,12 +303,14 @@ struct sunxi_pcie_port {
 	u32				num_ob_windows;
 	struct sunxi_pcie_host_ops	*ops;
 	int				msi_irq;
+	struct irq_domain		*intx_domain;
 	struct irq_domain		*irq_domain;
 	struct irq_domain		*msi_domain;
 	u16			msi_msg;
 	dma_addr_t		msi_data;
 	struct pci_host_bridge		*bridge;
 	raw_spinlock_t			lock;
+	bool					intx_map[PCI_NUM_INTX];
 	unsigned long			msi_map[BITS_TO_LONGS(INT_PCI_MSI_NR)];
 	bool				has_its;
 	bool				cpu_pcie_addr_quirk;

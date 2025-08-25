@@ -222,6 +222,93 @@ static void sunxi_pcie_free_msi(struct sunxi_pcie_port *pp)
 							DMA_FROM_DEVICE, DMA_ATTR_SKIP_CPU_SYNC);
 }
 
+static void sunxi_pcie_intx_irq_mask(struct irq_data *data)
+{
+	struct sunxi_pcie *pcie = irq_data_get_irq_chip_data(data);
+	struct sunxi_pcie_port *pp = &pcie->pp;
+	irq_hw_number_t hwirq = irqd_to_hwirq(data);
+	unsigned long flags;
+	u32 mask;
+
+	raw_spin_lock_irqsave(&pp->lock, flags);
+	mask = sunxi_pcie_readl(pcie, SII_INT_MASK0);
+	mask &= ~(INTX_RX_DEASSERT(hwirq) | INTX_RX_ASSERT(hwirq));
+	sunxi_pcie_writel(mask, pcie, SII_INT_MASK0);
+	pp->intx_map[hwirq] = false;
+	raw_spin_unlock_irqrestore(&pp->lock, flags);
+}
+
+static void sunxi_pcie_intx_irq_unmask(struct irq_data *data)
+{
+	struct sunxi_pcie *pcie = irq_data_get_irq_chip_data(data);
+	struct sunxi_pcie_port *pp = &pcie->pp;
+	irq_hw_number_t hwirq = irqd_to_hwirq(data);
+	unsigned long flags;
+	u32 mask;
+
+	raw_spin_lock_irqsave(&pp->lock, flags);
+	pp->intx_map[hwirq] = false;
+	mask = sunxi_pcie_readl(pcie, SII_INT_MASK0);
+	mask |= INTX_RX_DEASSERT(hwirq) | INTX_RX_ASSERT(hwirq);
+	sunxi_pcie_writel(mask, pcie, SII_INT_MASK0);
+	raw_spin_unlock_irqrestore(&pp->lock, flags);
+}
+
+static struct irq_chip sunxi_pcie_sii_intx_chip = {
+	.name = "SUNXI-PCIe-SII-INTx",
+	.irq_enable = sunxi_pcie_intx_irq_unmask,
+	.irq_disable = sunxi_pcie_intx_irq_mask,
+	.irq_mask = sunxi_pcie_intx_irq_mask,
+	.irq_unmask = sunxi_pcie_intx_irq_unmask,
+};
+
+static int sunxi_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
+				 irq_hw_number_t hwirq)
+{
+	irq_set_chip_and_handler(irq, &sunxi_pcie_sii_intx_chip, handle_simple_irq);
+	irq_set_chip_data(irq, domain->host_data);
+
+	return 0;
+}
+
+static const struct irq_domain_ops intx_domain_ops = {
+	.map = sunxi_pcie_intx_map,
+};
+
+static int sunxi_allocate_intx_domains(struct sunxi_pcie_port *pp)
+{
+	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
+	struct device_node *intc_node;
+	u32 val;
+
+	intc_node = of_get_next_child(pp->dev->of_node, NULL);
+	if (!intc_node) {
+		dev_err(pp->dev, "failed to found pcie intc node\n");
+		return -ENODEV;
+	}
+
+	pp->intx_domain = irq_domain_add_linear(intc_node, PCI_NUM_INTX,
+						 &intx_domain_ops, pci);
+	of_node_put(intc_node);
+	if (!pp->intx_domain) {
+		dev_err(pp->dev, "failed to add intx irq domain\n");
+		return -ENODEV;
+	}
+
+	/* intx irq enable */
+	val = sunxi_pcie_readl(pci, SII_INT_MASK0);
+	val |= INTX_RX_DEASSERT_MASK | INTX_RX_ASSERT_MASK;
+	sunxi_pcie_writel(val, pci, SII_INT_MASK0);
+
+	return 0;
+}
+
+static void sunxi_free_intx_domains(struct sunxi_pcie_port *pp)
+{
+	if (pp->intx_domain)
+		irq_domain_remove(pp->intx_domain);
+}
+
 static void sunxi_pcie_prog_outbound_atu(struct sunxi_pcie_port *pp, int index, int type,
 					u64 cpu_addr, u64 pci_addr, u32 size)
 {
@@ -396,8 +483,11 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 		pp->io_base   -= PCIE_CPU_BASE;
 	}
 
-	if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
+	ret = sunxi_allocate_intx_domains(pp);
+	if (ret)
+		return ret;
 
+	if (pci_msi_enabled() && !pp->has_its) {
 		ret = sunxi_allocate_msi_domains(pp);
 		if (ret)
 			return ret;
@@ -416,10 +506,11 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 	ret = pci_host_probe(bridge);
 
 	if (ret) {
-		if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
+		if (pci_msi_enabled() && !pp->has_its) {
 			sunxi_pcie_free_msi(pp);
 			sunxi_free_msi_domains(pp);
 		}
+		sunxi_free_intx_domains(pp);
 
 		sunxi_err(pp->dev, "Failed to probe host bridge\n");
 
@@ -464,7 +555,7 @@ void sunxi_pcie_host_setup_rc(struct sunxi_pcie_port *pp)
 
 	sunxi_pcie_writel_dbi(pci, PCI_COMMAND, val);
 
-	if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
+	if (pci_msi_enabled() && !pp->has_its) {
 		for (i = 0; i < 8; i++) {
 			sunxi_pcie_host_wr_own_conf(pp, PCIE_MSI_INTR_ENABLE(i), 4, ~0);
 		}
@@ -709,7 +800,7 @@ int sunxi_pcie_host_add_port(struct sunxi_pcie *pci, struct platform_device *pde
 
 	pp->has_its = device_property_read_bool(&pdev->dev, "msi-map");
 
-	if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
+	if (pci_msi_enabled() && !pp->has_its) {
 		pp->msi_irq = platform_get_irq_byname(pdev, "msi");
 		if (pp->msi_irq < 0)
 			return pp->msi_irq;
@@ -744,9 +835,10 @@ void sunxi_pcie_host_remove_port(struct sunxi_pcie *pci)
 		pci_remove_root_bus(pp->bridge->bus);
 	}
 
-	if (IS_ENABLED(CONFIG_PCI_MSI) && !pp->has_its) {
+	if (pci_msi_enabled() && !pp->has_its) {
 		sunxi_pcie_free_msi(pp);
 		sunxi_free_msi_domains(pp);
 	}
+	sunxi_free_intx_domains(pp);
 }
 EXPORT_SYMBOL_GPL(sunxi_pcie_host_remove_port);
