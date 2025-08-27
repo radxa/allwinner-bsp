@@ -1595,6 +1595,9 @@ static void __usb_passby(struct sunxi_hci_hcd *sunxi_hci, u32 enable,
 			/* bypass ohci bulk out changes */
 			reg_value |= (1 << 15);
 #endif
+			/* Enable addr unalign */
+			reg_value |= (1 << 14);
+			reg_value |= (1 << 13);
 
 #if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 			/* AHB Master interface INCR16 enable */
@@ -1628,6 +1631,9 @@ static void __usb_passby(struct sunxi_hci_hcd *sunxi_hci, u32 enable,
 			/* Not bypass ohci bulk out changes */
 			reg_value &= ~(1 << 15);
 #endif
+			/* Enable addr unalign */
+			reg_value &= ~(1 << 14);
+			reg_value &= ~(1 << 13);
 
 #if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 			/* AHB Master interface INCR16 disable */
