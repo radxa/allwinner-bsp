@@ -38,7 +38,7 @@
 #include "pcie-sunxi-dma.h"
 #include "pcie-sunxi.h"
 
-#define SUNXI_PCIE_MODULE_VERSION	"1.2.0"
+#define SUNXI_PCIE_MODULE_VERSION	"1.2.1"
 
 void sunxi_pcie_writel(u32 val, struct sunxi_pcie *pcie, u32 offset)
 {
@@ -618,39 +618,21 @@ static void sunxi_pcie_plat_combo_phy_deinit(struct sunxi_pcie *pci)
 static void sunxi_pcie_plat_sii_int0_handler(struct sunxi_pcie_port *pp)
 {
 	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
-	u32 mask, stas, irq, clr;
-	u32 bit;
-	unsigned long status;
+	u32 mask, stas, irq;
 
 	mask = sunxi_pcie_readl(pci, SII_INT_MASK0);
 	stas = sunxi_pcie_readl(pci, SII_INT_STAS0);
 	irq = mask & stas;
-	clr = 0;
 
 	if (irq & INTX_RX_ASSERT_MASK) {
-		status = irq & INTX_RX_ASSERT_MASK;
-		bit = INTX_RX_ASSERT_SHIFT;
+		unsigned long status = irq & INTX_RX_ASSERT_MASK;
+		u32 bit = INTX_RX_ASSERT_SHIFT;
 		for_each_set_bit_from(bit, &status, PCI_NUM_INTX + INTX_RX_ASSERT_SHIFT) {
-			if (!pp->intx_map[bit - INTX_RX_ASSERT_SHIFT]) {
-				pp->intx_map[bit - INTX_RX_ASSERT_SHIFT] = true;
-				/* Clear INTx status */
-				sunxi_pcie_writel(BIT(bit), pci, SII_INT_STAS0);
-				generic_handle_domain_irq(pp->intx_domain, bit - INTX_RX_ASSERT_SHIFT);
-			}
+			/* Clear INTx status */
+			sunxi_pcie_writel(BIT(bit), pci, SII_INT_STAS0);
+			generic_handle_domain_irq(pp->intx_domain, bit - INTX_RX_ASSERT_SHIFT);
 		}
 	}
-	if (irq & INTX_RX_DEASSERT_MASK) {
-		status = irq & INTX_RX_DEASSERT_MASK;
-		bit = INTX_RX_DEASSERT_SHIFT;
-		for_each_set_bit_from(bit, &status, PCI_NUM_INTX + INTX_RX_DEASSERT_SHIFT) {
-			if (pp->intx_map[bit - INTX_RX_DEASSERT_SHIFT]) {
-				pp->intx_map[bit - INTX_RX_DEASSERT_SHIFT] = false;
-				clr |= BIT(bit);
-			}
-		}
-	}
-
-	sunxi_pcie_writel(clr, pci, SII_INT_STAS0);
 }
 
 static irqreturn_t sunxi_pcie_plat_sii_handler(int irq, void *arg)

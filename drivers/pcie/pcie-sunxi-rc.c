@@ -228,13 +228,15 @@ static void sunxi_pcie_intx_irq_mask(struct irq_data *data)
 	struct sunxi_pcie_port *pp = &pcie->pp;
 	irq_hw_number_t hwirq = irqd_to_hwirq(data);
 	unsigned long flags;
-	u32 mask;
+	u32 mask, stas;
 
 	raw_spin_lock_irqsave(&pp->lock, flags);
 	mask = sunxi_pcie_readl(pcie, SII_INT_MASK0);
-	mask &= ~(INTX_RX_DEASSERT(hwirq) | INTX_RX_ASSERT(hwirq));
+	mask &= ~INTX_RX_ASSERT(hwirq);
 	sunxi_pcie_writel(mask, pcie, SII_INT_MASK0);
-	pp->intx_map[hwirq] = false;
+	stas = sunxi_pcie_readl(pcie, SII_INT_STAS0);
+	stas |= INTX_RX_ASSERT(hwirq);
+	sunxi_pcie_writel(stas, pcie, SII_INT_STAS0);
 	raw_spin_unlock_irqrestore(&pp->lock, flags);
 }
 
@@ -244,12 +246,14 @@ static void sunxi_pcie_intx_irq_unmask(struct irq_data *data)
 	struct sunxi_pcie_port *pp = &pcie->pp;
 	irq_hw_number_t hwirq = irqd_to_hwirq(data);
 	unsigned long flags;
-	u32 mask;
+	u32 mask, stas;
 
 	raw_spin_lock_irqsave(&pp->lock, flags);
-	pp->intx_map[hwirq] = false;
+	stas = sunxi_pcie_readl(pcie, SII_INT_STAS0);
+	stas |= INTX_RX_ASSERT(hwirq);
+	sunxi_pcie_writel(stas, pcie, SII_INT_STAS0);
 	mask = sunxi_pcie_readl(pcie, SII_INT_MASK0);
-	mask |= INTX_RX_DEASSERT(hwirq) | INTX_RX_ASSERT(hwirq);
+	mask |= INTX_RX_ASSERT(hwirq);
 	sunxi_pcie_writel(mask, pcie, SII_INT_MASK0);
 	raw_spin_unlock_irqrestore(&pp->lock, flags);
 }
@@ -281,9 +285,9 @@ static int sunxi_allocate_intx_domains(struct sunxi_pcie_port *pp)
 	struct device_node *intc_node;
 	u32 val;
 
-	intc_node = of_get_next_child(pp->dev->of_node, NULL);
+	intc_node = of_get_child_by_name(pp->dev->of_node, "legacy-interrupt-controller");
 	if (!intc_node) {
-		dev_err(pp->dev, "failed to found pcie intc node\n");
+		dev_warn(pp->dev, "failed to found pcie intc node\n");
 		return -ENODEV;
 	}
 
@@ -291,13 +295,13 @@ static int sunxi_allocate_intx_domains(struct sunxi_pcie_port *pp)
 						 &intx_domain_ops, pci);
 	of_node_put(intc_node);
 	if (!pp->intx_domain) {
-		dev_err(pp->dev, "failed to add intx irq domain\n");
+		dev_warn(pp->dev, "failed to add intx irq domain\n");
 		return -ENODEV;
 	}
 
 	/* intx irq enable */
 	val = sunxi_pcie_readl(pci, SII_INT_MASK0);
-	val |= INTX_RX_DEASSERT_MASK | INTX_RX_ASSERT_MASK;
+	val |= INTX_RX_ASSERT_MASK;
 	sunxi_pcie_writel(val, pci, SII_INT_MASK0);
 
 	return 0;
@@ -483,9 +487,7 @@ int sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 		pp->io_base   -= PCIE_CPU_BASE;
 	}
 
-	ret = sunxi_allocate_intx_domains(pp);
-	if (ret)
-		return ret;
+	sunxi_allocate_intx_domains(pp);
 
 	if (pci_msi_enabled() && !pp->has_its) {
 		ret = sunxi_allocate_msi_domains(pp);

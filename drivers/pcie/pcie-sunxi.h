@@ -310,7 +310,6 @@ struct sunxi_pcie_port {
 	dma_addr_t		msi_data;
 	struct pci_host_bridge		*bridge;
 	raw_spinlock_t			lock;
-	bool					intx_map[PCI_NUM_INTX];
 	unsigned long			msi_map[BITS_TO_LONGS(INT_PCI_MSI_NR)];
 	bool				has_its;
 	bool				cpu_pcie_addr_quirk;
