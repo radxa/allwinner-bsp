@@ -2689,6 +2689,7 @@ static const struct of_device_id sunxi_vin_match[] = {
 	{.compatible = "allwinner,sunxi-vin-media",},
 	{},
 };
+MODULE_DEVICE_TABLE(of, sunxi_vin_match);
 
 static struct platform_driver vin_driver = {
 	.probe = vin_probe,
