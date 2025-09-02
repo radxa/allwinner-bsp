@@ -1127,6 +1127,7 @@ static struct platform_driver csi_platform_driver = {
 		   .of_match_table = sunxi_csi_match,
 		   },
 };
+MODULE_DEVICE_TABLE(of, sunxi_csi_match);
 
 int sunxi_csi_set_ch_mode(struct v4l2_subdev *sd)
 {
