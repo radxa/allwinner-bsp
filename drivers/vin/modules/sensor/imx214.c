@@ -309,6 +309,8 @@ static struct regval_list sensor_4k_videos[] = {
 	{0x4177, 0x3C},
 	{0xAE20, 0x04},
 	{0xAE21, 0x5C},
+	{0x0138, 0x01},
+	{0x0100, 0x01},
 };
 
 static struct regval_list sensor_1080p_regs[] = {
