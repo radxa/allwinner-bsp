@@ -738,6 +738,7 @@ int sunxi_pcie_host_establish_link(struct sunxi_pcie *pci)
 
 	if (sunxi_pcie_host_is_link_up(pp)) {
 		sunxi_info(pci->dev, "pcie is already link up\n");
+		msleep(20);
 		return 0;
 	}
 
