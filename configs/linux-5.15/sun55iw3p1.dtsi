@@ -89,6 +89,42 @@
 		bl31 {
 			reg = <0x0 0x48000000 0x0 0x01000000>;
 		};
+
+		riscvsram0_reserved: riscvsram0@7280000 {
+			reg = <0x0 0x07280000 0x0 0x40000>;
+			no-map;
+		};
+
+		riscvsram1_reserved: riscvsram1@72c0000 {
+			reg = <0x0 0x072c0000 0x0 0x40000>;
+			no-map;
+		};
+
+		e906_mem_fw: e906_mem_fw@5F000000 {
+			/* boot0 & uboot0 load elf addr */
+			reg = <0x0 0x5F000000 0x0 0x00a00000>;
+		};
+
+		e906_dram_reserved: e906_dram@60000000 {
+			reg = <0x0 0x60000000 0x0 0x00a00000>;
+			no-map;
+		};
+
+		rv_vdev0buffer: vdev0buffer@4ae00000 {
+			compatible = "shared-dma-pool";
+			reg = <0x0 0x4ae00000 0x0 0x40000>;
+			no-map;
+		};
+
+		rv_vdev0vring0: vdev0vring0@4ae40000 {
+			reg = <0x0 0x4ae40000 0x0 0x2000>;
+			no-map;
+		};
+
+		rv_vdev0vring1: vdev0vring1@4ae42000 {
+			reg = <0x0 0x4ae42000 0x0 0x2000>;
+			no-map;
+		};
 	};
 
 	firmware {
