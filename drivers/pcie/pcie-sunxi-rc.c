@@ -688,6 +688,8 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 			msleep(100);
 			gpiod_set_raw_value(pci->rst_gpio, 1);
 		}
+	} else {
+		msleep(100);
 	}
 
 	sunxi_pcie_host_setup_rc(pp);
