@@ -271,3 +271,4 @@ MODULE_AUTHOR("zhouxijing@allwinnertech.com");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0.0");
 MODULE_DESCRIPTION("sunxi soundcard codec of av");
+MODULE_ALIAS("platform:sunxi-snd-codec-av");
