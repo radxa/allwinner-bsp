@@ -30,6 +30,18 @@
 
 #define DRV_NAME	"sunxi-snd-mach"
 
+static const unsigned int sunxi_pcm_rates[] = {
+    8000, 11025, 12000, 16000, 22050, 24000,
+    32000, 44100, 48000, 64000, 88200, 96000,
+    176400, 192000,
+};
+
+static const struct snd_pcm_hw_constraint_list sunxi_pcm_rate_constraints = {
+    .count = ARRAY_SIZE(sunxi_pcm_rates),
+    .list = sunxi_pcm_rates,
+    .mask = 0,
+};
+
 static void asoc_simple_shutdown(struct snd_pcm_substream *substream)
 {
 }
@@ -38,6 +50,15 @@ static int asoc_simple_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct asoc_simple_priv *priv = snd_soc_card_get_drvdata(rtd->card);
+    int ret;
+
+    /* Apply sample rate constraints */
+    ret = snd_pcm_hw_constraint_list(substream->runtime, 0,
+                     SNDRV_PCM_HW_PARAM_RATE,
+                     &sunxi_pcm_rate_constraints);
+    if (ret < 0)
+        return ret;
+
 	if (priv->wait_time)
 		sunxi_adpt_wait_time_conv(substream, priv->wait_time);
 	return 0;

@@ -111,6 +111,18 @@ static const struct ac101_real_to_reg ac101_sample_rate[] = {
 	{192000, 10},
 };
 
+/* Supported sample rates for constraint */
+static const unsigned int ac101_rates[] = {
+    8000, 11025, 12000, 16000, 22050, 24000,
+    32000, 44100, 48000, 96000, 192000,
+};
+
+static const struct snd_pcm_hw_constraint_list ac101_rate_constraints = {
+    .count = ARRAY_SIZE(ac101_rates),
+    .list = ac101_rates,
+    .mask = 0,
+};
+
 /* I2S1LCK_CTRL 0x10 iI2S_WORD_SIZ*/
 static const struct ac101_real_to_reg ac101_sample_bit[] = {
 	{8,  0},
@@ -814,8 +826,16 @@ static int ac101_startup(struct snd_pcm_substream *substream, struct snd_soc_dai
 	struct regmap *regmap = ac101->regmap;
 	struct ac101_data *pdata = &ac101->pdata;
 	unsigned int reg_val;
+	int ret;
 
 	SND_LOG_DEBUG("\n");
+
+	/* Apply sample rate constraints */
+    ret = snd_pcm_hw_constraint_list(substream->runtime, 0,
+                     SNDRV_PCM_HW_PARAM_RATE,
+                     &ac101_rate_constraints);
+    if (ret < 0)
+        return ret;
 
 	if (!atomic_read(&pdata->working)) {
 		/* save reg */
