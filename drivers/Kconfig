@@ -71,6 +71,7 @@ source "$(BSP_TOP)drivers/input/Kconfig"
 source "$(BSP_TOP)drivers/ata/Kconfig"
 source "$(BSP_TOP)drivers/smartcard/Kconfig"
 source "$(BSP_TOP)drivers/wiegand/Kconfig"
+source "$(BSP_TOP)drivers/dram_info/Kconfig"
 
 # Wireless
 source "$(BSP_TOP)drivers/net/Kconfig"

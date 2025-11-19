@@ -15,8 +15,6 @@ config USB_SUNXI_TYPEC
 
 if TYPEC
 
-source "$(BSP_TOP)drivers/usb/typec/tcpm/Kconfig"
-
 source "$(BSP_TOP)drivers/usb/typec/mux/Kconfig"
 
 endif # TYPEC

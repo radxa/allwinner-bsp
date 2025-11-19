@@ -64,7 +64,41 @@ static inline void iounmap_regs(void)
 int sunxi_chang_freq_safe(struct kbase_device *kbdev, unsigned long *freq, unsigned long u_volt)
 {
 	int ret = 0;
+	static const char *pll_gpu_name;
+	const char *gpu_parent_name = NULL;
+	struct clk *gpu_parent = NULL;
 
+	gpu_parent = clk_get_parent(kbdev->clocks[0]);
+	if (IS_ERR_OR_NULL(gpu_parent)) {
+		sunxi_err(kbdev->dev, "failed to get gpu parent clk,"
+				"gpu will not change frequency\n");
+		return -EINVAL;
+	}
+
+	gpu_parent_name = __clk_get_name(gpu_parent);
+	if (!pll_gpu_name)
+		pll_gpu_name = __clk_get_name(sunxi_data->pll_gpu);
+
+	/*
+	 * NOTE: In the kbase_device_runtime_suspend call process, driver will queue
+	 * DEVFREQ_WORK_SUSPEND (devfreq_suspend_device) into devfreq_queue.workq,
+	 * but it will not execute immediately. So DVFS may adjust the gpu-clk frequency
+	 * after turning off the gpu clock. In this case, gpu-clk can be turned off at
+	 * the highest frequency (parent is pll-gpu) in disable_gpu_power_control; and
+	 * then DVFS changed the gpu-clk frequency, which caused the GPU to need to
+	 * switch parent clk.
+	 * When the driver enbale gpu-clk in kbase_device_runtime_resume, the system
+	 * would stuck.So in order to avoid this issue, we need to enable the pll gpui
+	 * once more.
+	 */
+	if (strcmp(pll_gpu_name, gpu_parent_name) == 0)
+		ret = clk_prepare_enable(sunxi_data->pll_gpu);
+
+	if (ret) {
+		sunxi_err(kbdev->dev, "sunxi_chang_freq_safe failed to prepare"
+				"and enable pll-gpu (%d)\n", ret);
+		return ret;
+	}
 #if defined(CONFIG_ARCH_SUN55IW3)
 	// increase frequency
 	if (sunxi_data->current_freq < *freq) {
@@ -120,6 +154,12 @@ int sunxi_chang_freq_safe(struct kbase_device *kbdev, unsigned long *freq, unsig
 		}
 	}
 #endif
+	if (strcmp(pll_gpu_name, gpu_parent_name) == 0)
+		clk_disable_unprepare(sunxi_data->pll_gpu);
+
+	/* sync freq info to dvfs when change freq by sysfs file */
+	if (kbdev->devfreq)
+		kbdev->current_nominal_freq = sunxi_data->current_freq;
 
 	return ret;
 }
@@ -797,6 +837,8 @@ int sunxi_platform_init(struct kbase_device *kbdev)
 
 	sunxi_data->pll_gpu = of_clk_get(kbdev->dev->of_node, 2);
 	if (IS_ERR_OR_NULL(sunxi_data->pll_gpu)) {
+		sunxi_info(kbdev->dev, "sunxi init gpu Failed to get pll_gpu\n");
+	} else {
 		/* pll-gpu is one of the clk-gpu parent clks, which is
 		 * defined in ccu-sun55iw3.c.
 		 * So we just need to set the frequency of the pll-gpu,
@@ -806,12 +848,13 @@ int sunxi_platform_init(struct kbase_device *kbdev)
 		 * prepare & enable it.
 		 */
 		//clk_prepare_enable(sunxi_data->pll_gpu);
-		sunxi_info(kbdev->dev, "sunxi init gpu Failed to get pll_gpu\n");
+		sunxi_info(kbdev->dev, "Set gpu-clk's parent is pll_gpu\n");
+		clk_set_parent(kbdev->clocks[0], sunxi_data->pll_gpu);
 	}
 
 #if !defined(CONFIG_PM_OPP)
-	clk_set_rate(kbdev->clocks[0], SUNXI_BAK_CLK_RATE);
 	clk_set_rate(sunxi_data->pll_gpu, SUNXI_BAK_CLK_RATE);
+	clk_set_rate(kbdev->clocks[0], SUNXI_BAK_CLK_RATE);
 #else
 	freq = ULONG_MAX;
 	opp = dev_pm_opp_find_freq_floor(kbdev->dev, &freq);
@@ -837,8 +880,8 @@ int sunxi_platform_init(struct kbase_device *kbdev)
 	if (kbdev->regulators[0])
 		u_volt = regulator_get_voltage(kbdev->regulators[0]);
 #endif
-	clk_set_rate(kbdev->clocks[0], freq);
 	clk_set_rate(sunxi_data->pll_gpu, freq);
+	clk_set_rate(kbdev->clocks[0], freq);
 #endif
 
 	sunxi_data->reset = devm_reset_control_get(kbdev->dev, NULL);
@@ -951,6 +994,7 @@ static void enable_gpu_power_control(struct kbase_device *kbdev)
 {
 	unsigned int i;
 	dev_dbg(kbdev->dev, "%s\n", __func__);
+
 /*
  * If GPU use independent_power, user need to care regulators
  */
@@ -972,7 +1016,11 @@ static void enable_gpu_power_control(struct kbase_device *kbdev)
 	 */
 	if (sunxi_data->is_resume_pll_gpu) {
 		clk_set_parent(kbdev->clocks[0], sunxi_data->pll_gpu);
-		kbase_devfreq_force_freq(kbdev, sunxi_data->max_freq);
+
+		if (kbdev->devfreq) {
+			kbase_devfreq_force_freq(kbdev, sunxi_data->max_freq);
+			sunxi_info(kbdev->dev, "gpu sync freq between dvfs and hardware\n");
+		}
 		sunxi_data->is_resume_pll_gpu = false;
 	}
 

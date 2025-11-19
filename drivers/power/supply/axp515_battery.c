@@ -39,6 +39,9 @@ struct axp515_bat_power {
 	atomic_t	 	charge_control_lim;
 	/* charge_cycle_count */
 	atomic_t	 	charge_cycle_count;
+
+	/* power debugfs */
+	struct			sunxi_power_debug_data *debug;
 };
 
 static enum power_supply_property axp515_bat_props[] = {
@@ -130,9 +133,16 @@ static int axp515_get_soc(struct power_supply *ps,
 	bool bat_charging, vbus_good, bat_charge_done;
 	static int rest_vol_old, axp515_max_soc;
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "-------axp515_get_soc -- start -------");
+
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "rest_vol_old = %d", rest_vol_old);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "axp515_max_soc_old = %d", axp515_max_soc);
+
 	ret = regmap_read(regmap, AXP515_CAP, &reg_value);
 	if (ret < 0)
 		return ret;
+
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "AXP515_CAP[REG:0x%x] = 0x%x", AXP515_CAP, reg_value);
 
 	if (!(reg_value & AXP515_CAP_EN)) {
 		val->intval = rest_vol_old;
@@ -145,6 +155,8 @@ static int axp515_get_soc(struct power_supply *ps,
 	if (ret < 0)
 		return ret;
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "AXP515_OCV_PERCENT[REG:0x%x] = 0x%x", AXP515_OCV_PERCENT, reg_value);
+
 	if (reg_value & AXP515_OCV_PER_EN)
 		ocv_percent = reg_value & 0x7f;
 
@@ -152,18 +164,30 @@ static int axp515_get_soc(struct power_supply *ps,
 	if (ret)
 		return ret;
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "AXP515_CLUMB_PERCENT[REG:0x%x] = 0x%x", AXP515_CLUMB_PERCENT, reg_value);
+
 	if (reg_value & AXP515_GAUGE_EN)
 		coul_percent = (int)(reg_value & 0x7F);
-
 
 	ret = regmap_read(regmap, AXP515_STATUS0, &reg_value);
 	if (ret < 0)
 		return ret;
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "AXP515_STATUS0[REG:0x%x] = 0x%x", AXP515_STATUS0, reg_value);
+
 	bat_charging = ((((reg_value & AXP515_MASK_CHARGE) > 0))
 			&& ((reg_value & AXP515_MASK_CHARGE) < AXP515_CHARGE_MAX)) ? 1 : 0;
 	vbus_good = reg_value & AXP515_MASK_VBUS_STAT;
 	bat_charge_done = ((reg_value & AXP515_CHARGE_DONE) == AXP515_CHARGE_DONE) ? 1 : 0;
+
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "rest_vol = %d", rest_vol);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "ocv_percent = %d", ocv_percent);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "coul_percent = %d", coul_percent);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "bat_charging = %d", bat_charging);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "vbus_good = %d", vbus_good);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "bat_charge_done = %d", bat_charge_done);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "axp_config->ocv_coulumb_100 = %d", axp_config->ocv_coulumb_100);
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "axp_config->ocv_coulumb_100 = %d", axp_config->ocv_coulumb_100);
 
 	if (ocv_percent == 100 && bat_charging == 0 && rest_vol == 99 && vbus_good) {
 		ret = regmap_update_bits(regmap, AXP515_COULOMB_CTL,
@@ -211,6 +235,8 @@ static int axp515_get_soc(struct power_supply *ps,
 		}
 	}
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "axp515_max_soc_new = %d", axp515_max_soc);
+
 	if (bat_charge_done && (rest_vol == 99) && vbus_good) {
 		regmap_update_bits(regmap, AXP515_IPRECHG_CFG, BIT(7), 0);
 		regmap_update_bits(regmap, AXP515_IPRECHG_CFG, BIT(7), BIT(7));
@@ -222,8 +248,11 @@ static int axp515_get_soc(struct power_supply *ps,
 
 	rest_vol_old = rest_vol;
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "rest_vol = %d", rest_vol);
+
 	val->intval = rest_vol;
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "-------axp515_get_soc -- end -------");
 	return 0;
 }
 
@@ -702,6 +731,7 @@ static int axp515_set_ichg(struct axp515_bat_power *bat_power, int mA)
 	if (cur_now == cur_set)
 		return 0;
 
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "set ichg:%d", mA);
 	_axp515_set_ichg(regmap, cur_set);
 
 	return 0;
@@ -765,6 +795,7 @@ static int axp515_model_update(struct axp515_bat_power *bat_power)
 	struct axp_config_info *axp_config = &bat_power->dts_info;
 	struct regmap *regmap = bat_power->regmap;
 	unsigned char ocv_cap[AXP515_MAX_PARAM];
+	int ret = 0;
 
 	/* down load battery parameters */
 	ocv_cap[0]  = axp_config->pmu_bat_para1;
@@ -799,8 +830,17 @@ static int axp515_model_update(struct axp515_bat_power *bat_power)
 	ocv_cap[29] = axp_config->pmu_bat_para30;
 	ocv_cap[30] = axp_config->pmu_bat_para31;
 	ocv_cap[31] = axp_config->pmu_bat_para32;
-	regmap_bulk_write(regmap, AXP515_OCV_CURV0, ocv_cap, 32);
-	regmap_update_bits(regmap, AXP515_BATFET_DLY, BIT(3), BIT(3));
+
+	ret = regmap_bulk_write(regmap, AXP515_OCV_CURV0, ocv_cap, 32);
+	if (ret < 0) {
+		PMIC_ERR("Failed to write OCV curve: %d", ret);
+		return ret;
+	}
+	ret = regmap_update_bits(regmap, AXP515_BATFET_DLY, BIT(3), BIT(3));
+	if (ret < 0) {
+		PMIC_ERR("Failed to update BATFET_DLY: %d", ret);
+		return ret;
+	}
 
 	return 0;
 }
@@ -1014,6 +1054,7 @@ static int axp515_bat_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 		ret = _axp515_set_ichg(regmap, val->intval);
+		SUNXI_POWER_LOG_INFO(bat_power->debug, "set ichg:%d", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
 		ret = axp515_set_bat_max_voltage(regmap, val->intval);
@@ -1838,8 +1879,13 @@ static void axp515_temp_process_init(struct work_struct *work)
 
 	charge_cur = axp515_ichg(regmap);
 
-	temp_calib = (vts2 - vts1) / charge_cur;
-	bat_power->bat_temp_calib = clamp_val(temp_calib, axp_config->pmu_bat_temp_comp, axp_config->pmu_battery_rdc);
+	if (!charge_cur) {
+		bat_power->bat_temp_calib = axp_config->pmu_bat_temp_comp;
+	} else {
+		temp_calib = (vts2 - vts1) / charge_cur;
+		bat_power->bat_temp_calib = clamp_val(temp_calib, axp_config->pmu_bat_temp_comp, axp_config->pmu_battery_rdc);
+	}
+
 	axp_config->pmu_bat_temp_enable = 1;
 
 	/* init bat temp check */
@@ -1853,7 +1899,7 @@ static int axp515_battery_probe(struct platform_device *pdev)
 
 	struct axp515_bat_power *bat_power;
 	struct power_supply_config psy_cfg = {};
-	struct axp20x_dev *axp_dev = dev_get_drvdata(pdev->dev.parent);
+	struct sunxi_power_dev *axp_dev = dev_get_drvdata(pdev->dev.parent);
 	struct device_node *node = pdev->dev.of_node;
 
 	if (!of_device_is_available(node)) {
@@ -1902,7 +1948,7 @@ static int axp515_battery_probe(struct platform_device *pdev)
 
 
 	/* add thermal cooling */
-	axp20x_register_cooler(bat_power->bat_supply);
+	sunxi_power_register_cooler(bat_power->bat_supply);
 
 	for (i = 0; i < ARRAY_SIZE(axp_bat_irq); i++) {
 		irq = platform_get_irq_byname(pdev, axp_bat_irq[i].name);
@@ -1941,6 +1987,12 @@ static int axp515_battery_probe(struct platform_device *pdev)
 		schedule_delayed_work(&bat_power->bat_temp_init, 0);
 	}
 
+	bat_power->debug = sunxi_power_debugfs_init(&pdev->dev);
+	if (IS_ERR_OR_NULL(bat_power->debug))
+		dev_warn(&pdev->dev, "Failed to init debugfs\n");
+
+	SUNXI_POWER_LOG_INFO(bat_power->debug, "BAT power driver initialized");
+
 	return ret;
 
 err:
@@ -1956,9 +2008,15 @@ static int axp515_battery_remove(struct platform_device *pdev)
 	PMIC_DEV_DEBUG(&pdev->dev, "==============AXP515 unegister==============\n");
 	if (bat_power->bat_supply) {
 		power_supply_unregister(bat_power->bat_supply);
-		axp20x_unregister_cooler(bat_power->bat_supply);
+		sunxi_power_unregister_cooler(bat_power->bat_supply);
 		mutex_destroy(&bat_power->lock);
 	}
+	cancel_delayed_work_sync(&bat_power->bat_supply_mon);
+	cancel_delayed_work_sync(&bat_power->bat_temp_init);
+	if (bat_power->dts_info.pmu_bat_temp_enable && bat_power->bat_temp_ws) {
+		wakeup_source_unregister(bat_power->bat_temp_ws);
+	}
+	sunxi_power_debugfs_exit(bat_power->debug);
 	PMIC_DEV_DEBUG(&pdev->dev, "axp515 teardown battery dev\n");
 
 	return 0;
@@ -2090,4 +2148,4 @@ module_platform_driver(axp515_bat_power_driver);
 MODULE_AUTHOR("wangxiaoliang <wangxiaoliang@x-powers.com>");
 MODULE_DESCRIPTION("axp515 battery driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0.0");
+MODULE_VERSION("1.0.2");

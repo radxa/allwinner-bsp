@@ -27,6 +27,7 @@
 #endif
 
 #include <linux/power_supply.h>
+#include "sunxi-power-notifier.h"
 
 #define HUSB311_VENDOR_ID			0x2E99
 #define HUSB311_PRODUCT_ID			0x0311
@@ -84,6 +85,10 @@ struct husb311_chip {
 	ktime_t closed; /* Vbus Off Time */
 	bool can_skip;
 	bool need_check;
+
+	int current_limit;
+	struct delayed_work  vbus_check_mon;
+	struct notifier_block sunxi_notifier_nb;
 };
 
 static const char * const typec_cc_status_name[] = {
@@ -355,35 +360,21 @@ static int husb311_set_cc(struct tcpc_dev *tcpc, enum typec_cc_status cc)
 
 static int husb311_get_current_limit(struct tcpc_dev *tcpc)
 {
-	union power_supply_propval temp;
 	struct tcpci *tcpci = tcpc_to_tcpci(tcpc);
 	struct husb311_chip *chip = tdata_to_husb311(tcpci->data);
-	u32 limit;
 
-	power_supply_get_property(chip->usb_psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &temp);
-	if (temp.intval)
-		limit = temp.intval;
-	else
-		limit = 0;
-	dev_info(chip->dev, "get current limit %u mA", limit);
+	dev_info(chip->dev, "get current limit %u mA", chip->current_limit);
 
-	return limit;
+	return chip->current_limit;
 }
 
 static int husb311_set_current_limit(struct tcpc_dev *tcpc, u32 max_ma, u32 mv)
 {
-	union power_supply_propval temp;
 	struct tcpci *tcpci = tcpc_to_tcpci(tcpc);
 	struct husb311_chip *chip = tdata_to_husb311(tcpci->data);
 	int ret = 0;
 
 	dev_info(chip->dev, "Setting voltage/current limit %u mV %u mA", mv, max_ma);
-
-	temp.intval = mv;
-	power_supply_set_property(chip->usb_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &temp);
-
-	temp.intval = max_ma;
-	power_supply_set_property(chip->usb_psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &temp);
 
 	return ret;
 }
@@ -398,14 +389,33 @@ static void husb311_init_tcpci_data(struct husb311_chip *chip)
 
 static void husb311_init_tcpci_data_late(struct husb311_chip *chip)
 {
+	struct device_node *np = NULL;
 	union power_supply_propval temp;
+	int pmu_usbad_cur = 0, ret = 0;
+
 	if (!chip->usb_psy)
 		return;
 
-	power_supply_get_property(chip->usb_psy,
+	ret = power_supply_get_property(chip->usb_psy,
 				  POWER_SUPPLY_PROP_CALIBRATE, &temp);
+	if (ret < 0)
+		chip->battery_exist = 1;
+
 	chip->battery_exist = temp.intval ? true : false;
 	dev_info(chip->dev, "battery exist: %s", chip->battery_exist ? "yes" : "no");
+
+	np = of_parse_phandle(chip->dev->of_node, "det_usb_supply", 0);
+	if (np) {
+		if (of_property_read_u32(np, "pmu_usbad_cur", &pmu_usbad_cur)) {
+			np = of_parse_phandle(chip->usb_psy->of_node, "det_usb_supply", 0);
+			if (np) {
+				if (of_property_read_u32(np, "pmu_usbad_cur", &pmu_usbad_cur))
+					pmu_usbad_cur = 0;
+			}
+		}
+	}
+
+	chip->current_limit = pmu_usbad_cur ? pmu_usbad_cur : 2500;
 
 	chip->tcpci->tcpc.set_cc = husb311_set_cc;
 	chip->tcpci->tcpc.set_current_limit = husb311_set_current_limit;
@@ -503,6 +513,9 @@ irqreturn_t tcpci_irq_override(struct tcpci *tcpci)
 static irqreturn_t husb311_irq(int irq, void *dev_id)
 {
 	struct husb311_chip *chip = dev_id;
+	u16 status;
+
+	tcpci_read16(chip->tcpci, TCPC_ALERT, &status);
 
 	/**
 	 * NOTE:
@@ -511,6 +524,11 @@ static irqreturn_t husb311_irq(int irq, void *dev_id)
 
 	queue_delayed_work(system_power_efficient_wq, &chip->wq_detcable,
 			   chip->debounce_jiffies);
+
+	if (status & TCPC_ALERT_CC_STATUS) {
+		cancel_delayed_work_sync(&chip->vbus_check_mon);
+		schedule_delayed_work(&chip->vbus_check_mon, msecs_to_jiffies(100));
+	}
 
 	return tcpci_irq_override(chip->tcpci);
 }
@@ -609,12 +627,32 @@ static int husb311_check_revision(struct i2c_client *i2c)
 	return 0;
 }
 
+static void husb311_detect_call(struct work_struct *work)
+{
+	struct husb311_chip *chip = container_of(to_delayed_work(work), struct husb311_chip,
+						 vbus_check_mon);
+	enum typec_cc_status cc1, cc2;
+	bool status;
+
+	chip->tcpci->tcpc.get_cc(&chip->tcpci->tcpc, &cc1, &cc2);
+
+	dev_info(chip->dev, "%s:%d CC1: %d - %s, CC2: %d - %s\n",
+		 __func__, __LINE__, cc1, typec_cc_status_name[cc1], cc2, typec_cc_status_name[cc2]);
+
+	if (tcpci_cc_is_sink(cc1) || tcpci_cc_is_sink(cc2)) {
+		status = true;
+	} else {
+		status = false;
+	}
+
+	sunxi_call_power_supply_notifier_with_data(AW_PSY_EVENT_VBUS_ONLINE_CHECK, &status);
+}
+
 static void husb311_detect_cable(struct work_struct *work)
 {
 	struct husb311_chip *chip = container_of(to_delayed_work(work), struct husb311_chip,
 						 wq_detcable);
 	enum typec_cc_status cc1, cc2;
-	union power_supply_propval temp;
 
 	chip->tcpci->tcpc.get_cc(&chip->tcpci->tcpc, &cc1, &cc2);
 
@@ -629,19 +667,11 @@ static void husb311_detect_cable(struct work_struct *work)
 	if (!tcpci_port_is_sink(cc1, cc2) && !tcpci_port_is_source(cc1, cc2)) {
 
 		dev_dbg(chip->dev, "Setting Role [%s]\n", usb_role_name[USB_ROLE_NONE]);
-		if (chip->usb_psy) {
-			temp.intval = 0;
-			power_supply_set_property(chip->usb_psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &temp);
-		}
 		usb_role_switch_set_role(chip->role_sw, USB_ROLE_NONE);
 
 	} else if (tcpci_cc_is_sink(cc1) && tcpci_cc_is_sink(cc2)) {
 
 		dev_dbg(chip->dev, "Setting Role [%s]\n", usb_role_name[USB_ROLE_DEVICE]);
-		if (chip->usb_psy) {
-			temp.intval = 500;
-			power_supply_set_property(chip->usb_psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &temp);
-		}
 		usb_role_switch_set_role(chip->role_sw, USB_ROLE_DEVICE);
 	}
 }
@@ -695,6 +725,10 @@ static int husb311_probe(struct i2c_client *client)
 		if (ret != -ENODEV)
 			return ret;
 	}
+
+	/* init default para */
+	chip->current_limit = 2500;
+
 	/* Here are some compatible issues for Type-C Port Controller. */
 	chip->vbus_debounce_quirk = device_property_read_bool(chip->dev, "aw,vbus-debounce-quirk");
 	device_property_read_u32(chip->dev, "aw,vbus-tryon-debounce", &chip->vbus_tryon_debounce);
@@ -703,6 +737,7 @@ static int husb311_probe(struct i2c_client *client)
 
 	chip->debounce_jiffies = msecs_to_jiffies(HUSB311_TCPM_DEBOUNCE_MS);
 	INIT_DELAYED_WORK(&chip->wq_detcable, husb311_detect_cable);
+	INIT_DELAYED_WORK(&chip->vbus_check_mon, husb311_detect_call);
 
 	ret = husb311_sw_reset(chip);
 	if (ret < 0) {
@@ -777,6 +812,7 @@ static void husb311_remove(struct i2c_client *client)
 		device_init_wakeup(chip->dev, false);
 	}
 	cancel_delayed_work_sync(&chip->wq_detcable);
+	cancel_delayed_work_sync(&chip->vbus_check_mon);
 	usb_role_switch_put(chip->role_sw);
 	tcpci_unregister_port(chip->tcpci);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
@@ -812,6 +848,7 @@ static int husb311_pm_suspend(struct device *dev)
 	u8 pwr;
 
 	cancel_delayed_work_sync(&chip->wq_detcable);
+	cancel_delayed_work_sync(&chip->vbus_check_mon);
 	/*
 	 * When system suspend, disable irq to prevent interrupt trigger
 	 * during I2C bus suspend
@@ -846,6 +883,7 @@ static int husb311_pm_resume(struct device *dev)
 
 	queue_delayed_work(system_power_efficient_wq,
 			   &chip->wq_detcable, chip->debounce_jiffies);
+	schedule_delayed_work(&chip->vbus_check_mon, msecs_to_jiffies(100));
 
 	if (!chip->port_reset_quirk) {
 		dev_info(chip->dev, "disable reset this port\n");
@@ -908,4 +946,4 @@ MODULE_ALIAS("platform:husb311-i2c-driver");
 MODULE_DESCRIPTION("Husb311 USB Type-C Port Controller Interface Driver");
 MODULE_AUTHOR("kanghoupeng<kanghoupeng@allwinnertech.com>");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.0.19");
+MODULE_VERSION("1.0.21");

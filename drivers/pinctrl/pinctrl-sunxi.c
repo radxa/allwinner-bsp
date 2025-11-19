@@ -46,7 +46,7 @@
 #include "core.h"
 #include "pinctrl-sunxi.h"
 
-#define SUNXI_PINCTRL_CORE_VERSION	"1.4.9"
+#define SUNXI_PINCTRL_CORE_VERSION	"1.4.11"
 #define SUNXI_PINCTRL_I2S0_ROUTE_PAD
 /* Indexed by `enum sunxi_pinctrl_hw_type` */
 struct sunxi_pinctrl_hw_info sunxi_pinctrl_hw_info[SUNXI_PCTL_HW_TYPE_CNT] = {
@@ -1303,7 +1303,11 @@ static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin,
 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
 
 		/* Wait for voltage increasing. Double check! */
-		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, reg & BIT(bank * 2), 100, 10000));
+		if (auto_power_detect_mode_reverse)
+			WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !(reg & BIT(bank * 2)), 100, 10000));
+		else
+			WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, reg & BIT(bank * 2), 100, 10000));
+
 		udelay(10);
 
 		sunxi_debug(NULL, "pf-switch-increase: Wait for voltage increase done[0x%x=0x%x] pf[0x%x=0x%x]\n",
@@ -1328,7 +1332,11 @@ static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin,
 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
 
 		/* Wait for voltage decreasing. Double check! */
-		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !(reg & BIT(bank * 2)), 100, 10000));
+		if (auto_power_detect_mode_reverse)
+			WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, reg & BIT(bank * 2), 100, 10000));
+		else
+			WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !(reg & BIT(bank * 2)), 100, 10000));
+
 		udelay(10);
 
 		sunxi_debug(NULL, "pf-switch-decrease: Wait for voltage decrease done[0x%x=0x%x] pf[0x%x=0x%x]\n",
@@ -2569,30 +2577,21 @@ int sunxi_bsp_pinctrl_init_with_variant(struct platform_device *pdev,
 	pctl->chip->parent = &pdev->dev;
 	pctl->chip->base = pctl->desc->pin_base;
 
-	ret = gpiochip_add_data(pctl->chip, pctl);
-	if (ret)
-		return ret;
-
-	for (i = 0; i < pctl->desc->npins; i++) {
-		const struct sunxi_desc_pin *pin = pctl->desc->pins + i;
-
-		ret = gpiochip_add_pin_range(pctl->chip, dev_name(&pdev->dev),
-					     pin->pin.number - pctl->desc->pin_base,
-					     pin->pin.number, 1);
-		if (ret)
-			goto gpiochip_error;
-	}
-
 	ret = of_clk_get_parent_count(node);
 	clk = devm_clk_get(&pdev->dev, ret == 1 ? NULL : "apb");
 	if (IS_ERR(clk)) {
 		ret = PTR_ERR(clk);
-		goto gpiochip_error;
+		if (ret != -EPROBE_DEFER)
+			sunxi_err(&pdev->dev, "Couldn't get clk\n");
+
+		return ret;
 	}
 
 	ret = clk_prepare_enable(clk);
-	if (ret)
-		goto gpiochip_error;
+	if (ret) {
+		sunxi_err(&pdev->dev, "Couldn't enable clk\n");
+		return ret;
+	}
 
 	pctl->irq = devm_kcalloc(&pdev->dev,
 				 pctl->desc->irq_banks,
@@ -2652,8 +2651,11 @@ int sunxi_bsp_pinctrl_init_with_variant(struct platform_device *pdev,
 	ignore_array = NULL;
 
 	pctl->parent_domain = sunxi_pctrl_get_irq_domain(node);
-	if (IS_ERR(pctl->parent_domain))
-		return PTR_ERR(pctl->parent_domain);
+	if (IS_ERR(pctl->parent_domain)) {
+		ret = PTR_ERR(pctl->parent_domain);
+		goto clk_error;
+	}
+
 	pctl->domain = irq_domain_create_hierarchy(pctl->parent_domain, 0,
 					     pctl->desc->irq_banks * IRQ_PER_BANK,
 					     of_node_to_fwnode(node),
@@ -2743,6 +2745,23 @@ int sunxi_bsp_pinctrl_init_with_variant(struct platform_device *pdev,
 #endif
 	sunxi_pinctrl_setup_debounce(pctl, node);
 
+	ret = gpiochip_add_data(pctl->chip, pctl);
+	if (ret) {
+		sunxi_err(&pdev->dev, "Couldn't add gpiochip\n");
+		goto clk_error;
+	}
+
+	for (i = 0; i < pctl->desc->npins; i++) {
+		const struct sunxi_desc_pin *pin = pctl->desc->pins + i;
+
+		ret = gpiochip_add_pin_range(pctl->chip, dev_name(&pdev->dev),
+					     pin->pin.number - pctl->desc->pin_base,
+					     pin->pin.number, 1);
+		if (ret)
+			goto gpiochip_error;
+	}
+
+
 	if (pctl->desc->auto_power_source_switch || sunxi_pinctrl_hw_info[pctl->desc->hw_type].power_mode_detect)
 		withstand_auto_assert = true;
 
@@ -2753,10 +2772,11 @@ int sunxi_bsp_pinctrl_init_with_variant(struct platform_device *pdev,
 
 	return 0;
 
-clk_error:
-	clk_disable_unprepare(clk);
 gpiochip_error:
 	gpiochip_remove(pctl->chip);
+clk_error:
+	clk_disable_unprepare(clk);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(sunxi_bsp_pinctrl_init_with_variant);

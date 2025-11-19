@@ -26,6 +26,9 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_simple_kms_helper.h>
 #include <drm/drm_probe_helper.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+#include <drm/drm_edid.h>
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
 #include <drm/drm_scdc_helper.h>
@@ -153,6 +156,8 @@ struct sunxi_hdmi_ctrl_s {
 	unsigned int drv_dts_clk_src;
 	unsigned int drv_dts_ddc_index;
 	unsigned int drv_dts_res_src;
+	unsigned int drv_dts_force_mode;
+	struct drm_display_mode   *drv_dts_mode;
 
 	/* hdcp control state */
 	int drv_hdcp_clock;
@@ -178,9 +183,13 @@ struct sunxi_hdmi_ctrl_s {
 	/* edid control */
 	u8	drv_edid_dbg_mode;
 	u8	drv_edid_dbg_data[SUNXI_HDMI_EDID_LENGTH];
-	u8	drv_edid_dbg_size;
+	u32	drv_edid_dbg_size;
 	struct mutex	drv_edid_lock;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	struct edid    *drv_edid_data;
+#else
+	const struct drm_edid *drv_edid_data;
+#endif
 };
 
 struct sunxi_hdmi_cec_s {
@@ -771,12 +780,28 @@ static int _sunxi_drv_hdmi_read_edid(struct sunxi_drm_hdmi *hdmi)
 
 	if (hdmi->hdmi_ctrl.drv_edid_dbg_mode) {
 		hdmi_inf("hdmi drv use debug edid\n");
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 		hdmi->hdmi_ctrl.drv_edid_data = (struct edid *)&hdmi->hdmi_ctrl.drv_edid_dbg_data;
+#else
+		hdmi->hdmi_ctrl.drv_edid_data = drm_edid_alloc(hdmi->hdmi_ctrl.drv_edid_dbg_data,
+							       hdmi->hdmi_ctrl.drv_edid_dbg_size);
+		if (!drm_edid_valid(hdmi->hdmi_ctrl.drv_edid_data)) {
+			hdmi_err("hdmi drv debug edid invalid!!!\n");
+			drm_edid_free(hdmi->hdmi_ctrl.drv_edid_data);
+			hdmi->hdmi_ctrl.drv_edid_data = NULL;
+			ret = -1;
+			goto exit;
+		}
+#endif
 		goto edid_parse;
 	}
 
 	hdmi->hdmi_ctrl.drv_edid_data = NULL;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	hdmi->hdmi_ctrl.drv_edid_data = drm_get_edid(&hdmi->sdrm.connector, &hdmi->i2c_adap);
+#else
+	hdmi->hdmi_ctrl.drv_edid_data = drm_edid_read_ddc(&hdmi->sdrm.connector, &hdmi->i2c_adap);
+#endif
 	if (IS_ERR_OR_NULL(hdmi->hdmi_ctrl.drv_edid_data)) {
 		hdmi_err("hdmi drv i2c read edid failed\n");
 		hdmi->hdmi_ctrl.drv_edid_data = NULL;
@@ -785,7 +810,11 @@ static int _sunxi_drv_hdmi_read_edid(struct sunxi_drm_hdmi *hdmi)
 	}
 
 edid_parse:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	sunxi_hdmi_edid_parse((u8 *)hdmi->hdmi_ctrl.drv_edid_data);
+#else
+	sunxi_hdmi_edid_parse((u8 *)drm_edid_raw(hdmi->hdmi_ctrl.drv_edid_data));
+#endif
 	ret = 0;
 
 exit:
@@ -1055,7 +1084,7 @@ static int _sunxi_drv_hdmi_set_rate(struct sunxi_hdmi_res_s *p_clk)
 
 	clk_rate = clk_get_rate(p_clk->clk_tcon_tv);
 	if (clk_rate == 0) {
-		hdmi_err("tcon clock rate is 0");
+		hdmi_trace("not set tcon clock rate\n");
 		return -1;
 	}
 
@@ -1107,6 +1136,8 @@ static int _sunxi_drv_hdmi_enable(struct sunxi_drm_hdmi *hdmi)
 
 	if (hdmi->hdmi_ctrl.drv_hdcp_enable)
 		_sunxi_drv_hdcp_enable(hdmi);
+
+	sunxi_hdmi_check();
 
 	hdmi->hdmi_ctrl.drv_enable = 0x1;
 	hdmi_inf("hdmi drv enable output done\n");
@@ -1280,6 +1311,16 @@ static int _sunxi_drv_hdmi_select_output(struct sunxi_drm_hdmi *hdmi)
 	u32 vic = (u32)drm_match_cea_mode(&hdmi->drm_mode_adjust);
 	u32 pixel_clk = hdmi->drm_mode_adjust.clock;
 
+	if (hdmi->hdmi_ctrl.drv_dts_force_mode &&
+			!IS_ERR_OR_NULL(hdmi->hdmi_ctrl.drv_dts_mode)) {
+		info->dvi_hdmi = DISP_HDMI;
+		info->format = DISP_CSC_TYPE_RGB;
+		info->bits   = DISP_DATA_8BITS;
+		info->eotf   = DISP_EOTF_GAMMA22;
+		info->cs     = DISP_BT709;
+		goto select_info;
+	}
+
 	if (!c_info->is_hdmi) {
 		info->dvi_hdmi = DISP_DVI;
 		info->format = DISP_CSC_TYPE_RGB;
@@ -1296,7 +1337,9 @@ static int _sunxi_drv_hdmi_select_output(struct sunxi_drm_hdmi *hdmi)
 	sunxi_hdmi_disp_select_space(info, vic);
 
 format_select:
-	sunxi_hdmi_disp_select_format(info, vic);
+	ret = sunxi_hdmi_disp_select_format(info, vic);
+	if (ret != 0)
+		goto select_info;
 
 check_clock:
 	ret = sunxi_hdmi_video_check_tmds_clock(info->format, info->bits, pixel_clk);
@@ -1320,6 +1363,7 @@ check_clock:
 		return -1;
 	}
 
+select_info:
 	info->range = (info->format == DISP_CSC_TYPE_RGB) ?
 			DISP_COLOR_RANGE_0_255 : DISP_COLOR_RANGE_16_235;
 	info->scan  = DISP_SCANINFO_NO_DATA;
@@ -1369,6 +1413,9 @@ static int _sunxi_drv_hdmi_hpd_plugout(struct sunxi_drm_hdmi *hdmi)
 
 	cec_notifier_phys_addr_invalidate(hdmi->hdmi_cec.notify);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	drm_edid_free(hdmi->hdmi_ctrl.drv_edid_data);
+#endif
 	hdmi->hdmi_ctrl.drv_edid_data = NULL;
 	ret = _sunxi_drv_hdmi_disable(hdmi);
 	if (ret != 0)
@@ -1500,6 +1547,9 @@ static int _sunxi_drv_hdmi_suspend(struct device *dev)
 	pm_runtime_put_sync(dev);
 
 suspend_exit:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	drm_edid_free(hdmi->hdmi_ctrl.drv_edid_data);
+#endif
 	hdmi->hdmi_ctrl.drv_edid_data = NULL;
 	hdmi->hdmi_ctrl.drv_pm_state  = 0x1;
 	hdmi_inf("hdmi drv pm suspend done\n");
@@ -2010,7 +2060,7 @@ sysfs_show_func(hdmi_source)
 
 	n += sprintf(buf + n, "\n[ver]\n");
 	n += sprintf(buf + n, " - hw: 2.0\n");
-	n += sprintf(buf + n, " - sw: 2.25.0403. I5500e572fd4671be68c769d948c11b78bb0a3cb7\n");
+	n += sprintf(buf + n, " - sw: 2.25.1023. Ib84e5b7971fa3a5a4e29b55213dad5f13ebb1357\n");
 
 	n += sprintf(buf + n, "\n[drv cfg]\n");
 	n += sprintf(buf + n, "|       |                  dts                        |                  drm                  |\n");
@@ -2027,6 +2077,18 @@ sysfs_show_func(hdmi_source)
 		hdmi->hdmi_ctrl.drm_mode_set ? "yes" : "no",
 		hdmi->drm_mode.hdisplay, hdmi->drm_mode.vdisplay,
 		hdmi->hdmi_ctrl.drm_hpd_force == DRM_FORCE_ON ? "on" : "off");
+
+	if (hdmi->hdmi_ctrl.drv_dts_force_mode) {
+		n += sprintf(buf + n, "\n[dts timing]\n");
+		n += sprintf(buf + n, "|  name |  clock | hactive | hsync_start | hsync_end | htotal | vactive | vsync_start | vsync_end | vtotal |\n");
+		n += sprintf(buf + n, "|-------+--------+---------+-------------+-----------+--------+---------+-------------+-----------+--------|\n");
+		n += sprintf(buf + n, "| state | %-6d |   %-4d  |     %-4d    |    %-4d   |  %-4d  |   %-4d  |     %-4d    |    %-4d   |  %-4d  |\n",
+			hdmi->hdmi_ctrl.drv_dts_mode->clock,
+			hdmi->hdmi_ctrl.drv_dts_mode->hdisplay, hdmi->hdmi_ctrl.drv_dts_mode->hsync_start,
+			hdmi->hdmi_ctrl.drv_dts_mode->hsync_end, hdmi->hdmi_ctrl.drv_dts_mode->htotal,
+			hdmi->hdmi_ctrl.drv_dts_mode->vdisplay, hdmi->hdmi_ctrl.drv_dts_mode->vsync_start,
+			hdmi->hdmi_ctrl.drv_dts_mode->vsync_end, hdmi->hdmi_ctrl.drv_dts_mode->vtotal);
+	}
 
 	n += sprintf(buf + n, "\n[drv state]\n");
 	n += sprintf(buf + n, "|       |     driver     |           hpd         |          hdcp      |  cec  |                |\n");
@@ -2560,7 +2622,7 @@ static void _sunxi_drm_hdmi_mode_set(struct drm_encoder *encoder,
 
 	memcpy(&hdmi->drm_mode, adjust_mode, sizeof(struct drm_display_mode));
 
-	ret = sunxi_hdmi_set_disp_mode(&hdmi->drm_mode);
+	ret = sunxi_hdmi_set_disp_mode(&hdmi->hdmi_core, &hdmi->drm_mode);
 	if (ret != 0) {
 		hdmi_err("drm mode set convert failed\n");
 		return;
@@ -2593,8 +2655,8 @@ static int _sunxi_drm_hdmi_get_modes(struct drm_connector *connector)
 {
 	struct sunxi_drm_hdmi   *hdmi = drm_connector_to_hdmi(connector);
 	struct drm_display_mode *mode = NULL;
-	struct edid  *raw_edid = NULL;
 	struct drm_display_info *info = &connector->display_info;
+	const struct edid *raw_edid;
 	int ret = 0, i = 0;
 
 	if (IS_ERR_OR_NULL(hdmi)) {
@@ -2607,10 +2669,18 @@ static int _sunxi_drm_hdmi_get_modes(struct drm_connector *connector)
 
 	ret = _sunxi_drv_hdmi_read_edid(hdmi);
 	if (ret != 0) {
+		if (hdmi->hdmi_ctrl.drv_dts_force_mode &&
+					!IS_ERR_OR_NULL(hdmi->hdmi_ctrl.drv_dts_mode)) {
+			mode = drm_mode_duplicate(connector->dev, hdmi->hdmi_ctrl.drv_dts_mode);
+			drm_mode_probed_add(connector, mode);
+			hdmi_inf("hdmi drv add dts mode when not read edid\n");
+			return 0;
+		}
 		hdmi_err("drm get mode read edid failed\n");
 		goto use_default;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	raw_edid = hdmi->hdmi_ctrl.drv_edid_data;
 	if (IS_ERR_OR_NULL(raw_edid)) {
 		shdmi_err(raw_edid); /*error*/
@@ -2618,11 +2688,27 @@ static int _sunxi_drm_hdmi_get_modes(struct drm_connector *connector)
 	}
 
 	drm_connector_update_edid_property(connector, raw_edid);
+#else
+	raw_edid = drm_edid_raw(hdmi->hdmi_ctrl.drv_edid_data);
+	drm_edid_connector_update(connector, hdmi->hdmi_ctrl.drv_edid_data);
+#endif
 
 	if (!IS_ERR_OR_NULL(hdmi->hdmi_cec.notify))
 		cec_notifier_set_phys_addr_from_edid(hdmi->hdmi_cec.notify, raw_edid);
 
-	ret = drm_add_edid_modes(connector, raw_edid);
+	if (hdmi->hdmi_ctrl.drv_dts_force_mode && !IS_ERR_OR_NULL(hdmi->hdmi_ctrl.drv_dts_mode)) {
+		mode = drm_mode_duplicate(connector->dev, hdmi->hdmi_ctrl.drv_dts_mode);
+		drm_mode_probed_add(connector, mode);
+		hdmi_inf("hdmi drv add dts mode done\n");
+		return 0;
+	}
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+	ret = drm_add_edid_modes(connector, (struct edid *)raw_edid);
+#else
+	ret = drm_edid_connector_add_modes(connector);
+#endif
+
 	hdmi_inf("drm get edid support modes: %d\n", ret);
 	return ret;
 
@@ -2651,6 +2737,7 @@ use_default:
 static enum drm_mode_status _sunxi_drm_hdmi_mode_valid(
 		struct drm_connector *connector, struct drm_display_mode *mode)
 {
+	struct sunxi_drm_hdmi *hdmi = drm_connector_to_hdmi(connector);
 	int rate = drm_mode_vrefresh(mode);
 
 	/* check low i-timing */
@@ -2659,6 +2746,9 @@ static enum drm_mode_status _sunxi_drm_hdmi_mode_valid(
 				mode->hdisplay, mode->vdisplay, rate);
 		return MODE_BAD;
 	}
+
+	if (hdmi->hdmi_ctrl.drv_dts_force_mode)
+		return MODE_OK;
 
 	/* check frame rate support */
 	if (rate > 60) {
@@ -2926,6 +3016,9 @@ static int __sunxi_hdmi_init_dts(struct sunxi_drm_hdmi *hdmi)
 	struct device *dev = hdmi->dev;
 	struct device_node	*node = dev->of_node;
 	struct sunxi_hdmi_res_s *pclk = &hdmi->hdmi_res;
+	const char *dts_timming = NULL;
+	char dts_timing_string[128] = {0};
+	struct drm_display_mode *timming = drm_mode_create(hdmi->sdrm.drm_dev);
 
 	if (IS_ERR_OR_NULL(node)) {
 		shdmi_err(node);
@@ -2969,6 +3062,21 @@ static int __sunxi_hdmi_init_dts(struct sunxi_drm_hdmi *hdmi)
 	/* if dts not set, default use 0x1F */
 	ret = of_property_read_u32(node, "hdmi_ddc_index", &value);
 	hdmi->hdmi_ctrl.drv_dts_ddc_index = (ret != 0x0) ? 0x1F : value;
+
+	ret = of_property_read_u32(node, "force-output", &value);
+	if (ret == 0) {
+		ret = of_property_read_string(node, "force-output-timing", &dts_timming);
+		if (ret == 0) {
+			strcpy(dts_timing_string, dts_timming);
+			sscanf(dts_timing_string, "%d-%hu-%hu-%hu-%hu-%hu-%hu-%hu-%hu",
+				&timming->clock,
+				&timming->hdisplay, &timming->hsync_start, &timming->hsync_end, &timming->htotal,
+				&timming->vdisplay, &timming->vsync_start, &timming->vsync_end, &timming->vtotal);
+			timming->type = DRM_MODE_TYPE_ALL;
+			hdmi->hdmi_ctrl.drv_dts_force_mode = value;
+			hdmi->hdmi_ctrl.drv_dts_mode = timming;
+		}
+	}
 
 	/* parse tcon clock */
 	pclk->clk_tcon_tv = devm_clk_get(dev, "clk_tcon_tv");
@@ -3111,7 +3219,8 @@ static int __sunxi_hdmi_init_value(struct sunxi_drm_hdmi *hdmi)
 	info->eotf         = DISP_EOTF_GAMMA22; /* SDR */
 	info->cs           = DISP_BT709;
 	info->dvi_hdmi     = DISP_HDMI;
-	info->range        = DISP_COLOR_RANGE_DEFAULT;
+	info->range        = (info->format == DISP_CSC_TYPE_RGB) ?
+				DISP_COLOR_RANGE_0_255 : DISP_COLOR_RANGE_16_235;
 	info->scan         = DISP_SCANINFO_NO_DATA;
 	info->aspect_ratio = HDMI_ACTIVE_ASPECT_PICTURE;
 
@@ -3378,6 +3487,7 @@ static int sunxi_hdmi_bind(struct device *dev, struct device *master, void *data
 	boot_state = sunxi_drm_check_device_boot_enabled(drm,
 			DRM_MODE_CONNECTOR_HDMIA,
 			hdmi->sdrm.hw_id);
+	hdmi->hdmi_ctrl.drv_boot_enable = boot_state;
 
 	/* init hdmi device sysfs */
 	ret = _sunxi_hdmi_init_sysfs(hdmi);
@@ -3399,8 +3509,7 @@ static int sunxi_hdmi_bind(struct device *dev, struct device *master, void *data
 		goto bind_ng;
 	}
 
-	hdmi->hdmi_ctrl.drv_boot_enable = boot_state && sunxi_hdmi_get_hpd();
-	if (boot_state) {
+	if (boot_state && sunxi_hdmi_get_hpd()) {
 		hdmi->hdmi_ctrl.drv_enable = 0x1;
 		_sunxi_drv_hdmi_hpd_set(hdmi, 0x1);
 		_sunxi_drv_hdcp_update_support(hdmi);

@@ -46,6 +46,7 @@
 #include <mali_kbase_caps.h>
 #include <mali_kbase_trace_gpu_mem.h>
 #include <mali_kbase_reset_gpu.h>
+#include <linux/version_compat_defs.h>
 
 #if ((KERNEL_VERSION(5, 3, 0) <= LINUX_VERSION_CODE) || \
 	(KERNEL_VERSION(5, 0, 0) > LINUX_VERSION_CODE))
@@ -683,9 +684,6 @@ unsigned long kbase_mem_evictable_reclaim_count_objects(struct shrinker *s,
 	int evict_nents = atomic_read(&kctx->evict_nents);
 	unsigned long nr_freeable_items;
 
-	WARN((sc->gfp_mask & __GFP_ATOMIC),
-	     "Shrinkers cannot be called for GFP_ATOMIC allocations. Check kernel mm for problems. gfp_mask==%x\n",
-	     sc->gfp_mask);
 	WARN(in_atomic(),
 	     "Shrinker called in atomic context. The caller must use GFP_ATOMIC or similar, then Shrinkers must not be called. gfp_mask==%x\n",
 	     sc->gfp_mask);
@@ -1700,7 +1698,7 @@ static struct kbase_va_region *kbase_mem_from_user_buffer(
 #if KERNEL_VERSION(5, 9, 0) > LINUX_VERSION_CODE
 	faulted_pages = get_user_pages(address, *va_pages,
 			write ? FOLL_WRITE : 0, pages, NULL);
-#else
+#elif KERNEL_VERSION(6, 5, 0) > LINUX_VERSION_CODE
 	/* pin_user_pages function cannot be called with pages param NULL.
 	 * get_user_pages function will be used instead because it is safe to be
 	 * used with NULL pages param as long as it doesn't have FOLL_GET flag.
@@ -1712,6 +1710,8 @@ static struct kbase_va_region *kbase_mem_from_user_buffer(
 		faulted_pages =
 			get_user_pages(address, *va_pages, write ? FOLL_WRITE : 0, pages, NULL);
 	}
+#else
+	faulted_pages = get_user_pages(address, *va_pages, write ? FOLL_WRITE : 0, pages);
 #endif
 
 	up_read(kbase_mem_get_process_mmap_lock());
@@ -2604,8 +2604,7 @@ static int kbase_cpu_mmap(struct kbase_context *kctx,
 	 * This will need updating to propagate coherency flags
 	 * See MIDBASE-1057
 	 */
-
-	vma->vm_flags |= VM_DONTCOPY | VM_DONTDUMP | VM_DONTEXPAND | VM_IO;
+	vm_flags_set(vma, VM_DONTCOPY | VM_DONTDUMP | VM_DONTEXPAND | VM_IO);
 	vma->vm_ops = &kbase_vm_ops;
 	vma->vm_private_data = map;
 
@@ -2634,11 +2633,11 @@ static int kbase_cpu_mmap(struct kbase_context *kctx,
 	}
 
 	if (!kaddr) {
-		vma->vm_flags |= VM_PFNMAP;
+		vm_flags_set(vma, VM_PFNMAP);
 	} else {
 		WARN_ON(aligned_offset);
 		/* MIXEDMAP so we can vfree the kaddr early and not track it after map time */
-		vma->vm_flags |= VM_MIXEDMAP;
+		vm_flags_set(vma, VM_MIXEDMAP);
 		/* vmalloc remaping is easy... */
 		err = remap_vmalloc_range(vma, kaddr, 0);
 		WARN_ON(err);
@@ -2852,9 +2851,9 @@ int kbase_context_mmap(struct kbase_context *const kctx,
 	dev_dbg(dev, "kbase_mmap\n");
 
 	if (!(vma->vm_flags & VM_READ))
-		vma->vm_flags &= ~VM_MAYREAD;
+		vm_flags_clear(vma, VM_MAYREAD);
 	if (!(vma->vm_flags & VM_WRITE))
-		vma->vm_flags &= ~VM_MAYWRITE;
+		vm_flags_clear(vma, VM_MAYWRITE);
 
 	if (nr_pages == 0) {
 		err = -EINVAL;
@@ -3364,7 +3363,9 @@ KBASE_EXPORT_TEST_API(kbase_vunmap);
 
 static void kbasep_add_mm_counter(struct mm_struct *mm, int member, long value)
 {
-#if (KERNEL_VERSION(4, 19, 0) <= LINUX_VERSION_CODE)
+#if (KERNEL_VERSION(6, 2, 0) <= LINUX_VERSION_CODE)
+	percpu_counter_add(&mm->rss_stat[member], value);
+#elif (KERNEL_VERSION(5, 5, 0) <= LINUX_VERSION_CODE)
 	/* To avoid the build breakage due to an unexported kernel symbol
 	 * 'mm_trace_rss_stat' from later kernels, i.e. from V4.19.0 onwards,
 	 * we inline here the equivalent of 'add_mm_counter()' from linux
@@ -3399,8 +3400,8 @@ static int kbase_tracking_page_setup(struct kbase_context *kctx, struct vm_area_
 		return -EINVAL;
 
 	/* no real access */
-	vma->vm_flags &= ~(VM_READ | VM_MAYREAD | VM_WRITE | VM_MAYWRITE | VM_EXEC | VM_MAYEXEC);
-	vma->vm_flags |= VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP | VM_IO;
+	vm_flags_clear(vma, VM_READ | VM_MAYREAD | VM_WRITE | VM_MAYWRITE | VM_EXEC | VM_MAYEXEC);
+	vm_flags_set(vma, VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP | VM_IO);
 
 	return 0;
 }

@@ -11,6 +11,7 @@
  */
 #include <linux/kthread.h>
 #include <linux/version.h>
+#include <linux/delay.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_atomic.h>
@@ -28,6 +29,8 @@
 #include <linux/version.h>
 #include <linux/sort.h>
 #include <linux/completion.h>
+#include <linux/ktime.h>
+#include <linux/math64.h>
 
 #include "sunxi_drm_crtc.h"
 #include "sunxi_drm_drv.h"
@@ -39,15 +42,16 @@
 
 /* wb finish after two vsync, use to signal work finish after vysnc, 2 struct wb_signal_wait is enough */
 struct wb_signal_wait {
-	bool active;
-	unsigned int vsync_cnt;
+	struct list_head link;
+	u64 vblank_count;
 };
 
 struct sunxi_drm_wb {
 	struct sunxi_de_wb *hw_wb;
 	struct drm_writeback_connector wb_connector;
 	spinlock_t signal_lock;
-	struct wb_signal_wait signal[WB_SIGNAL_MAX];
+	struct list_head signal_list;
+	struct wb_signal_wait *pending_commit; /* pending commit will add to signal_list after atomic_flush */
 };
 
 struct sunxi_drm_crtc {
@@ -89,6 +93,14 @@ struct sunxi_drm_crtc {
 	unsigned int irqcnt;
 	unsigned int fifo_err;
 	unsigned int vblank_trace;
+
+	bool support_offline;
+	unsigned int offline_composite_timeout;
+	unsigned int last_offline_composite_finish;
+	unsigned int current_offline_composite_finish;
+	unsigned int offline_composite_finish_per_60vsync;
+
+	struct disp_video_timings timings;
 
 	unsigned int hue_default_value;
 	bool share_scaler;
@@ -299,6 +311,7 @@ static int sunxi_plane_pq_proc_locked(struct drm_plane *plane, enum sunxi_pq_typ
 		DRM_ERROR("pq cmd not support %d\n", type);
 		return -EINVAL;
 	}
+	de_channel_pq_apply_atonce(splane->hdl, cstate);
 	return 0;
 }
 
@@ -1050,7 +1063,7 @@ void sunxi_plane_print_state(struct drm_printer *p,
 static void sunxi_plane_atomic_print_state(struct drm_printer *p,
 				   const struct drm_plane_state *state)
 {
-	sunxi_plane_print_state(p, state, true);
+	sunxi_plane_print_state(p, state, false);
 }
 
 static const struct drm_plane_funcs sunxi_plane_funcs = {
@@ -1347,11 +1360,11 @@ static int sunxi_drm_plane_init(struct drm_device *dev,
 
 static void wb_finish_proc(struct sunxi_drm_crtc *scrtc)
 {
-	int i;
 	struct sunxi_drm_wb *wb;
 	unsigned long flags;
 	struct wb_signal_wait *wait;
 	bool signal = false;
+	u64 current_vblank;
 
 	spin_lock_irqsave(&scrtc->wb_lock, flags);
 	wb = scrtc->wb;
@@ -1360,19 +1373,17 @@ static void wb_finish_proc(struct sunxi_drm_crtc *scrtc)
 		return;
 	}
 
+	current_vblank = drm_crtc_vblank_count(&scrtc->crtc);
+
 	spin_lock_irqsave(&wb->signal_lock, flags);
-	for (i = 0; i < WB_SIGNAL_MAX; i++) {
-		wait = &wb->signal[i];
-		if (wait->active) {
-			wait->vsync_cnt++;
-			if (wait->vsync_cnt == 2) {
-				wait->active = 0;
-				wait->vsync_cnt = 0;
-				signal = true;
-			}
-		}
+	wait = list_first_entry_or_null(&wb->signal_list, struct wb_signal_wait, link);
+	if (wait && ((int)(current_vblank - wait->vblank_count)) > 1) {
+		signal = true;
+		list_del(&wait->link);
+		kfree(wait);
 	}
 	spin_unlock_irqrestore(&wb->signal_lock, flags);
+
 	if (signal)
 		drm_writeback_signal_completion(&wb->wb_connector, 0);
 }
@@ -1403,33 +1414,50 @@ static int sunxi_wb_connector_get_modes(struct drm_connector *connector)
 
 static void commit_new_wb_job(struct sunxi_drm_crtc *scrtc, struct sunxi_drm_wb *wb)
 {
-	int i;
 	unsigned long flags;
-	bool found = false;
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(scrtc->crtc.state);
+	struct wb_signal_wait *wait = kzalloc(sizeof(*wait), GFP_KERNEL);
 
+	if (!wait) {
+		DRM_ERROR("[SUNXI-DE] init writeback_job failed !\n");
+		return;
+	}
 
 	DRM_INFO("[SUNXI-DE] %s start\n", __FUNCTION__);
 	/* find a free signal slot */
 	spin_lock_irqsave(&wb->signal_lock, flags);
-	for (i = 0; i < WB_SIGNAL_MAX; i++) {
-		if (wb->signal[i].active == false) {
-			DRM_DEBUG_DRIVER("[SUNXI-DE] set wb for crtc\n");
-			wb->signal[i].active = true;
-			found = true;
-			break;
-		}
+	if (wb->pending_commit) {
+		DRM_ERROR("[SUNXI-DE] previous writeback_job not commit yet !\n");
+		wb->pending_commit->vblank_count = drm_crtc_vblank_count(&scrtc->crtc);
+		list_add_tail(&wb->pending_commit->link, &wb->signal_list);
 	}
+	wb->pending_commit = wait;
 	spin_unlock_irqrestore(&wb->signal_lock, flags);
 
 	/* add wb for isr to signal wb job */
-	WARN(!found, "no free wb active signal slot\n");
 	spin_lock_irqsave(&scrtc->wb_lock, flags);
 	scrtc_state->wb = NULL;
 	scrtc->wb = wb;
 	spin_unlock_irqrestore(&scrtc->wb_lock, flags);
+
 	sunxi_de_write_back(scrtc->sunxi_de, wb->hw_wb, wb->wb_connector.base.state->writeback_job->fb);
 	drm_writeback_queue_job(&wb->wb_connector, wb->wb_connector.base.state);
+}
+
+static void sunxi_wb_commit_done(struct sunxi_drm_crtc *scrtc)
+{
+	unsigned long flags;
+	struct sunxi_drm_wb *wb = scrtc->wb;
+
+	if (wb) {
+		spin_lock_irqsave(&wb->signal_lock, flags);
+		if (wb->pending_commit) {
+			wb->pending_commit->vblank_count = drm_crtc_vblank_count(&scrtc->crtc);
+			list_add_tail(&wb->pending_commit->link, &wb->signal_list);
+		}
+		wb->pending_commit = NULL;
+		spin_unlock_irqrestore(&wb->signal_lock, flags);
+	}
 }
 
 static void disable_and_reset_wb(struct sunxi_drm_crtc *scrtc)
@@ -1437,17 +1465,11 @@ static void disable_and_reset_wb(struct sunxi_drm_crtc *scrtc)
 	bool all_finish = true;
 	struct sunxi_drm_wb *wb = scrtc->wb;
 	unsigned long flags;
-	int i;
 
 	if (wb) {
 		/* check if all jobs finsh */
 		spin_lock_irqsave(&wb->signal_lock, flags);
-		for (i = 0; i < WB_SIGNAL_MAX; i++) {
-			if (wb->signal[i].active == true) {
-				all_finish = false;
-				break;
-			}
-		}
+		all_finish = list_empty(&wb->signal_list);
 		spin_unlock_irqrestore(&wb->signal_lock, flags);
 
 		/* disable wb if all jobs finish  */
@@ -1481,22 +1503,14 @@ static int sunxi_wb_encoder_atomic_check(struct drm_encoder *encoder,
 			       struct drm_connector_state *conn_state)
 
 {
-	int i, ret = 0;
-	unsigned long flags;
+	int ret = 0;
 	struct sunxi_crtc_state *scrtc_state = to_sunxi_crtc_state(crtc_state);
 	struct sunxi_drm_wb *wb = container_of(encoder, struct sunxi_drm_wb, wb_connector.encoder);
 	if (!crtc_state->active) {
 		DRM_ERROR("[SUNXI-DE] wb check fail, crtc is not enabled %s %d \n", __FUNCTION__, __LINE__);
 		return -EINVAL;
 	}
-	spin_lock_irqsave(&wb->signal_lock, flags);
-	for (i = 0; i < WB_SIGNAL_MAX; i++) {
-		if (wb->signal[i].active) {
-			//ret = -EBUSY;
-			DRM_ERROR("[SUNXI-DE] wb check fail, pending wb not finish %s %d \n", __FUNCTION__, __LINE__);
-		}
-	}
-	spin_unlock_irqrestore(&wb->signal_lock, flags);
+
 	/* user should make sure not to switch connector and request wb on the same commit*/
 	if (crtc_state->mode_changed || crtc_state->connectors_changed) {
 		crtc_state->mode_changed = false;
@@ -1541,6 +1555,7 @@ struct sunxi_drm_wb *sunxi_drm_wb_init_one(struct sunxi_de_wb_info *wb_info)
 	}
 	wb->hw_wb = wb_info->wb;
 	spin_lock_init(&wb->signal_lock);
+	INIT_LIST_HEAD(&wb->signal_list);
 	wb->wb_connector.encoder.possible_crtcs = wb_info->support_disp_mask;
 	drm_connector_helper_add(&wb->wb_connector.base, &sunxi_wb_connector_helper_funcs);
 
@@ -1586,7 +1601,8 @@ irqreturn_t sunxi_crtc_event_proc(int irq, void *crtc)
 {
 	struct sunxi_drm_crtc *scrtc = to_sunxi_crtc(crtc);
 	bool timeout;
-	bool busy = sunxi_de_query_de_busy(scrtc->sunxi_de);
+	bool busy = sunxi_de_query_de_busy(scrtc->sunxi_de, &scrtc->timings);
+	int offline_status = 0;
 
 	scrtc->irqcnt++;
 	if (scrtc->check_status(scrtc->output_dev_data)) {
@@ -1597,12 +1613,28 @@ irqreturn_t sunxi_crtc_event_proc(int irq, void *crtc)
 	SUNXIDRM_TRACE_INT2("crtc-irq", scrtc->hw_id, scrtc->irqcnt & 1);
 	SUNXIDRM_TRACE_INT2("crtc-busy", scrtc->hw_id, busy);
 
+	if (scrtc->support_offline) {
+		offline_status = sunxi_de_query_clear_offline_mode_status(scrtc->sunxi_de, OFFLINE_BLD_MASK);
+
+		if (offline_status & OFFLINE_BLD_FINISH)
+			scrtc->current_offline_composite_finish++;
+		if (offline_status & OFFLINE_BLD_TIMEOUT)
+			scrtc->offline_composite_timeout++;
+
+		if (!(scrtc->irqcnt % 100)) {
+			scrtc->offline_composite_finish_per_60vsync = scrtc->current_offline_composite_finish - scrtc->last_offline_composite_finish;
+			scrtc->last_offline_composite_finish = scrtc->current_offline_composite_finish;
+		}
+		SUNXIDRM_TRACE_INT2("crtc-offline-timeout", scrtc->hw_id, scrtc->offline_composite_timeout);
+	}
+
 	timeout = !scrtc->is_sync_time_enough(scrtc->output_dev_data);
 	sunxi_de_event_proc(scrtc->sunxi_de, timeout);
 
-	wb_finish_proc(scrtc);
 	/* vblank common process */
 	drm_crtc_handle_vblank(&scrtc->crtc);
+
+	wb_finish_proc(scrtc);
 
 	if (!busy) {
 		/*
@@ -1771,6 +1803,24 @@ static void sunxi_crtc_reset(struct drm_crtc *crtc)
 	__drm_atomic_helper_crtc_reset(crtc, &state->base);
 }
 
+u64 sunxi_get_fpsraw_and_vblankcnt(struct drm_crtc *crtc)
+{
+	static ktime_t time_us[2];
+	u64 vblank_count[2];
+	u64 fps_raw, vblank_delta, time_us_delta;
+
+	vblank_count[0] = drm_crtc_vblank_count_and_time(crtc, &time_us[0]);
+	msleep(100);
+	vblank_count[1] = drm_crtc_vblank_count_and_time(crtc, &time_us[1]);
+
+	vblank_delta = vblank_count[1] - vblank_count[0];
+	time_us_delta = ktime_us_delta(time_us[1], time_us[0]);
+
+	fps_raw = div64_u64(vblank_delta * 1000000 * 1000, time_us_delta); /* For Float */
+
+	return fps_raw;
+}
+
 void sunxi_crtc_atomic_print_state(struct drm_printer *p,
 				   const struct drm_crtc_state *state)
 {
@@ -1778,18 +1828,36 @@ void sunxi_crtc_atomic_print_state(struct drm_printer *p,
 	struct sunxi_drm_wb *wb;
 	struct sunxi_crtc_state *cstate = to_sunxi_crtc_state(state);
 	struct sunxi_drm_crtc *scrtc = (struct sunxi_drm_crtc *)state->crtc;
-	int w = state->mode.hdisplay;
-	int h = state->mode.vdisplay;
-	int fps = drm_mode_vrefresh(&state->mode);
+	struct wb_signal_wait *wait;
+	int mode_w = state->mode.hdisplay;
+	int mode_h = state->mode.vdisplay;
+	int mode_fps = drm_mode_vrefresh(&state->mode);
+	u64 fps_raw, fps_integer, fps_fractional;
+
+	fps_raw = sunxi_get_fpsraw_and_vblankcnt(state->crtc);
+	fps_integer = div64_u64_rem(fps_raw, 1000, &fps_fractional);
 
 	drm_printf(p, "\t%s", scrtc->enabled ? "on: " : "off\n");
 	if (scrtc->enabled) {
-		drm_printf(p, "%dx%d@%d&%dMhz->tcon%d irqcnt=%d err=%d\n", w, h, fps,
-			    (int)(scrtc->clk_freq / 1000000), cstate->tcon_id, scrtc->irqcnt, scrtc->fifo_err);
-		drm_printf(p, "\t    format_space: %d yuv_sampling: %d eotf:%d cs: %d"
-			    " color_range: %d data_bits: %d\n", cstate->px_fmt_space,
-			    cstate->yuv_sampling, cstate->eotf, cstate->color_space,
-			    cstate->color_range, cstate->data_bits);
+		drm_printf(p, "%dx%d@%d&%dMhz->tcon%d\tirqcnt:%d\terr:%d\tfps:%llu.%llu\n", mode_w, mode_h,
+				mode_fps, (int)(scrtc->clk_freq / 1000000), cstate->tcon_id, scrtc->irqcnt,
+				scrtc->fifo_err, fps_integer, fps_fractional);
+		drm_printf(p, "\t\tformat_space:%d\tyuv_sampling:%d\teotf:%d\tcs:%d"
+				"\tcolor_range:%d\tdata_bits:%d\n", cstate->px_fmt_space,
+				cstate->yuv_sampling, cstate->eotf, cstate->color_space,
+				cstate->color_range, cstate->data_bits);
+		if (scrtc->support_offline) {
+			int fixed_point_8b;
+			int integer_part;
+			int fractional_part;
+
+			fixed_point_8b = scrtc->offline_composite_finish_per_60vsync * 0x100 / 60 * mode_fps;
+			integer_part = fixed_point_8b >> 8;
+			fractional_part = ((fixed_point_8b & 0xFF) * 100) / 256;
+			fractional_part = fractional_part < 0 ? -fractional_part : fractional_part;
+			drm_printf(p, "\toffline composite fps:%d.%02d\ttimeout:%d\n",
+				integer_part, fractional_part, scrtc->offline_composite_timeout);
+		}
 
 		sunxi_de_dump_state(p, scrtc->sunxi_de);
 
@@ -1798,9 +1866,9 @@ void sunxi_crtc_atomic_print_state(struct drm_printer *p,
 		if (!wb) {
 			drm_printf(p, "\twb off\n");
 		} else {
-			drm_printf(p, "\twb on:\n\t\t[0]: %s %d\n\t\t[1]: %s %d\n",
-				    wb->signal[0].active ? "waiting" : "finish", wb->signal[0].vsync_cnt,
-				    wb->signal[1].active ? "waiting" : "finish", wb->signal[1].vsync_cnt);
+			list_for_each_entry(wait, &wb->signal_list, link) {
+				drm_printf(p, "\twb on:\t%lld\n", wait->vblank_count);
+			}
 		}
 		spin_unlock_irqrestore(&scrtc->wb_lock, flags);
 	}
@@ -2003,6 +2071,7 @@ static void sunxi_crtc_atomic_flush(struct drm_crtc *crtc,
 	sunxi_wb_commit(scrtc);
 	memset(&cfg, 0, sizeof(cfg));
 	if (all_dirty || crtc->state->color_mgmt_changed) {
+		scrtc->gamma_dirty = false;
 		if (crtc->state->gamma_lut) {
 			cfg.gamma_lut = crtc->state->gamma_lut->data;
 			cfg.gamma_dirty = true;
@@ -2031,6 +2100,7 @@ static void sunxi_crtc_atomic_flush(struct drm_crtc *crtc,
 	if (scrtc_state->atomic_flush)
 		scrtc_state->atomic_flush(scrtc_state->output_dev_data);
 
+	sunxi_wb_commit_done(scrtc);
 
 	/*
 	 * Ideally, the page_flip should be called within the vsync interrupt;
@@ -2146,9 +2216,11 @@ static int sunxi_drm_crtc_atomic_check(struct drm_crtc *crtc,
 		return -EINVAL;
 	}
 	if (scrtc->gamma_dirty == true) {
-		scrtc->gamma_dirty = false;
 		crtc_state->color_mgmt_changed = true;
 	}
+
+	if (crtc_state->mode_changed || crtc_state->connectors_changed)
+		drm_mode_to_sunxi_video_timings(&crtc_state->adjusted_mode, &scrtc->timings);
 
 	if (scrtc->share_scaler) {
 		for_each_new_plane_in_state(atomic_state, plane, new_plane_state, i) {
@@ -2346,6 +2418,40 @@ void sunxi_drm_crtc_set_backlight_value(struct sunxi_drm_crtc *scrtc, int backli
 		scrtc->set_backlight_value(scrtc->output_dev_data, backlight);
 }
 
+int sunxi_drm_crtc_offline_mode_pre_init(struct drm_crtc *crtc, unsigned int width, unsigned int height)
+{
+	struct sunxi_drm_crtc *scrtc = to_sunxi_crtc(crtc);
+
+	if (!crtc || !scrtc) {
+		DRM_ERROR("crtc is NULL\n");
+		return -1;
+	}
+
+	if (!scrtc->sunxi_de) {
+		DRM_ERROR("sunxi_de is NULL\n");
+		return -1;
+	}
+
+	return sunxi_de_offline_mode_pre_init(scrtc->sunxi_de, width, height);
+}
+
+int sunxi_drm_crtc_get_offline_mode_info(struct drm_crtc *crtc, void **vir_addr, unsigned long *buff_size)
+{
+	struct sunxi_drm_crtc *scrtc = to_sunxi_crtc(crtc);
+
+	if (!crtc || !scrtc) {
+		DRM_ERROR("crtc is NULL\n");
+		return -1;
+	}
+
+	if (!scrtc->sunxi_de) {
+		DRM_ERROR("sunxi_de is NULL\n");
+		return -1;
+	}
+
+	return sunxi_de_get_offline_mode_info(scrtc->sunxi_de, vir_addr, buff_size);
+}
+
 struct sunxi_drm_crtc *sunxi_drm_crtc_init_one(struct sunxi_de_info *info)
 {
 	struct sunxi_drm_crtc *scrtc;
@@ -2370,6 +2476,7 @@ struct sunxi_drm_crtc *sunxi_drm_crtc_init_one(struct sunxi_de_info *info)
 	scrtc->clk_freq = info->clk_freq;
 	scrtc->hue_default_value = info->hue_default_value;
 	scrtc->share_scaler = info->feat.feat.share_scaler;
+	scrtc->support_offline = info->support_offline;
 	scrtc->plane =
 		devm_kzalloc(drm->dev,
 			     sizeof(*scrtc->plane) * info->plane_cnt,

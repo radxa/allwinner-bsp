@@ -4595,7 +4595,12 @@ int power_control_init(struct kbase_device *kbdev)
 	unsigned int i;
 #if defined(CONFIG_REGULATOR)
 	static const char * const regulator_names[] = {
-		"mali", "shadercores"
+		"mali",
+#if (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE)
+		NULL
+#elif (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
+		"shadercores"
+#endif /* (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE) */
 	};
 	BUILD_BUG_ON(ARRAY_SIZE(regulator_names) < BASE_MAX_NR_CLOCKS_REGULATORS);
 #endif /* CONFIG_REGULATOR */
@@ -4746,15 +4751,18 @@ void power_control_term(struct kbase_device *kbdev)
 	 * If user don't call it, rmmod and reinsmod mali_kbase.ko,
 	 * dev_pm_opp_set_regulators will be failed.
 	 */
-	dev_pm_opp_put_prop_name(kbdev->opp_table);
 	dev_pm_opp_of_remove_table(kbdev->dev);
 #if defined(CONFIG_REGULATOR)
 #if (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE)
-	if (kbdev->token > -EPERM)
+	if (kbdev->token > -EPERM) {
+		dev_pm_opp_put_prop_name(kbdev->token);
 		dev_pm_opp_put_regulators(kbdev->token);
+	}
 #elif (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
-	if (!IS_ERR_OR_NULL(kbdev->opp_table))
+	if (!IS_ERR_OR_NULL(kbdev->opp_table)) {
+		dev_pm_opp_put_prop_name(kbdev->opp_table);
 		dev_pm_opp_put_regulators(kbdev->opp_table);
+	}
 #endif /* (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE) */
 #endif /* CONFIG_REGULATOR */
 #endif /* CONFIG_PM_OPP */

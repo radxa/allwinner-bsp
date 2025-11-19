@@ -94,6 +94,11 @@ struct sunxi_de_debug {
 	int force_offline_mode;
 };
 
+struct sunxi_de_offline_mode {
+	int enable;
+	int compress_mode; // reserve
+};
+
 struct sunxi_de_out {
 	int id;
 	int port_id;
@@ -146,6 +151,7 @@ struct sunxi_display_engine {
 	unsigned int chn_cfg_mode;
 	unsigned char display_out_cnt;
 	struct sunxi_de_out *display_out;
+	struct sunxi_de_offline_mode offline_mode;
 	struct de_reg_buffer reg;
 	bool de_devfreq_auto;
 	struct sunxi_de_debug *debug;
@@ -722,7 +728,7 @@ void sunxi_de_atomic_flush(struct sunxi_de_out *hwde, struct de_backend_data *da
 
 		if (engine->de_devfreq_auto)
 			sunxi_de_auto_calc_freq_and_apply(engine->display_out);
-		de_top_update_force_by_ahb(engine->top_hdl);
+		// de_top_update_force_by_ahb(engine->top_hdl);
 
 		if (engine->match_data->rcq_wait_line)
 			rcq_update_timer_start(hwde);
@@ -813,17 +819,19 @@ static int rtmx_start(struct sunxi_display_engine *engine, unsigned int id, unsi
 	cfg.rcq_header_byte = use_rcq ? rcq_info->block_num_aligned * sizeof(*(rcq_info->vir_addr)) : 0;
 	de_top_display_config(engine->top_hdl, &cfg);
 
-	if (engine->debug->force_offline_mode)
+	if (engine->offline_mode.enable || engine->debug->force_offline_mode)
 		offline.enable = true;
 	else
 		offline.enable = false;
+	offline.disp = id;
 	offline.mode = ONE_FRAME_DELAY;
 	offline.w = w;
 	offline.h = h;
 	de_top_offline_mode_config(engine->top_hdl, &offline);
 
 	memset(&dfs_cfg, 0, sizeof(dfs_cfg));
-	dfs_cfg.enable = true;
+	if (!engine->de_devfreq_auto) // software/hardware dfs choose one
+		dfs_cfg.enable = true;
 	dfs_cfg.display_id = id;
 	dfs_cfg.de_clk = hwde->output_info.de_clk_freq;
 	dfs_cfg.dclk = hwde->kHZ_pixelclk * 1000;
@@ -1077,6 +1085,10 @@ static int sunxi_de_parse_dts(struct device *dev,
 		DRM_INFO("[SUNXI-DE] chn_cfg_mode not found, used def val\n");
 	}
 
+	if (of_property_read_u32(node, "offline_mode", &engine->offline_mode.enable)) {
+		DRM_INFO("[SUNXI-DE] chn_cfg_mode not found, used def val\n");
+	}
+
 	return 0;
 }
 
@@ -1204,7 +1216,8 @@ static ssize_t de_top_offline_mode_proc_write(struct file *file,
 		return count;
 	}
 
-	offline.mode = CURRENT_FRAME;
+	offline.disp = 0;
+	offline.mode = ONE_FRAME_DELAY;
 	offline.w = w;
 	offline.h = h;
 	de_top_offline_mode_config(engine->top_hdl, &offline);
@@ -1290,6 +1303,7 @@ static int sunxi_de_bind(struct device *dev, struct device *master, void *data)
 		       sizeof(display_out->backend_hdl->feat.mod));
 		info.feat.hw_id = display_out->id;
 		info.feat.feat.share_scaler = engine->top_hdl->share_scaler;
+		info.support_offline = engine->top_hdl->support_offline;
 		info.gamma_lut_len = display_out->backend_hdl->feat.gamma_lut_len;
 		info.hue_default_value = display_out->backend_hdl->feat.hue_default_value;
 
@@ -1405,10 +1419,11 @@ static void de_process_late_work_next_frame(struct sunxi_de_out *hwde)
 
 	if (hwde->backend_hdl->vblank_work) {
 		btstate.device_support_bk = sunxi_drm_crtc_is_support_backlight(hwde->scrtc);
+		btstate.backlight = sunxi_drm_crtc_get_backlight(hwde->scrtc);
 		de_backend_vblank_work(hwde->backend_hdl, &btstate);
 
 		if (btstate.dimming_changed) {
-			backlight = btstate.backlight_user_set * btstate.dimming / 256;
+			backlight = btstate.backlight_after_dimming;
 			sunxi_drm_crtc_set_backlight_value(hwde->scrtc, backlight);
 		}
 	}
@@ -1417,7 +1432,11 @@ static void de_process_late_work_next_frame(struct sunxi_de_out *hwde)
 
 void sunxi_de_dump_state(struct drm_printer *p, struct sunxi_de_out *hwde)
 {
-	drm_printf(p, "\t    vsync: %d last rcq at vsync: %d\n", hwde->vsync_count, hwde->last_rcq_vsync);
+	struct sunxi_display_engine *engine = dev_get_drvdata(hwde->dev);
+	bool offline_en = engine->offline_mode.enable | engine->debug->force_offline_mode;
+
+	drm_printf(p, "\t    vsync: %d last rcq at vsync: %d offline: %sable\n", hwde->vsync_count, hwde->last_rcq_vsync,
+			offline_en ? "en" : "dis");
 }
 
 #if defined(CONFIG_PM_DEVFREQ)
@@ -1809,10 +1828,22 @@ int sunxi_de_write_back(struct sunxi_de_out *hwde, struct sunxi_de_wb *wb, struc
 	return de_wb_apply(wb_hdl, &in_info, fb);
 }
 
-bool sunxi_de_query_de_busy(struct sunxi_de_out *hwde)
+bool sunxi_de_query_de_busy(struct sunxi_de_out *hwde, struct disp_video_timings *timings)
 {
 	struct sunxi_display_engine *engine = dev_get_drvdata(hwde->dev);
-	return de_top_query_de_busy_state(engine->top_hdl, hwde->id);
+	unsigned int cur_line;
+
+	if (engine->match_data->update_mode == RCQ_MODE) {
+		if (engine->match_data->rcq_wait_line) {
+			cur_line = sunxi_drm_crtc_get_output_current_line(hwde->scrtc);
+			return !(cur_line <= timings->ver_front_porch);
+		} else {
+			return de_top_query_de_busy_state(engine->top_hdl, hwde->id);
+		}
+	} else {
+		// TODO
+		return false;
+	}
 }
 
 int sunxi_de_div_calc_mn(unsigned long freq_in_kHZ, unsigned long freq_out_kHZ, unsigned int *m, unsigned int *n)
@@ -1892,3 +1923,44 @@ int sunxi_de_auto_calc_freq_and_apply(struct sunxi_de_out *hwde)
 	de_top_freq_div_apply(engine->top_hdl, m, n);
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_AW_DRM_DE_OFFLINE_MODE)
+int sunxi_de_get_offline_mode_info(struct sunxi_de_out *hwde, void **vir_addr, unsigned long *buff_size)
+{
+	struct sunxi_display_engine *engine;
+	struct de_offline_get_info offline_info;
+	int ret;
+
+	engine = dev_get_drvdata(hwde->dev);
+	ret = de_top_get_offline_info(engine->top_hdl, &offline_info);
+	if (ret >= 0) {
+		*vir_addr = offline_info.vir_addr;
+		*buff_size = offline_info.buff_size;
+	} else {
+		*vir_addr = NULL;
+		*buff_size = 0;
+	}
+
+	return ret;
+}
+
+int sunxi_de_offline_mode_pre_init(struct sunxi_de_out *hwde, unsigned int width, unsigned int height)
+{
+	struct sunxi_display_engine *engine;
+	struct offline_cfg offline;
+
+	engine = dev_get_drvdata(hwde->dev);
+	offline.enable = false;
+	offline.mode = ONE_FRAME_DELAY;
+	offline.w = width;
+	offline.h = height;
+	return de_top_offline_mode_config(engine->top_hdl, &offline);
+}
+
+enum de_offline_mode_status sunxi_de_query_clear_offline_mode_status(struct sunxi_de_out *hwde,
+											enum de_offline_mode_status status)
+{
+	struct sunxi_display_engine *engine = dev_get_drvdata(hwde->dev);
+	return de_top_offline_mode_query_state_with_clear(engine->top_hdl, status);
+}
+#endif
