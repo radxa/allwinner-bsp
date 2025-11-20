@@ -1087,7 +1087,7 @@ static int ac101_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 	}
 
 	if (pdata->sysclk_src != SYSCLK_SRC_PLL) {
-		dev_err(dai->dev, "ac101 sysclk source don't pll, don't need config pll\n");
+		dev_warn(dai->dev, "ac101 sysclk source don't pll, don't need config pll\n");
 		return 0;
 	}
 
