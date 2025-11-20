@@ -1177,21 +1177,20 @@ static int sunxi_i2s_clk_open(struct snd_pcm_substream *substream,
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
 	    !i2s_clk_sta->p_work && i2s_clk_sta->c_work &&
 	    sample_rate != i2s_clk_sta->old_rate) {
-		SND_LOG_ERR("i2s is capture in %dKHz, but new rate is %dKHz,"
-			    "capture has wrong!!!\n",
+		SND_LOG_WARN("i2s capture rate is %dKHz, but new playback rate is %dKHz, "
+            "playback and capture only support the same rate!!!\n",
 			    i2s_clk_sta->old_rate, sample_rate);
-		return -1;
 	}
-	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE &&
+	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE &&
 	    !i2s_clk_sta->c_work && i2s_clk_sta->p_work &&
 	    sample_rate != i2s_clk_sta->old_rate) {
-		SND_LOG_ERR("i2s is playing in %dKHz, but new rate is %dKHz,"
-			    "playing has wrong!!!\n",
+		SND_LOG_WARN("i2s is playing in %dKHz, but new rate is %dKHz,"
+			    "playback and capture only support the same rate!!!\n",
 			    i2s_clk_sta->old_rate, sample_rate);
-		return -1;
 	}
-
-	i2s_clk_sta->old_rate = sample_rate;
+	else {
+		i2s_clk_sta->old_rate = sample_rate;
+	}
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		i2s_clk_sta->p_work = 1;
