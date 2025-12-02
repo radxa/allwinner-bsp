@@ -646,6 +646,21 @@ void sunxi_pcie_host_change_nsi_port_bwl(struct sunxi_pcie *pci, int gen)
 #endif
 }
 
+int sunxi_pcie_host_read_speed(struct sunxi_pcie *pci)
+{
+	int val, gen;
+
+	sunxi_pcie_dbi_ro_wr_en(pci);
+	val = sunxi_pcie_readl_dbi(pci, LINK_CONTROL2_LINK_STATUS2);
+	gen = val & 0xf;
+
+	sunxi_info(pci->dev, "PCIe speed of Gen%d\n", gen);
+	sunxi_pcie_host_change_nsi_port_bwl(pci, gen);
+
+	sunxi_pcie_dbi_ro_wr_dis(pci);
+	return 0;
+}
+
 int sunxi_pcie_host_speed_change(struct sunxi_pcie *pci, int gen)
 {
 	int val;
@@ -694,9 +709,15 @@ static void __sunxi_pcie_host_init(struct sunxi_pcie_port *pp)
 
 	sunxi_pcie_host_setup_rc(pp);
 
-	sunxi_pcie_host_establish_link(pci);
+	if (sunxi_pcie_host_is_link_up(pp)) {
+		sunxi_info(pci->dev, "pcie is already link up\n");
 
-	sunxi_pcie_host_speed_change(pci, pci->link_gen);
+		sunxi_pcie_host_read_speed(pci);
+	} else {
+		sunxi_pcie_host_establish_link(pci);
+
+		sunxi_pcie_host_speed_change(pci, pci->link_gen);
+	}
 }
 
 static bool sunxi_pcie_host_link_up_status(struct sunxi_pcie_port *pp)
