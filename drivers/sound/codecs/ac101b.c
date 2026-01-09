@@ -236,6 +236,7 @@ static int sunxi_jack_adv_init(void *data)
 
 	/* hp_det */
 	regmap_update_bits(regmap, HP_DET_CTRL, 0x1 << HP_DET_EN, 0x1 << HP_DET_EN);
+	regmap_update_bits(regmap, HP_DET_CTRL, 0x1 << DET_POLY, 0x1 << DET_POLY);
 	regmap_update_bits(regmap, HBIAS_REG, 0x1 << HBIAS_MODE, 0x1 << HBIAS_MODE);
 
 	regmap_update_bits(regmap, HP_DET_IRQ, 0x1 << HP_PLUGIN_IRQ,
@@ -440,7 +441,7 @@ static void sunxi_jack_adv_det_irq_work(void *data, enum snd_jack_types *jack_ty
 	regmap_read(regmap, HP_DET_CTRL, &hp_det_val);
 	regmap_read(regmap, HMIC_DET_DATA, &hmic_data);
 
-	if (hp_det_val & (1 << HP_DET)) {
+	if (!(hp_det_val & (1 << HP_DET))) {
 		reg_val |= (0x1 << HP_PLUGOUT_PENDING);
 		reg_val |= (0x1 << HMIC_PLUGOUT_PENDING);
 		regmap_write(regmap, HP_DET_STA, reg_val);
