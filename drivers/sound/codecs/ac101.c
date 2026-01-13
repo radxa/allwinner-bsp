@@ -1532,7 +1532,7 @@ static int ac101_probe(struct snd_soc_component *component)
 	struct regmap *regmap = ac101->regmap;
 	struct sunxi_jack_adv_priv *jack_adv_priv = &pdata->jack_adv_priv;
 	unsigned int reg_val;
-	int ret;
+	int ret, i;
 
 	SND_LOG_DEBUG("\n");
 
@@ -1545,10 +1545,22 @@ static int ac101_probe(struct snd_soc_component *component)
 	 */
 	regmap_write(regmap, CHIP_SOFT_RST, 0x123);
 
-	do {
-		regmap_read(regmap, CHIP_SOFT_RST, &reg_val);
-		SND_LOG_INFO("wait ac101 reset successfully, need 0x101/%d\n", reg_val);
-	} while (reg_val != 0x101);
+	for (i = 0; i < 50; i++) { /* 500ms */
+		ret = regmap_read(regmap, CHIP_SOFT_RST, &reg_val);
+		if (ret) {
+			if (ret == -EREMOTEIO || ret == -ENXIO || ret == -EIO)
+				return -ENODEV;
+			return ret;
+		}
+
+		if (reg_val == 0x101)
+			break;
+
+		msleep(10);
+	}
+
+	if (i == 50)
+		return -ETIMEDOUT;
 
 	pdata->working = (atomic_t)ATOMIC_INIT(0);
 
