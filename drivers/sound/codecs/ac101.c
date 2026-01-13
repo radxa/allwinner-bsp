@@ -1706,21 +1706,23 @@ static int ac101_probe(struct snd_soc_component *component)
 	struct regmap *regmap = ac101->regmap;
 	struct sunxi_jack_adv_priv *jack_adv_priv = &pdata->jack_adv_priv;
 	unsigned int reg_val;
-	int ret = -1;
-	unsigned int i;
-	unsigned int try_num = 5;
+	int ret = -1, i;
 
 	SND_LOG_DEBUG("\n");
 
 	/* wait ac101 stable */
 	msleep(50);
 
-	for (i = 0; (i < try_num) && (ret < 0); i++) {
+	/* try read chip id 5 times to verify communication */
+	for (i = 0; i < 5; i++) {
 		ret = regmap_read(regmap, CHIP_SOFT_RST, &reg_val);
+		if (ret < 0)
+			continue;
+		break;
 	}
 	if (ret) {
 		SND_LOG_ERR("try read ac101 5 times but failed, ac101 probe failed\n");
-		return -1;
+		return ret;
 	}
 
 	/* software reset to wait ac101 stable,
@@ -1729,10 +1731,22 @@ static int ac101_probe(struct snd_soc_component *component)
 	 */
 	regmap_write(regmap, CHIP_SOFT_RST, 0x123);
 
-	do {
-		regmap_read(regmap, CHIP_SOFT_RST, &reg_val);
-		SND_LOG_INFO("wait ac101 reset successfully, need 0x101/0x%x\n", reg_val);
-	} while (reg_val != 0x101);
+	for (i = 0; i < 50; i++) { /* 500ms timeout */
+		ret = regmap_read(regmap, CHIP_SOFT_RST, &reg_val);
+		if (ret) {
+			if (ret == -EREMOTEIO || ret == -ENXIO || ret == -EIO)
+				return -ENODEV;
+			return ret;
+		}
+
+		if (reg_val == 0x101)
+			break;
+
+		msleep(10);
+	}
+
+	if (i == 50)
+		return -ETIMEDOUT;
 
 	pdata->working = (atomic_t)ATOMIC_INIT(0);
 

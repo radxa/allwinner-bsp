@@ -1690,8 +1690,9 @@ static int ac101b_probe(struct snd_soc_component *component)
 	struct ac101b_data *pdata = &ac101b->pdata;
 	struct regmap *regmap = ac101b->regmap;
 	struct sunxi_jack_adv_priv *jack_adv_priv = &pdata->jack_adv_priv;
-	int ret = -1;
-	unsigned int i, reg_val;
+	int ret = -1, i;
+	unsigned int reg_val;
+	unsigned int val;
 	unsigned int try_num = 5;
 
 	SND_LOG_DEBUG("\n");
@@ -1759,9 +1760,23 @@ static int ac101b_probe(struct snd_soc_component *component)
 
 	regmap_update_bits(regmap, POWER_REG1, 0x1 << BG_BUFEN, 0x1 << BG_BUFEN);
 
-	do {
-		regmap_read(regmap, POWER_REG4, &ret);
-	} while (!(ret & (0x1 << AVCC_POR)));
+	for (i = 0; i < 50; i++) {
+		ret = regmap_read(regmap, POWER_REG4, &val);
+		if (ret) {
+			if (ret == -EREMOTEIO || ret == -ENXIO || ret == -EIO)
+				return -ENODEV;
+			return ret;
+		}
+
+		if (val & (0x1 << AVCC_POR))
+			break;
+
+		msleep(10);
+	}
+
+	if (i == 50)
+		return -ETIMEDOUT;
+
 	regmap_update_bits(regmap, POWER_REG1,
 			   0x1 << VRA1_SEPPEDUP, 0x1 << VRA1_SEPPEDUP);
 
