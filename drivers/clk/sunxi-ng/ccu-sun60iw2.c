@@ -2895,7 +2895,7 @@ static int sun60iw2_ccu_really_probe(struct device_node *node)
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_AW_KERNEL_ORIGIN)
+#if !IS_ENABLED(CONFIG_AW_KERNEL_ORIGIN)
 static void __init of_sun60iw2_ccu_init(struct device_node *node)
 {
 	sun60iw2_ccu_really_probe(node);
