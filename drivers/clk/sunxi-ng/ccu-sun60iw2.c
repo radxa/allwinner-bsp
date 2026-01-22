@@ -2875,8 +2875,8 @@ static int sun60iw2_ccu_really_probe(struct device_node *node)
 	 * When this feature is enabled, it will automatically monitor the traffic of AHB (Advanced High-performance Bus).
 	 * If there is no data, it will automatically turn off the clock of the relevant bus decoder,
 	 * which helps reduce power consumption.*/
-	set_reg(reg + AHB_GATE_EN_REG, 0x1, 1, AHB_MONITOR_ENABLE);
-	set_reg(reg + AHB_GATE_EN_REG, 0x1, 1, SD_MONITOR_ENABLE);
+	// set_reg(reg + AHB_GATE_EN_REG, 0x1, 1, AHB_MONITOR_ENABLE);
+	// set_reg(reg + AHB_GATE_EN_REG, 0x1, 1, SD_MONITOR_ENABLE);
 
 	ret = sunxi_parse_sdm_info(node);
 	if (ret)
