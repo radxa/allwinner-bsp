@@ -71,6 +71,17 @@ struct sunxi_drm_private {
 	struct drm_property *prop_frame_rate_change;
 	struct drm_property *prop_compressed_image_crop;
 	struct sunxi_drm_pri *priv;
+	struct sunxi_mode_monitor *mode_monitor;
+};
+
+struct sunxi_mode_monitor {
+	struct delayed_work work;
+	struct drm_connector *connector;
+	struct drm_crtc *crtc;
+	struct sunxi_drm_pri *priv;
+	int check_interval_ms;
+	bool is_monitoring;
+	/* char conn_type[16]; */
 };
 
 #define to_sunxi_drm_private(drm) container_of(drm, struct sunxi_drm_private, base)

@@ -685,6 +685,108 @@ static int get_boot_display_info(struct drm_device *drm)
 	return 0;
 }
 
+static void sunxi_drm_mode_monitor_work_handler(struct work_struct *work)
+{
+	struct sunxi_mode_monitor *monitor = container_of(
+			to_delayed_work(work), struct sunxi_mode_monitor, work);
+	struct drm_connector *connector;
+	struct drm_device *drm;
+	struct drm_display_mode *mode;
+	struct sunxi_init_connecting *c;
+	int modes_count;
+
+	if (!monitor || !monitor->is_monitoring)
+		return;
+
+	connector = monitor->connector;
+	if (!connector || !connector->dev)
+		goto reschedule;
+
+	drm = connector->dev;
+
+	mutex_lock(&drm->mode_config.mutex);
+
+	connector->status = connector->funcs->detect(connector, false);
+
+	if (connector->status == connector_status_connected) {
+		DRM_INFO("%s connection detected\n", connector->name);
+
+		modes_count = connector->funcs->fill_modes(connector, 8192, 8192);
+		mode = list_first_entry_or_null(&connector->modes,
+				struct drm_display_mode, head);
+		if (mode) {
+			c = kmalloc(sizeof(*c), GFP_KERNEL | __GFP_ZERO);
+			if (c) {
+				c->crtc = monitor->crtc;
+				c->connector = connector;
+				c->mode = mode;
+				list_add_tail(&c->list, &monitor->priv->connecting_head);
+
+				DRM_INFO("%s: Configuration mode %dx%d@%dHz\n",
+						connector->name,
+						mode->hdisplay, mode->vdisplay,
+						drm_mode_vrefresh(mode));
+
+				mutex_unlock(&drm->mode_config.mutex);
+
+				monitor->is_monitoring = false;
+				drm_connector_put(connector);
+
+				commit_init_connecting(drm);
+
+				DRM_INFO("%s: Configuration complete\n", connector->name);
+				return;
+			}
+		}
+	}
+	mutex_unlock(&drm->mode_config.mutex);
+
+reschedule:
+	if (monitor->is_monitoring) {
+		schedule_delayed_work(&monitor->work,
+				msecs_to_jiffies(monitor->check_interval_ms));
+	}
+}
+
+static struct sunxi_mode_monitor *sunxi_drm_create_mode_monitor(
+		struct drm_connector *connector,
+		struct drm_crtc *crtc,
+		struct sunxi_drm_pri *priv)
+{
+	struct sunxi_mode_monitor *monitor;
+
+	if (!connector->funcs || !connector->funcs->detect) {
+		DRM_DEBUG("%s does not have a detect function and does not support hot-plugging.\n",
+				connector->name);
+		return NULL;
+	}
+
+	monitor = kzalloc(sizeof(*monitor), GFP_KERNEL);
+	if (!monitor)
+		return NULL;
+
+	drm_connector_get(connector);
+	monitor->connector = connector;
+	monitor->crtc = crtc;
+	monitor->priv = priv;
+	monitor->check_interval_ms = 100;
+	monitor->is_monitoring = true;
+
+	INIT_DELAYED_WORK(&monitor->work, sunxi_drm_mode_monitor_work_handler);
+
+	return monitor;
+}
+
+static void sunxi_drm_start_mode_monitor(struct sunxi_mode_monitor *monitor)
+{
+	if (!monitor || !monitor->is_monitoring)
+		return;
+
+	DRM_INFO("start %s monitor monitoring, interval: %dms\n",
+			monitor->connector->name, monitor->check_interval_ms);
+	schedule_delayed_work(&monitor->work, 0);
+}
+
 static int init_connecting(struct drm_device *drm, struct drm_crtc **crtcs, unsigned int crtc_cnt,
 				struct drm_connector **connectors, unsigned int connector_cnt)
 {
@@ -744,7 +846,6 @@ static int init_connecting(struct drm_device *drm, struct drm_crtc **crtcs, unsi
 				mutex_unlock(&drm->mode_config.mutex);
 
 				if (mode) {
-					drm_connector_get(connectors[i]);
 					connector_ = connectors[i];
 					break;
 				}
@@ -763,21 +864,31 @@ static int init_connecting(struct drm_device *drm, struct drm_crtc **crtcs, unsi
 
 	/* no bootloader connecting info, use the first one we found */
 	if (init_cnt == 0) {
-		drm_connector_get(connectors[0]);
 		mutex_lock(&drm->mode_config.mutex);
 		modes_count = connectors[0]->funcs->fill_modes(connectors[0], 8192, 8192);
 		//DRM_INFO("%s found mode %d\n", __FUNCTION__, modes_count);
 		mode = list_first_entry_or_null(&connectors[0]->modes, struct drm_display_mode, head);
 		if (mode) {
-			drm_connector_get(connectors[0]);
 			c = kmalloc(sizeof(*c), GFP_KERNEL | __GFP_ZERO);
 			c->crtc = crtcs[0];
 			c->connector = connectors[0];
 			c->mode = mode;
 			list_add_tail(&c->list, &pri->priv->connecting_head);
-		} else
-			DRM_ERROR("none mode found %s\n", __func__);
-		mutex_unlock(&drm->mode_config.mutex);
+			mutex_unlock(&drm->mode_config.mutex);
+		} else {
+			mutex_unlock(&drm->mode_config.mutex);
+			if (connectors[0]->funcs && connectors[0]->funcs->detect) {
+				DRM_INFO("%s Not connected, start hot-plug monitoring\n", connectors[0]->name);
+				pri->mode_monitor = sunxi_drm_create_mode_monitor(
+						connectors[0], crtcs[0], pri->priv);
+
+				if (pri->mode_monitor) {
+					sunxi_drm_start_mode_monitor(pri->mode_monitor);
+				}
+			} else {
+				DRM_INFO("%s does not support hot-swapping\n", connectors[0]->name);
+			}
+		};
 	}
 	return 0;
 }
@@ -1099,10 +1210,23 @@ mode_config_clean:
 static void sunxi_drm_unbind(struct device *dev)
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
+	struct sunxi_drm_private *pri = to_sunxi_drm_private(drm_dev);
 
 #if IS_ENABLED(CONFIG_PROC_FS)
 	sunxi_drm_procfs_term();
 #endif
+	if (pri->mode_monitor) {
+		if (pri->mode_monitor->is_monitoring) {
+			pri->mode_monitor->is_monitoring = false;
+			cancel_delayed_work_sync(&pri->mode_monitor->work);
+			if (pri->mode_monitor->connector)
+				drm_connector_put(pri->mode_monitor->connector);
+		}
+
+		kfree(pri->mode_monitor);
+		pri->mode_monitor = NULL;
+	}
+
 	dev_set_drvdata(dev, NULL);
 	drm_dev_unregister(drm_dev);
 	drm_kms_helper_poll_fini(drm_dev);
