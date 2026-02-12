@@ -335,6 +335,62 @@ OUT:
 	return ret;
 }
 
+static struct sunxi_mode_monitor *sunxi_drm_create_mode_monitor(
+		struct drm_connector *connector,
+		struct drm_crtc *crtc,
+		struct sunxi_drm_pri *priv);
+static void sunxi_drm_start_mode_monitor(struct sunxi_mode_monitor *monitor);
+
+static int __maybe_unused setup_kernel_connecting_state(struct drm_device *drm)
+{
+	struct drm_connector_list_iter conn_iter;
+	struct drm_connector *connector, **connectors = NULL;
+	unsigned int connector_count = 0;
+	unsigned int num_crtc = drm->mode_config.num_crtc;
+	struct drm_crtc *crtc, **crtcs;
+	int i = 0, ret = 0;
+	struct sunxi_drm_private *pri = to_sunxi_drm_private(drm);
+
+	drm_connector_list_iter_begin(drm, &conn_iter);
+	drm_client_for_each_connector_iter(connector, &conn_iter) {
+		struct drm_connector **tmp;
+
+		tmp = krealloc(connectors, (connector_count + 1) * sizeof(*connectors), GFP_KERNEL);
+		if (!tmp) {
+			ret = -ENOMEM;
+			goto free_connectors;
+		}
+
+		connectors = tmp;
+		drm_connector_get(connector);
+		connectors[connector_count++] = connector;
+	}
+	drm_connector_list_iter_end(&conn_iter);
+	if (!connector_count) {
+		DRM_ERROR("connector conut zero\n");
+		return -1;
+	}
+
+	crtcs = kcalloc(num_crtc, sizeof(*crtcs), GFP_KERNEL);
+	drm_for_each_crtc(crtc, drm)
+		crtcs[i++] = crtc;
+
+	INIT_LIST_HEAD(&pri->priv->connecting_head);
+
+	if (!pri->mode_monitor && connector_count && num_crtc) {
+		pri->mode_monitor = sunxi_drm_create_mode_monitor(connectors[0], crtcs[0], pri->priv);
+		if (pri->mode_monitor)
+			sunxi_drm_start_mode_monitor(pri->mode_monitor);
+	}
+
+free_connectors:
+	for (i = 0; i < connector_count; i++)
+		drm_connector_put(connectors[i]);
+	kfree(connectors);
+	kfree(crtcs);
+	return ret;
+}
+
 static const struct drm_ioctl_desc sunxi_drm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(SUNXI_PQ_PROC, sunxi_de_pq_ioctl, 0),
 };
@@ -1191,7 +1247,7 @@ static int sunxi_drm_bind(struct device *dev)
 
 	/* Enable connectors polling * */
 	drm_kms_helper_poll_init(drm);
-	ret = setup_bootloader_connecting_state(drm);
+	ret = setup_kernel_connecting_state(drm);
 	if (ret < 0) {
 		DRM_ERROR("setup bootloader connecting failed.Skip commit_init_connecting.\n");
 		goto dev_register;
