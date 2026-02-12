@@ -704,9 +704,19 @@ static void sunxi_drm_mode_monitor_work_handler(struct work_struct *work)
 
 	drm = connector->dev;
 
+	if (!list_empty(&monitor->priv->connecting_head)) {
+		monitor->is_monitoring = false;
+		drm_connector_put(connector);
+		commit_init_connecting(drm);
+		return;
+	}
+
 	mutex_lock(&drm->mode_config.mutex);
 
-	connector->status = connector->funcs->detect(connector, false);
+	if (connector->funcs && connector->funcs->detect)
+		connector->status = connector->funcs->detect(connector, false);
+	else
+		connector->status = connector_status_connected;
 
 	if (connector->status == connector_status_connected) {
 		DRM_INFO("%s connection detected\n", connector->name);
@@ -755,11 +765,8 @@ static struct sunxi_mode_monitor *sunxi_drm_create_mode_monitor(
 {
 	struct sunxi_mode_monitor *monitor;
 
-	if (!connector->funcs || !connector->funcs->detect) {
-		DRM_DEBUG("%s does not have a detect function and does not support hot-plugging.\n",
-				connector->name);
+	if (!connector->funcs || !connector->funcs->fill_modes)
 		return NULL;
-	}
 
 	monitor = kzalloc(sizeof(*monitor), GFP_KERNEL);
 	if (!monitor)
@@ -1189,7 +1196,7 @@ static int sunxi_drm_bind(struct device *dev)
 		DRM_ERROR("setup bootloader connecting failed.Skip commit_init_connecting.\n");
 		goto dev_register;
 	}
-	commit_init_connecting(drm);
+	/* commit_init_connecting() is triggered only by sunxi_drm_mode_monitor_work_handler() */
 
 dev_register:
 	ret = drm_dev_register(drm, 0);
