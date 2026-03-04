@@ -2603,15 +2603,18 @@
 				reg = <0x0 0x05820000 0x0 0x1000>;
 				interrupts = <GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH>;
 				device_id = <0>;
-				status = "okay";
+				pinctrl-names = "default","sleep";
+				pinctrl-0 = <&ncsi0_8bit_pins_a>;
+				pinctrl-1 = <&ncsi0_8bit_pins_b>;
+				status = "disabled";
 			};
 			csi1: csi@5821000 {
 				compatible = "allwinner,sunxi-csi";
 				reg = <0x0 0x05821000 0x0 0x1000>;
 				interrupts = <GIC_SPI 126 IRQ_TYPE_LEVEL_HIGH>;
 				pinctrl-names = "default","sleep";
-				pinctrl-0 = <&ncsi0_8bit_pins_a>;
-				pinctrl-1 = <&ncsi0_8bit_pins_b>;
+				pinctrl-0 = <&ncsi1_8bit_pins_a>;
+				pinctrl-1 = <&ncsi1_8bit_pins_b>;
 				device_id = <1>;
 				status = "disabled";
 			};
@@ -2620,8 +2623,6 @@
 				reg = <0x0 0x05822000 0x0 0x1000>;
 				interrupts = <GIC_SPI 127 IRQ_TYPE_LEVEL_HIGH>;
 				pinctrl-names = "default","sleep";
-				pinctrl-0 = <&ncsi1_8bit_pins_a>;
-				pinctrl-1 = <&ncsi1_8bit_pins_b>;
 				device_id = <2>;
 				status = "disabled";
 			};
