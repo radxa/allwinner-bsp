@@ -5125,6 +5125,29 @@ static int sunxi_drm_edp_bind(struct device *dev, struct device *master,
 	INIT_DELAYED_WORK(&drm_edp->typec_hpd_monitor, drm_edp_typec_hpd_monitor);
 	mutex_init(&drm_edp->typec_dp_lock);
 
+	for(int i = 0; i < 5; i++) {
+		if (typec_dp_try_communication(drm_edp)) {
+			EDP_INFO("typec aux communication success after retry %d times\n", i);
+			drm_edp->hpd_state_now = true;
+			drm_edp->hpd_state = false;
+			/* trigger hotplug multiple times to ensure display works */
+			edp_report_hpd_work(drm_edp, EDP_HPD_PLUGIN);
+			edp_hotplugin_proc(drm_edp);
+			msleep(300);
+			edp_report_hpd_work(drm_edp, EDP_HPD_PLUGOUT);
+			edp_hotplugout_proc(drm_edp);
+			msleep(300);
+			edp_report_hpd_work(drm_edp, EDP_HPD_PLUGIN);
+			edp_hotplugin_proc(drm_edp);
+			msleep(300);
+			drm_edp->hpd_state = drm_edp->hpd_state_now;
+			break;
+		} else {
+			EDP_WRN("typec aux communication failed after retry %d times\n", i);
+			msleep(1000);
+		}
+	}
+
 	EDP_DRV_DBG("edp bind finish!\n");
 	return RET_OK;
 
