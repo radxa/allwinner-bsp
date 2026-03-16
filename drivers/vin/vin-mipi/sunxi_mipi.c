@@ -1657,7 +1657,7 @@ static size_t phy_digital_status_dump(struct mipi_dev *mipi, char *buf, size_t s
 		count += scnprintf(buf + count, size - count, "data_lane1:\t 0x%x (error)\n", phy_sta_d1);
 
 	phy_sta_ck0 = cmb_phy_sta_ck0_get(mipi->id);
-	if ((mipi->id & 1) && cmb_port_lane_num_get(mipi->id - 1) == 4) {
+	if ((mipi->id & 1) && cmb_csi_port_is_valid(mipi->id - 1) && cmb_port_lane_num_get(mipi->id - 1) == 4) {
 		if (0x0 == phy_sta_ck0) {
 			count += scnprintf(buf + count, size - count,
 				"clk_lane:\t 0x%x (mipi%d used for 4_lane mode, clk_lane is the same with mipi%d)\n",
