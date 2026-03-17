@@ -193,6 +193,7 @@ struct combo_csi_cfg {
 int cmb_csi_set_top_base_addr(unsigned long addr);
 int cmb_csi_set_phy_base_addr(unsigned int sel, unsigned long addr);
 int cmb_csi_set_port_base_addr(unsigned int sel, unsigned long addr);
+bool cmb_csi_port_is_valid(unsigned int sel);
 
 /*
  * Detail function information of registers----PHY TOP

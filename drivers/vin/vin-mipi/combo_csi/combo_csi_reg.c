@@ -63,6 +63,16 @@ int cmb_csi_set_port_base_addr(unsigned int sel, unsigned long addr)
 	return 0;
 }
 
+bool cmb_csi_port_is_valid(unsigned int sel)
+{
+	if (sel < 0 || sel > VIN_MAX_MIPI - 1)
+		return false;
+	if (cmb_csi_port_base_addr[sel] == NULL)
+		return false;
+
+	return true;
+}
+
 /*
  * Detail function information of registers----PHY TOP
  */
