@@ -847,7 +847,7 @@ static void sunxi_drm_start_mode_monitor(struct sunxi_mode_monitor *monitor)
 
 	DRM_INFO("start %s monitor monitoring, interval: %dms\n",
 			monitor->connector->name, monitor->check_interval_ms);
-	schedule_delayed_work(&monitor->work, 0);
+	schedule_delayed_work(&monitor->work, msecs_to_jiffies(1000));
 }
 
 static int init_connecting(struct drm_device *drm, struct drm_crtc **crtcs, unsigned int crtc_cnt,
