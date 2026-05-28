@@ -1273,8 +1273,7 @@ static struct snd_soc_dai_driver ac101_dai = {
 		.stream_name	= "Playback",
 		.channels_min	= 1,
 		.channels_max	= 4,
-		.rates		= SNDRV_PCM_RATE_8000_192000
-				| SNDRV_PCM_RATE_KNOT,
+		.rates		= SNDRV_PCM_RATE_8000_192000,
 		.formats	= SNDRV_PCM_FMTBIT_S8
 				| SNDRV_PCM_FMTBIT_S16_LE
 				| SNDRV_PCM_FMTBIT_S20_3LE
@@ -1284,8 +1283,7 @@ static struct snd_soc_dai_driver ac101_dai = {
 		.stream_name	= "Capture",
 		.channels_min	= 1,
 		.channels_max	= 4,
-		.rates		= SNDRV_PCM_RATE_8000_192000
-				| SNDRV_PCM_RATE_KNOT,
+		.rates		= SNDRV_PCM_RATE_8000_192000,
 		.formats	= SNDRV_PCM_FMTBIT_S8
 				| SNDRV_PCM_FMTBIT_S16_LE
 				| SNDRV_PCM_FMTBIT_S20_3LE
