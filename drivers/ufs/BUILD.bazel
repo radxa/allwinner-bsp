@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026 The Allwinner BSP DDK Project
+
+load("//build/kernel/kleaf:kernel.bzl", "ddk_module", "ddk_headers")
+load("//devices/allwinner:rules.bzl", "ddk_install")
+
+ddk_headers(
+    name = "ufs-headers",
+    hdrs = glob([
+        "*.h",
+    ]),
+    includes = [
+        ".",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+ddk_module(
+    name = "sunxi-ufs-platform",
+    srcs = [
+        "sunxi-ufs-platform.c",
+    ],
+    out = "sunxi-ufs-platform.ko",
+    defconfig = "//devices/allwinner:allwinner_defconfig.fragment",
+    kernel_build = "//devices/allwinner:allwinner_android",
+    deps = [
+        "//devices/allwinner/bsp:allwinner_bsp_headers",
+        ":ufs-headers",
+        "//devices/allwinner/bsp/drivers/sid:sunxi-sid_exposed",
+    ],
+    visibility = ["//devices/allwinner:__subpackages__"],
+)
+
+ddk_install(
+    name = "sunxi-ufs-platform_install",
+    ddk_module = ":sunxi-ufs-platform",
+)

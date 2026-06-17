@@ -1,0 +1,5 @@
+{
+  "modules": [
+    { "name": "sunxi-ufs-platform", "conditions": [ "CONFIG_AW_UFS=m" ] }
+  ]
+}
