@@ -89,6 +89,9 @@ static struct ccu_gate dcxo_wakeup_clk = {
 static SUNXI_CCU_GATE(dcxo_serdes1_clk, "dcxo-serdes1", "r-ahb", 0x16c, BIT(5), 0);
 
 static SUNXI_CCU_GATE(dcxo_serdes0_clk, "dcxo-serdes0", "r-ahb", 0x16c, BIT(4), 0);
+
+static SUNXI_CCU_GATE(dcxo_ufs_gating_clk, "dcxo-ufs-gating", "r-ahb", 0x16c, BIT(0), 0);
+
 /* TODO: should add the div func */
 static SUNXI_CCU_GATE(rtc_spi_clk, "rtc-spi", "r-ahb", 0x310, BIT(31), 0);
 
@@ -104,6 +107,7 @@ static struct ccu_common *sun60iw2_rtc_ccu_clks[] = {
 	&dcxo_serdes0_clk.common,
 	&rtc_spi_clk.common,
 	&dcxo_clk.common,
+	&dcxo_ufs_gating_clk.common,
 };
 
 static struct clk_hw_onecell_data sun60iw2_rtc_ccu_hw_clks = {
@@ -121,6 +125,7 @@ static struct clk_hw_onecell_data sun60iw2_rtc_ccu_hw_clks = {
 		[CLK_RTC_DCXO_SERDES0]		= &dcxo_serdes0_clk.common.hw,
 		[CLK_RTC_SPI]			= &rtc_spi_clk.common.hw,
 		[CLK_DCXO]			= &dcxo_clk.common.hw,
+		[CLK_DCXO_UFS]	= &dcxo_ufs_gating_clk.common.hw,
 	},
 	.num	= CLK_NUMBER,
 };

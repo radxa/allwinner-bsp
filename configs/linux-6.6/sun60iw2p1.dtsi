@@ -4335,10 +4335,12 @@
 				<&ccu CLK_STORE_AHB_GATE>,
 				<&ccu CLK_MBUS_STORE_GATE>,
 				<&ccu CLK_MSI_LITE1>,
-				<&rtc_ccu CLK_RTC_DCXO_WAKEUP>;
+				<&rtc_ccu CLK_RTC_DCXO_WAKEUP>,
+				<&rtc_ccu CLK_DCXO_UFS>;
 			clock-names = "osc24m","pll_periph","pll_periph_2",
 					"axi_clk_gate","ahb_gate", "cfg_clk_gate",
-					"store_ahb","store_mbus","msi_lite","dcxo_wakeup";
+					"store_ahb","store_mbus","msi_lite","dcxo_wakeup",
+					"dcxo_ufs_gating";
 			resets = <&ccu RST_BUS_UFS_CORE>,
 				 <&ccu RST_BUS_UFS_PHY>,
 				 <&ccu RST_BUS_UFS_AXI>,
