@@ -30,6 +30,8 @@
 
 #define HUSB311_VENDOR_ID			0x2E99
 #define HUSB311_PRODUCT_ID			0x0311
+#define ET7304_VENDOR_ID			0x6DCF
+#define ET7304_PRODUCT_ID			0x1711
 #define HUSB311_REG_BMC_CTRL			0x90
 #define HUSB311_REG_VCONN_CLIMITEN		0x95
 #define HUSB311_REG_IDLE_CTRL			0x9B
@@ -549,6 +551,10 @@ static int husb311_init_gpio(struct husb311_chip *chip)
 	int ret = 0;
 
 	ret = of_get_named_gpio(np, "husb311,intr_gpio", 0);
+	if (ret == -EPROBE_DEFER)
+		return ret;
+	if (ret < 0)
+		ret = of_get_named_gpio(np, "et7304,intr_gpio", 0);
 	if (ret < 0) {
 		dev_err(dev, "no intr_gpio info, ret = %d\n", ret);
 		return ret;
@@ -590,7 +596,7 @@ static int husb311_check_revision(struct i2c_client *i2c)
 		return ret;
 	}
 
-	if (ret != HUSB311_VENDOR_ID) {
+	if (ret != HUSB311_VENDOR_ID && ret != ET7304_VENDOR_ID) {
 		dev_err(&i2c->dev, "vid is not correct, 0x%04x\n", ret);
 		return -ENODEV;
 	}
@@ -601,7 +607,7 @@ static int husb311_check_revision(struct i2c_client *i2c)
 		return ret;
 	}
 
-	if (ret != HUSB311_PRODUCT_ID) {
+	if (ret != HUSB311_PRODUCT_ID && ret != ET7304_PRODUCT_ID) {
 		dev_err(&i2c->dev, "pid is not correct, 0x%04x\n", ret);
 		return -ENODEV;
 	}
@@ -874,6 +880,7 @@ static int husb311_pm_resume(struct device *dev)
 
 static const struct i2c_device_id husb311_id[] = {
 	{ "husb311", 0 },
+	{ "et7304", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, husb311_id);
@@ -881,6 +888,7 @@ MODULE_DEVICE_TABLE(i2c, husb311_id);
 #if IS_ENABLED(CONFIG_OF)
 static const struct of_device_id husb311_of_match[] = {
 	{ .compatible = "hynetek,husb311" },
+	{ .compatible = "etek,et7304" },
 	{ /* Sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, husb311_of_match);
