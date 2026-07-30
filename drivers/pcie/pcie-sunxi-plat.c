@@ -990,6 +990,12 @@ static int sunxi_pcie_plat_parse_dts_res(struct platform_device *pdev, struct su
 		pci->link_gen = 0x1;
 	}
 
+	pci->power_gpio = devm_gpiod_get_optional(&pdev->dev, "power", GPIOD_OUT_HIGH);
+	if (IS_ERR(pci->power_gpio))
+		sunxi_warn(&pdev->dev, "Failed to get \"power-gpios\"\n");
+	else if (pci->power_gpio)
+		msleep(50);
+
 	pci->rst_gpio = devm_gpiod_get(&pdev->dev, "reset", GPIOD_OUT_HIGH);
 	if (IS_ERR(pci->rst_gpio))
 		sunxi_warn(&pdev->dev, "Failed to get \"reset-gpios\"\n");
