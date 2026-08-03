@@ -25,7 +25,7 @@
 
 / {
 	model = "sun55iw3";
-	interrupt-parent = <&gic>;
+	interrupt-parent = <&wakeupgen>;
 	#address-cells = <2>;
 	#size-cells = <2>;
 
@@ -4960,9 +4960,18 @@
 				     <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "JOB", "MMU", "GPU";
-			clocks = <&ccu CLK_GPU>, <&ccu CLK_BUS_GPU>, <&ccu CLK_PLL_GPU>;
-			clock-names = "clk_mali", "clk_bus", "clk_parent";
+			clocks = <&ccu CLK_GPU>,
+				<&ccu CLK_BUS_GPU>,
+				<&ccu CLK_PLL_GPU>,
+				<&ccu CLK_PLL_PERI0_800M>,
+				<&ccu CLK_PLL_PERI0_600M>,
+				<&ccu CLK_PLL_PERI0_400M>,
+				<&ccu CLK_PLL_PERI0_300M>,
+				<&ccu CLK_PLL_PERI0_200M>;
+			clock-names = "clk_mali", "clk_bus", "clk_parent",
+				"clk_800", "clk_600", "clk_400", "clk_300", "clk_200";
 			resets = <&ccu RST_BUS_GPU>;
+			reset-names = "rst_bus_gpu";
 			operating-points-v2 = <&gpu_opp_table>;
 			#cooling-cells = <2>;
 			ipa_dvfs:ipa_dvfs {
@@ -4980,7 +4989,7 @@
 
 		gpu_opp_table: gpu-opp-table {
 			compatible = "allwinner, mali-valhall-operating-points";
-			opp@150000000 {
+			/*opp@150000000 {
 				opp-hz = /bits/ 64 <150000000>;
 				opp-microvolt = <900000>;
 			};
@@ -4993,7 +5002,7 @@
 			opp@300000000 {
 				opp-hz = /bits/ 64 <300000000>;
 				opp-microvolt = <900000>;
-			};
+			};*/
 
 			opp@400000000 {
 				opp-hz = /bits/ 64 <400000000>;
@@ -5062,51 +5071,55 @@
 		};
 
 		pcie: pcie@4800000 {
-			compatible = "allwinner,sunxi-pcie-v210-rc";
 			#address-cells = <3>;
 			#size-cells = <2>;
-			bus-range = <0x0 0xff>;
-			reg = <0 0x04800000 0 0x480000>;
-			reg-names = "dbi";
+			compatible = "allwinner,sun55iw3-pcie", "snps,dw-pcie";
 			device_type = "pci";
-			ranges = <0x00000800 0 0x20000000 0x0 0x20000000 0 0x01000000
-				  0x81000000 0 0x21000000 0x0 0x21000000 0 0x01000000
-				  0x82000000 0 0x22000000 0x0 0x22000000 0 0x0e000000>;
-			num-lanes = <1>;
-			phys = <&combophy PHY_TYPE_PCIE>;
-			phy-names = "pcie-phy";
-			interrupts = <GIC_SPI 107 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 98  IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 99  IRQ_TYPE_LEVEL_HIGH>,
+			reg = <0x0 0x04800000 0x0 0x00100000>,
+			      <0x0 0x04900000 0x0 0x00040000>,
+			      <0x0 0x04b00000 0x0 0x00080000>,
+			      <0x0 0x04b80000 0x0 0x00080000>,
+			      <0x0 0x04c00000 0x0 0x00080000>,
+			      <0x0 0x20000000 0x0 0x01000000>;
+			reg-names = "dbi", "dbi2", "atu", "dma", "app", "config";
+			ranges = <0x01000000 0x0 0x21000000 0x0 0x21000000 0x0 0x01000000>, /* downstream I/O (16 MB) */
+				 <0x02000000 0x0 0x22000000 0x0 0x22000000 0x0 0x0e000000>; /* non-prefetchable memory (224 MB) */
+			clocks = <&ccu CLK_PCIE_AUX>;
+			clock-names = "aux";
+			power-domains = <&pd1 A523_PCK_PCIE>;
+			interrupts = <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 107 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI  98 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI  99 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 101 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 105 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-names = "msi", "sii", "edma-w0", "edma-w1", "edma-w2", "edma-w3",
-					  "edma-r0", "edma-r1", "edma-r2", "edma-r3";
+			interrupt-names = "sii", "msi",
+					  "dma0", "dma1", "dma2", "dma3", /* edma-w */
+					  "dma4", "dma5", "dma6", "dma7"; /* edma-r */
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 7>;
 			interrupt-map = <0 0 0 1 &pcie_intc 0>,
-							<0 0 0 2 &pcie_intc 1>,
-							<0 0 0 3 &pcie_intc 2>,
-							<0 0 0 4 &pcie_intc 3>;
-			num-edma = <4>;
-			max-link-speed = <2>;
-			num-ib-windows = <8>;
-			num-ob-windows = <8>;
+					<0 0 0 2 &pcie_intc 1>,
+					<0 0 0 3 &pcie_intc 2>,
+					<0 0 0 4 &pcie_intc 3>;
+			bus-range = <0x0 0xff>;
 			linux,pci-domain = <0>;
-			power-domains = <&pd1 A523_PCK_PCIE>;
-			clocks = <&dcxo24M>, <&ccu CLK_PCIE_AUX>;
-			clock-names = "hosc", "pclk_aux";
+			max-link-speed = <2>;
+			num-lanes = <1>;
+			phys = <&combophy PHY_TYPE_PCIE>;
+			phy-names = "pcie-phy";
 			status = "disabled";
 
 			pcie_intc: legacy-interrupt-controller {
 				interrupt-controller;
 				#address-cells = <0>;
 				#interrupt-cells = <1>;
+				interrupt-parent = <&gic>;
+				interrupts = <GIC_SPI 106 IRQ_TYPE_EDGE_RISING>;
 			};
 		};
 

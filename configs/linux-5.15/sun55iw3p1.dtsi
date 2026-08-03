@@ -4957,9 +4957,18 @@
 				     <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "JOB", "MMU", "GPU";
-			clocks = <&ccu CLK_GPU>, <&ccu CLK_BUS_GPU>, <&ccu CLK_PLL_GPU>;
-			clock-names = "clk_mali", "clk_bus", "clk_parent";
+			clocks = <&ccu CLK_GPU>,
+				<&ccu CLK_BUS_GPU>,
+				<&ccu CLK_PLL_GPU>,
+				<&ccu CLK_PLL_PERI0_800M>,
+				<&ccu CLK_PLL_PERI0_600M>,
+				<&ccu CLK_PLL_PERI0_400M>,
+				<&ccu CLK_PLL_PERI0_300M>,
+				<&ccu CLK_PLL_PERI0_200M>;
+			clock-names = "clk_mali", "clk_bus", "clk_parent",
+				"clk_800", "clk_600", "clk_400", "clk_300", "clk_200";
 			resets = <&ccu RST_BUS_GPU>;
+			reset-names = "rst_bus_gpu";
 			operating-points-v2 = <&gpu_opp_table>;
 			#cooling-cells = <2>;
 			ipa_dvfs:ipa_dvfs {
@@ -4977,7 +4986,7 @@
 
 		gpu_opp_table: gpu-opp-table {
 			compatible = "allwinner, mali-valhall-operating-points";
-			opp@150000000 {
+			/*opp@150000000 {
 				opp-hz = /bits/ 64 <150000000>;
 				opp-microvolt = <900000>;
 			};
@@ -4990,7 +4999,7 @@
 			opp@300000000 {
 				opp-hz = /bits/ 64 <300000000>;
 				opp-microvolt = <900000>;
-			};
+			};*/
 
 			opp@400000000 {
 				opp-hz = /bits/ 64 <400000000>;

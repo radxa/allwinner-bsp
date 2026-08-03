@@ -2857,9 +2857,18 @@
 				     <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "JOB", "MMU", "GPU";
-			clocks = <&ccu CLK_PLL_GPU>, <&ccu CLK_GPU>, <&ccu CLK_BUS_GPU>;
-			clock-names = "clk_parent", "clk_mali", "clk_bus";
+			clocks = <&ccu CLK_GPU>,
+				<&ccu CLK_BUS_GPU>,
+				<&ccu CLK_PLL_GPU>,
+				<&ccu CLK_PLL_PERI0_800M>,
+				<&ccu CLK_PLL_PERI0_600M>,
+				<&ccu CLK_PLL_PERI0_400M>,
+				<&ccu CLK_PLL_PERI0_300M>,
+				<&ccu CLK_PLL_PERI0_200M>;
+			clock-names = "clk_mali", "clk_bus", "clk_parent",
+				"clk_800", "clk_600", "clk_400", "clk_300", "clk_200";
 			resets = <&ccu RST_BUS_GPU>;
+			reset-names = "rst_bus_gpu";
 			/*power-domains = <&pd1 A523_PCK_GPU>;*/
 		};
 

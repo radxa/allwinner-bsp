@@ -821,11 +821,11 @@ static SUNXI_CCU_GATE(bus_spi0_clk, "bus-spi0",
 		0x096C, BIT(0), 0);
 
 static SUNXI_CCU_GATE(gmac0_25m_clk, "gmac0-25m",
-		"dcxo24M",
+		"pll-peri0-25m",
 		0x0970, BIT(31) | BIT(30), 0);
 
 static SUNXI_CCU_GATE(gmac1_25m_clk, "gmac1-25m",
-		"dcxo24M",
+		"pll-peri0-25m",
 		0x0974, BIT(31) | BIT(30), 0);
 
 static SUNXI_CCU_GATE_ASSOC(gmac0_clk, "gmac0",
@@ -1754,24 +1754,14 @@ static const u32 sun55iw3_usb_clk_regs[] = {
 	SUN55IW3_USB1_CTRL_REG,
 };
 
-static int sun55iw3_ccu_probe(struct platform_device *pdev)
+static int sun55iw3_ccu_really_probe(struct device_node *node)
 {
-	struct resource *res;
-	struct device *dev = &pdev->dev;
 	void __iomem *reg;
 	int i, ret;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		dev_err(dev, "Fail to get IORESOURCE_MEM\n");
-		return -EINVAL;
-	}
-
-	reg = devm_ioremap(dev, res->start, resource_size(res));
-	if (IS_ERR(reg)) {
-		dev_err(dev, "Fail to map IO resource\n");
+	reg = of_iomap(node, 0);
+	if (IS_ERR(reg))
 		return PTR_ERR(reg);
-	}
 
 	/* Enable the lock_en bits on all PLLs */
 	for (i = 0; i < ARRAY_SIZE(sun55iw3_pll_regs); i++) {
@@ -1805,11 +1795,11 @@ static int sun55iw3_ccu_probe(struct platform_device *pdev)
 	/* Enable RES_DCAP_24M_GATE to calibrating the system clock frequency.*/
 	set_reg(reg + RES_DCAP_24M_GATE, 0x1, 1, 3);
 
-	ret = sunxi_parse_sdm_info(dev->of_node);
+	ret = sunxi_parse_sdm_info(node);
 	if (ret)
 		pr_debug("%s: sdm_info not enabled", __func__);
 
-	ret = sunxi_ccu_probe(pdev->dev.of_node, reg, &sun55iw3_ccu_desc);
+	ret = sunxi_ccu_probe(node, reg, &sun55iw3_ccu_desc);
 	if (ret)
 		return ret;
 
@@ -1818,6 +1808,21 @@ static int sun55iw3_ccu_probe(struct platform_device *pdev)
 			NULL, 0);
 
 	return 0;
+}
+
+#if IS_ENABLED(CONFIG_AW_KERNEL_ORIGIN)
+static void __init of_sun55iw3_ccu_init(struct device_node *node)
+{
+	sun55iw3_ccu_really_probe(node);
+}
+
+CLK_OF_DECLARE(sun55iw3_ccu_init, "allwinner,sun55iw3-ccu", of_sun55iw3_ccu_init);
+#else
+static int sun55iw3_ccu_probe(struct platform_device *pdev)
+{
+	struct device_node *node = pdev->dev.of_node;
+
+	return sun55iw3_ccu_really_probe(node);
 }
 
 static const struct of_device_id sun55iw3_ccu_ids[] = {
@@ -1851,8 +1856,9 @@ static void __exit sun55iw3_ccu_exit(void)
 	platform_driver_unregister(&sun55iw3_ccu_driver);
 }
 module_exit(sun55iw3_ccu_exit);
+#endif
 
 MODULE_DESCRIPTION("Allwinner sun55iw3 clk driver");
 MODULE_AUTHOR("rengaomin<rengaomin@allwinnertech.com>");
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("1.5.4");
+MODULE_VERSION("1.5.5");
