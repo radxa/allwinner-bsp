@@ -8,6 +8,7 @@
  */
 
 #include <linux/dma-buf.h>
+#include <linux/dma-heap.h>
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
 #include <linux/highmem.h>
@@ -29,7 +30,7 @@
  * with other sources
  * 							--ouyangkun 2020.09.12
  */
-#include "third-party/heap.c"
+// #include "third-party/heap.c"
 #include "third-party/heap-helpers.c"
 
 struct dma_heap *sunxi_drm_heap;
@@ -50,7 +51,7 @@ static void sunxi_drm_heap_free(struct heap_helper_buffer *buffer)
 	kfree(buffer);
 }
 
-static int sunxi_drm_heap_allocate(struct dma_heap *heap, unsigned long len,
+static struct dma_buf *sunxi_drm_heap_allocate(struct dma_heap *heap, unsigned long len,
 				   unsigned long fd_flags,
 				   unsigned long heap_flags)
 {
@@ -63,7 +64,7 @@ static int sunxi_drm_heap_allocate(struct dma_heap *heap, unsigned long len,
 
 	helper_buffer = kzalloc(sizeof(*helper_buffer), GFP_KERNEL);
 	if (!helper_buffer)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 
 	init_heap_helper_buffer(helper_buffer, sunxi_drm_heap_free);
 	helper_buffer->heap = heap;
@@ -107,10 +108,10 @@ static int sunxi_drm_heap_allocate(struct dma_heap *heap, unsigned long len,
 	if (ret < 0) {
 		dma_buf_put(dmabuf);
 		/* just return, as put will call release and that will free */
-		return ret;
+		return ERR_PTR(ret);
 	}
 
-	return ret;
+	return ERR_PTR(ret);
 
 err1:
 	while (pg > 0)
@@ -119,27 +120,11 @@ err1:
 err0:
 	kfree(helper_buffer);
 
-	return ret;
-}
-
-int sunxi_drm_heap_phys(struct dma_heap *heap, int dma_buf_fd,
-			unsigned int *tee_addr, unsigned int *phy_addr, unsigned int *len)
-{
-	struct dma_buf *dma_buf;
-	struct heap_helper_buffer *helper;
-	dma_buf = dma_buf_get(dma_buf_fd);
-	helper = (struct heap_helper_buffer *)dma_buf->priv;
-	*phy_addr = page_to_phys(helper->pages[0]);
-	*tee_addr = *phy_addr - sunxi_drm_info.drm_base +
-		sunxi_drm_info.tee_base;
-	*len = helper->size;
-	dma_buf_put(dma_buf);
-	return 0;
+	return ERR_PTR(ret);
 }
 
 static const struct dma_heap_ops sunxi_drm_heap_ops = {
 	.allocate = sunxi_drm_heap_allocate,
-	.phys = sunxi_drm_heap_phys,
 };
 
 static int sunxi_drm_heap_create(void)
@@ -158,9 +143,6 @@ static int sunxi_drm_heap_create(void)
 	ret = gen_pool_add_virt(drm_pool, sunxi_drm_info.tee_base,
 				sunxi_drm_info.drm_base,
 				sunxi_drm_info.drm_size, -1);
-	if (ret)
-		goto exit;
-	ret = dma_heap_init();
 	if (ret)
 		goto exit;
 

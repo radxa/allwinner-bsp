@@ -61,13 +61,13 @@ static void dma_heap_buffer_destroy(struct heap_helper_buffer *buffer)
 	buffer->free(buffer);
 }
 
-static int dma_heap_buffer_vmap_get(struct heap_helper_buffer *buffer, struct dma_buf_map *map)
+static int dma_heap_buffer_vmap_get(struct heap_helper_buffer *buffer, struct iosys_map *map)
 {
 	void *vaddr;
 
 	if (buffer->vmap_cnt) {
 		buffer->vmap_cnt++;
-		dma_buf_map_set_vaddr(map, buffer->vaddr);
+		iosys_map_set_vaddr(map, buffer->vaddr);
 		return 0;
 	}
 	vaddr = dma_heap_map_kernel(buffer);
@@ -75,7 +75,7 @@ static int dma_heap_buffer_vmap_get(struct heap_helper_buffer *buffer, struct dm
 		return PTR_ERR(vaddr);
 	buffer->vaddr = vaddr;
 	buffer->vmap_cnt++;
-	dma_buf_map_set_vaddr(map, buffer->vaddr);
+	iosys_map_set_vaddr(map, buffer->vaddr);
 	return 0;
 }
 
@@ -239,7 +239,7 @@ static int dma_heap_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 	return 0;
 }
 
-static int dma_heap_dma_buf_vmap(struct dma_buf *dmabuf, struct dma_buf_map *map)
+static int dma_heap_dma_buf_vmap(struct dma_buf *dmabuf, struct iosys_map *map)
 {
 	struct heap_helper_buffer *buffer = dmabuf->priv;
 	int ret = 0;
@@ -251,14 +251,14 @@ static int dma_heap_dma_buf_vmap(struct dma_buf *dmabuf, struct dma_buf_map *map
 	return ret;
 }
 
-static void dma_heap_dma_buf_vunmap(struct dma_buf *dmabuf, struct dma_buf_map *map)
+static void dma_heap_dma_buf_vunmap(struct dma_buf *dmabuf, struct iosys_map *map)
 {
 	struct heap_helper_buffer *buffer = dmabuf->priv;
 
 	mutex_lock(&buffer->lock);
 	dma_heap_buffer_vmap_put(buffer);
 	mutex_unlock(&buffer->lock);
-	dma_buf_map_clear(map);
+	iosys_map_clear(map);
 }
 
 const struct dma_buf_ops heap_helper_ops = {
