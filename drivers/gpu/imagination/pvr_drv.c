@@ -1561,3 +1561,4 @@ MODULE_IMPORT_NS("DMA_BUF");
 MODULE_FIRMWARE("powervr/rogue_33.15.11.3_v1.fw");
 MODULE_FIRMWARE("powervr/rogue_36.52.104.182_v1.fw");
 MODULE_FIRMWARE("powervr/rogue_36.53.104.796_v1.fw");
+MODULE_FIRMWARE("powervr/rogue_36.56.104.183_v1.fw");
