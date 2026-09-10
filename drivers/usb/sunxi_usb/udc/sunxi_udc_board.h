@@ -20,6 +20,10 @@
 u32 open_usb_clock(sunxi_udc_io_t *sunxi_udc_io);
 u32 close_usb_clock(sunxi_udc_io_t *sunxi_udc_io);
 
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+int sun60iw2_udc_cold_reset(sunxi_udc_io_t *sunxi_udc_io);
+#endif
+
 __s32 sunxi_udc_io_init(__u32 usbc_no, sunxi_udc_io_t *sunxi_udc_io);
 __s32 sunxi_udc_io_exit(sunxi_udc_io_t *sunxi_udc_io);
 __s32 sunxi_udc_bsp_init(sunxi_udc_io_t *sunxi_udc_io);

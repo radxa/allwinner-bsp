@@ -4159,6 +4159,14 @@ static int sunxi_udc_probe_otg(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+	retval = sun60iw2_udc_cold_reset(&g_sunxi_udc_io);
+	if (retval) {
+		DMSG_ERR("ERR: sun60iw2_udc_cold_reset failed\n");
+		return retval;
+	}
+#endif
+
 	sunxi_udc_io_init(usbd_port_no, &g_sunxi_udc_io);
 
 	sunxi_udc_reinit(udc);

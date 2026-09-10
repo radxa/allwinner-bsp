@@ -59,6 +59,66 @@ static int __maybe_unused usbc_rescal_clock_set(sunxi_udc_io_t *sunxi_udc_io, bo
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+int sun60iw2_udc_cold_reset(sunxi_udc_io_t *sunxi_udc_io)
+{
+	int ret;
+
+	/* Deassert alone does not reset state left behind by the bootloader. */
+	if (sunxi_udc_io->reset_otg) {
+		ret = reset_control_deassert(sunxi_udc_io->reset_otg);
+		if (ret) {
+			DMSG_ERR("[udc]: prepare otg reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_phy) {
+		ret = reset_control_deassert(sunxi_udc_io->reset_phy);
+		if (ret) {
+			DMSG_ERR("[udc]: prepare phy reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_usb) {
+		ret = reset_control_deassert(sunxi_udc_io->reset_usb);
+		if (ret) {
+			DMSG_ERR("[udc]: prepare usb reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_otg) {
+		ret = reset_control_assert(sunxi_udc_io->reset_otg);
+		if (ret) {
+			DMSG_ERR("[udc]: assert otg reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_phy) {
+		ret = reset_control_assert(sunxi_udc_io->reset_phy);
+		if (ret) {
+			DMSG_ERR("[udc]: assert phy reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_usb) {
+		ret = reset_control_assert(sunxi_udc_io->reset_usb);
+		if (ret) {
+			DMSG_ERR("[udc]: assert usb reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	usleep_range(10, 20);
+
+	return 0;
+}
+#endif
+
 u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 {
 	int ret;
