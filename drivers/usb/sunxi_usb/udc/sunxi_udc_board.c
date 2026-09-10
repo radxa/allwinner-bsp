@@ -59,6 +59,72 @@ static int __maybe_unused usbc_rescal_clock_set(sunxi_udc_io_t *sunxi_udc_io, bo
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+static bool sun60iw2_cold_reset_done;
+
+static int sun60iw2_udc_cold_reset(sunxi_udc_io_t *sunxi_udc_io)
+{
+	int ret;
+
+	if (sun60iw2_cold_reset_done)
+		return 0;
+
+	/* Deassert alone does not reset state left behind by the bootloader. */
+	if (sunxi_udc_io->reset_otg) {
+		ret = reset_control_deassert(sunxi_udc_io->reset_otg);
+		if (ret) {
+			DMSG_ERR("[udc]: prepare otg reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_phy) {
+		ret = reset_control_deassert(sunxi_udc_io->reset_phy);
+		if (ret) {
+			DMSG_ERR("[udc]: prepare phy reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_usb) {
+		ret = reset_control_deassert(sunxi_udc_io->reset_usb);
+		if (ret) {
+			DMSG_ERR("[udc]: prepare usb reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_otg) {
+		ret = reset_control_assert(sunxi_udc_io->reset_otg);
+		if (ret) {
+			DMSG_ERR("[udc]: assert otg reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_phy) {
+		ret = reset_control_assert(sunxi_udc_io->reset_phy);
+		if (ret) {
+			DMSG_ERR("[udc]: assert phy reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	if (sunxi_udc_io->reset_usb) {
+		ret = reset_control_assert(sunxi_udc_io->reset_usb);
+		if (ret) {
+			DMSG_ERR("[udc]: assert usb reset err, return %d\n", ret);
+			return ret;
+		}
+	}
+
+	usleep_range(10, 20);
+	sun60iw2_cold_reset_done = true;
+
+	return 0;
+}
+#endif
+
 u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 {
 	int ret;
@@ -73,6 +139,11 @@ u32  open_usb_clock(sunxi_udc_io_t *sunxi_udc_io)
 #endif
 
 	if (!sunxi_udc_io->clk_is_open) {
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+		ret = sun60iw2_udc_cold_reset(sunxi_udc_io);
+		if (ret)
+			return ret;
+#endif
 #if IS_ENABLED(CONFIG_ARCH_SUN55IW3) || IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 		usbc_rescal_clock_set(sunxi_udc_io, true);
 		usbc_phyx_res_cal(0, true, sunxi_udc_io->rext_cal_bypass);
