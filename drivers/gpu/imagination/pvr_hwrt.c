@@ -43,13 +43,13 @@ hwrt_init_kernel_structure(struct pvr_file *pvr_file,
 			   struct pvr_hwrt_dataset *hwrt)
 {
 	struct pvr_device *pvr_dev = pvr_file->pvr_dev;
-	int err, i;
+	int err;
 
 	hwrt->pvr_dev = pvr_dev;
 	hwrt->max_rts = args->layers;
 
 	/* Get pointers to the free lists */
-	for (i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
+	for (int i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
 		hwrt->free_lists[i] = pvr_free_list_lookup(pvr_file,  args->free_list_handles[i]);
 		if (!hwrt->free_lists[i]) {
 			err = -EINVAL;
@@ -66,7 +66,7 @@ hwrt_init_kernel_structure(struct pvr_file *pvr_file,
 	return 0;
 
 err_put_free_lists:
-	for (i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
+	for (int i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
 		pvr_free_list_put(hwrt->free_lists[i]);
 		hwrt->free_lists[i] = NULL;
 	}
@@ -77,8 +77,7 @@ err_put_free_lists:
 static void
 hwrt_fini_kernel_structure(struct pvr_hwrt_dataset *hwrt)
 {
-	int i;
-	for (i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
+	for (int i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
 		pvr_free_list_put(hwrt->free_lists[i]);
 		hwrt->free_lists[i] = NULL;
 	}
@@ -161,8 +160,7 @@ get_cr_multisamplectl_val(u32 samples, bool y_flip, u64 *value_out)
 	if (idx < 0 || idx > 3)
 		return -EINVAL;
 
-	u32 i;
-	for (i = 0; i < 8; i++) {
+	for (u32 i = 0; i < 8; i++) {
 		value |= ((u64)sample_positions[idx].x[i]) << (i * 8);
 		if (y_flip)
 			value |= (((u64)(16 - sample_positions[idx].y[i]) & 0xf)) << (i * 8 + 4);
@@ -362,12 +360,12 @@ hwrt_data_init_fw_structure(struct pvr_file *pvr_file,
 	struct drm_pvr_create_hwrt_geom_data_args *geom_data_args = &args->geom_data_args;
 	struct pvr_device *pvr_dev = pvr_file->pvr_dev;
 	struct rogue_fwif_rta_ctl *rta_ctl;
-	int err, free_list_i;
+	int err;
 
 	pvr_fw_object_get_fw_addr(hwrt->common_fw_obj,
 				  &hwrt_data->data.hwrt_data_common_fw_addr);
 
-	for (free_list_i = 0; free_list_i < ARRAY_SIZE(hwrt->free_lists); free_list_i++) {
+	for (int free_list_i = 0; free_list_i < ARRAY_SIZE(hwrt->free_lists); free_list_i++) {
 		pvr_fw_object_get_fw_addr(hwrt->free_lists[free_list_i]->fw_obj,
 					  &hwrt_data->data.freelists_fw_addr[free_list_i]);
 	}
@@ -459,7 +457,7 @@ pvr_hwrt_dataset_create(struct pvr_file *pvr_file,
 	int err, i = 0;
 
 	/* Create and fill out the kernel structure */
-	hwrt = kzalloc(sizeof(*hwrt), GFP_KERNEL);
+	hwrt = kzalloc_obj(*hwrt);
 
 	if (!hwrt)
 		return ERR_PTR(-ENOMEM);
@@ -504,8 +502,7 @@ pvr_hwrt_dataset_release(struct kref *ref_count)
 	struct pvr_hwrt_dataset *hwrt =
 		container_of(ref_count, struct pvr_hwrt_dataset, ref_count);
 
-	int i;
-	for (i = ARRAY_SIZE(hwrt->data) - 1; i >= 0; i--) {
+	for (int i = ARRAY_SIZE(hwrt->data) - 1; i >= 0; i--) {
 		WARN_ON(pvr_fw_structure_cleanup(hwrt->pvr_dev, ROGUE_FWIF_CLEANUP_HWRTDATA,
 						 hwrt->data[i].fw_obj, 0));
 		hwrt_data_fini_fw_structure(hwrt, i);

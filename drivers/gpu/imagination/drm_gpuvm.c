@@ -2126,7 +2126,6 @@ drm_gpuva_map_img(struct drm_gpuvm *gpuvm,
 	      struct drm_gpuva *va,
 	      struct drm_gpuva_op_map *op)
 {
-	int ret;
 	drm_gpuva_init_from_op(va, op);
 	drm_gpuva_insert_img(gpuvm, va);
 }

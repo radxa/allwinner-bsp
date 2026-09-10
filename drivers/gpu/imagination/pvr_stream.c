@@ -68,8 +68,7 @@ pvr_stream_process_1(struct pvr_device *pvr_dev, const struct pvr_stream_def *st
 {
 	int err = 0;
 
-	u32 i;
-	for (i = 0; i < nr_entries; i++) {
+	for (u32 i = 0; i < nr_entries; i++) {
 		if (stream_def[i].offset >= dest_size) {
 			err = -EINVAL;
 			break;
@@ -131,7 +130,6 @@ pvr_stream_process_ext_stream(struct pvr_device *pvr_dev,
 	u32 musthave_masks[PVR_STREAM_EXTHDR_TYPE_MAX];
 	u32 ext_header;
 	int err = 0;
-	u32 i;
 
 	/* Copy "must have" mask from device. We clear this as we process the stream. */
 	memcpy(musthave_masks, pvr_dev->stream_musthave_quirks[cmd_defs->type],
@@ -159,7 +157,7 @@ pvr_stream_process_ext_stream(struct pvr_device *pvr_dev,
 
 		musthave_masks[type] &= ~data;
 
-		for (i = 0; i < header->ext_streams_num; i++) {
+		for (u32 i = 0; i < header->ext_streams_num; i++) {
 			const struct pvr_stream_ext_def *ext_def = &header->ext_streams[i];
 
 			if (!(ext_header & ext_def->header_mask))
@@ -181,7 +179,7 @@ pvr_stream_process_ext_stream(struct pvr_device *pvr_dev,
 	 * Verify that "must have" mask is now zero. If it isn't then one of the "must have" quirks
 	 * for this command was not present.
 	 */
-	for (i = 0; i < cmd_defs->ext_nr_headers; i++) {
+	for (u32 i = 0; i < cmd_defs->ext_nr_headers; i++) {
 		if (musthave_masks[i])
 			return -EINVAL;
 	}
@@ -249,8 +247,7 @@ pvr_stream_process(struct pvr_device *pvr_dev, const struct pvr_stream_cmd_defs 
 		 * If we don't have an extension stream then there must not be any "must have"
 		 * quirks for this command.
 		 */
-		u32 i;
-		for (i = 0; i < cmd_defs->ext_nr_headers; i++) {
+		for (u32 i = 0; i < cmd_defs->ext_nr_headers; i++) {
 			if (pvr_dev->stream_musthave_quirks[cmd_defs->type][i])
 				return -EINVAL;
 		}

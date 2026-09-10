@@ -14,13 +14,9 @@
 #include "pvr_stream.h"
 #include "pvr_stream_defs.h"
 #include "pvr_sync.h"
+#include "pvr_trace.h"
 
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 #include <drm/drm_exec.h>
-#else
-#include "include/pvr_drm_exec.h"
-#endif
 #include <drm/drm_gem.h>
 #include <linux/types.h>
 #include "include/pvr_drm.h"
@@ -331,7 +327,7 @@ prepare_job_syncs(struct pvr_file *pvr_file,
 		  struct pvr_job_data *job_data,
 		  struct xarray *signal_array)
 {
-	struct dma_fence *done_fence;
+	struct dma_fence *finished_fence;
 	int err = pvr_sync_signal_array_collect_ops(signal_array,
 						    from_pvr_file(pvr_file),
 						    job_data->sync_op_count,
@@ -352,7 +348,6 @@ prepare_job_syncs(struct pvr_file *pvr_file,
 		 */
 		struct drm_gem_object *obj =
 			gem_from_pvr_gem(job_data->job->hwrt->fw_obj->gem);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 		enum dma_resv_usage usage =
 			dma_resv_usage_rw(job_data->job->type ==
 					  DRM_PVR_JOB_TYPE_GEOMETRY);
@@ -361,22 +356,17 @@ prepare_job_syncs(struct pvr_file *pvr_file,
 		err = drm_sched_job_add_resv_dependencies(&job_data->job->base,
 							  obj->resv, usage);
 		dma_resv_unlock(obj->resv);
-#else
-		struct dma_fence *fence = dma_resv_get_excl_unlocked(obj->resv);
-		if (fence)
-			err = dma_fence_wait(fence, true);
-#endif
 		if (err)
 			return err;
 	}
 
-	/* We need to arm the job to get the job done fence. */
-	done_fence = pvr_queue_job_arm(job_data->job);
+	/* We need to arm the job to get the job finished fence. */
+	finished_fence = pvr_queue_job_arm(job_data->job);
 
 	err = pvr_sync_signal_array_update_fences(signal_array,
 						  job_data->sync_op_count,
 						  job_data->sync_ops,
-						  done_fence);
+						  finished_fence);
 	return err;
 }
 
@@ -397,8 +387,7 @@ prepare_job_syncs_for_each(struct pvr_file *pvr_file,
 			   u32 *job_count,
 			   struct xarray *signal_array)
 {
-	u32 i;
-	for (i = 0; i < *job_count; i++) {
+	for (u32 i = 0; i < *job_count; i++) {
 		int err = prepare_job_syncs(pvr_file, &job_data[i],
 					    signal_array);
 
@@ -427,7 +416,7 @@ create_job(struct pvr_device *pvr_dev,
 	    (args->hwrt.set_handle || args->hwrt.data_index))
 		return ERR_PTR(-EINVAL);
 
-	job = kzalloc(sizeof(*job), GFP_KERNEL);
+	job = kzalloc_obj(*job);
 	if (!job)
 		return ERR_PTR(-ENOMEM);
 
@@ -458,11 +447,7 @@ create_job(struct pvr_device *pvr_dev,
 	if (err)
 		goto err_put_job;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	err = pvr_queue_job_init(job, pvr_file->file->client_id);
-#else
-	err = pvr_queue_job_init(job, (u32)task_tgid_nr(current));
-#endif
 	if (err)
 		goto err_put_job;
 
@@ -481,8 +466,7 @@ err_put_job:
 static void
 pvr_job_data_fini(struct pvr_job_data *job_data, u32 job_count)
 {
-	u32 i;
-	for (i = 0; i < job_count; i++) {
+	for (u32 i = 0; i < job_count; i++) {
 		pvr_job_put(job_data[i].job);
 		kvfree(job_data[i].sync_ops);
 	}
@@ -527,6 +511,8 @@ static int pvr_job_data_init(struct pvr_device *pvr_dev,
 		}
 
 		job_data_out[i].sync_op_count = job_args[i].sync_ops.count;
+
+		trace_pvr_job_create(pvr_dev, job_data_out[i].job, job_data_out[i].sync_op_count);
 	}
 
 	return 0;
@@ -540,39 +526,28 @@ err_cleanup:
 static void
 push_jobs(struct pvr_job_data *job_data, u32 job_count)
 {
-	u32 i;
-	for (i = 0; i < job_count; i++)
+	for (u32 i = 0; i < job_count; i++)
 		pvr_queue_job_push(job_data[i].job);
 }
 
 static int
 prepare_fw_obj_resv(struct drm_exec *exec, struct pvr_fw_object *fw_obj)
 {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	return drm_exec_prepare_obj(exec, gem_from_pvr_gem(fw_obj->gem), 1);
-#else
-	return pvr_drm_exec_prepare_obj(exec, gem_from_pvr_gem(fw_obj->gem), 1);
-#endif
 }
 
 static int
 jobs_lock_all_objs(struct drm_exec *exec, struct pvr_job_data *job_data,
 		   u32 job_count)
 {
-	u32 i;
-	for (i = 0; i < job_count; i++) {
+	for (u32 i = 0; i < job_count; i++) {
 		struct pvr_job *job = job_data[i].job;
 
 		/* Grab a lock on a the context, to guard against
 		 * concurrent submission to the same queue.
 		 */
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 		int err = drm_exec_lock_obj(exec,
 					    gem_from_pvr_gem(job->ctx->fw_obj->gem));
-#else
-		int err = pvr_drm_exec_lock_obj(exec,
-					    gem_from_pvr_gem(job->ctx->fw_obj->gem));
-#endif
 
 		if (err)
 			return err;
@@ -607,46 +582,24 @@ static void
 update_job_resvs(struct pvr_job *job)
 {
 	if (job->hwrt) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 		enum dma_resv_usage usage = job->type == DRM_PVR_JOB_TYPE_GEOMETRY ?
 					    DMA_RESV_USAGE_WRITE : DMA_RESV_USAGE_READ;
 		struct drm_gem_object *obj = gem_from_pvr_gem(job->hwrt->fw_obj->gem);
 
 		dma_resv_add_fence(obj->resv, &job->base.s_fence->finished, usage);
-#else
-		struct drm_gem_object *obj = gem_from_pvr_gem(job->hwrt->fw_obj->gem);
-		struct dma_fence *fence = &job->base.s_fence->finished;
-		bool is_geometry_job = (job->type == DRM_PVR_JOB_TYPE_GEOMETRY);
-
-		if (!obj || !obj->resv)
-			return;
-
-		if (is_geometry_job) {
-			dma_resv_add_excl_fence(obj->resv, fence);
-		} else {
-			if (!dma_resv_shared_list(obj->resv)) {
-				dma_resv_add_excl_fence(obj->resv, fence);
-			} else {
-				dma_resv_add_shared_fence(obj->resv, fence);
-			}
-		}
-#endif
 	}
 }
 
 static void
 update_job_resvs_for_each(struct pvr_job_data *job_data, u32 job_count)
 {
-	u32 i;
-	for (i = 0; i < job_count; i++)
+	for (u32 i = 0; i < job_count; i++)
 		update_job_resvs(job_data[i].job);
 }
 
 static bool can_combine_jobs(struct pvr_job *a, struct pvr_job *b)
 {
 	struct pvr_job *geom_job = a, *frag_job = b;
-	struct dma_fence *fence;
-	unsigned long index;
 
 	/* Geometry and fragment jobs can be combined if they are queued to the
 	 * same context and targeting the same HWRT.
@@ -656,20 +609,10 @@ static bool can_combine_jobs(struct pvr_job *a, struct pvr_job *b)
 	    a->ctx != b->ctx ||
 	    a->hwrt != b->hwrt)
 		return false;
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
-	xa_for_each(&frag_job->base.dependencies, index, fence) {
-		/* We combine when we see an explicit geom -> frag dep. */
-		if (&geom_job->base.s_fence->scheduled == fence)
-			return true;
-	}
-#else
-	struct drm_sched_entity *entity = frag_job->base.entity;
-	if (entity && entity->dependency) {
-		if (&geom_job->base.s_fence->scheduled == entity->dependency)
-			return true;
-	}
-#endif
-	return false;
+
+	/* We combine when we see an explicit geom -> frag dep. */
+	return drm_sched_job_has_dependency(&frag_job->base,
+					    &geom_job->base.s_fence->scheduled);
 }
 
 static struct dma_fence *
@@ -680,8 +623,7 @@ get_last_queued_job_scheduled_fence(struct pvr_queue *queue,
 	/* We iterate over the current job array in reverse order to grab the
 	 * last to-be-queued job targeting the same queue.
 	 */
-	u32 i;
-	for (i = cur_job_pos; i > 0; i--) {
+	for (u32 i = cur_job_pos; i > 0; i--) {
 		struct pvr_job *job = job_data[i - 1].job;
 
 		if (job->ctx == queue->ctx && job->type == queue->type)
@@ -697,8 +639,7 @@ get_last_queued_job_scheduled_fence(struct pvr_queue *queue,
 static int
 pvr_jobs_link_geom_frag(struct pvr_job_data *job_data, u32 *job_count)
 {
-	u32 i;
-	for (i = 0; i < *job_count - 1; i++) {
+	for (u32 i = 0; i < *job_count - 1; i++) {
 		struct pvr_job *geom_job = job_data[i].job;
 		struct pvr_job *frag_job = job_data[i + 1].job;
 		struct pvr_queue *frag_queue;
@@ -716,13 +657,8 @@ pvr_jobs_link_geom_frag(struct pvr_job_data *job_data, u32 *job_count)
 		f = get_last_queued_job_scheduled_fence(frag_queue, job_data,
 							i);
 		if (f) {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 			int err = drm_sched_job_add_dependency(&geom_job->base,
 							       f);
-#else
-			int err = drm_gem_fence_array_add(&geom_job->deps,
-								 f);
-#endif
 			if (err) {
 				*job_count = i;
 				return err;
@@ -785,8 +721,8 @@ pvr_submit_jobs(struct pvr_device *pvr_dev, struct pvr_file *pvr_file,
 	if (err)
 		return err;
 
-	job_data = kvmalloc_array(args->jobs.count, sizeof(*job_data),
-				  GFP_KERNEL | __GFP_ZERO);
+	job_data = kvmalloc_objs(*job_data, args->jobs.count,
+				 GFP_KERNEL | __GFP_ZERO);
 	if (!job_data) {
 		err = -ENOMEM;
 		goto out_free;
@@ -807,11 +743,7 @@ pvr_submit_jobs(struct pvr_device *pvr_dev, struct pvr_file *pvr_file,
 	if (err)
 		goto out_job_data_cleanup;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
-	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT | DRM_EXEC_IGNORE_DUPLICATES);
-#else
-	pvr_drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT | DRM_EXEC_IGNORE_DUPLICATES);
-#endif
+	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT | DRM_EXEC_IGNORE_DUPLICATES, 0);
 
 	xa_init_flags(&signal_array, XA_FLAGS_ALLOC);
 
@@ -837,11 +769,7 @@ pvr_submit_jobs(struct pvr_device *pvr_dev, struct pvr_file *pvr_file,
 	err = 0;
 
 out_exec_fini:
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	drm_exec_fini(&exec);
-#else
-	pvr_drm_exec_fini(&exec);
-#endif
 	pvr_sync_signal_array_cleanup(&signal_array);
 
 out_job_data_cleanup:

@@ -43,7 +43,6 @@ pvr_mips_fw_process(struct pvr_device *pvr_dev, const u8 *fw,
 	struct rogue_mipsfw_boot_data *boot_data;
 	dma_addr_t dma_addr;
 	int err;
-	u32 page_nr;
 
 	err = pvr_fw_process_elf_command_stream(pvr_dev, fw, fw_code_ptr, fw_data_ptr,
 						fw_core_code_ptr, fw_core_data_ptr);
@@ -77,7 +76,7 @@ pvr_mips_fw_process(struct pvr_device *pvr_dev, const u8 *fw,
 
 	boot_data->reg_base = pvr_dev->regs_resource->start;
 
-	for (page_nr = 0; page_nr < ARRAY_SIZE(boot_data->pt_phys_addr); page_nr++) {
+	for (u32 page_nr = 0; page_nr < ARRAY_SIZE(boot_data->pt_phys_addr); page_nr++) {
 		/* Firmware expects 4k pages, but host page size might be different. */
 		u32 src_page_nr = (page_nr * ROGUE_MIPSFW_PAGE_SIZE_4K) >> PAGE_SHIFT;
 		u32 page_offset = (page_nr * ROGUE_MIPSFW_PAGE_SIZE_4K) & ~PAGE_MASK;

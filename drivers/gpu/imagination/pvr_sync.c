@@ -6,13 +6,7 @@
 #include <drm/drm_syncobj.h>
 #include <drm/gpu_scheduler.h>
 #include <linux/xarray.h>
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 #include <linux/dma-fence-unwrap.h>
-#else
-#include <linux/dma-fence-array.h>
-#include "pvr_job.h"
-#endif
 
 #include "pvr_device.h"
 #include "pvr_queue.h"
@@ -70,7 +64,7 @@ pvr_sync_signal_array_add(struct xarray *array, struct drm_file *file, u32 handl
 	int err;
 	u32 id;
 
-	sig_sync = kzalloc(sizeof(*sig_sync), GFP_KERNEL);
+	sig_sync = kzalloc_obj(*sig_sync);
 	if (!sig_sync)
 		return ERR_PTR(-ENOMEM);
 
@@ -141,8 +135,7 @@ pvr_sync_signal_array_collect_ops(struct xarray *array,
 				  u32 sync_op_count,
 				  const struct drm_pvr_sync_op *sync_ops)
 {
-	u32 i;
-	for (i = 0; i < sync_op_count; i++) {
+	for (u32 i = 0; i < sync_op_count; i++) {
 		struct pvr_sync_signal *sig_sync;
 		int ret;
 
@@ -167,10 +160,9 @@ int
 pvr_sync_signal_array_update_fences(struct xarray *array,
 				    u32 sync_op_count,
 				    const struct drm_pvr_sync_op *sync_ops,
-				    struct dma_fence *done_fence)
+				    struct dma_fence *finished_fence)
 {
-	u32 i;
-	for (i = 0; i < sync_op_count; i++) {
+	for (u32 i = 0; i < sync_op_count; i++) {
 		struct dma_fence *old_fence;
 		struct pvr_sync_signal *sig_sync;
 
@@ -183,7 +175,7 @@ pvr_sync_signal_array_update_fences(struct xarray *array,
 			return -EINVAL;
 
 		old_fence = sig_sync->fence;
-		sig_sync->fence = dma_fence_get(done_fence);
+		sig_sync->fence = dma_fence_get(finished_fence);
 		dma_fence_put(old_fence);
 
 		if (WARN_ON(!sig_sync->fence))
@@ -210,37 +202,19 @@ pvr_sync_signal_array_push_fences(struct xarray *array)
 	}
 }
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-static int drm_sched_job_add_dependency_compat(struct drm_sched_job *job,
-											 struct dma_fence *fence)
-{
-	int ret;
-
-	if (!fence)
-		return 0;
-
-	if (dma_fence_is_signaled(fence)) {
-		dma_fence_put(fence);
-		return 0;
-	}
-
-	return ret;
-}
-#endif
-
 static int
 pvr_sync_add_dep_to_job(struct drm_sched_job *job, struct dma_fence *f)
 {
+	struct dma_fence_unwrap iter;
 	u32 native_fence_count = 0;
+	struct dma_fence *uf;
 	int err = 0;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
-	struct dma_fence_unwrap iter;
-	struct dma_fence *uf;
 	dma_fence_unwrap_for_each(uf, &iter, f) {
-		if (pvr_queue_fence_is_ufo_backed(uf))
+		if (pvr_queue_fence_is_native(uf))
 			native_fence_count++;
 	}
+
 	/* No need to unwrap the fence if it's fully non-native. */
 	if (!native_fence_count)
 		return drm_sched_job_add_dependency(job, f);
@@ -253,7 +227,7 @@ pvr_sync_add_dep_to_job(struct drm_sched_job *job, struct dma_fence *f)
 		if (err)
 			continue;
 
-		if (pvr_queue_fence_is_ufo_backed(uf)) {
+		if (pvr_queue_fence_is_native(uf)) {
 			struct drm_sched_fence *s_fence = to_drm_sched_fence(uf);
 
 			/* If this is a native dependency, we wait for the scheduled fence,
@@ -265,23 +239,8 @@ pvr_sync_add_dep_to_job(struct drm_sched_job *job, struct dma_fence *f)
 			err = drm_sched_job_add_dependency(job, dma_fence_get(uf));
 		}
 	}
-	dma_fence_put(f);
-#else
-	if (!f)
-		return 0;
-
-	if (pvr_queue_fence_is_ufo_backed(f)) {
-		struct drm_sched_fence *s_fence = to_drm_sched_fence(f);
-
-		err = drm_sched_job_add_dependency_compat(job,
-							  dma_fence_get(&s_fence->scheduled));
-	} else {
-		err = drm_sched_job_add_dependency_compat(job, dma_fence_get(f));
-	}
 
 	dma_fence_put(f);
-
-#endif
 	return err;
 }
 
@@ -292,12 +251,11 @@ pvr_sync_add_deps_to_job(struct pvr_file *pvr_file, struct drm_sched_job *job,
 			 struct xarray *signal_array)
 {
 	int err = 0;
-	u32 i;
 
 	if (!sync_op_count)
 		return 0;
 
-	for (i = 0; i < sync_op_count; i++) {
+	for (u32 i = 0; i < sync_op_count; i++) {
 		struct pvr_sync_signal *sig_sync;
 		struct dma_fence *fence;
 

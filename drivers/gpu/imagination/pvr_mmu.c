@@ -133,8 +133,8 @@ int pvr_mmu_flush_exec(struct pvr_device *pvr_dev, bool wait)
 	if (!drm_dev_enter(from_pvr_device(pvr_dev), &idx))
 		return -EIO;
 
-	/* Can't flush MMU if the firmware hasn't booted yet. */
-	if (!pvr_dev->fw_dev.booted)
+	/* Can't flush MMU if the firmware hasn't been initialised yet. */
+	if (!READ_ONCE(pvr_dev->fw_dev.initialised))
 		goto err_drm_dev_exit;
 
 	cmd_mmu_cache_data->cache_flags =
@@ -1828,7 +1828,7 @@ pvr_page_table_l0_get_or_insert(struct pvr_mmu_op_context *op_ctx,
  */
 struct pvr_mmu_context *pvr_mmu_context_create(struct pvr_device *pvr_dev)
 {
-	struct pvr_mmu_context *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	struct pvr_mmu_context *ctx = kzalloc_obj(*ctx);
 	int err;
 
 	if (!ctx)
@@ -1877,8 +1877,7 @@ pvr_page_table_l1_alloc(struct pvr_mmu_context *ctx)
 {
 	int err;
 
-	struct pvr_page_table_l1 *table =
-		kzalloc(sizeof(*table), GFP_KERNEL);
+	struct pvr_page_table_l1 *table = kzalloc_obj(*table);
 
 	if (!table)
 		return ERR_PTR(-ENOMEM);
@@ -1906,8 +1905,7 @@ pvr_page_table_l0_alloc(struct pvr_mmu_context *ctx)
 {
 	int err;
 
-	struct pvr_page_table_l0 *table =
-		kzalloc(sizeof(*table), GFP_KERNEL);
+	struct pvr_page_table_l0 *table = kzalloc_obj(*table);
 
 	if (!table)
 		return ERR_PTR(-ENOMEM);
@@ -2350,10 +2348,9 @@ struct pvr_mmu_op_context *
 pvr_mmu_op_context_create(struct pvr_mmu_context *ctx, struct sg_table *sgt,
 			  u64 sgt_offset, u64 size)
 {
-	int err, i;
+	int err;
 
-	struct pvr_mmu_op_context *op_ctx =
-		kzalloc(sizeof(*op_ctx), GFP_KERNEL);
+	struct pvr_mmu_op_context *op_ctx = kzalloc_obj(*op_ctx);
 
 	if (!op_ctx)
 		return ERR_PTR(-ENOMEM);
@@ -2383,7 +2380,7 @@ pvr_mmu_op_context_create(struct pvr_mmu_context *ctx, struct sg_table *sgt,
 		 * each type, ending with linked lists of l0 and l1 entries in
 		 * reverse order.
 		 */
-		for (i = 0; i < l1_count; i++) {
+		for (int i = 0; i < l1_count; i++) {
 			struct pvr_page_table_l1 *l1_tmp =
 				pvr_page_table_l1_alloc(ctx);
 
@@ -2395,7 +2392,7 @@ pvr_mmu_op_context_create(struct pvr_mmu_context *ctx, struct sg_table *sgt,
 			op_ctx->map.l1_prealloc_tables = l1_tmp;
 		}
 
-		for (i = 0; i < l0_count; i++) {
+		for (int i = 0; i < l0_count; i++) {
 			struct pvr_page_table_l0 *l0_tmp =
 				pvr_page_table_l0_alloc(ctx);
 
@@ -2432,7 +2429,6 @@ pvr_mmu_op_context_unmap_curr_page(struct pvr_mmu_op_context *op_ctx,
 				   u64 nr_pages)
 {
 	int err;
-	u64 page;
 
 	if (nr_pages == 0)
 		return 0;
@@ -2446,7 +2442,7 @@ pvr_mmu_op_context_unmap_curr_page(struct pvr_mmu_op_context *op_ctx,
 	if (op_ctx->curr_page.l0_table)
 		pvr_page_destroy(op_ctx);
 
-	for (page = 1; page < nr_pages; ++page) {
+	for (u64 page = 1; page < nr_pages; ++page) {
 		err = pvr_mmu_op_context_next_page(op_ctx, false);
 		/*
 		 * If the page table tree structure at @op_ctx.curr_page is

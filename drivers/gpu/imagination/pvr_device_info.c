@@ -54,7 +54,6 @@ static void pvr_device_info_set_common(struct pvr_device *pvr_dev, const u64 *bi
 {
 	const u32 mapping_max_size = (mapping_max + 63) >> 6;
 	const u32 nr_bits = min(bitmask_size * 64, mapping_max);
-	u32 i;
 
 	/* Warn if any unsupported values in the bitmask. */
 	if (bitmask_size > mapping_max_size) {
@@ -76,7 +75,7 @@ static void pvr_device_info_set_common(struct pvr_device *pvr_dev, const u64 *bi
 		}
 	}
 
-	for (i = 0; i < nr_bits; i++) {
+	for (u32 i = 0; i < nr_bits; i++) {
 		if (bitmask[i >> 6] & BIT_ULL(i & 63))
 			*(bool *)((u8 *)pvr_dev + mapping[i]) = true;
 	}
@@ -221,7 +220,7 @@ int pvr_device_info_set_features(struct pvr_device *pvr_dev, const u64 *features
 	const u32 mapping_max_size = (mapping_max + 63) >> 6;
 	const u32 nr_bits = min(features_size * 64, mapping_max);
 	const u64 *feature_params = features + features_size;
-	u32 param_idx = 0, i;
+	u32 param_idx = 0;
 
 	BUILD_BUG_ON(ARRAY_SIZE(features_mapping) != PVR_FW_HAS_FEATURE_MAX);
 
@@ -237,7 +236,7 @@ int pvr_device_info_set_features(struct pvr_device *pvr_dev, const u64 *features
 				 "Unsupported features in firmware image");
 	}
 
-	for (i = 0; i < nr_bits; i++) {
+	for (u32 i = 0; i < nr_bits; i++) {
 		if (features[i >> 6] & BIT_ULL(i & 63)) {
 			*(bool *)((u8 *)pvr_dev + features_mapping[i].flag_offset) = true;
 

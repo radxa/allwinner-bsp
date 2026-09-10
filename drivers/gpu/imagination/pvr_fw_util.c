@@ -34,9 +34,8 @@ pvr_fw_process_elf_command_stream(struct pvr_device *pvr_dev, const u8 *fw,
 	struct elf32_phdr *program_header = (struct elf32_phdr *)(fw + header->e_phoff);
 	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
 	int err;
-	u32 entry;
 
-	for (entry = 0; entry < header->e_phnum; entry++, program_header++) {
+	for (u32 entry = 0; entry < header->e_phnum; entry++, program_header++) {
 		void *write_addr;
 
 		/* Only consider loadable entries in the ELF segment table */

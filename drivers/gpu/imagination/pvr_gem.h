@@ -23,28 +23,10 @@
 #include <linux/scatterlist.h>
 #include <linux/sizes.h>
 #include <linux/types.h>
-#include <linux/version.h>
 
 /* Forward declaration from "pvr_device.h". */
 struct pvr_device;
 struct pvr_file;
-
-/* copy from linux 6.6 */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0))
-/**
- * container_of_const - cast a member of a structure out to the containing
- *          structure and preserve the const-ness of the pointer
- * @ptr:        the pointer to the member
- * @type:       the type of the container struct this is embedded in.
- * @member:     the name of the member within the struct.
- */
-#define container_of_const(ptr, type, member)			\
-	_Generic(ptr,						\
-		const typeof(*(ptr)) * : ((const type *)container_of(ptr, type, member)),\
-		default :								\
-			((type *)container_of(ptr, type, member))	\
-	)
-#endif
 
 /**
  * DOC: Flags for DRM_IOCTL_PVR_CREATE_BO (kernel-only)
@@ -102,8 +84,10 @@ struct pvr_gem_object {
 	/**
 	 * @base: The underlying &struct drm_gem_shmem_object.
 	 *
-	 * Do not access this member directly, instead call
-	 * shem_gem_from_pvr_gem().
+	 * .. note::
+	 *
+	 *    This member should not be accessed directly, but instead by
+	 *    calling shmem_gem_from_pvr_gem().
 	 */
 	struct drm_gem_shmem_object base;
 
@@ -115,12 +99,6 @@ struct pvr_gem_object {
 	 * changed after creation.
 	 *
 	 * Must be a combination of DRM_PVR_BO_* and/or PVR_BO_* flags.
-	 *
-	 * .. note::
-	 *
-	 *    This member is declared const to indicate that none of these
-	 *    options may change or be changed throughout the object's
-	 *    lifetime.
 	 */
 	u64 flags;
 
@@ -131,9 +109,9 @@ static_assert(offsetof(struct pvr_gem_object, base) == 0,
 
 #define shmem_gem_from_pvr_gem(pvr_obj) (&(pvr_obj)->base)
 
-#define gem_from_pvr_gem(pvr_obj) (&(pvr_obj)->base.base)
-
 #define shmem_gem_to_pvr_gem(shmem_obj) container_of_const(shmem_obj, struct pvr_gem_object, base)
+
+#define gem_from_pvr_gem(pvr_obj) (&(pvr_obj)->base.base)
 
 #define gem_to_pvr_gem(gem_obj) container_of_const(gem_obj, struct pvr_gem_object, base.base)
 

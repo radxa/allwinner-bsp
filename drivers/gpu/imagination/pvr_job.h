@@ -88,12 +88,6 @@ struct pvr_job {
 	 * the job is done.
 	 */
 	bool has_pm_ref;
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0))
-	/* Array of struct dma_fence * to block on before submitting this job.
-	*/
-	struct xarray deps;
-#endif
 };
 
 /**

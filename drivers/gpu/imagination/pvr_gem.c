@@ -15,9 +15,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
 #include <linux/gfp.h>
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 #include <linux/iosys-map.h>
-#endif
 #include <linux/log2.h>
 #include <linux/mutex.h>
 #include <linux/pagemap.h>
@@ -27,7 +25,20 @@
 
 static void pvr_gem_object_free(struct drm_gem_object *obj)
 {
-	drm_gem_shmem_object_free(obj);
+	struct drm_gem_shmem_object *shmem_obj = to_drm_gem_shmem_obj(obj);
+
+	shmem_obj->pages_mark_dirty_on_put = true;
+	drm_gem_shmem_free(shmem_obj);
+}
+
+static struct dma_buf *pvr_gem_export(struct drm_gem_object *obj, int flags)
+{
+	struct pvr_gem_object *pvr_obj = gem_to_pvr_gem(obj);
+
+	if (pvr_obj->flags & DRM_PVR_BO_PM_FW_PROTECT)
+		return ERR_PTR(-EPERM);
+
+	return drm_gem_prime_export(obj, flags);
 }
 
 static int pvr_gem_mmap(struct drm_gem_object *gem_obj, struct vm_area_struct *vma)
@@ -44,15 +55,14 @@ static int pvr_gem_mmap(struct drm_gem_object *gem_obj, struct vm_area_struct *v
 static const struct drm_gem_object_funcs pvr_gem_object_funcs = {
 	.free = pvr_gem_object_free,
 	.print_info = drm_gem_shmem_object_print_info,
+	.export = pvr_gem_export,
 	.pin = drm_gem_shmem_object_pin,
 	.unpin = drm_gem_shmem_object_unpin,
 	.get_sg_table = drm_gem_shmem_object_get_sg_table,
 	.vmap = drm_gem_shmem_object_vmap,
 	.vunmap = drm_gem_shmem_object_vunmap,
 	.mmap = pvr_gem_mmap,
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	.vm_ops = &drm_gem_shmem_vm_ops,
-#endif
 };
 
 /**
@@ -94,8 +104,7 @@ pvr_gem_object_flags_validate(u64 flags)
 	 * Check for all combinations of flags marked as invalid in the array
 	 * above.
 	 */
-	int i;
-	for (i = 0; i < ARRAY_SIZE(invalid_combinations); ++i) {
+	for (int i = 0; i < ARRAY_SIZE(invalid_combinations); ++i) {
 		u64 combo = invalid_combinations[i];
 
 		if ((flags & combo) == combo)
@@ -202,16 +211,12 @@ pvr_gem_object_vmap(struct pvr_gem_object *pvr_obj)
 {
 	struct drm_gem_shmem_object *shmem_obj = shmem_gem_from_pvr_gem(pvr_obj);
 	struct drm_gem_object *obj = gem_from_pvr_gem(pvr_obj);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	struct iosys_map map;
-#else
-	struct dma_buf_map map;
-#endif
 	int err;
 
 	dma_resv_lock(obj->resv, NULL);
 
-	err = drm_gem_shmem_vmap(shmem_obj, &map);
+	err = drm_gem_shmem_vmap_locked(shmem_obj, &map);
 	if (err)
 		goto err_unlock;
 
@@ -247,11 +252,7 @@ void
 pvr_gem_object_vunmap(struct pvr_gem_object *pvr_obj)
 {
 	struct drm_gem_shmem_object *shmem_obj = shmem_gem_from_pvr_gem(pvr_obj);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	struct iosys_map map = IOSYS_MAP_INIT_VADDR(shmem_obj->vaddr);
-#else
-	struct dma_buf_map map = DMA_BUF_MAP_INIT_VADDR(shmem_obj->vaddr);
-#endif
 	struct drm_gem_object *obj = gem_from_pvr_gem(pvr_obj);
 
 	if (WARN_ON(!map.vaddr))
@@ -269,7 +270,7 @@ pvr_gem_object_vunmap(struct pvr_gem_object *pvr_obj)
 			dma_sync_sgtable_for_device(dev, shmem_obj->sgt, DMA_BIDIRECTIONAL);
 	}
 
-	drm_gem_shmem_vunmap(shmem_obj, &map);
+	drm_gem_shmem_vunmap_locked(shmem_obj, &map);
 
 	dma_resv_unlock(obj->resv);
 }
@@ -316,7 +317,7 @@ struct drm_gem_object *pvr_gem_create_object(struct drm_device *drm_dev, size_t 
 	struct drm_gem_object *gem_obj;
 	struct pvr_gem_object *pvr_obj;
 
-	pvr_obj = kzalloc(sizeof(*pvr_obj), GFP_KERNEL);
+	pvr_obj = kzalloc_obj(*pvr_obj);
 	if (!pvr_obj)
 		return ERR_PTR(-ENOMEM);
 
@@ -365,7 +366,6 @@ pvr_gem_object_create(struct pvr_device *pvr_dev, size_t size, u64 flags)
 	if (IS_ERR(shmem_obj))
 		return ERR_CAST(shmem_obj);
 
-	shmem_obj->pages_mark_dirty_on_put = true;
 	shmem_obj->map_wc = !(flags & PVR_BO_CPU_CACHED);
 	pvr_obj = shmem_gem_to_pvr_gem(shmem_obj);
 	pvr_obj->flags = flags;

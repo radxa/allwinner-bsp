@@ -10,17 +10,16 @@
 #include "pvr_rogue_fwif.h"
 #include "pvr_rogue_heap_config.h"
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 #include <drm/drm_exec.h>
-#include <linux/container_of.h>
-#include <linux/gfp_types.h>
-#endif
 #include <drm/drm_gem.h>
 #include "include/drm_gpuvm.h"
+#include <drm/drm_print.h>
 
 #include <linux/bug.h>
+#include <linux/container_of.h>
 #include <linux/err.h>
 #include <linux/errno.h>
+#include <linux/gfp_types.h>
 #include <linux/kref.h>
 #include <linux/mutex.h>
 #include <linux/stddef.h>
@@ -194,6 +193,7 @@ static int pvr_vm_bind_op_exec(struct pvr_vm_bind_op *bind_op)
 			.map.gem.obj = gem_from_pvr_gem(bind_op->pvr_obj),
 			.map.gem.offset = bind_op->offset,
 		};
+
 		return drm_gpuvm_sm_map(&bind_op->vm_ctx->gpuvm_mgr,
 					bind_op, &map_req);
 	}
@@ -256,14 +256,14 @@ pvr_vm_bind_op_map_init(struct pvr_vm_bind_op *bind_op,
 	bind_op->type = PVR_VM_BIND_TYPE_MAP;
 
 	dma_resv_lock(obj->resv, NULL);
-	bind_op->gpuvm_bo = drm_gpuvm_bo_obtain(&vm_ctx->gpuvm_mgr, obj);
+	bind_op->gpuvm_bo = drm_gpuvm_bo_obtain_locked(&vm_ctx->gpuvm_mgr, obj);
 	dma_resv_unlock(obj->resv);
 	if (IS_ERR(bind_op->gpuvm_bo))
 		return PTR_ERR(bind_op->gpuvm_bo);
 
-	bind_op->new_va = kzalloc(sizeof(*bind_op->new_va), GFP_KERNEL);
-	bind_op->prev_va = kzalloc(sizeof(*bind_op->prev_va), GFP_KERNEL);
-	bind_op->next_va = kzalloc(sizeof(*bind_op->next_va), GFP_KERNEL);
+	bind_op->new_va = kzalloc_obj(*bind_op->new_va);
+	bind_op->prev_va = kzalloc_obj(*bind_op->prev_va);
+	bind_op->next_va = kzalloc_obj(*bind_op->next_va);
 	if (!bind_op->new_va || !bind_op->prev_va || !bind_op->next_va) {
 		err = -ENOMEM;
 		goto err_bind_op_fini;
@@ -310,8 +310,8 @@ pvr_vm_bind_op_unmap_init(struct pvr_vm_bind_op *bind_op,
 
 	bind_op->type = PVR_VM_BIND_TYPE_UNMAP;
 
-	bind_op->prev_va = kzalloc(sizeof(*bind_op->prev_va), GFP_KERNEL);
-	bind_op->next_va = kzalloc(sizeof(*bind_op->next_va), GFP_KERNEL);
+	bind_op->prev_va = kzalloc_obj(*bind_op->prev_va);
+	bind_op->next_va = kzalloc_obj(*bind_op->next_va);
 	if (!bind_op->prev_va || !bind_op->next_va) {
 		err = -ENOMEM;
 		goto err_bind_op_fini;
@@ -365,8 +365,8 @@ pvr_vm_gpuva_map(struct drm_gpuva_op *op, void *op_ctx)
 	if (err)
 		return err;
 
-	drm_gpuva_map_img(&ctx->vm_ctx->gpuvm_mgr, &ctx->new_va->base, &op->map);
-	drm_gpuva_link_img(&ctx->new_va->base, ctx->gpuvm_bo);
+	drm_gpuva_map(&ctx->vm_ctx->gpuvm_mgr, &ctx->new_va->base, &op->map);
+	drm_gpuva_link(&ctx->new_va->base, ctx->gpuvm_bo);
 	ctx->new_va = NULL;
 
 	return 0;
@@ -395,8 +395,8 @@ pvr_vm_gpuva_unmap(struct drm_gpuva_op *op, void *op_ctx)
 	if (err)
 		return err;
 
-	drm_gpuva_unmap_img(&op->unmap);
-	drm_gpuva_unlink_img(op->unmap.va);
+	drm_gpuva_unmap(&op->unmap);
+	drm_gpuva_unlink(op->unmap.va);
 	kfree(to_pvr_vm_gpuva(op->unmap.va));
 
 	return 0;
@@ -430,21 +430,21 @@ pvr_vm_gpuva_remap(struct drm_gpuva_op *op, void *op_ctx)
 	/* No actual remap required: the page table tree depth is fixed to 3,
 	 * and we use 4k page table entries only for now.
 	 */
-	drm_gpuva_remap_img(&ctx->prev_va->base, &ctx->next_va->base, &op->remap);
+	drm_gpuva_remap(&ctx->prev_va->base, &ctx->next_va->base, &op->remap);
 
 	if (op->remap.prev) {
 		pvr_gem_object_get(gem_to_pvr_gem(ctx->prev_va->base.gem.obj));
-		drm_gpuva_link_img(&ctx->prev_va->base, ctx->gpuvm_bo);
+		drm_gpuva_link(&ctx->prev_va->base, ctx->gpuvm_bo);
 		ctx->prev_va = NULL;
 	}
 
 	if (op->remap.next) {
 		pvr_gem_object_get(gem_to_pvr_gem(ctx->next_va->base.gem.obj));
-		drm_gpuva_link_img(&ctx->next_va->base, ctx->gpuvm_bo);
+		drm_gpuva_link(&ctx->next_va->base, ctx->gpuvm_bo);
 		ctx->next_va = NULL;
 	}
 
-	drm_gpuva_unlink_img(op->remap.unmap->va);
+	drm_gpuva_unlink(op->remap.unmap->va);
 	kfree(to_pvr_vm_gpuva(op->remap.unmap->va));
 
 	return 0;
@@ -565,7 +565,7 @@ pvr_vm_create_context(struct pvr_device *pvr_dev, bool is_userspace_context)
 		return ERR_PTR(-EINVAL);
 	}
 
-	vm_ctx = kzalloc(sizeof(*vm_ctx), GFP_KERNEL);
+	vm_ctx = kzalloc_obj(*vm_ctx);
 	if (!vm_ctx)
 		return ERR_PTR(-ENOMEM);
 
@@ -624,11 +624,7 @@ pvr_vm_context_release(struct kref *ref_count)
 	pvr_vm_unmap_all(vm_ctx);
 
 	pvr_mmu_context_destroy(vm_ctx->mmu_ctx);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	drm_gem_private_object_fini(&vm_ctx->dummy_gem);
-#else
-	dma_resv_fini(&vm_ctx->dummy_gem._resv);
-#endif
 	mutex_destroy(&vm_ctx->lock);
 
 	drm_gpuvm_put(&vm_ctx->gpuvm_mgr);
@@ -702,11 +698,7 @@ pvr_vm_lock_extra(struct drm_gpuvm_exec *vm_exec)
 	struct pvr_gem_object *pvr_obj = bind_op->pvr_obj;
 
 	/* Acquire lock on the GEM object being mapped/unmapped. */
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	return drm_exec_lock_obj(&vm_exec->exec, gem_from_pvr_gem(pvr_obj));
-#else
-	return pvr_drm_exec_lock_obj(&vm_exec->exec, gem_from_pvr_gem(pvr_obj));
-#endif
 }
 
 /**
@@ -755,6 +747,7 @@ pvr_vm_map(struct pvr_vm_context *vm_ctx, struct pvr_gem_object *pvr_obj,
 
 	pvr_gem_object_get(pvr_obj);
 
+	mutex_lock(&vm_ctx->lock);
 	err = drm_gpuvm_exec_lock(&vm_exec);
 	if (err)
 		goto err_cleanup;
@@ -764,6 +757,7 @@ pvr_vm_map(struct pvr_vm_context *vm_ctx, struct pvr_gem_object *pvr_obj,
 	drm_gpuvm_exec_unlock(&vm_exec);
 
 err_cleanup:
+	mutex_unlock(&vm_ctx->lock);
 	pvr_vm_bind_op_fini(&bind_op);
 
 	return err;
@@ -869,7 +863,7 @@ pvr_vm_unmap(struct pvr_vm_context *vm_ctx, u64 device_addr, u64 size)
 
 	mutex_lock(&vm_ctx->lock);
 
-	va = drm_gpuva_find_img(&vm_ctx->gpuvm_mgr, device_addr, size);
+	va = drm_gpuva_find(&vm_ctx->gpuvm_mgr, device_addr, size);
 	if (va) {
 		pvr_obj = gem_to_pvr_gem(va->gem.obj);
 		err = pvr_vm_unmap_obj_locked(vm_ctx, pvr_obj,
@@ -899,7 +893,7 @@ pvr_vm_unmap_all(struct pvr_vm_context *vm_ctx)
 		struct pvr_gem_object *pvr_obj;
 		struct drm_gpuva *va;
 
-		va = drm_gpuva_find_first_img(&vm_ctx->gpuvm_mgr,
+		va = drm_gpuva_find_first(&vm_ctx->gpuvm_mgr,
 					  vm_ctx->gpuvm_mgr.mm_start,
 					  vm_ctx->gpuvm_mgr.mm_range);
 		if (!va)
@@ -1027,7 +1021,8 @@ copy_out:
 	if (err < 0)
 		return err;
 
-	args->size = sizeof(query);
+	if (args->size > sizeof(query))
+		args->size = sizeof(query);
 	return 0;
 }
 
@@ -1059,8 +1054,7 @@ pvr_heap_info_get(const struct pvr_device *pvr_dev,
 
 	/* Region header heap is only present if BRN63142 is present. */
 	dest = query.heaps.array;
-	size_t i;
-	for (i = 0; i < query.heaps.count; i++) {
+	for (size_t i = 0; i < query.heaps.count; i++) {
 		struct drm_pvr_heap heap = pvr_heaps[i];
 
 		if (i == DRM_PVR_HEAP_RGNHDR && !PVR_HAS_QUIRK(pvr_dev, 63142))
@@ -1078,7 +1072,8 @@ copy_out:
 	if (err < 0)
 		return err;
 
-	args->size = sizeof(query);
+	if (args->size > sizeof(query))
+		args->size = sizeof(query);
 	return 0;
 }
 
@@ -1124,8 +1119,7 @@ pvr_find_heap_containing(struct pvr_device *pvr_dev, u64 start, u64 size)
 	 * &pvr_heaps, so iterate over the entire array for a heap whose
 	 * range completely encompasses the given range.
 	 */
-	u32 heap_id;
-    for (heap_id = 0; heap_id < ARRAY_SIZE(pvr_heaps); heap_id++) {
+	for (u32 heap_id = 0; heap_id < ARRAY_SIZE(pvr_heaps); heap_id++) {
 		/* Filter heaps that present only with an associated quirk */
 		if (heap_id == DRM_PVR_HEAP_RGNHDR &&
 		    !PVR_HAS_QUIRK(pvr_dev, 63142)) {
@@ -1167,7 +1161,7 @@ pvr_vm_find_gem_object(struct pvr_vm_context *vm_ctx, u64 device_addr,
 
 	mutex_lock(&vm_ctx->lock);
 
-	va = drm_gpuva_find_first_img(&vm_ctx->gpuvm_mgr, device_addr, 1);
+	va = drm_gpuva_find_first(&vm_ctx->gpuvm_mgr, device_addr, 1);
 	if (!va)
 		goto err_unlock;
 

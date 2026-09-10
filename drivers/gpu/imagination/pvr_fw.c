@@ -17,6 +17,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_mm.h>
+#include <drm/drm_print.h>
 #include <linux/clk.h>
 #include <linux/firmware.h>
 #include <linux/math.h>
@@ -51,8 +52,7 @@ pvr_fw_find_layout_entry(struct pvr_device *pvr_dev, enum pvr_fw_section_id id)
 	const struct pvr_fw_layout_entry *layout_entries = pvr_dev->fw_dev.layout_entries;
 	u32 num_layout_entries = pvr_dev->fw_dev.header->layout_entry_num;
 
-	u32 entry;
-	for (entry = 0; entry < num_layout_entries; entry++) {
+	for (u32 entry = 0; entry < num_layout_entries; entry++) {
 		if (layout_entries[entry].id == id)
 			return &layout_entries[entry];
 	}
@@ -66,8 +66,7 @@ pvr_fw_find_private_data(struct pvr_device *pvr_dev)
 	const struct pvr_fw_layout_entry *layout_entries = pvr_dev->fw_dev.layout_entries;
 	u32 num_layout_entries = pvr_dev->fw_dev.header->layout_entry_num;
 
-	u32 entry;
-	for (entry = 0; entry < num_layout_entries; entry++) {
+	for (u32 entry = 0; entry < num_layout_entries; entry++) {
 		if (layout_entries[entry].id == META_PRIVATE_DATA ||
 		    layout_entries[entry].id == MIPS_PRIVATE_DATA ||
 		    layout_entries[entry].id == RISCV_PRIVATE_DATA)
@@ -96,7 +95,7 @@ pvr_fw_validate(struct pvr_device *pvr_dev)
 	const struct pvr_fw_info_header *header;
 	const u8 *fw = firmware->data;
 	u32 fw_offset = firmware->size - SZ_4K;
-	u32 layout_table_size, entry;
+	u32 layout_table_size;
 
 	if (firmware->size < SZ_4K || (firmware->size % FW_BLOCK_SIZE))
 		return -EINVAL;
@@ -143,7 +142,7 @@ pvr_fw_validate(struct pvr_device *pvr_dev)
 		return -EINVAL;
 
 	layout_entries = (const struct pvr_fw_layout_entry *)&fw[fw_offset];
-	for (entry = 0; entry < header->layout_entry_num; entry++) {
+	for (u32 entry = 0; entry < header->layout_entry_num; entry++) {
 		u32 start_addr = layout_entries[entry].base_addr;
 		u32 end_addr = start_addr + layout_entries[entry].alloc_size;
 
@@ -202,8 +201,7 @@ layout_get_sizes(struct pvr_device *pvr_dev)
 	fw_mem->core_data_alloc_size = 0;
 
 	/* Extract section sizes from FW layout table. */
-	u32 entry;
-	for (entry = 0; entry < num_layout_entries; entry++) {
+	for (u32 entry = 0; entry < num_layout_entries; entry++) {
 		switch (layout_entries[entry].type) {
 		case FW_CODE:
 			fw_mem->code_alloc_size += layout_entries[entry].alloc_size;
@@ -238,8 +236,7 @@ pvr_fw_find_mmu_segment(struct pvr_device *pvr_dev, u32 addr, u32 size, void *fw
 	if (end_addr <= addr)
 		return -EINVAL;
 
-	int entry;
-	for (entry = 0; entry < num_layout_entries; entry++) {
+	for (int entry = 0; entry < num_layout_entries; entry++) {
 		u32 entry_start_addr = layout_entries[entry].base_addr;
 		u32 entry_end_addr = entry_start_addr + layout_entries[entry].alloc_size;
 
@@ -356,8 +353,7 @@ fw_fault_page_init(void *cpu_ptr, void *priv)
 {
 	u32 *fault_page = cpu_ptr;
 
-	int i;
-	for (i = 0; i < PVR_ROGUE_FAULT_PAGE_SIZE / sizeof(*fault_page); i++)
+	for (int i = 0; i < PVR_ROGUE_FAULT_PAGE_SIZE / sizeof(*fault_page); i++)
 		fault_page[i] = 0xdeadbee0;
 }
 
@@ -369,7 +365,11 @@ fw_sysinit_init(void *cpu_ptr, void *priv)
 	struct pvr_fw_device *fw_dev = &pvr_dev->fw_dev;
 	struct pvr_fw_mem *fw_mem = &fw_dev->mem;
 	dma_addr_t fault_dma_addr = 0;
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	u32 clock_speed_hz = clk_get_rate(pvr_dev->clk);
+#else
+	u32 clock_speed_hz = clk_get_rate(pvr_dev->core_clk);
+#endif
 
 	WARN_ON(!clock_speed_hz);
 
@@ -433,7 +433,11 @@ fw_runtime_cfg_init(void *cpu_ptr, void *priv)
 {
 	struct rogue_fwif_runtime_cfg *runtime_cfg = cpu_ptr;
 	struct pvr_device *pvr_dev = priv;
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	u32 clock_speed_hz = clk_get_rate(pvr_dev->clk);
+#else
+	u32 clock_speed_hz = clk_get_rate(pvr_dev->core_clk);
+#endif
 
 	WARN_ON(!clock_speed_hz);
 
@@ -968,13 +972,9 @@ pvr_fw_init(struct pvr_device *pvr_dev)
 	spin_lock_init(&fw_dev->fw_mm_lock);
 
 	INIT_LIST_HEAD(&fw_dev->fw_objs.list);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	err = drmm_mutex_init(from_pvr_device(pvr_dev), &fw_dev->fw_objs.lock);
 	if (err)
 		goto err_mm_takedown;
-#else
-	mutex_init(&fw_dev->fw_objs.lock);
-#endif
 
 	err = pvr_fw_process(pvr_dev);
 	if (err)
@@ -1012,7 +1012,7 @@ pvr_fw_init(struct pvr_device *pvr_dev)
 		goto err_fw_stop;
 	}
 
-	fw_dev->booted = true;
+	WRITE_ONCE(fw_dev->initialised, true);
 
 	return 0;
 
@@ -1052,7 +1052,7 @@ pvr_fw_fini(struct pvr_device *pvr_dev)
 {
 	struct pvr_fw_device *fw_dev = &pvr_dev->fw_dev;
 
-	fw_dev->booted = false;
+	WRITE_ONCE(fw_dev->initialised, false);
 
 	pvr_fw_destroy_structures(pvr_dev);
 	pvr_fw_object_unmap_and_destroy(pvr_dev->kccb.rtn_obj);
@@ -1280,7 +1280,7 @@ pvr_fw_object_create_and_map_common(struct pvr_device *pvr_dev, size_t size,
 	/* %DRM_PVR_BO_PM_FW_PROTECT is implicit for FW objects. */
 	flags |= DRM_PVR_BO_PM_FW_PROTECT;
 
-	fw_obj = kzalloc(sizeof(*fw_obj), GFP_KERNEL);
+	fw_obj = kzalloc_obj(*fw_obj);
 	if (!fw_obj)
 		return ERR_PTR(-ENOMEM);
 

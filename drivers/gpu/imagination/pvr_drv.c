@@ -14,6 +14,7 @@
 #include "pvr_rogue_defs.h"
 #include "pvr_rogue_fwif_client.h"
 #include "pvr_rogue_fwif_shared.h"
+#include "pvr_trace.h"
 #include "pvr_vm.h"
 
 #include "include/pvr_drm.h"
@@ -29,7 +30,6 @@
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/of_device.h>
@@ -43,8 +43,9 @@
  *
  * This driver supports the following PowerVR/IMG graphics cores from Imagination Technologies:
  *
- * * AXE-1-16M (found in Texas Instruments AM62)
- * * BXS-4-64 MC1 (found in Texas Instruments J721S2/AM68)
+ * * AXE-1-16M (33.15.11.3)
+ * * BXM-4-64 MC1 (36.52.104.182)
+ * * BXS-4-64 MC1 (36.53.104.796)
  */
 
 /**
@@ -484,15 +485,14 @@ pvr_dev_query_quirks_get(struct pvr_device *pvr_dev,
 	if (query._padding_c)
 		return -EINVAL;
 
-	int i;
-	for (i = 0; i < ARRAY_SIZE(umd_quirks_musthave); i++) {
+	for (int i = 0; i < ARRAY_SIZE(umd_quirks_musthave); i++) {
 		if (pvr_device_has_uapi_quirk(pvr_dev, umd_quirks_musthave[i])) {
 			out[out_count++] = umd_quirks_musthave[i];
 			out_musthave_count++;
 		}
 	}
 
-	for (i = 0; i < ARRAY_SIZE(umd_quirks); i++) {
+	for (int i = 0; i < ARRAY_SIZE(umd_quirks); i++) {
 		if (pvr_device_has_uapi_quirk(pvr_dev, umd_quirks[i]))
 			out[out_count++] = umd_quirks[i];
 	}
@@ -515,7 +515,8 @@ copy_out:
 	if (err < 0)
 		return err;
 
-	args->size = sizeof(query);
+	if (args->size > sizeof(query))
+		args->size = sizeof(query);
 	return 0;
 }
 
@@ -559,7 +560,7 @@ pvr_dev_query_enhancements_get(struct pvr_device *pvr_dev,
 	struct drm_pvr_dev_query_enhancements query;
 	u32 out[ARRAY_SIZE(umd_enhancements)];
 	size_t out_idx = 0;
-	int err, i;
+	int err;
 
 	if (!args->pointer) {
 		args->size = sizeof(struct drm_pvr_dev_query_enhancements);
@@ -575,7 +576,7 @@ pvr_dev_query_enhancements_get(struct pvr_device *pvr_dev,
 	if (query._padding_c)
 		return -EINVAL;
 
-	for (i = 0; i < ARRAY_SIZE(umd_enhancements); i++) {
+	for (int i = 0; i < ARRAY_SIZE(umd_enhancements); i++) {
 		if (pvr_device_has_uapi_enhancement(pvr_dev, umd_enhancements[i]))
 			out[out_idx++] = umd_enhancements[i];
 	}
@@ -596,7 +597,8 @@ copy_out:
 	if (err < 0)
 		return err;
 
-	args->size = sizeof(query);
+	if (args->size > sizeof(query))
+		args->size = sizeof(query);
 	return 0;
 }
 
@@ -1151,6 +1153,8 @@ pvr_ioctl_submit_jobs(struct drm_device *drm_dev, void *raw_args,
 	int idx;
 	int err;
 
+	trace_pvr_job_submit_ioctl(pvr_dev, args->jobs.count);
+
 	if (!drm_dev_enter(drm_dev, &idx))
 		return -EIO;
 
@@ -1192,7 +1196,6 @@ pvr_get_uobj_array(const struct drm_pvr_obj_array *in, u32 min_stride, u32 obj_s
 {
 	int ret = 0;
 	void *out_alloc;
-	u32 i;
 
 	if (in->stride < min_stride)
 		return -EINVAL;
@@ -1212,7 +1215,7 @@ pvr_get_uobj_array(const struct drm_pvr_obj_array *in, u32 min_stride, u32 obj_s
 		void __user *in_ptr = u64_to_user_ptr(in->array);
 		void *out_ptr = out_alloc;
 
-		for (i = 0; i < in->count; i++) {
+		for (u32 i = 0; i < in->count; i++) {
 			ret = copy_struct_from_user(out_ptr, obj_size, in_ptr, in->stride);
 			if (ret)
 				break;
@@ -1249,20 +1252,18 @@ pvr_set_uobj_array(const struct drm_pvr_obj_array *out, u32 min_stride, u32 obj_
 		u32 cpy_elem_size = min_t(u32, out->stride, obj_size);
 		void __user *out_ptr = u64_to_user_ptr(out->array);
 		const void *in_ptr = in;
-		int i;
 
-		for (i = 0; i < out->count; i++) {
+		for (u32 i = 0; i < out->count; i++) {
 			if (copy_to_user(out_ptr, in_ptr, cpy_elem_size))
 				return -EFAULT;
 
-			out_ptr += obj_size;
-			in_ptr += out->stride;
-		}
+			if (out->stride > obj_size &&
+			    clear_user(out_ptr + cpy_elem_size, out->stride - obj_size)) {
+				return -EFAULT;
+			}
 
-		if (out->stride > obj_size &&
-		    clear_user(u64_to_user_ptr(out->array + obj_size),
-			       out->stride - obj_size)) {
-			return -EFAULT;
+			out_ptr += out->stride;
+			in_ptr += obj_size;
 		}
 	}
 
@@ -1315,7 +1316,7 @@ pvr_drm_driver_open(struct drm_device *drm_dev, struct drm_file *file)
 	struct pvr_device *pvr_dev = to_pvr_device(drm_dev);
 	struct pvr_file *pvr_file;
 
-	pvr_file = kzalloc(sizeof(*pvr_file), GFP_KERNEL);
+	pvr_file = kzalloc_obj(*pvr_file);
 	if (!pvr_file)
 		return -ENOMEM;
 
@@ -1378,7 +1379,7 @@ pvr_drm_driver_postclose(__always_unused struct drm_device *drm_dev,
 DEFINE_DRM_GEM_FOPS(pvr_drm_driver_fops);
 
 static struct drm_driver pvr_drm_driver = {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	.driver_features = DRIVER_GEM | DRIVER_GEM_GPUVA | DRIVER_RENDER |
 #else
 	.driver_features = DRIVER_GEM | DRIVER_RENDER |
@@ -1401,10 +1402,6 @@ static struct drm_driver pvr_drm_driver = {
 
 	.gem_prime_import_sg_table = drm_gem_shmem_prime_import_sg_table,
 	.gem_create_object = pvr_gem_create_object,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
-	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
-	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
-#endif
 };
 
 static int
@@ -1471,7 +1468,11 @@ err_context_fini:
 	return err;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+static void pvr_remove(struct platform_device *plat_dev)
+#else
 static int pvr_remove(struct platform_device *plat_dev)
+#endif
 {
 	struct drm_device *drm_dev = platform_get_drvdata(plat_dev);
 	struct pvr_device *pvr_dev = to_pvr_device(drm_dev);
@@ -1489,7 +1490,11 @@ static int pvr_remove(struct platform_device *plat_dev)
 	pvr_queue_device_fini(pvr_dev);
 	pvr_context_device_fini(pvr_dev);
 	pvr_power_domains_fini(pvr_dev);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+	return;
+#else
 	return 0;
+#endif
 }
 
 static const struct pvr_device_data pvr_device_data_manual = {
@@ -1506,7 +1511,7 @@ static const struct of_device_id dt_match[] = {
 		.data = &pvr_device_data_pwrseq,
 	},
 	{
-		.compatible = "img,gpu",
+		.compatible = "img,img-rogue",
 		.data = &pvr_device_data_manual,
 	},
 
@@ -1519,16 +1524,16 @@ static const struct of_device_id dt_match[] = {
 		.compatible = "img,img-axe",
 		.data = &pvr_device_data_manual,
 	},
+	{
+		.compatible = "img,gpu",
+		.data = &pvr_device_data_manual,
+	},
 	{}
 };
 MODULE_DEVICE_TABLE(of, dt_match);
 
 static const struct dev_pm_ops pvr_pm_ops = {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 	RUNTIME_PM_OPS(pvr_power_device_suspend, pvr_power_device_resume, pvr_power_device_idle)
-#else
-	SET_RUNTIME_PM_OPS(pvr_power_device_suspend, pvr_power_device_resume, pvr_power_device_idle)
-#endif
 };
 
 static struct platform_driver pvr_driver = {
@@ -1540,19 +1545,7 @@ static struct platform_driver pvr_driver = {
 		.of_match_table = dt_match,
 	},
 };
-
-static int __init pvr_driver_init(void)
-{
-	return platform_driver_register(&pvr_driver);
-}
-
-static void __exit pvr_driver_exit(void)
-{
-	platform_driver_unregister(&pvr_driver);
-}
-
-late_initcall_sync(pvr_driver_init);
-module_exit(pvr_driver_exit);
+module_platform_driver(pvr_driver);
 
 MODULE_AUTHOR("Imagination Technologies Ltd.");
 MODULE_DESCRIPTION(PVR_DRIVER_DESC);

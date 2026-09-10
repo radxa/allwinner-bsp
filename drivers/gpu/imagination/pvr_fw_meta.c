@@ -16,6 +16,8 @@
 #include <linux/ktime.h>
 #include <linux/types.h>
 
+#include <drm/drm_print.h>
+
 #define ROGUE_FW_HEAP_META_SHIFT 25 /* 32 MB */
 
 #define POLL_TIMEOUT_USEC 1000000
@@ -375,8 +377,7 @@ configure_seg_mmu(struct pvr_device *pvr_dev, u32 **boot_conf_ptr)
 		ROGUE_FW_SEGMMU_OUTADDR_TOP_SLC(MMU_CONTEXT_MAPPING_FWPRIV,
 						ROGUE_FW_SEGMMU_META_BIFDM_ID);
 
-	u32 i;
-	for (i = 0; i < num_layout_entries; i++) {
+	for (u32 i = 0; i < num_layout_entries; i++) {
 		/*
 		 * FW code is using the bootloader segment which is already
 		 * configured on boot. FW coremem code and data don't use the

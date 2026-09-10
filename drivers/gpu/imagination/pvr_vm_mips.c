@@ -102,8 +102,7 @@ pvr_vm_mips_fini(struct pvr_device *pvr_dev)
 	struct pvr_fw_mips_data *mips_data = fw_dev->processor_data.mips_data;
 
 	vunmap(mips_data->pt);
-	int page_nr;
-	for (page_nr = PVR_MIPS_PT_PAGE_COUNT - 1; page_nr >= 0; page_nr--) {
+	for (int page_nr = PVR_MIPS_PT_PAGE_COUNT - 1; page_nr >= 0; page_nr--) {
 		dma_unmap_page(from_pvr_device(pvr_dev)->dev,
 			       mips_data->pt_dma_addr[page_nr], PAGE_SIZE, DMA_TO_DEVICE);
 
@@ -224,14 +223,13 @@ pvr_vm_mips_unmap(struct pvr_device *pvr_dev, struct pvr_fw_object *fw_obj)
 	const u64 start = fw_obj->fw_mm_node.start;
 	const u64 size = fw_obj->fw_mm_node.size;
 	const u64 end = start + size;
-	u32 pfn;
 
 	const u32 start_pfn = (start & fw_dev->fw_heap_info.offset_mask) >>
 			      ROGUE_MIPSFW_LOG2_PAGE_SIZE_4K;
 	const u32 end_pfn = (end & fw_dev->fw_heap_info.offset_mask) >>
 			    ROGUE_MIPSFW_LOG2_PAGE_SIZE_4K;
 
-	for (pfn = start_pfn; pfn < end_pfn; pfn++)
+	for (u32 pfn = start_pfn; pfn < end_pfn; pfn++)
 		WRITE_ONCE(mips_data->pt[pfn], 0);
 
 	pvr_mmu_flush_request_all(pvr_dev);

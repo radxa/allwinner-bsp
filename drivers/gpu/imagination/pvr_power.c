@@ -10,10 +10,8 @@
 
 #include <drm/drm_drv.h>
 #include <drm/drm_managed.h>
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
+#include <drm/drm_print.h>
 #include <linux/cleanup.h>
-#endif
 #include <linux/clk.h>
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
@@ -92,11 +90,11 @@ pvr_power_request_pwr_off(struct pvr_device *pvr_dev)
 }
 
 static int
-pvr_power_fw_disable(struct pvr_device *pvr_dev, bool hard_reset)
+pvr_power_fw_disable(struct pvr_device *pvr_dev, bool hard_reset, bool rpm_suspend)
 {
-	if (!hard_reset) {
-		int err;
+	int err;
 
+	if (!hard_reset) {
 		cancel_delayed_work_sync(&pvr_dev->watchdog.work);
 
 		err = pvr_power_request_idle(pvr_dev);
@@ -108,29 +106,47 @@ pvr_power_fw_disable(struct pvr_device *pvr_dev, bool hard_reset)
 			return err;
 	}
 
-	return pvr_fw_stop(pvr_dev);
+	if (rpm_suspend) {
+		/* This also waits for late processing of GPU or firmware IRQs in other cores */
+		disable_irq(pvr_dev->irq);
+	}
+
+	err = pvr_fw_stop(pvr_dev);
+	if (err && rpm_suspend)
+		enable_irq(pvr_dev->irq);
+
+	return err;
 }
 
 static int
-pvr_power_fw_enable(struct pvr_device *pvr_dev)
+pvr_power_fw_enable(struct pvr_device *pvr_dev, bool rpm_resume)
 {
 	int err;
 
+	if (rpm_resume)
+		enable_irq(pvr_dev->irq);
+
 	err = pvr_fw_start(pvr_dev);
 	if (err)
-		return err;
+		goto out;
 
 	err = pvr_wait_for_fw_boot(pvr_dev);
 	if (err) {
 		drm_err(from_pvr_device(pvr_dev), "Firmware failed to boot\n");
 		pvr_fw_stop(pvr_dev);
-		return err;
+		goto out;
 	}
 
 	queue_delayed_work(pvr_dev->sched_wq, &pvr_dev->watchdog.work,
 			   msecs_to_jiffies(WATCHDOG_TIME_MS));
 
 	return 0;
+
+out:
+	if (rpm_resume)
+		disable_irq(pvr_dev->irq);
+
+	return err;
 }
 
 bool
@@ -200,7 +216,7 @@ pvr_watchdog_worker(struct work_struct *work)
 	if (pm_runtime_get_if_in_use(from_pvr_device(pvr_dev)->dev) <= 0)
 		goto out_requeue;
 
-	if (!pvr_dev->fw_dev.booted)
+	if (!READ_ONCE(pvr_dev->fw_dev.initialised))
 		goto out_pm_runtime_put;
 
 	stalled = pvr_watchdog_kccb_stalled(pvr_dev);
@@ -257,17 +273,31 @@ static int pvr_power_on_sequence_manual(struct pvr_device *pvr_dev)
 {
 	int err;
 
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	err = clk_prepare_enable(pvr_dev->clk_parent);
 	if (err)
 		return err;
 
 	err = clk_prepare_enable(pvr_dev->clk);
 	if (err)
-		goto err_clk_parent_disable;
+		goto err_core_clk_disable;
 
 	err = clk_prepare_enable(pvr_dev->clk_bus);
 	if (err)
-		goto err_clk_disable;
+		goto err_sys_clk_disable;
+#else
+	err = clk_prepare_enable(pvr_dev->core_clk);
+	if (err)
+		return err;
+
+	err = clk_prepare_enable(pvr_dev->sys_clk);
+	if (err)
+		goto err_core_clk_disable;
+
+	err = clk_prepare_enable(pvr_dev->mem_clk);
+	if (err)
+		goto err_sys_clk_disable;
+#endif
 
 	/*
 	 * According to the hardware manual, a delay of at least 32 clock
@@ -281,18 +311,29 @@ static int pvr_power_on_sequence_manual(struct pvr_device *pvr_dev)
 
 	err = reset_control_deassert(pvr_dev->reset);
 	if (err)
-		goto err_clk_bus_disable;
+		goto err_mem_clk_disable;
 
 	return 0;
 
-err_clk_bus_disable:
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
+err_mem_clk_disable:
 	clk_disable_unprepare(pvr_dev->clk_bus);
 
-err_clk_disable:
+err_sys_clk_disable:
 	clk_disable_unprepare(pvr_dev->clk);
 
-err_clk_parent_disable:
+err_core_clk_disable:
 	clk_disable_unprepare(pvr_dev->clk_parent);
+#else
+err_mem_clk_disable:
+	clk_disable_unprepare(pvr_dev->mem_clk);
+
+err_sys_clk_disable:
+	clk_disable_unprepare(pvr_dev->sys_clk);
+
+err_core_clk_disable:
+	clk_disable_unprepare(pvr_dev->core_clk);
+#endif
 
 	return err;
 }
@@ -303,9 +344,15 @@ static int pvr_power_off_sequence_manual(struct pvr_device *pvr_dev)
 
 	err = reset_control_assert(pvr_dev->reset);
 
+#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 	clk_disable_unprepare(pvr_dev->clk_bus);
 	clk_disable_unprepare(pvr_dev->clk);
 	clk_disable_unprepare(pvr_dev->clk_parent);
+#else
+	clk_disable_unprepare(pvr_dev->mem_clk);
+	clk_disable_unprepare(pvr_dev->sys_clk);
+	clk_disable_unprepare(pvr_dev->core_clk);
+#endif
 
 	return err;
 }
@@ -336,12 +383,12 @@ static int pvr_power_init_pwrseq(struct pvr_device *pvr_dev)
 
 static int pvr_power_on_sequence_pwrseq(struct pvr_device *pvr_dev)
 {
-	return pwrseq_power_on(pvr_dev->pwrseq);
+	return pwrseq_enable(pvr_dev->pwrseq);
 }
 
 static int pvr_power_off_sequence_pwrseq(struct pvr_device *pvr_dev)
 {
-	return pwrseq_power_off(pvr_dev->pwrseq);
+	return pwrseq_disable(pvr_dev->pwrseq);
 }
 
 const struct pvr_power_sequence_ops pvr_power_sequence_ops_pwrseq = {
@@ -362,8 +409,8 @@ pvr_power_device_suspend(struct device *dev)
 	if (!drm_dev_enter(drm_dev, &idx))
 		return -EIO;
 
-	if (pvr_dev->fw_dev.booted) {
-		err = pvr_power_fw_disable(pvr_dev, false);
+	if (READ_ONCE(pvr_dev->fw_dev.initialised)) {
+		err = pvr_power_fw_disable(pvr_dev, false, true);
 		if (err)
 			goto err_drm_dev_exit;
 	}
@@ -392,8 +439,8 @@ pvr_power_device_resume(struct device *dev)
 	if (err)
 		goto err_drm_dev_exit;
 
-	if (pvr_dev->fw_dev.booted) {
-		err = pvr_power_fw_enable(pvr_dev);
+	if (READ_ONCE(pvr_dev->fw_dev.initialised)) {
+		err = pvr_power_fw_enable(pvr_dev, true);
 		if (err)
 			goto err_power_off;
 	}
@@ -512,7 +559,16 @@ pvr_power_reset(struct pvr_device *pvr_dev, bool hard_reset)
 	}
 
 	/* Disable IRQs for the duration of the reset. */
-	disable_irq(pvr_dev->irq);
+	if (hard_reset) {
+		disable_irq(pvr_dev->irq);
+	} else {
+		/*
+		 * Soft reset is triggered as a response to a FW command to the Host and is
+		 * processed from the threaded IRQ handler. This code cannot (nor needs to)
+		 * wait for any IRQ processing to complete.
+		 */
+		disable_irq_nosync(pvr_dev->irq);
+	}
 
 	do {
 		if (hard_reset) {
@@ -520,10 +576,10 @@ pvr_power_reset(struct pvr_device *pvr_dev, bool hard_reset)
 			queues_disabled = true;
 		}
 
-		err = pvr_power_fw_disable(pvr_dev, hard_reset);
+		err = pvr_power_fw_disable(pvr_dev, hard_reset, false);
 		if (!err) {
 			if (hard_reset) {
-				pvr_dev->fw_dev.booted = false;
+				WRITE_ONCE(pvr_dev->fw_dev.initialised, false);
 				WARN_ON(pvr_power_device_suspend(from_pvr_device(pvr_dev)->dev));
 
 				err = pvr_fw_hard_reset(pvr_dev);
@@ -531,7 +587,7 @@ pvr_power_reset(struct pvr_device *pvr_dev, bool hard_reset)
 					goto err_device_lost;
 
 				err = pvr_power_device_resume(from_pvr_device(pvr_dev)->dev);
-				pvr_dev->fw_dev.booted = true;
+				WRITE_ONCE(pvr_dev->fw_dev.initialised, true);
 				if (err)
 					goto err_device_lost;
 			} else {
@@ -543,7 +599,7 @@ pvr_power_reset(struct pvr_device *pvr_dev, bool hard_reset)
 
 			pvr_fw_irq_clear(pvr_dev);
 
-			err = pvr_power_fw_enable(pvr_dev);
+			err = pvr_power_fw_enable(pvr_dev, false);
 		}
 
 		if (err && hard_reset)
@@ -613,7 +669,7 @@ int pvr_power_domains_init(struct pvr_device *pvr_dev)
 	int i;
 
 	domain_count = of_count_phandle_with_args(dev->of_node, "power-domains",
-						  "#power-domain-cells");
+											  "#power-domain-cells");
 
 	if (domain_count <= 1)
 		return 0;
@@ -625,19 +681,22 @@ int pvr_power_domains_init(struct pvr_device *pvr_dev)
 		return -ENOMEM;
 
 	domain_links = kcalloc(link_count, sizeof(*domain_links), GFP_KERNEL);
-	if (!domain_links) {
+	if (!domain_links)
+	{
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0))
 		kfree(domain_devs);
 #endif
 		return -ENOMEM;
 	}
 
-	for (i = 0; i < domain_count; i++) {
+	for (i = 0; i < domain_count; i++)
+	{
 		struct device *domain_dev;
 
 		dev_name[0] = 'a' + i;
 		domain_dev = dev_pm_domain_attach_by_name(dev, dev_name);
-		if (IS_ERR_OR_NULL(domain_dev)) {
+		if (IS_ERR_OR_NULL(domain_dev))
+		{
 			err = domain_dev ? PTR_ERR(domain_dev) : -ENODEV;
 			goto err_detach;
 		}
@@ -645,11 +704,13 @@ int pvr_power_domains_init(struct pvr_device *pvr_dev)
 		domain_devs[i] = domain_dev;
 	}
 
-	for (i = 0; i < domain_count; i++) {
+	for (i = 0; i < domain_count; i++)
+	{
 		struct device_link *link;
 
 		link = device_link_add(dev, domain_devs[i], DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
-		if (!link) {
+		if (!link)
+		{
 			err = -ENODEV;
 			goto err_unlink;
 		}
@@ -657,13 +718,15 @@ int pvr_power_domains_init(struct pvr_device *pvr_dev)
 		domain_links[i] = link;
 	}
 
-	for (i = domain_count; i < link_count; i++) {
+	for (i = domain_count; i < link_count; i++)
+	{
 		struct device_link *link;
 
 		link = device_link_add(domain_devs[i - domain_count + 1],
-				       domain_devs[i - domain_count],
-				       DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
-		if (!link) {
+							   domain_devs[i - domain_count],
+							   DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
+		if (!link)
+		{
 			err = -ENODEV;
 			goto err_unlink;
 		}
@@ -719,5 +782,5 @@ void pvr_power_domains_fini(struct pvr_device *pvr_dev)
 	kfree(pvr_dev->power.domain_links);
 	kfree(pvr_dev->power.domain_devs);
 
-	pvr_dev->power = (struct pvr_device_power){ 0 };
+	pvr_dev->power = (struct pvr_device_power){0};
 }

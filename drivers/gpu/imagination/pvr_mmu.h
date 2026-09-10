@@ -6,7 +6,6 @@
 
 #include <linux/memory.h>
 #include <linux/types.h>
-#include <linux/version.h>
 
 /* Forward declaration from "pvr_device.h" */
 struct pvr_device;
@@ -85,11 +84,7 @@ struct sg_table;
  *    This value is derived from %PVR_PAGE_TABLE_ADDR_SPACE_SIZE, so the same
  *    notes on that constant apply here.
  */
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 0, 0))
 #define PVR_PAGE_TABLE_ADDR_SPACE_SIZE SZ_1T
-#else
-#define PVR_PAGE_TABLE_ADDR_SPACE_SIZE _AC(0x10000000000, ULL)
-#endif
 #define PVR_PAGE_TABLE_ADDR_BITS __ffs(PVR_PAGE_TABLE_ADDR_SPACE_SIZE)
 #define PVR_PAGE_TABLE_ADDR_MASK (PVR_PAGE_TABLE_ADDR_SPACE_SIZE - 1)
 
