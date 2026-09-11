@@ -211,7 +211,10 @@ const static struct afbc_stream_info afbc_stream_infos[] = {
 	{ DRM_FORMAT_NV12,     1, {8, 8, 8, 0}, {1, 5} },
 	{ DRM_FORMAT_NV21,     1, {8, 8, 8, 0}, {1, 5} },
 
+	{ DRM_FORMAT_ARGB2101010, 0, {10, 10, 10, 2}, {0, 3} },
 	{ DRM_FORMAT_ABGR2101010, 0, {10, 10, 10, 2}, {0, 3} },
+	{ DRM_FORMAT_RGBA1010102, 0, {10, 10, 10, 2}, {0, 3} },
+	{ DRM_FORMAT_BGRA1010102, 0, {10, 10, 10, 2}, {0, 3} },
 	{ DRM_FORMAT_P010, 1, {10, 10, 10, 0}, {1, 3} },
 	{ DRM_FORMAT_P210, 2, {10, 10, 10, 0}, {2, 3} },
 };
@@ -368,14 +371,17 @@ static void fbd_atw_set_block_dirty(struct de_fbd_atw_private *priv,
 
 bool de_afbc_format_mod_supported(struct de_afbd_handle *hdl, u32 format, u64 modifier)
 {
-	if (modifier == DRM_FORMAT_MOD_INVALID)
+	unsigned int i;
+
+	if (modifier != SUNXI_RGB_AFBC_MOD && modifier != SUNXI_YUV_AFBC_MOD)
 		return false;
 
-	// TODO: filter out the formats which not support AFBC
-	if (modifier == SUNXI_RGB_AFBC_MOD || modifier == SUNXI_YUV_AFBC_MOD)
-		return true;
+	for (i = 0; i < ARRAY_SIZE(afbc_stream_infos); i++) {
+		if (afbc_stream_infos[i].format == format)
+			return true;
+	}
 
-    return false;
+	return false;
 }
 
 static void de_fbd_get_rotate_info(struct de_fbd_info *info, const unsigned int rotation, u32 format)
