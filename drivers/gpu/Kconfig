@@ -32,4 +32,21 @@ config AW_DRM_LIMA
 	help
 	 DRM driver for ARM Mali 400/450 GPUs.
 
+config AW_DRM_POWERVR
+	tristate "Imagination Technologies PowerVR (Series 6 and later) & IMG Graphics"
+	depends on (ARM64 || RISCV && 64BIT)
+	depends on DRM
+	depends on MMU
+	depends on PM
+	select DRM_EXEC
+	select DRM_GEM_SHMEM_HELPER
+	select DRM_SCHED
+	select DRM_GPUVM
+	select FW_LOADER
+	help
+	  Choose this option if you have a system that has an Imagination
+	  Technologies PowerVR (Series 6 or later) or IMG GPU.
+
+	  If "M" is selected, the module will be called powervr.
+
 endmenu
