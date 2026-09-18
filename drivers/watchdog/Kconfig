@@ -10,4 +10,14 @@ config AW_WATCHDOG
 	help
 	  Say Y here to support the watchdog timer in Allwinner SoCs.
 
+config AW_AXP_WATCHDOG
+	tristate "Watchdog support for X-Powers AXP2101-family PMIC"
+	depends on AW_MFD_AXP2101
+	select WATCHDOG
+	select WATCHDOG_CORE
+	help
+	  Say Y here to support the watchdog in X-Powers AXP2101-family
+	  PMICs (AXP318W / AXP8191). Its RESTART timeout mode power-cycles
+	  the PMIC, resetting rails the SoC watchdog cannot reach.
+
 endmenu
