@@ -132,6 +132,10 @@ config SENSOR_IMX219
 	tristate "use imx219 driver"
 	default n
 
+config SENSOR_IMX415
+	tristate "use imx415 driver"
+	default n
+
 config SENSOR_IMX274_SLVDS
 	tristate "use imx274_slvds driver"
 	default n

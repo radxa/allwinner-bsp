@@ -68,23 +68,23 @@ static struct regval_list sensor_default_regs[] = {	/* 3280 x 2464_20fps 4lanes 
 
 
 static struct regval_list sensor_hxga_regs[] = {
-
+	{0x0100, 0x00},
 	{0x30EB, 0x05},
 	{0x30EB, 0x0C},
 	{0x300A, 0xFF},
 	{0x300B, 0xFF},
 	{0x30EB, 0x05},
 	{0x30EB, 0x09},
-	{0x0114, 0x03},
+
+	{0x0114, 0x01},
 	{0x0128, 0x00},
 	{0x012A, 0x18},
 	{0x012B, 0x00},
 
-	{0x0160, 0x0F},
-	{0x0161, 0xC5},
+	{0x0160, 0x0A},
+	{0x0161, 0x8C},
 	{0x0162, 0x0D},
 	{0x0163, 0x78},
-
 	{0x0164, 0x00},
 	{0x0165, 0x00},
 	{0x0166, 0x0C},
@@ -96,29 +96,41 @@ static struct regval_list sensor_hxga_regs[] = {
 	{0x016C, 0x0C},
 	{0x016D, 0xD0},
 	{0x016E, 0x09},
-	{0x016F, 0xA0},
+	{0x016F, 0xa0},
+
 	{0x0170, 0x01},
 	{0x0171, 0x01},
 	{0x0174, 0x00},
 	{0x0175, 0x00},
+
 	{0x018C, 0x0A},
 	{0x018D, 0x0A},
+
 	{0x0301, 0x05},
 	{0x0303, 0x01},
 	{0x0304, 0x03},
 	{0x0305, 0x03},
 	{0x0306, 0x00},
-	{0x0307, 0x57},
+	{0x0307, 0x36},
 	{0x0309, 0x0A},
 	{0x030B, 0x01},
 	{0x030C, 0x00},
-	{0x030D, 0x5A},
-	{0x4767, 0x0F},
-	{0x4750, 0x14},
-	{0x47B4, 0x14},
+	{0x030D, 0x6C},
+
+	{0x455E, 0x00}, 
+	{0x471E, 0x4B}, 
+	{0x4767, 0x0F}, 
+	{0x4750, 0x14}, 
+	{0x4540, 0x00}, 
+	{0x47B4, 0x14}, 
+	{0x4713, 0x30}, 
+	{0x478B, 0x10}, 
+	{0x478F, 0x10}, 
+	{0x4793, 0x10}, 
+	{0x4797, 0x0E}, 
+	{0x479B, 0x0E},
 
 	{0x0100, 0x01},
-
 };
 
 static struct regval_list sensor_sxga_regs[] = {
@@ -129,7 +141,7 @@ static struct regval_list sensor_sxga_regs[] = {
 	{0x300B, 0xFF},
 	{0x30EB, 0x05},
 	{0x30EB, 0x09},
-	{0x0114, 0x03},
+	{0x0114, 0x01},
 	{0x0128, 0x00},
 	{0x012A, 0x18},
 	{0x012B, 0x00},
@@ -178,6 +190,7 @@ static struct regval_list sensor_sxga_regs[] = {
 
 
 static struct regval_list sensor_1080p_regs[] = {
+	{0x0100, 0x00},
 
 
 	{0x30EB, 0x05},
@@ -187,17 +200,17 @@ static struct regval_list sensor_1080p_regs[] = {
 	{0x30EB, 0x05},
 	{0x30EB, 0x09},
 
-	{0x0114, 0x03},
+	{0x0114, 0x01},
 	{0x0128, 0x00},
 	{0x012A, 0x18},
 	{0x012B, 0x00},
 
 
 
-	{0x0160, 0x0A},
-	{0x0161, 0x2F},
+	{0x0160, 0x06},
+	{0x0161, 0xE6},
 	{0x0162, 0x0D},
-	{0x0163, 0xE8},
+	{0x0163, 0x78},
 	{0x0164, 0x02},
 	{0x0165, 0xA8},
 	{0x0166, 0x0A},
@@ -212,8 +225,11 @@ static struct regval_list sensor_1080p_regs[] = {
 	{0x016F, 0x38},
 	{0x0170, 0x01},
 	{0x0171, 0x01},
+	{0x0172, 0x00},
 	{0x0174, 0x00},
 	{0x0175, 0x00},
+	{0x0176, 0x01},
+	{0x0177, 0x01},
 	{0x018C, 0x0A},
 	{0x018D, 0x0A},
 	{0x0301, 0x05},
@@ -221,27 +237,30 @@ static struct regval_list sensor_1080p_regs[] = {
 	{0x0304, 0x03},
 	{0x0305, 0x03},
 	{0x0306, 0x00},
-	{0x0307, 0x57},
+	{0x0307, 0x39},
 	{0x0309, 0x0A},
 	{0x030B, 0x01},
 	{0x030C, 0x00},
-	{0x030D, 0x5A},
+	{0x030D, 0x72},
+	{0x455E, 0x00},
+	{0x471E, 0x4B},
 	{0x4767, 0x0F},
 	{0x4750, 0x14},
+	{0x4540, 0x00},
 	{0x47B4, 0x14},
+	{0xFFFF, 0x00},
 	{0x0100, 0x01},
 };
 
 static struct regval_list sensor_720p_regs[] = {
-
-
+	{0x0100, 0x00},
 	{0x30EB, 0x05},
 	{0x30EB, 0x0C},
 	{0x300A, 0xFF},
 	{0x300B, 0xFF},
 	{0x30EB, 0x05},
 	{0x30EB, 0x09},
-	{0x0114, 0x03},
+	{0x0114, 0x01},
 	{0x0128, 0x00},
 	{0x012A, 0x18},
 	{0x012B, 0x00},
@@ -272,11 +291,11 @@ static struct regval_list sensor_720p_regs[] = {
 	{0x0304, 0x03},
 	{0x0305, 0x03},
 	{0x0306, 0x00},
-	{0x0307, 0x57},
-	{0x0309, 0x05}, /* 0A */
+	{0x0307, 0x3C},
+	{0x0309, 0x0A}, /* 0A */
 	{0x030B, 0x01},
 	{0x030C, 0x00},
-	{0x030D, 0x5A},
+	{0x030D, 0x2E},
 	{0x4767, 0x0F},
 	{0x4750, 0x14},
 	{0x47B4, 0x14},
@@ -858,15 +877,17 @@ static struct sensor_format_struct sensor_formats[] = {
 static struct sensor_win_size sensor_win_sizes[] = {
 	/* 3280*2464 */
 	{
-	 .width = 3264,
-	 .height = 2448,
-	 .hoffset = (3280 - 3264) / 2,
-	 .voffset = (2464 - 2448) / 2,
-	 .hts = 3448,
-	 .vts = 4037,
+	 .width = 3280,
+	 .height = 2464,
+	 .hoffset = 0,
+	 .voffset = 0,
+	 .hoffset = 0,
+	 .voffset = 0,
+	 .hts = 3444,
+	 .vts = 2700,
 	 .pclk = (278 * 1000 * 1000),
 	 .mipi_bps = 720 * 1000 * 1000,
-	 .fps_fixed = 1,
+	 .fps_fixed = 30,
 	 .bin_factor = 1,
 	 .intg_min = 1 << 4,
 	 .intg_max = (4037 - 4) << 4,
@@ -883,11 +904,11 @@ static struct sensor_win_size sensor_win_sizes[] = {
 	 .height = HD1080_HEIGHT,
 	 .hoffset = 0,
 	 .voffset = 0,
-	 .hts = 3560,
-	 .vts = 2607,
+	 .hts = 3444,
+	 .vts = 1766,
 	 .pclk = (278 * 1000 * 1000),
 	 .mipi_bps = 720 * 1000 * 1000,
-	 .fps_fixed = 1,
+	 .fps_fixed = 30,
 	 .bin_factor = 2,
 	 .intg_min = 1 << 4,
 	 .intg_max = (2607 - 4) << 4,
@@ -907,7 +928,7 @@ static struct sensor_win_size sensor_win_sizes[] = {
 	 .vts = 2607,
 	 .pclk = (278 * 1000 * 1000),
 	 .mipi_bps = 720 * 1000 * 1000,
-	 .fps_fixed = 1,
+	 .fps_fixed = 30,
 	 .bin_factor = 2,
 	 .intg_min = 1 << 4,
 	 .intg_max = 2607 << 4,
@@ -927,7 +948,7 @@ static struct sensor_win_size sensor_win_sizes[] = {
 	 .vts = 1303,
 	 .pclk = (200 * 1000 * 1000),
 	 .mipi_bps = 720 * 1000 * 1000,
-	 .fps_fixed = 1,
+	 .fps_fixed = 30,
 	 .bin_factor = 2,
 	 .intg_min = 1 << 4,
 	 .intg_max = (1303 - 4) << 4,
@@ -992,7 +1013,11 @@ static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 				struct v4l2_mbus_config *cfg)
 {
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
-	cfg->flags = 0 | V4L2_MBUS_CSI2_4_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+	cfg->flags = 0 | V4L2_MBUS_CSI2_2_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#else
+	cfg->bus.mipi_csi2.num_data_lanes = 0 | V4L2_MBUS_CSI2_2_LANE | V4L2_MBUS_CSI2_CHANNEL_0;
+#endif
 
 	return 0;
 }
@@ -1112,8 +1137,12 @@ static int sensor_init_controls(struct v4l2_subdev *sd, const struct v4l2_ctrl_o
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
 static int sensor_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
+#else
+static int sensor_probe(struct i2c_client *client)
+#endif
 {
 	struct v4l2_subdev *sd;
 	struct sensor_info *info;
@@ -1132,6 +1161,7 @@ static int sensor_probe(struct i2c_client *client,
 	info->fmt = &sensor_formats[0];
 	info->fmt_pt = &sensor_formats[0];
 	info->win_pt = &sensor_win_sizes[0];
+	info->time_hs  = 0x25;
 	info->fmt_num = N_FMTS;
 	info->win_size_num = N_WIN_SIZES;
 	info->sensor_field = V4L2_FIELD_NONE;
@@ -1139,13 +1169,20 @@ static int sensor_probe(struct i2c_client *client,
 
 	return 0;
 }
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 static int sensor_remove(struct i2c_client *client)
+#else
+static void sensor_remove(struct i2c_client *client)
+#endif
 {
 	struct v4l2_subdev *sd;
 
 	sd = cci_dev_remove_helper(client, &cci_drv);
 	kfree(to_state(sd));
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
 	return 0;
+#endif
 }
 
 static const struct i2c_device_id sensor_id[] = {
