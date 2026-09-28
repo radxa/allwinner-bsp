@@ -31,6 +31,7 @@ obj-$(CONFIG_SENSOR_GC2590)			+= gc2590_mipi.o
 obj-$(CONFIG_SENSOR_SP5409)			+= sp5409_mipi.o
 obj-$(CONFIG_SENSOR_IMX214)			+= imx214.o
 obj-$(CONFIG_SENSOR_IMX219)			+= imx219.o
+obj-$(CONFIG_SENSOR_IMX415)			+= imx415_mipi.o
 obj-$(CONFIG_SENSOR_IMX274_SLVDS)		+= imx274_slvds.o
 obj-$(CONFIG_SENSOR_IMX291_DVP)			+= imx291_dvp.o
 obj-$(CONFIG_SENSOR_IMX291)			+= imx291_mipi.o
