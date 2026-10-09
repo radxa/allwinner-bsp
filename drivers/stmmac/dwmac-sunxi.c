@@ -638,8 +638,6 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0))
 #ifdef MODULE
 	get_custom_mac_address(1, "eth", stmmac_res.mac);
-#else
-	sunxi_dwmac_set_mac(stmmac_res.mac, mac_str);
 #endif
 #else
 	if (mac_temp) {
@@ -871,19 +869,6 @@ static struct platform_driver sunxi_dwmac_driver = {
 	},
 };
 module_platform_driver(sunxi_dwmac_driver);
-
-#ifndef MODULE
-static int __init sunxi_dwmac_set_mac_addr(char *str)
-{
-	char *p = str;
-
-	if (str && strlen(str))
-		memcpy(mac_str, p, MAC_ADDR_LEN);
-
-	return 0;
-}
-__setup("mac_addr=", sunxi_dwmac_set_mac_addr);
-#endif /* MODULE */
 
 MODULE_DESCRIPTION("Allwinner DWMAC driver");
 MODULE_AUTHOR("wujiayi <wujiayi@allwinnertech.com>");
