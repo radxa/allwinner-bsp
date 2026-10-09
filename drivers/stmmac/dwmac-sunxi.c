@@ -33,17 +33,7 @@
 
 #define DWMAC_MODULE_VERSION		"0.3.2"
 
-#define MAC_ADDR_LEN			18
-#define SUNXI_DWMAC_MAC_ADDRESS		"00:00:00:00:00:00"
 #define MAC_IRQ_NAME			8
-
-static char mac_str[MAC_ADDR_LEN] = SUNXI_DWMAC_MAC_ADDRESS;
-module_param_string(mac_str, mac_str, MAC_ADDR_LEN, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(mac_str, "MAC Address String.(xx:xx:xx:xx:xx:xx)");
-
-#ifdef MODULE
-extern int get_custom_mac_address(int fmt, char *name, char *addr);
-#endif
 
 static int sunxi_dwmac200_set_syscon(struct sunxi_dwmac *chip)
 {
@@ -577,18 +567,6 @@ static int sunxi_dwmac_resource_get(struct platform_device *pdev, struct sunxi_d
 
 	return 0;
 }
-
-#ifndef MODULE
-static void sunxi_dwmac_set_mac(u8 *dst, u8 *src)
-{
-	int i;
-	char *p = src;
-
-	for (i = 0; i < ETH_ALEN; i++, p++)
-		dst[i] = simple_strtoul(p, &p, 16);
-}
-#endif
-
 static int sunxi_dwmac_probe(struct platform_device *pdev)
 {
 	struct plat_stmmacenet_data *plat_dat;
@@ -596,9 +574,6 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	struct sunxi_dwmac *chip;
 	struct device *dev = &pdev->dev;
 	int ret;
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0))
-	char *mac_temp = NULL;
-#endif
 
 	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
 	if (ret)
@@ -623,10 +598,8 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	plat_dat = stmmac_probe_config_dt(pdev, stmmac_res.mac);
 #else
 	plat_dat = stmmac_probe_config_dt(pdev, &stmmac_res.mac);
-	if (IS_ERR_OR_NULL(stmmac_res.mac)) {
-		mac_temp = devm_kzalloc(dev, ETH_ALEN, GFP_KERNEL);
-		stmmac_res.mac = mac_temp;
-	}
+	if (IS_ERR_OR_NULL(stmmac_res.mac))
+		stmmac_res.mac = devm_kzalloc(dev, ETH_ALEN, GFP_KERNEL);
 #endif
 	if (IS_ERR(plat_dat))
 		return PTR_ERR(plat_dat);
@@ -634,22 +607,6 @@ static int sunxi_dwmac_probe(struct platform_device *pdev)
 	ret = sunxi_dwmac_resource_get(pdev, chip, plat_dat);
 	if (ret < 0)
 		return -EINVAL;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0))
-#ifdef MODULE
-	get_custom_mac_address(1, "eth", stmmac_res.mac);
-#else
-	sunxi_dwmac_set_mac(stmmac_res.mac, mac_str);
-#endif
-#else
-	if (mac_temp) {
-#ifdef MODULE
-		get_custom_mac_address(1, "eth", mac_temp);
-#else
-		sunxi_dwmac_set_mac(mac_temp, mac_str);
-#endif
-	}
-#endif
 
 	plat_dat->bsp_priv = chip;
 	plat_dat->init = sunxi_dwmac_init;
@@ -871,19 +828,6 @@ static struct platform_driver sunxi_dwmac_driver = {
 	},
 };
 module_platform_driver(sunxi_dwmac_driver);
-
-#ifndef MODULE
-static int __init sunxi_dwmac_set_mac_addr(char *str)
-{
-	char *p = str;
-
-	if (str && strlen(str))
-		memcpy(mac_str, p, MAC_ADDR_LEN);
-
-	return 0;
-}
-__setup("mac_addr=", sunxi_dwmac_set_mac_addr);
-#endif /* MODULE */
 
 MODULE_DESCRIPTION("Allwinner DWMAC driver");
 MODULE_AUTHOR("wujiayi <wujiayi@allwinnertech.com>");
