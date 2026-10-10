@@ -129,12 +129,11 @@ static int axp2202_get_ic_temp(struct power_supply *ps,
 	struct axp2202_usb_power *usb_power = power_supply_get_drvdata(ps);
 	struct regmap *regmap = usb_power->regmap;
 	uint8_t i = 0;
-
 	uint8_t data[2];
-	int temp, old_temp;
+	int temp, old_temp, raw;
 	int ret = 0;
 
-	ret = regmap_update_bits(regmap, AXP2202_ADC_DATA_SEL, 0x03, AXP2202_ADC_TDIE_SEL); /* ADC channel select */
+	ret = regmap_update_bits(regmap, AXP2202_ADC_DATA_SEL, 0x03, AXP2202_ADC_TDIE_SEL);
 	if (ret < 0)
 		return ret;
 	mdelay(1);
@@ -142,13 +141,18 @@ static int axp2202_get_ic_temp(struct power_supply *ps,
 	ret = regmap_bulk_read(regmap, AXP2202_ADC_DATA_H, data, 2);
 	if (ret < 0)
 		return ret;
-	old_temp = (753 - ((data[0] << 8) + data[1])) * 1000 / 173;
+	raw = ((data[0] & 0x3F) << 8) + data[1];
+	if (raw == 0)
+		return -ENODATA;
+	old_temp = (753 - raw) * 1000 / 173;
 
-	/* read until abs(old_temp - temp) < 10*/
 	ret = regmap_bulk_read(regmap, AXP2202_ADC_DATA_H, data, 2);
 	if (ret < 0)
 		return ret;
-	temp = (753 - ((data[0] << 8) + data[1])) * 1000 / 173;
+	raw = ((data[0] & 0x3F) << 8) + data[1];
+	if (raw == 0)
+		return -ENODATA;
+	temp = (753 - raw) * 1000 / 173;
 
 	PMIC_DEBUG("old_temp:%d, temp:%d\n", old_temp, temp);
 	while ((abs(old_temp - temp) > 100) && (i < 10)) {
@@ -156,10 +160,17 @@ static int axp2202_get_ic_temp(struct power_supply *ps,
 		ret = regmap_bulk_read(regmap, AXP2202_ADC_DATA_H, data, 2);
 		if (ret < 0)
 			return ret;
-		temp = (753 - ((data[0] << 8) + data[1])) * 1000 / 173;
+		raw = ((data[0] & 0x3F) << 8) + data[1];
+		if (raw == 0)
+			return -ENODATA;
+		temp = (753 - raw) * 1000 / 173;
 		i++;
 		PMIC_DEBUG("turn[%d]:old_temp:%d, temp:%d\n", i, old_temp, temp);
 	}
+
+	/* Reject faulty/uninitialized ADC readings (-50..150 C). */
+	if (temp < -500 || temp > 1500)
+		return -ENODATA;
 
 	val->intval = temp;
 
