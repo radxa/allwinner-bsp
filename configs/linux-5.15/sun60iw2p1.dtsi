@@ -528,7 +528,7 @@
 		cpul_thermal_zone: cpul_thermal_zone {
 			polling-delay-passive = <100>;
 			polling-delay = <1000>;
-			thermal-sensors = <&ths 3>;
+			thermal-sensors = <&ths 0>;
 			sustainable-power = <756>;
 
 			cpul_trips: trips {
@@ -561,7 +561,7 @@
 		cpub_thermal_zone: cpub_thermal_zone {
 			polling-delay-passive = <100>;
 			polling-delay = <1000>;
-			thermal-sensors = <&ths 0>;
+			thermal-sensors = <&ths 3>;
 			sustainable-power = <914>;
 
 			cpub_trips: trips {
