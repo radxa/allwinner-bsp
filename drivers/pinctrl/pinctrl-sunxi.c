@@ -1303,7 +1303,7 @@ static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin,
 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
 
 		/* Wait for voltage increasing. Double check! */
-		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, reg & BIT(bank * 2), 100, 10000));
+		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !!(reg & BIT(bank * 2)) != auto_power_detect_mode_reverse, 100, 10000));
 		udelay(10);
 
 		sunxi_debug(NULL, "pf-switch-increase: Wait for voltage increase done[0x%x=0x%x] pf[0x%x=0x%x]\n",
@@ -1328,7 +1328,7 @@ static void sunxi_power_auto_switch_pf(struct sunxi_pinctrl *pctl, unsigned pin,
 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
 
 		/* Wait for voltage decreasing. Double check! */
-		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !(reg & BIT(bank * 2)), 100, 10000));
+		WARN_ON(readl_relaxed_poll_timeout(pow_val_addr, reg, !!(reg & BIT(bank * 2)) == auto_power_detect_mode_reverse, 100, 10000));
 		udelay(10);
 
 		sunxi_debug(NULL, "pf-switch-decrease: Wait for voltage decrease done[0x%x=0x%x] pf[0x%x=0x%x]\n",
