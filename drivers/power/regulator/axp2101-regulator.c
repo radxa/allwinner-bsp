@@ -81,7 +81,8 @@ extern void sun55iw3_pinctrl_fix_over_voltage(bool is_cpus_gpio);
 		.ops		= &axp20x_ops,					\
 	}
 
-#define AXP_DESC_SW(_family, _id, _match, _supply, _ereg, _emask)		\
+#define AXP_DESC_SW_OPS(_family, _id, _match, _supply, _ereg, _emask,	\
+			_ops)							\
 	[_family##_##_id] = {							\
 		.name		= (_match),					\
 		.supply_name	= (_supply),					\
@@ -92,8 +93,12 @@ extern void sun55iw3_pinctrl_fix_over_voltage(bool is_cpus_gpio);
 		.owner		= THIS_MODULE,					\
 		.enable_reg	= (_ereg),					\
 		.enable_mask	= (_emask),					\
-		.ops		= &axp20x_ops_sw,				\
+		.ops		= (_ops),					\
 	}
+
+#define AXP_DESC_SW(_family, _id, _match, _supply, _ereg, _emask)		\
+	AXP_DESC_SW_OPS(_family, _id, _match, _supply, _ereg, _emask,		\
+			&axp20x_ops_sw)
 
 #define AXP_DESC_FIXED(_family, _id, _match, _supply, _volt)			\
 	[_family##_##_id] = {							\
@@ -182,6 +187,7 @@ struct axp_reg_data {
 	struct regulator *virtual_consumer;
 	char consumer_name[MAX_NAME_LEN];
 	struct notifier_block nb;
+	bool restore_on_resume;
 };
 
 static int regulator_is_enabled_regmap_axp2202_c_drivevbus(struct regulator_dev *rdev)
@@ -555,10 +561,47 @@ static struct regulator_ops axp20x_ops = {
 	.set_voltage_time_sel = axp2101_set_voltage_time_sel,
 };
 
+static int axp8191_set_suspend_disable(struct regulator_dev *rdev)
+{
+	struct axp_reg_data *data = rdev_get_drvdata(rdev);
+	int ret;
+
+	data->restore_on_resume = false;
+
+	ret = regulator_is_enabled_regmap(rdev);
+	if (ret <= 0)
+		return ret;
+
+	ret = regulator_disable_regmap(rdev);
+	if (!ret)
+		data->restore_on_resume = true;
+
+	return ret;
+}
+
+static int axp8191_regulator_resume(struct regulator_dev *rdev)
+{
+	struct axp_reg_data *data = rdev_get_drvdata(rdev);
+
+	if (!data->restore_on_resume)
+		return 0;
+
+	data->restore_on_resume = false;
+	return regulator_enable_regmap(rdev);
+}
+
 static struct regulator_ops axp20x_ops_sw = {
 	.enable			= regulator_enable_regmap,
 	.disable		= regulator_disable_regmap,
 	.is_enabled		= regulator_is_enabled_regmap,
+};
+
+static const struct regulator_ops axp8191_ops_sw = {
+	.enable			= regulator_enable_regmap,
+	.disable		= regulator_disable_regmap,
+	.is_enabled		= regulator_is_enabled_regmap,
+	.set_suspend_disable	= axp8191_set_suspend_disable,
+	.resume			= axp8191_regulator_resume,
 };
 
 static struct regulator_ops axp2202_c_ops_drivevbus = {
@@ -1351,8 +1394,8 @@ static const struct regulator_desc axp8191_regulators[] = {
 			(AXP8191, DCDC9, "dcdc9", "vin-ps", axp8191_dcdc9_ranges,
 			0x68, AXP8191_DC9OUT_VOL, GENMASK(6, 0),
 			AXP8191_DCDC_CTL2, BIT(0)),
-	AXP_DESC_SW(AXP8191, DC1SW1, "dc1sw1", "swin", AXP8191_DCDC_CTL2,
-		    BIT(3)),
+	AXP_DESC_SW_OPS(AXP8191, DC1SW1, "dc1sw1", "swin",
+			AXP8191_DCDC_CTL2, BIT(3), &axp8191_ops_sw),
 	AXP_DESC_SW(AXP8191, DC1SW2, "dc1sw2", "swin", AXP8191_DCDC_CTL2,
 		    BIT(4)),
 	AXP_DESC(AXP8191, ALDO1, "aldo1", "aldo", 500, 3400, 100,
