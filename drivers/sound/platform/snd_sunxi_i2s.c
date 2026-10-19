@@ -1272,6 +1272,7 @@ static int sunxi_i2s_dai_hw_params(struct snd_pcm_substream *substream,
 		break;
 	case SNDRV_PCM_FORMAT_S20_3LE:
 	case SNDRV_PCM_FORMAT_S24_3LE:
+	case SNDRV_PCM_FORMAT_S24_LE:
 		regmap_update_bits(regmap, SUNXI_I2S_FMT0,
 				   0x7 << I2S_SAMPLE_RESOLUTION,
 				   0x5 << I2S_SAMPLE_RESOLUTION);
@@ -1282,7 +1283,6 @@ static int sunxi_i2s_dai_hw_params(struct snd_pcm_substream *substream,
 			regmap_update_bits(regmap, SUNXI_I2S_FIFOCTL, 0x3 << RXOM, 0x1 << RXOM);
 		}
 		break;
-	case SNDRV_PCM_FORMAT_S24_LE:
 	case SNDRV_PCM_FORMAT_S32_LE:
 		regmap_update_bits(regmap, SUNXI_I2S_FMT0,
 				   0x7 << I2S_SAMPLE_RESOLUTION,

@@ -59,7 +59,7 @@ EXPORT_SYMBOL_GPL(sunxi_adpt_rt_delay);
  * unalter active count of components without DAIs will
  * cause hardware resource to be close by mistake.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) && LINUX_VERSION_CODE <= KERNEL_VERSION(6, 6, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)
 void sunxi_adpt_runtime_action(struct snd_soc_component *component, int action)
 {
 	component->active += action;
