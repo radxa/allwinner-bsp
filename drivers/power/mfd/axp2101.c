@@ -19,6 +19,7 @@
 
 #include "sunxi-power-mfd.h"
 #include "axp2101.h"
+#include <linux/reboot.h>
 
 #define AXP20X_OFF	0x80
 
@@ -3125,6 +3126,10 @@ static struct mfd_cell axp2202_cells[] = {
 
 static struct mfd_cell axp8191_cells[] = {
 	{
+		.name = "axp2xx-watchdog",
+		.of_compatible = "x-powers,axp2xx-watchdog",
+	},
+	{
 		.name = "axp2101-regulator",
 	},
 	{
@@ -3524,11 +3529,21 @@ static void axp20x_power_off(void)
 	if (axp20x_pm_power_off->variant == AXP288_ID)
 		return;
 
-	regmap_write(axp20x_pm_power_off->regmap, AXP20X_OFF_CTRL,
-		     AXP20X_OFF);
+	if (axp20x_pm_power_off->variant == AXP8191_ID)
+		regmap_update_bits(axp20x_pm_power_off->regmap,
+				   AXP8191_POWER_DISABLE_POWER_DOWN_SEQUENCE,
+				   BIT(7), BIT(7));
+	else
+		regmap_write(axp20x_pm_power_off->regmap, AXP20X_OFF_CTRL, AXP20X_OFF);
 
 	/* Give capacitors etc. time to drain to avoid kernel panic msg. */
 	msleep(500);
+}
+
+static int axp_sys_power_off(struct sys_off_data *data)
+{
+	axp20x_power_off();
+	return NOTIFY_DONE;
 }
 
 /*
@@ -4460,9 +4475,13 @@ int axp20x_device_probe(struct sunxi_power_dev *axp20x)
 
 	axp20x_pm_power_off = axp20x;
 	axp_sysfs_init(axp20x);
-	if (!pm_power_off) {
+	if (axp20x->variant == AXP8191_ID)
+		devm_register_sys_off_handler(axp20x->dev,
+					      SYS_OFF_MODE_POWER_OFF,
+					      SYS_OFF_PRIO_FIRMWARE + 1,
+					      axp_sys_power_off, NULL);
+	else if (!pm_power_off)
 		pm_power_off = axp20x_power_off;
-	}
 
 	PMIC_DEV_INFO(axp20x->dev, "AXP20X driver loaded\n");
 
