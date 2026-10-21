@@ -139,6 +139,80 @@
 static void sunxi_mmc_regs_save(struct sunxi_mmc_host *host);
 static void sunxi_mmc_regs_restore(struct sunxi_mmc_host *host);
 static int sunxi_mmc_bus_clk_en(struct sunxi_mmc_host *host, int enable);
+
+static int sunxi_mmc_hs400_read_ext_csd(struct mmc_card *card)
+{
+	__le32 sectors = cpu_to_le32(card->ext_csd.sectors);
+	u8 *ext_csd;
+	int i, err;
+
+	for (i = 0; i < MMC_TUNING_RETRY_TIMES; i++) {
+		err = mmc_get_ext_csd(card, &ext_csd);
+		if (err)
+			return err;
+		if (ext_csd[EXT_CSD_REV] != card->ext_csd.rev ||
+		    memcmp(ext_csd + EXT_CSD_SEC_CNT, &sectors, sizeof(sectors)))
+			err = -EIO;
+		kfree(ext_csd);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
+static int sunxi_mmc_execute_hs400_tuning(struct mmc_host *mmc,
+					struct mmc_card *card)
+{
+	struct sunxi_mmc_host *host = mmc_priv(mmc);
+	u32 saved_caps = host->ctl_spec_cap;
+	u32 saved_delay = host->kernel_tuning_ds_dly;
+	int delay, best = 0, run = 0, window = 0, err;
+
+	if (!host->hs400_tuning_enabled || !host->sunxi_mmc_set_ds_dl)
+		return 0;
+
+	host->hs400_tuning_valid = false;
+	host->execute_tuning_runing = 1;
+	/* Keep error recovery from changing the delay under test. */
+	host->ctl_spec_cap &= ~(SUNXI_SC_EN_RETRY | SUNXI_SC_EN_RETRY_CMD |
+				SUNXI_MANUAL_READ_DATA_TIMEOUT);
+	SM_INFO(mmc_dev(mmc), "start HS400 DS tuning, clock = %u\n", mmc->ios.clock);
+	for (delay = 0; delay < 64; delay++) {
+		host->sunxi_mmc_set_ds_dl(host, delay);
+		err = sunxi_mmc_hs400_read_ext_csd(card);
+		if (err == -ENOMEM)
+			goto out;
+		if (err) {
+			run = 0;
+		} else if (++run > window) {
+			window = run;
+			best = delay - (run - 1) / 2;
+		}
+	}
+
+	if (window < 12) {
+		err = -EIO;
+		goto out;
+	}
+	host->sunxi_mmc_set_ds_dl(host, best);
+	err = sunxi_mmc_hs400_read_ext_csd(card);
+	if (!err) {
+		host->kernel_tuning_ds_dly = best;
+		host->hs400_tuning_valid = true;
+		SM_INFO(mmc_dev(mmc), "HS400 DS tuning complete, window = %d-%d, delay = %d\n",
+			best - window / 2, best + (window - 1) / 2, best);
+	}
+out:
+	if (err) {
+		host->sunxi_mmc_set_ds_dl(host, saved_delay);
+		SM_ERR(mmc_dev(mmc), "HS400 DS tuning failed: %d\n", err);
+	}
+	host->ctl_spec_cap = saved_caps;
+	host->execute_tuning_runing = 0;
+	return err;
+}
+
 static void sunxi_mmc_parse_cmd(struct mmc_host *mmc, struct mmc_command *cmd,
 				u32 *cval, u32 *im, bool *wdma);
 static int sunxi_mmc_set_dat(struct sunxi_mmc_host *host, struct mmc_host *mmc,
@@ -3543,6 +3617,27 @@ static struct mmc_host_ops sunxi_mmc_ops = {
 	.execute_tuning = sunxi_mmc_execute_tuning,
 };
 
+static int sunxi_mmc_init_host_ops(struct mmc_host *mmc)
+{
+	struct sunxi_mmc_host *host = mmc_priv(mmc);
+	struct mmc_host_ops *ops;
+
+	mmc->ops = &sunxi_mmc_ops;
+	if (!host->hs400_tuning_enabled || !host->sunxi_mmc_set_ds_dl ||
+	    !(mmc->caps2 & MMC_CAP2_HS400))
+		return 0;
+
+	/* Keep the shared operations unchanged for hosts without DS tuning. */
+	ops = devm_kmemdup(mmc->parent, &sunxi_mmc_ops, sizeof(*ops),
+			   GFP_KERNEL);
+	if (!ops)
+		return -ENOMEM;
+
+	ops->execute_hs400_tuning = sunxi_mmc_execute_hs400_tuning;
+	mmc->ops = ops;
+	return 0;
+}
+
 #if defined(MMC_FPGA) && defined(CONFIG_ARCH_SUN8IW10P1)
 void disable_card2_dat_det(void)
 {
@@ -4257,6 +4352,8 @@ static int sunxi_mmc_extra_of_parse(struct mmc_host *mmc)
 		dev_info(mmc->parent,
 			"execute tuning in kernel, retune_period=%d\n", mmc->retune_period);
 	}
+	host->hs400_tuning_enabled = host->tuning_in_kernel &&
+		of_property_read_bool(np, "allwinner,hs400-ds-tuning");
 
 	if (of_property_read_u32(np, "cqe-dto-ms", &host->cqe_rdto_ms) < 0) {
 		host->cqe_rdto_ms = 2000;
@@ -4344,7 +4441,9 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
 		goto error_free_host;
 	}
 
-	mmc->ops = &sunxi_mmc_ops;
+	ret = sunxi_mmc_init_host_ops(mmc);
+	if (ret)
+		goto error_free_dma;
 	mmc->max_blk_count = 8192;
 	mmc->max_blk_size = 4096;
 	mmc->max_segs = PAGE_SIZE * host->req_page_count / sizeof(*for_sizeof);

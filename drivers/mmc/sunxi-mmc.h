@@ -610,11 +610,15 @@ struct sunxi_mmc_host {
 
 #define MMC_TUNING_RETRY_TIMES		20
 	u32 kernel_tuning_sample_dly;
+	u32 kernel_tuning_ds_dly;
+	bool hs400_tuning_valid;
+	bool hs400_tuning_enabled;
 	u8 tuning_in_kernel;
 	u8 ecc_error;
 	u32 execute_tuning_runing;
 	void (*sunxi_mmc_set_samp_dl)(struct sunxi_mmc_host *host,
 					int sunxi_samp_dl);
+	void (*sunxi_mmc_set_ds_dl)(struct sunxi_mmc_host *host, int ds_dly);
 
 };
 

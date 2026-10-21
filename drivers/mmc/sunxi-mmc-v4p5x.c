@@ -350,6 +350,8 @@ static void sunxi_mmc_set_clk_dly(struct sunxi_mmc_host *host, int clk,
 
 	if (host->tuning_in_kernel) {
 		sam_dly = host->kernel_tuning_sample_dly;
+		if (timing == MMC_TIMING_MMC_HS400 && host->hs400_tuning_valid)
+			ds_dly = host->kernel_tuning_ds_dly;
 		SM_INFO(mmc_dev(host->mmc), "used kernel tuning, delay = %d\n", sam_dly);
 	} else {
 		rval = of_property_read_u32(np, raw_sm_str, raw_sm);
@@ -1314,6 +1316,7 @@ void sunxi_mmc_init_priv_v4p6x(struct sunxi_mmc_host *host,
 
 	host->sunxi_mmc_oclk_en = sunxi_mmc_oclk_onoff;
 	host->sunxi_mmc_set_samp_dl = sunxi_mmc_set_samp_dl_raw;
+	host->sunxi_mmc_set_ds_dl = sunxi_mmc_set_ds_dl_raw;
 }
 EXPORT_SYMBOL_GPL(sunxi_mmc_init_priv_v4p6x);
 
