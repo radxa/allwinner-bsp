@@ -729,6 +729,8 @@ static int vidioc_enum_framesizes(struct file *file, void *fh,
 {
 	struct vin_core *vinc = video_drvdata(file);
 	struct v4l2_subdev_frame_size_enum fse;
+	struct v4l2_subdev *isp_sd;
+	struct isp_dev *isp;
 	int ret;
 
 	if (vinc == NULL)
@@ -742,6 +744,17 @@ static int vidioc_enum_framesizes(struct file *file, void *fh,
 				enum_frame_size, NULL, &fse);
 	if (ret < 0)
 		return -1;
+
+	isp_sd = vinc->vid_cap.pipe.sd[VIN_IND_ISP];
+	if (IS_ENABLED(CONFIG_ARCH_SUN60IW2) && isp_sd) {
+		isp = v4l2_get_subdevdata(isp_sd);
+		if (isp && !isp->large_image) {
+			/* Match the normal ISP limits in __isp_try_format(). */
+			fse.max_width = min_t(u32, fse.max_width,
+					      isp->id == 1 ? 3264 : 4224);
+			fse.max_height = min_t(u32, fse.max_height, 4224);
+		}
+	}
 
 	fsize->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
 	fsize->stepwise.min_width = MIN_IN_WIDTH;

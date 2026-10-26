@@ -1090,7 +1090,9 @@ static struct isp_pix_fmt *__isp_try_format(struct isp_dev *isp,
 		if (!isp->large_image) {
 			if (isp->id == 1) {
 				mf->width = clamp_t(u32, mf->width, MIN_IN_WIDTH, 3264);
-				mf->height = clamp_t(u32, mf->height, MIN_IN_HEIGHT, 3264);
+				mf->height = clamp_t(u32, mf->height, MIN_IN_HEIGHT,
+						     IS_ENABLED(CONFIG_ARCH_SUN60IW2) ?
+						     4224 : 3264);
 			} else {
 				mf->width = clamp_t(u32, mf->width, MIN_IN_WIDTH, 4224);
 				mf->height = clamp_t(u32, mf->height, MIN_IN_HEIGHT, 4224);
