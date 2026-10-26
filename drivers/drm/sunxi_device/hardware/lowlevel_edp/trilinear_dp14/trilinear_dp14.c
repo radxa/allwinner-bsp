@@ -1776,6 +1776,7 @@ s32 trilinear_link_start(struct sunxi_edp_hw_desc *edp_hw)
 s32 trilinear_link_stop(struct sunxi_edp_hw_desc *edp_hw)
 {
 	edp_video_stream_disable(edp_hw);
+	TR_SET_BITS(edp_hw, TR_TRANSMITTER_OUTPUT_EN, 0, 1, 0x0);
 
 	return RET_OK;
 }
