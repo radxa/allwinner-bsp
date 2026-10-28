@@ -1807,7 +1807,7 @@ static s32 sunxi_dsi_write_para(struct sunxi_drm_dsi *dsi, const struct mipi_dsi
 
 	if (packet.payload_length) {
 		memcpy(para + 4, packet.payload, packet.payload_length);
-		crc = dsi_crc_pro((u8 *)packet.payload, packet.payload_length + 1);
+		crc = dsi_crc_pro((u8 *)packet.payload, packet.payload_length);
 		para[packet.size] = (crc >> 0) & 0xff;
 		para[packet.size + 1] = (crc >> 8) & 0xff;
 		para_num = packet.size + 2;
