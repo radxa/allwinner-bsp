@@ -33,6 +33,7 @@ obj-$(CONFIG_AW_AXP8191_TEMP_CTRL)	+= temp_ctrl/axp8191_temp_ctrl.o
 obj-$(CONFIG_AW_INPUT_AXP2101_PEK)	+= power_key/axp2101-pek.o
 
 # regulator
+obj-$(CONFIG_REGULATOR_RASPBERRYPI_TOUCHSCREEN_V2) += regulator/rpi-panel-v2-regulator.o
 obj-$(CONFIG_AW_REGULATOR_AXP2101)	+= regulator/axp2101-regulator.o
 obj-$(CONFIG_AW_REGULATOR_PMU_EXT)	+= regulator/pmu-ext-regulator.o
 obj-$(CONFIG_AW_REGULATOR_BMU_EXT)	+= regulator/bmu-ext-regulator.o

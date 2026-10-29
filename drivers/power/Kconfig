@@ -89,6 +89,16 @@ config AW_POWER_DEBUG
 
 comment "Regulator Drivers"
 
+config REGULATOR_RASPBERRYPI_TOUCHSCREEN_V2
+	tristate "Raspberry Pi 7-inch touchscreen panel V2 regulator"
+	depends on REGULATOR && GPIOLIB
+	depends on I2C && OF && PWM
+	select GPIO_REGMAP
+	select REGMAP_I2C
+	help
+	  This driver supports the MCU on the Raspberry Pi Touch Display 2.
+	  It provides the display and touch reset GPIOs and backlight PWM.
+
 if AW_MFD_AXP2101
 
 config AW_REGULATOR_AXP2101
