@@ -1636,8 +1636,12 @@ static size_t phy_digital_status_dump(struct mipi_dev *mipi, char *buf, size_t s
 	// 0x0034: PHY Frequency Counter Register (mipi_bps: Mbps)
 	dphy_clk = clk_get_rate(vind->clk[VIN_TOP_CLK].clock) / 1000000;
 	phy_freq_cnt = cmb_phy_freq_cnt_get(mipi->id);
-	mipi_bps = 1000 * dphy_clk * 8 / phy_freq_cnt;
-	count += scnprintf(buf + count, size - count, "mipi_bps:\t %u Mbps\n", mipi_bps);
+	if (phy_freq_cnt) {
+		mipi_bps = 1000 * dphy_clk * 8 / phy_freq_cnt;
+		count += scnprintf(buf + count, size - count, "mipi_bps:\t %u Mbps\n", mipi_bps);
+	} else {
+		count += scnprintf(buf + count, size - count, "mipi_bps:\t no clock detected\n");
+	}
 
 	// 0x00f0: PHY Debug Register (PHY clock lane0 status, PHYC data lane0/1 status)
 	phy_sta_d0 = cmb_phy_sta_d0_get(mipi->id);
