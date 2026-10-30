@@ -192,6 +192,19 @@ void rk628_mipi_dphy_init_hsmanual(struct rk628 *rk628, bool manual, uint8_t mip
 {
 	dev_info(rk628->dev,
 		"mipi dphy%d hs config, manual: %s\n", mipi_id, manual ? "true" : "false");
+	/* Reference 1c26cf8e289f: 1250..1349 Mbps; VIN manual mode selects 1300 Mbps. */
+	if (manual && rk628->version >= RK628F_VERSION) {
+		rk628_testif_write(rk628, 0x60, BIT(6) | 0x0b, mipi_id);
+		rk628_testif_write(rk628, 0x61, BIT(7) | 0x43, mipi_id);
+		rk628_testif_write(rk628, 0x62, BIT(6) | 0x2c, mipi_id);
+		rk628_testif_write(rk628, 0x63, BIT(7) | 0x50, mipi_id);
+		rk628_testif_write(rk628, 0x65, BIT(4) | 0x0f, mipi_id);
+		rk628_testif_write(rk628, 0x70, BIT(6) | 0x0b, mipi_id);
+		rk628_testif_write(rk628, 0x71, BIT(7) | 0x53, mipi_id);
+		rk628_testif_write(rk628, 0x72, BIT(6) | 0x10, mipi_id);
+		rk628_testif_write(rk628, 0x73, BIT(7) | 0x5b, mipi_id);
+		return;
+	}
 	//config mipi timing when mipi freq is 1250Mbps
 	rk628_testif_write(rk628, 0x71,
 		manual ? (HSTX(rk628->mipi_timing[mipi_id].data_prepare) | BIT(7)) : 0, mipi_id);

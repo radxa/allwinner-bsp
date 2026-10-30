@@ -6,6 +6,7 @@
  */
 
 #include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 //#include <linux/soc/rockchip/rk_vendor_storage.h>
@@ -698,7 +699,8 @@ void rk628_hdmirx_audio_setup(HAUDINFO info)
 	if (rk628->version >= RK628F_VERSION) {
 		rk628_i2c_update_bits(aif->rk628, HDMI_RX_DMI_DISABLE_IF,
 				AUD_ENABLE_MASK, AUD_ENABLE(1));
-		schedule_delayed_work(&aif->delayed_work_audio, msecs_to_jiffies(1000));
+		if (aif->i2s_enabled_default)
+			schedule_delayed_work(&aif->delayed_work_audio, msecs_to_jiffies(1000));
 	} else {
 		aif->ctsn_ints_en = true;
 		rk628_i2c_write(aif->rk628, HDMI_RX_PDEC_IEN_SET,
@@ -1394,21 +1396,21 @@ TIMING_ERR:
 	return -ENOLCK;
 }
 
-bool rk628_hdmirx_tx_5v_power_detect(struct gpio_config *det_gpio)
+bool rk628_hdmirx_tx_5v_power_detect(struct gpio_desc *det_gpio)
 {
 	bool ret;
 	int val, i, cnt;
 
 	/* Direct Mode */
-	if (!gpio_is_valid(det_gpio->gpio)) {
+	if (!det_gpio) {
 		sensor_print("%s: det_gpio->gpio is invalid!, direct mode!\n", __func__);
 		return true;
 	}
 
 	cnt = 0;
 	for (i = 0; i < 5; i++) {
-		val = gpio_get_value(det_gpio->gpio);
-		if (val <= 0)	// hdmirx_det gpio inverted
+		val = gpiod_get_value_cansleep(det_gpio);
+		if (val > 0)
 			cnt++;
 		usleep_range(500, 600);
 	}
@@ -1450,7 +1452,7 @@ int rk628_hdmirx_get_timings(struct rk628 *rk628,
 	last_fmt = BUS_FMT_RGB;
 
 	for (i = 0; i < HDMIRX_GET_TIMING_CNT; i++) {
-		if (!rk628_hdmirx_tx_5v_power_detect(&rk628->hdmirx_det_gpio)) {
+		if (!rk628_hdmirx_tx_5v_power_detect(rk628->hdmirx_det_gpio)) {
 			dev_info(rk628->dev, "%s: hdmi plug out!\n", __func__);
 			return -EINVAL;
 		}
@@ -1540,8 +1542,9 @@ bool rk628_hdmirx_scdc_ced_err(struct rk628 *rk628)
 	if (rk628->version < RK628F_VERSION)
 		return false;
 
-	rk628_i2c_read(rk628, HDMI_RX_SCDC_REGS1, &val);
-	rk628_i2c_read(rk628, HDMI_RX_SCDC_REGS2, &val1);
+	if (rk628_i2c_read(rk628, HDMI_RX_SCDC_REGS1, &val) ||
+	    rk628_i2c_read(rk628, HDMI_RX_SCDC_REGS2, &val1))
+		return true;
 	if (((val >> 15) & SCDC_ERRDET_MASK) < SCDC_CED_ERR_CNT &&
 	    ((val1 >> 15) & SCDC_ERRDET_MASK) < SCDC_CED_ERR_CNT &&
 	    (val1 & SCDC_ERRDET_MASK) < SCDC_CED_ERR_CNT)
@@ -1560,12 +1563,14 @@ bool rk628_hdmirx_is_signal_change_ists(struct rk628 *rk628)
 	md_mask = VACT_LIN_ISTS | HACT_PIX_ISTS |
 		  HS_CLK_ISTS | DE_ACTIVITY_ISTS |
 		  VS_ACT_ISTS | HS_ACT_ISTS | VS_CLK_ISTS;
-	rk628_i2c_read(rk628, HDMI_RX_MD_ISTS, &md_ints);
+	if (rk628_i2c_read(rk628, HDMI_RX_MD_ISTS, &md_ints))
+		return true;
 	if (md_ints & md_mask)
 		return true;
 
 	pded_madk = AVI_CKS_CHG_ISTS;
-	rk628_i2c_read(rk628, HDMI_RX_PDEC_ISTS, &pdec_ints);
+	if (rk628_i2c_read(rk628, HDMI_RX_PDEC_ISTS, &pdec_ints))
+		return true;
 	if (pdec_ints & pded_madk)
 		return true;
 

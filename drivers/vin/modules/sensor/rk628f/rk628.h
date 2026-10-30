@@ -300,7 +300,7 @@ struct rk628 {
 	struct mutex rst_lock;
 	int tx_mode;
 	struct dentry *debug_dir;
-	struct gpio_config hdmirx_det_gpio;
+	struct gpio_desc *hdmirx_det_gpio;
 };
 
 int rk628_media_i2c_write(struct rk628 *rk628, u32 reg, u32 val);

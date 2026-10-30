@@ -44,7 +44,7 @@ int read_rk628(struct v4l2_subdev *sd, unsigned int addr, unsigned int *value)
 	msg[1].buf = &data[4];
 
 	ret = i2c_transfer(client->adapter, msg, 2);
-	if (ret >= 0) {
+	if (ret == 2) {
 #if RK628_REG_ENDIAN_BIG
 		/* big endian */
 		*value = data[4] * 0x1000000 + data[5] * 0x10000 + data[6] * 0x100 + data[7];
@@ -52,9 +52,9 @@ int read_rk628(struct v4l2_subdev *sd, unsigned int addr, unsigned int *value)
 		/* little endian */
 		*value = data[7] * 0x1000000 + data[6] * 0x10000 + data[5] * 0x100 + data[4];
 #endif
-		ret = 0;
+		return 0;
 	}
-	return ret;
+	return ret >= 0 ? -EIO : ret;
 }
 
 int write_rk628(struct v4l2_subdev *sd, unsigned int addr, unsigned int value)
@@ -93,7 +93,9 @@ int write_rk628(struct v4l2_subdev *sd, unsigned int addr, unsigned int value)
 	msg.buf = data;
 
 	ret = i2c_transfer(client->adapter, &msg, 1);
+	if (ret == 1)
+		return 0;
 	if (ret >= 0)
-		ret = 0;
+		ret = -EIO;
 	return ret;
 }
