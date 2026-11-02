@@ -655,6 +655,23 @@ static void buffer_queue(struct vb2_buffer *vb)
 	spin_unlock_irqrestore(&cap->slock, flags);
 }
 
+static unsigned int vin_min_capture_buffers(struct vin_vid_cap *cap)
+{
+	if (cap->capture_mode == V4L2_MODE_IMAGE)
+		return 1;
+#if IS_ENABLED(CONFIG_DISPPLAY_SYNC)
+	if (cap->vinc->id == disp_sync_video)
+		return 1;
+#endif
+	if (cap->vinc->id == CSI_VE_ONLINE_VIDEO) {
+		if (cap->vinc->ve_online_cfg.dma_buf_num == BK_ONE_BUFFER)
+			return 1;
+		if (cap->vinc->ve_online_cfg.dma_buf_num == BK_TWO_BUFFER)
+			return 2;
+	}
+	return 3;
+}
+
 static int start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	return 0;
@@ -3898,6 +3915,11 @@ static int vin_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 	struct v4l2_control c;
 	int ret = 0;
 
+	if (ctrl->id == V4L2_CID_MIN_BUFFERS_FOR_CAPTURE) {
+		ctrl->val = vin_min_capture_buffers(cap);
+		return 0;
+	}
+
 	if (ctrl->id == V4L2_CID_VFLIP || ctrl->id == V4L2_CID_HFLIP) {
 		ctrl->val = ctrl->id == V4L2_CID_VFLIP ? cap->vinc->vflip : cap->vinc->hflip;
 		return 0;
@@ -5619,8 +5641,12 @@ int vin_init_controls(struct v4l2_ctrl_handler *hdl, struct vin_vid_cap *cap)
 	struct v4l2_ctrl *ctrl;
 	unsigned int i, ret = 0;
 
-	v4l2_ctrl_handler_init(hdl, 40 + ARRAY_SIZE(custom_ctrls)
+	v4l2_ctrl_handler_init(hdl, 41 + ARRAY_SIZE(custom_ctrls)
 		+ ARRAY_SIZE(ae_win_ctrls) + ARRAY_SIZE(af_win_ctrls));
+	ctrl = v4l2_ctrl_new_std(hdl, &vin_ctrl_ops,
+				 V4L2_CID_MIN_BUFFERS_FOR_CAPTURE, 1, 3, 1, 3);
+	if (ctrl)
+		ctrl->flags |= V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_VOLATILE;
 	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_BRIGHTNESS, -128, 512, 1, 0);
 	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_CONTRAST, -128, 512, 1, 0);
 	v4l2_ctrl_new_std(hdl, &vin_ctrl_ops, V4L2_CID_SATURATION, -256, 512, 1, 0);
