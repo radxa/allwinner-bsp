@@ -69,4 +69,26 @@ static const unsigned char rk628_capture_edid[256] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9f,
 };
+
+static inline void rk628_capture_init_edid(unsigned char *edid, int audio)
+{
+	unsigned int i, sum = 0;
+
+	for (i = 0; i < sizeof(rk628_capture_edid); i++)
+		edid[i] = rk628_capture_edid[i];
+	if (!audio)
+		return;
+
+	/* The base CTA block has no DTDs; append stereo LPCM, 16-bit, 32/44.1/48 kHz. */
+	i = 128 + edid[130];
+	edid[i++] = 0x23;
+	edid[i++] = 0x09;
+	edid[i++] = 0x07;
+	edid[i] = 0x01;
+	edid[130] += 4;
+	edid[131] |= 0x40;
+	for (i = 128; i < 255; i++)
+		sum += edid[i];
+	edid[255] = -sum;
+}
 #endif

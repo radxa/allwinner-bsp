@@ -385,9 +385,11 @@ static void rk628_csi_delayed_work_audio_v2(struct work_struct *work)
 	int init_state, pre_state, fifo_status, fifo_ints;
 	unsigned long delay = 500;
 
+	mutex_lock(aif->confctl_mutex);
 	fs_audio = _rk628_hdmirx_audio_fs(aif);
 	/* read fifo init status */
-	rk628_i2c_read(rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints);
+	if (rk628_i2c_read(rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints))
+		goto exit;
 	dev_dbg(rk628->dev, "%s: HDMI_RX_AUD_FIFO_ISTS:%#x\r\n", __func__, fifo_ints);
 
 	if (fifo_ints & (AFIF_UNDERFL_ISTS | AFIF_OVERFL_ISTS)) {
@@ -404,7 +406,8 @@ static void rk628_csi_delayed_work_audio_v2(struct work_struct *work)
 	/* read fifo fill status */
 	init_state = audio_state->init_state;
 	pre_state = audio_state->pre_state;
-	rk628_i2c_read(rk628, HDMI_RX_AUD_FIFO_FILLSTS1, &fifo_status);
+	if (rk628_i2c_read(rk628, HDMI_RX_AUD_FIFO_FILLSTS1, &fifo_status))
+		goto exit;
 	dev_dbg(rk628->dev,
 		"%s: HDMI_RX_AUD_FIFO_FILLSTS1:%#x, single offset:%d, total offset:%d\n",
 		__func__, fifo_status, fifo_status - pre_state, fifo_status - init_state);
@@ -437,15 +440,17 @@ static void rk628_csi_delayed_work_audio_v2(struct work_struct *work)
 	}
 	audio_state->pre_state = fifo_status;
 
-	rk628_i2c_read(rk628, HDMI_RX_AUD_SPARE, &sample_flat);
+	if (rk628_i2c_read(rk628, HDMI_RX_AUD_SPARE, &sample_flat))
+		goto exit;
 	sample_flat = sample_flat & AUDS_MAS_SAMPLE_FLAT;
-	if (!sample_flat)
-		rk628_i2c_update_bits(rk628, GRF_SYSTEM_CON0, SW_I2S_DATA_OEN_MASK, SW_I2S_DATA_OEN(0));
-	else
-		rk628_i2c_update_bits(rk628, GRF_SYSTEM_CON0, SW_I2S_DATA_OEN_MASK, SW_I2S_DATA_OEN(1));
+	/* Keep BCLK/LRCK running when HDMI marks samples invalid. */
+	rk628_i2c_update_bits(rk628, HDMI_RX_AUD_SAO_CTRL,
+			      I2S_DATA_ENABLE_BITS(0xf),
+			      I2S_DATA_ENABLE_BITS(sample_flat ? 0xf : 0));
 
 exit:
 	schedule_delayed_work(&aif->delayed_work_audio, msecs_to_jiffies(delay));
+	mutex_unlock(aif->confctl_mutex);
 }
 
 static void rk628_csi_delayed_work_audio(struct work_struct *work)
@@ -699,8 +704,11 @@ void rk628_hdmirx_audio_setup(HAUDINFO info)
 	if (rk628->version >= RK628F_VERSION) {
 		rk628_i2c_update_bits(aif->rk628, HDMI_RX_DMI_DISABLE_IF,
 				AUD_ENABLE_MASK, AUD_ENABLE(1));
-		if (aif->i2s_enabled_default)
+		if (aif->i2s_enabled_default) {
+			rk628_i2c_update_bits(rk628, GRF_SYSTEM_CON0,
+					      SW_I2S_DATA_OEN_MASK, SW_I2S_DATA_OEN(0));
 			schedule_delayed_work(&aif->delayed_work_audio, msecs_to_jiffies(1000));
+		}
 	} else {
 		aif->ctsn_ints_en = true;
 		rk628_i2c_write(aif->rk628, HDMI_RX_PDEC_IEN_SET,

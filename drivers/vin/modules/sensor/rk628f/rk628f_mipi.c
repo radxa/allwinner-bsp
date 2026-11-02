@@ -101,6 +101,7 @@ struct rk628_csi {
 	// const char *len_name;
 	//u32 module_index;
 	u8 edid_blocks_written;
+	u8 edid[sizeof(rk628_capture_edid)];
 	u64 lane_mbps;
 	u8 csi_lanes_in_use;
 	// u32 mbus_fmt_code;
@@ -427,6 +428,8 @@ static void rk628_csi_delayed_work_enable_hotplug(struct work_struct *work)
 	struct v4l2_subdev *sd = &csi->info.sd;
 	bool plugin;
 
+	/* The audio worker uses confctl_mutex; drain it before resetting HDMI RX. */
+	rk628_hdmirx_audio_cancel_work_audio(csi->audio_info, true);
 	mutex_lock(&csi->confctl_mutex);
 	if (csi->stopping)
 		goto out;
@@ -1141,7 +1144,7 @@ static int rk628_csi_initial(struct v4l2_subdev *sd)
 	def_edid.pad = 0;
 	def_edid.start_block = 0;
 	def_edid.blocks = 2;
-	def_edid.edid = (u8 *)rk628_capture_edid;
+	def_edid.edid = csi->edid;
 	rk628_hdmirx_set_hdcp(csi->rk628, &csi->hdcp, false);
 	return rk628_write_edid(sd, &def_edid);
 }
@@ -1434,7 +1437,7 @@ static int sensor_get_edid(struct v4l2_subdev *sd,
 	} else {
 		edid->blocks = min_t(u32, edid->blocks,
 				     csi->edid_blocks_written - edid->start_block);
-		memcpy(edid->edid, rk628_capture_edid + edid->start_block * 128,
+		memcpy(edid->edid, csi->edid + edid->start_block * 128,
 		       edid->blocks * 128);
 	}
 	mutex_unlock(&csi->confctl_mutex);
@@ -1483,7 +1486,7 @@ static int sensor_set_edid(struct v4l2_subdev *sd,
 		return -EINVAL;
 	/* Keep the advertised modes within the single-port capture contract. */
 	if (edid->blocks && (edid->blocks != 2 || !edid->edid ||
-			     memcmp(edid->edid, rk628_capture_edid, sizeof(rk628_capture_edid))))
+			     memcmp(edid->edid, csi->edid, sizeof(csi->edid))))
 		return -EINVAL;
 	mutex_lock(&csi->confctl_mutex);
 	if (csi->stopping) {
@@ -2169,6 +2172,7 @@ static int rk628_csi_gpio_init(struct rk628_csi *csi)
 
 	if (!np)
 		return -EINVAL;
+	csi->i2s_enable_default = of_property_read_bool(np, "i2s-enable-default");
 	if (of_find_property(np, "allwinner,rx-clock-deskew", NULL)) {
 		if (of_property_count_u32_elems(np, "allwinner,rx-clock-deskew") != 2 ||
 		    of_property_read_u32_array(np, "allwinner,rx-clock-deskew",
@@ -2278,6 +2282,7 @@ static int sensor_probe(struct i2c_client *client)
 	ret = rk628_csi_gpio_init(csi);
 	if (ret)
 		return dev_err_probe(dev, ret, "GPIO configuration failed\n");
+	rk628_capture_init_edid(csi->edid, csi->i2s_enable_default);
 	csi->rk628->hdmirx_det_gpio = csi->plugin_det_gpio;
 	csi->csi_lanes_in_use = 4;
 	csi->nosignal = true;
@@ -2340,7 +2345,7 @@ static int sensor_probe(struct i2c_client *client)
 	csi->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 	csi->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 	csi->audio_info = rk628_hdmirx_audioinfo_alloc(dev, &csi->confctl_mutex,
-						       csi->rk628, false);
+						       csi->rk628, csi->i2s_enable_default);
 	if (!csi->audio_info) {
 		ret = -ENOMEM;
 		goto fail;
