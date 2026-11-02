@@ -3893,27 +3893,45 @@ static int vin_try_ctrl(struct v4l2_ctrl *ctrl)
 static int vin_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct vin_vid_cap *cap = container_of(ctrl->handler, struct vin_vid_cap, ctrl_handler);
-	struct sensor_instance *inst = get_valid_sensor(cap->vinc);
-	struct v4l2_subdev *sensor = cap->pipe.sd[VIN_IND_SENSOR];
-	struct v4l2_subdev *flash = cap->pipe.sd[VIN_IND_FLASH];
+	struct sensor_instance *inst;
+	struct v4l2_subdev *sensor, *flash;
 	struct v4l2_control c;
 	int ret = 0;
 
+	if (ctrl->id == V4L2_CID_VFLIP || ctrl->id == V4L2_CID_HFLIP) {
+		ctrl->val = ctrl->id == V4L2_CID_VFLIP ? cap->vinc->vflip : cap->vinc->hflip;
+		return 0;
+	}
+
+	inst = get_valid_sensor(cap->vinc);
+	if (!inst)
+		return -ENODEV;
+	if (ctrl->id == V4L2_CID_SENSOR_TYPE) {
+		ctrl->val = inst->is_bayer_raw;
+		return 0;
+	}
+	sensor = cap->pipe.sd[VIN_IND_SENSOR];
+	if (!sensor || !sensor->ctrl_handler)
+		return -ENODEV;
+	flash = cap->pipe.sd[VIN_IND_FLASH];
 	c.id = ctrl->id;
 	if (inst->is_isp_used && inst->is_bayer_raw) {
 		switch (ctrl->id) {
 		case V4L2_CID_EXPOSURE:
-			v4l2_g_ctrl(sensor->ctrl_handler, &c);
-			ctrl->val = c.value;
+			ret = v4l2_g_ctrl(sensor->ctrl_handler, &c);
+			if (!ret)
+				ctrl->val = c.value;
 			break;
 		case V4L2_CID_EXPOSURE_ABSOLUTE:
 			c.id = V4L2_CID_EXPOSURE;
-			v4l2_g_ctrl(sensor->ctrl_handler, &c);
-			ctrl->val = __vin_sensor_line2time(sensor, c.value);
+			ret = v4l2_g_ctrl(sensor->ctrl_handler, &c);
+			if (!ret)
+				ctrl->val = __vin_sensor_line2time(sensor, c.value);
 			break;
 		case V4L2_CID_GAIN:
-			v4l2_g_ctrl(sensor->ctrl_handler, &c);
-			ctrl->val = c.value;
+			ret = v4l2_g_ctrl(sensor->ctrl_handler, &c);
+			if (!ret)
+				ctrl->val = c.value;
 			break;
 		case V4L2_CID_AE_WIN_X1:
 			break;
@@ -3925,45 +3943,30 @@ static int vin_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 		case V4L2_CID_3A_LOCK:
 		case V4L2_CID_AUTO_FOCUS_STATUS: /* Read-Only */
 			break;
-		case V4L2_CID_SENSOR_TYPE:
-			ctrl->val = inst->is_bayer_raw;
-			break;
-		case V4L2_CID_VFLIP:
-			ctrl->val = cap->vinc->vflip;
-			break;
-		case V4L2_CID_HFLIP:
-			ctrl->val = cap->vinc->hflip;
-			break;
 		default:
 			return -EINVAL;
 		}
 		return ret;
 	} else {
 		switch (ctrl->id) {
-		case V4L2_CID_SENSOR_TYPE:
-			c.value = inst->is_bayer_raw;
-			break;
 		case V4L2_CID_FLASH_LED_MODE:
+			if (!flash || !flash->ctrl_handler)
+				return -ENODEV;
 			ret = v4l2_g_ctrl(flash->ctrl_handler, &c);
 			break;
 		case V4L2_CID_AUTO_FOCUS_STATUS:
 			ret = v4l2_g_ctrl(sensor->ctrl_handler, &c);
-			if (c.value != V4L2_AUTO_FOCUS_STATUS_BUSY)
+			if (!ret && c.value != V4L2_AUTO_FOCUS_STATUS_BUSY)
 				sunxi_flash_stop(flash);
-			break;
-		case V4L2_CID_VFLIP:
-			ctrl->val = cap->vinc->vflip;
-			break;
-		case V4L2_CID_HFLIP:
-			ctrl->val = cap->vinc->hflip;
 			break;
 		default:
 			ret = v4l2_g_ctrl(sensor->ctrl_handler, &c);
 			break;
 		}
-		ctrl->val = c.value;
 		if (ret < 0)
 			vin_warn("v4l2 sub device g_ctrl fail!\n");
+		else
+			ctrl->val = c.value;
 	}
 	return ret;
 }
