@@ -163,6 +163,7 @@ struct sensor_info {
 	struct sensor_tvin tvin;
 	struct sensor_indetect sensor_indet;
 	void (*sensor_fps_change_callback)(int act_fps);
+	bool enum_scale_range; /* Opt in to a single scaled frame-size range. */
 };
 
 #endif /* __CAMERA__H__ */

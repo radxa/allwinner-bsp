@@ -2296,6 +2296,7 @@ static int sensor_probe(struct i2c_client *client)
 	info->win_pt = &csi->window;
 	info->current_wins = &csi->window;
 	info->win_size_num = 1;
+	info->enum_scale_range = true;
 	info->combo_mode = CMB_TERMINAL_RES | CMB_PHYA_OFFSET2 | MIPI_NORMAL_MODE;
 	info->time_hs = 0x30;
 	info->stream_seq = MIPI_BEFORE_SENSOR;

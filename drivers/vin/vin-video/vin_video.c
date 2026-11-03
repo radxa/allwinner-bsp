@@ -762,39 +762,67 @@ static int vidioc_enum_framesizes(struct file *file, void *fh,
 {
 	struct vin_core *vinc = video_drvdata(file);
 	struct v4l2_subdev_frame_size_enum fse;
-	struct v4l2_subdev *isp_sd;
+	struct v4l2_subdev *sensor, *isp_sd;
 	struct isp_dev *isp;
+	u32 max_width = 0, max_height = 0;
+	bool scale_range;
 	int ret;
 
-	if (vinc == NULL)
+	if (!vinc)
+		return -EINVAL;
+
+	sensor = vinc->vid_cap.pipe.sd[VIN_IND_SENSOR];
+	scale_range = sensor && to_state(sensor)->enum_scale_range;
+	if (scale_range && fsize->index)
+		return -EINVAL;
+	if (scale_range && !vin_find_format(&fsize->pixel_format, NULL, VIN_FMT_ALL, -1, false))
 		return -EINVAL;
 
 	memset(&fse, 0, sizeof(fse));
-	fse.index = fsize->index;
 	fse.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 
-	ret = v4l2_subdev_call(vinc->vid_cap.pipe.sd[VIN_IND_SENSOR], pad,
-				enum_frame_size, NULL, &fse);
-	if (ret < 0)
-		return -1;
+	if (!scale_range) {
+		/* shortcut: keep legacy ranges until camera enumeration is validated separately. */
+		fse.index = fsize->index;
+		ret = v4l2_subdev_call(sensor, pad, enum_frame_size, NULL, &fse);
+		if (ret < 0)
+			return -1;
+		max_width = fse.max_width;
+		max_height = fse.max_height;
+	} else {
+		for (fse.index = 0; ; fse.index++) {
+			ret = v4l2_subdev_call(sensor, pad, enum_frame_size, NULL, &fse);
+			if (ret == -EINVAL)
+				break;
+			if (ret < 0)
+				return ret == -ENOIOCTLCMD ? -EINVAL : ret;
+			if ((u64)fse.max_width * fse.max_height >
+			    (u64)max_width * max_height) {
+				max_width = fse.max_width;
+				max_height = fse.max_height;
+			}
+		}
+	}
 
 	isp_sd = vinc->vid_cap.pipe.sd[VIN_IND_ISP];
 	if (IS_ENABLED(CONFIG_ARCH_SUN60IW2) && isp_sd) {
 		isp = v4l2_get_subdevdata(isp_sd);
 		if (isp && !isp->large_image) {
 			/* Match the normal ISP limits in __isp_try_format(). */
-			fse.max_width = min_t(u32, fse.max_width,
-					      isp->id == 1 ? 3264 : 4224);
-			fse.max_height = min_t(u32, fse.max_height, 4224);
+			max_width = min_t(u32, max_width,
+					  isp->id == 1 ? 3264 : 4224);
+			max_height = min_t(u32, max_height, 4224);
 		}
 	}
+	if (scale_range && (max_width < MIN_IN_WIDTH || max_height < MIN_IN_HEIGHT))
+		return -EINVAL;
 
-	fsize->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
+	fsize->type = scale_range ? V4L2_FRMSIZE_TYPE_STEPWISE : V4L2_FRMSIZE_TYPE_CONTINUOUS;
 	fsize->stepwise.min_width = MIN_IN_WIDTH;
 	fsize->stepwise.min_height = MIN_IN_HEIGHT;
 	fsize->stepwise.step_width = 2;
-	fsize->stepwise.max_width = fse.max_width;
-	fsize->stepwise.max_height = fse.max_height;
+	fsize->stepwise.max_width = max_width;
+	fsize->stepwise.max_height = max_height;
 	fsize->stepwise.step_height = 2;
 
 	return 0;
