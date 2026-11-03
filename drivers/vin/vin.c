@@ -1372,15 +1372,19 @@ static int __vin_subdev_set_stream(struct v4l2_subdev *sd, unsigned int idx, int
 	}
 #endif
 	ret = v4l2_subdev_call(sd, video, s_stream, on);
+	if (ret == -ENOIOCTLCMD)
+		ret = 0;
+	if (on && ret < 0)
+		--(*stream_count);
 #if defined ISP0_BRIDGE_VALID
-	if (on && idx == VIN_IND_ISP) {
+	if (on && !ret && idx == VIN_IND_ISP) {
 		isp = v4l2_get_subdevdata(sd);
 		if (isp->id == 0)
 			csic_isp_bridge_enable(0);
 	}
 #endif
 
-	return ret != -ENOIOCTLCMD ? ret : 0;
+	return ret;
 }
 
 static int __vin_pipeline_s_stream(struct vin_pipeline *p, int on_idx)
@@ -1507,8 +1511,10 @@ error:
 			continue;
 		if (vinc->ptn_cfg.ptn_en && (idx <= VIN_IND_MIPI))
 			continue;
-		ret = __vin_subdev_set_stream(p->sd[idx], idx, !on);
+		__vin_subdev_set_stream(p->sd[idx], idx, !on);
 	}
+	if (on)
+		vin_bridge_ch_en(vinc, 0);
 	return ret;
 }
 

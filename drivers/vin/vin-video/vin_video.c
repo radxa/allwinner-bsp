@@ -672,15 +672,11 @@ static unsigned int vin_min_capture_buffers(struct vin_vid_cap *cap)
 	return 3;
 }
 
-static int start_streaming(struct vb2_queue *vq, unsigned int count)
-{
-	return 0;
-}
+static int vin_start_capture(struct vin_vid_cap *cap);
 
-/*  abort streaming and wait for last buffer  */
-static void stop_streaming(struct vb2_queue *vq)
+static void vin_return_buffers(struct vin_vid_cap *cap,
+			       enum vb2_buffer_state state)
 {
-	struct vin_vid_cap *cap = vb2_get_drv_priv(vq);
 	unsigned long flags = 0;
 
 	spin_lock_irqsave(&cap->slock, flags);
@@ -695,10 +691,30 @@ static void stop_streaming(struct vb2_queue *vq)
 				continue;
 			buf->first_qbuf = 0;
 		}
-		vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
+		vb2_buffer_done(&buf->vb.vb2_buf, state);
 		vin_log(VIN_LOG_VIDEO, "buf %d stop\n", buf->vb.vb2_buf.index);
 	}
 	spin_unlock_irqrestore(&cap->slock, flags);
+}
+
+static int start_streaming(struct vb2_queue *vq, unsigned int count)
+{
+	struct vin_vid_cap *cap = vb2_get_drv_priv(vq);
+	int ret;
+
+	if (count < vin_min_capture_buffers(cap))
+		ret = -ENOBUFS;
+	else
+		ret = vin_start_capture(cap);
+	if (ret)
+		vin_return_buffers(cap, VB2_BUF_STATE_QUEUED);
+	return ret;
+}
+
+/* The ioctl/close paths stop hardware before returning its buffers. */
+static void stop_streaming(struct vb2_queue *vq)
+{
+	vin_return_buffers(vb2_get_drv_priv(vq), VB2_BUF_STATE_ERROR);
 }
 
 static const struct vb2_ops vin_video_qops = {
@@ -2167,30 +2183,17 @@ static int __csi_isp_setup_link(struct vin_core *vinc, int en)
 	return 0;
 }
 
-static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
+static int vin_start_capture(struct vin_vid_cap *cap)
 {
-	struct vin_core *vinc = video_drvdata(file);
-	struct vin_vid_cap *cap = &vinc->vid_cap;
+	struct vin_core *vinc = cap->vinc;
 	struct vin_md *vind = dev_get_drvdata(vinc->v4l2_dev->dev);
 	struct modules_config *module = &vind->modules[vinc->sensor_sel];
 	int valid_idx = module->sensors.valid_idx;
 	int ret = 0;
 	__maybe_unused struct vin_core *vinc_bind = NULL;
-
-	if (i != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		ret = -EINVAL;
-		goto streamon_error;
-	}
-
-	if (vin_streaming(cap)) {
-		vin_err("video%d has already stream on\n", vinc->id);
-		ret = -1;
-		goto streamon_error;
-	}
-
-	ret = vb2_ioctl_streamon(file, priv, i);
-	if (ret)
-		goto streamon_error;
+#ifdef SUPPORT_PTN
+	bool ptn_allocated = false;
+#endif
 
 	if (vinc->large_image == 1) {
 #ifdef SUPPORT_PTN
@@ -2201,8 +2204,10 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 		os_mem_alloc(&vinc->pdev->dev, &vinc->ptn_cfg.ptn_buf);
 		if (vinc->ptn_cfg.ptn_buf.vir_addr == NULL) {
 			vin_err("ptn buffer 0x%x alloc failed!\n", cap->buf_byte_size);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto streamon_start_error;
 		}
+		ptn_allocated = true;
 		csic_dma_buffer_address(vinc->vipp_sel, CSI_BUF_0_A, (unsigned long)vinc->ptn_cfg.ptn_buf.dma_addr);
 #endif
 	}
@@ -2213,11 +2218,13 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 	if (vin_lpm(cap)) {
 		if (__vin_sensor_setup_link(vinc, module, valid_idx, 1) < 0) {
 			vin_err("sensor setup link failed\n");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto streamon_link_error;
 		}
 		if (__csi_isp_setup_link(vinc, 1) < 0) {
 			vin_err("csi&isp setup link failed\n");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto streamon_link_error;
 		}
 		clear_bit(VIN_LPM, &cap->state);
 	}
@@ -2230,15 +2237,19 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 		if (vinc->id % 4 == 1 && vin_core_gbl[vinc->id - 1]) {
 			vinc_bind = vin_core_gbl[vinc->id - 1];
 			ret = vin_pipeline_call(vinc_bind, set_stream, &vinc_bind->vid_cap.pipe, vinc_bind->stream_idx);
-			if (ret < 0)
+			if (ret < 0) {
 				vin_err("video%d %s error!\n", vinc_bind->id, __func__);
+				goto streamon_pipeline_error;
+			}
 			set_bit(VIN_STREAM, &vinc_bind->vid_cap.state);
 		}
 	}
 
 	ret = vin_pipeline_call(cap->vinc, set_stream, &cap->pipe, cap->vinc->stream_idx);
-	if (ret < 0)
+	if (ret < 0) {
 		vin_err("video%d %s error!\n", vinc->id, __func__);
+		goto streamon_pipeline_error;
+	}
 	set_bit(VIN_STREAM, &cap->state);
 
 	/* set saved exp and gain for reopen, you can call the api in sensor_reg_init */
@@ -2262,9 +2273,38 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 #endif
 #endif
 #endif
-streamon_error:
+	return 0;
 
+streamon_pipeline_error:
+	if (vinc_bind && vin_streaming(&vinc_bind->vid_cap)) {
+		vin_pipeline_call(vinc_bind, set_stream, &vinc_bind->vid_cap.pipe, 0);
+		clear_bit(VIN_STREAM, &vinc_bind->vid_cap.state);
+	}
+	mutex_unlock(&cap->vdev.entity.graph_obj.mdev->graph_mutex);
+	vin_timer_del(vinc);
+streamon_link_error:
+	mutex_lock(&cap->vdev.entity.graph_obj.mdev->graph_mutex);
+	set_bit(VIN_LPM, &cap->state);
+	__csi_isp_setup_link(vinc, 0);
+	__vin_sensor_setup_link(vinc, module, valid_idx, 0);
+	mutex_unlock(&cap->vdev.entity.graph_obj.mdev->graph_mutex);
+#ifdef SUPPORT_PTN
+streamon_start_error:
+	if (ptn_allocated)
+		os_mem_free(&vinc->pdev->dev, &vinc->ptn_cfg.ptn_buf);
+#endif
 	return ret;
+}
+
+static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
+{
+	struct vin_core *vinc = video_drvdata(file);
+
+	if (i != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+		return -EINVAL;
+	if (vin_streaming(&vinc->vid_cap))
+		return -1;
+	return vb2_ioctl_streamon(file, priv, i);
 }
 
 static void vin_queue_free(struct file *file)
@@ -2287,10 +2327,10 @@ static int vidioc_streamoff(struct file *file, void *priv, enum v4l2_buf_type i)
 	int valid_idx = module->sensors.valid_idx;
 	int ret = 0;
 	__maybe_unused struct vin_core *vinc_bind = NULL;
-	if (!vin_streaming(cap)) {
-		vin_err("video%d has already stream off\n", vinc->id);
-		goto streamoff_error;
-	}
+	if (i != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+		return -EINVAL;
+	if (!vin_streaming(cap))
+		return vb2_ioctl_streamoff(file, priv, i);
 	vin_timer_del(vinc);
 
 #if VIN_FALSE
@@ -2322,11 +2362,6 @@ static int vidioc_streamoff(struct file *file, void *priv, enum v4l2_buf_type i)
 	__csi_isp_setup_link(vinc, 0);
 	__vin_sensor_setup_link(vinc, module, valid_idx, 0);
 	mutex_unlock(&cap->vdev.entity.graph_obj.mdev->graph_mutex);
-
-	if (i != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		ret = -EINVAL;
-		goto streamoff_error;
-	}
 
 	ret = vb2_ioctl_streamoff(file, priv, i);
 	if (ret != 0) {
