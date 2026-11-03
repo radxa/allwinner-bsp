@@ -894,15 +894,12 @@ static void tdm_set_rx_data_rate(struct tdm_rx_dev *tdm_rx, unsigned int en)
 }
 #endif
 
-static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
+static bool tdm_bypass_stream(const struct v4l2_mbus_framefmt *mf)
 {
-	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
-	struct tdm_dev *tdm = container_of(tdm_rx, struct tdm_dev, tdm_rx[tdm_rx->id]);
-	struct v4l2_mbus_framefmt *mf = &tdm_rx->format;
-	struct mbus_framefmt_res *res = (void *)mf->reserved;
-	__maybe_unused struct tdm_rx_dev *tdm_rx1 = NULL, *tdm_rx2 = NULL, *tdm_rx3 = NULL;
-	__maybe_unused struct rx_chn_fmt *chn_fmt;
-	__maybe_unused int i;
+	const struct mbus_framefmt_res *res = (const void *)mf->reserved;
+
+	if (mf->code == MEDIA_BUS_FMT_UYVY8_2X8)
+		return true;
 
 	switch (res->res_pix_fmt) {
 	case V4L2_PIX_FMT_SBGGR8:
@@ -917,11 +914,23 @@ static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 	case V4L2_PIX_FMT_SGBRG12:
 	case V4L2_PIX_FMT_SGRBG12:
 	case V4L2_PIX_FMT_SRGGB12:
-		vin_log(VIN_LOG_FMT, "%s output fmt is raw, return directly\n", __func__);
-		return 0;
+		return true;
 	default:
 		break;
 	}
+	return false;
+}
+
+static int __tdm_hw_s_stream(struct v4l2_subdev *sd, int enable)
+{
+	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
+	struct tdm_dev *tdm = container_of(tdm_rx, struct tdm_dev, tdm_rx[tdm_rx->id]);
+	struct v4l2_mbus_framefmt *mf = &tdm_rx->format;
+	struct mbus_framefmt_res *res = (void *)mf->reserved;
+	__maybe_unused struct tdm_rx_dev *tdm_rx1 = NULL, *tdm_rx2 = NULL, *tdm_rx3 = NULL;
+	__maybe_unused struct rx_chn_fmt *chn_fmt;
+	__maybe_unused int i;
+
 	if (enable) {
 #ifdef TDM_V200
 		tdm_rx->ws.wdr_mode = res->res_wdr_mode;
@@ -937,6 +946,10 @@ static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 		} else
 			tdm_rx->streaming = true;
 		chn_fmt = kzalloc(sizeof(struct rx_chn_fmt), GFP_KERNEL);
+		if (!chn_fmt) {
+			tdm_rx->streaming = false;
+			return -ENOMEM;
+		}
 		chn_fmt->wdr_mode = res->res_wdr_mode;
 		chn_fmt->rx_dev = tdm_rx;
 		tdm_save_wdr_mode(tdm_rx, chn_fmt);
@@ -1140,7 +1153,9 @@ static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 			if (tdm_rx->width != tdm_rx->format.width || tdm_rx->height != tdm_rx->format.height) {
 				vin_err("The size of the %d time opening tdm_rx%d is different from the first time opened\n",
 					tdm_rx->stream_cnt, tdm_rx->id);
-				return -1;
+				tdm->stream_cnt--;
+				tdm_rx->stream_cnt--;
+				return -EINVAL;
 			}
 		}
 		if (tdm->stream_cnt == 1) {
@@ -1227,7 +1242,7 @@ static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 				tdm_rx_bufs_free(tdm_rx3);
 		}
 
-		cancel_work_sync(&tdm->tdm_reset_task);
+		tdm_rx->streaming = false;
 #else /* else not TDM_V200 */
 		tdm->stream_cnt--;
 		if (tdm->stream_cnt == 0) {
@@ -1257,6 +1272,72 @@ static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
 	return 0;
 }
 
+static int sunxi_tdm_subdev_s_stream(struct v4l2_subdev *sd, int enable)
+{
+	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
+#ifdef TDM_V200
+	struct tdm_dev *tdm = container_of(tdm_rx, struct tdm_dev, tdm_rx[tdm_rx->id]);
+#endif
+	int ret = 0;
+
+#ifdef TDM_V200
+	/* The exported VE reset callback must not synchronously drain its own work. */
+	if (current_work() == &tdm->tdm_reset_task)
+		return -EBUSY;
+#endif
+
+	mutex_lock(&tdm_rx->subdev_lock);
+	if (tdm_rx->session == TDM_SESSION_STOPPING) {
+		ret = -EBUSY;
+		goto out;
+	}
+	if (enable) {
+		if (tdm_rx->session != TDM_SESSION_STOPPED)
+			goto out;
+		/* Hardware large-image setup may change the working width in place. */
+		tdm_rx->stream_format = tdm_rx->format;
+		if (tdm_bypass_stream(&tdm_rx->format)) {
+			tdm_rx->session = TDM_SESSION_BYPASS;
+			goto out;
+		}
+		if (!tdm_rx->tdm_fmt) {
+			ret = -EINVAL;
+			goto out;
+		}
+		ret = __tdm_hw_s_stream(sd, 1);
+#ifdef TDM_V200
+		if (!ret && !tdm_rx->streaming)
+			ret = -EBUSY;
+#endif
+		if (!ret)
+			tdm_rx->session = TDM_SESSION_TDM;
+		else
+			tdm_rx->format = tdm_rx->stream_format;
+		goto out;
+	}
+	if (tdm_rx->session != TDM_SESSION_TDM) {
+		if (tdm_rx->session == TDM_SESSION_BYPASS)
+			tdm_rx->format = tdm_rx->stream_format;
+		tdm_rx->session = TDM_SESSION_STOPPED;
+		goto out;
+	}
+
+	/* Stop follows the session that started, not a later format request. */
+	tdm_rx->session = TDM_SESSION_STOPPING;
+	ret = __tdm_hw_s_stream(sd, 0);
+	mutex_unlock(&tdm_rx->subdev_lock);
+#ifdef TDM_V200
+	cancel_work_sync(&tdm->tdm_reset_task);
+#endif
+	mutex_lock(&tdm_rx->subdev_lock);
+	if (!ret)
+		tdm_rx->format = tdm_rx->stream_format;
+	tdm_rx->session = ret ? TDM_SESSION_TDM : TDM_SESSION_STOPPED;
+out:
+	mutex_unlock(&tdm_rx->subdev_lock);
+	return ret;
+}
+
 static struct tdm_format *__tdm_try_format(struct v4l2_mbus_framefmt *mf)
 {
 	struct tdm_format *tdm_fmt = NULL;
@@ -1283,144 +1364,200 @@ int sunxi_tdm_subdev_s_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *para
 	return 0;
 }
 
+static const struct v4l2_mbus_framefmt *tdm_active_format(struct tdm_rx_dev *tdm_rx)
+{
+	if (tdm_rx->session != TDM_SESSION_STOPPED)
+		return &tdm_rx->stream_format;
+	return &tdm_rx->format;
+}
+
+static int tdm_get_format(struct v4l2_subdev *sd,
+			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_format *fmt)
+{
+	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
+
+	if (fmt->pad >= TDM_PAD_NUM)
+		return -EINVAL;
+	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+		if (!cfg)
+			return -EINVAL;
+		fmt->format = cfg[fmt->pad].try_fmt;
+		return 0;
+	}
+	if (fmt->which != V4L2_SUBDEV_FORMAT_ACTIVE)
+		return -EINVAL;
+
+	mutex_lock(&tdm_rx->subdev_lock);
+	fmt->format = *tdm_active_format(tdm_rx);
+	mutex_unlock(&tdm_rx->subdev_lock);
+	return 0;
+}
+
+static bool tdm_same_input(const struct v4l2_mbus_framefmt *active,
+			   const struct v4l2_mbus_framefmt *requested)
+{
+	const struct mbus_framefmt_res *a = (const void *)active->reserved;
+	const struct mbus_framefmt_res *r = (const void *)requested->reserved;
+
+	if (active->width != requested->width || active->height != requested->height ||
+	    active->code != requested->code || active->field != requested->field)
+		return false;
+	/* Standard subdev ioctls clear reserved; no vendor inputs were requested. */
+	if (!r->res_pix_fmt)
+		return true;
+
+	return tdm_bypass_stream(active) == tdm_bypass_stream(requested) &&
+		a->res_mipi_bps == r->res_mipi_bps &&
+		a->res_combo_mode == r->res_combo_mode &&
+		a->res_wdr_mode == r->res_wdr_mode &&
+		a->res_time_hs == r->res_time_hs &&
+		a->res_deskew == r->res_deskew &&
+		a->res_lp_mode == r->res_lp_mode &&
+		a->fps == r->fps && a->pclk_dly == r->pclk_dly;
+}
+
+static void tdm_copy_active_format(struct v4l2_mbus_framefmt *dst,
+				   const struct v4l2_mbus_framefmt *active)
+{
+	struct mbus_framefmt_res *res = (void *)dst->reserved;
+	u32 pix_fmt = res->res_pix_fmt;
+
+	*dst = *active;
+	/* Each VIPP consumer keeps its own memory layout through the shared TDM. */
+	if (pix_fmt)
+		res->res_pix_fmt = pix_fmt;
+}
+
+static int tdm_set_format(struct v4l2_subdev *sd,
+			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_format *fmt)
+{
+	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
+	__maybe_unused struct tdm_dev *tdm = container_of(tdm_rx, struct tdm_dev, tdm_rx[tdm_rx->id]);
+	__maybe_unused struct mbus_framefmt_res *res;
+	struct tdm_format *tdm_fmt = NULL;
+	unsigned int stream_count;
+	int ret = 0;
+
+	if (fmt->pad >= TDM_PAD_NUM)
+		return -EINVAL;
+	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+		if (!cfg)
+			return -EINVAL;
+		if (fmt->pad == TDM_PAD_SOURCE) {
+			fmt->format = cfg[TDM_PAD_SOURCE].try_fmt;
+			return 0;
+		}
+		if (fmt->format.code != MEDIA_BUS_FMT_UYVY8_2X8)
+			__tdm_try_format(&fmt->format);
+		cfg[TDM_PAD_SINK].try_fmt = fmt->format;
+		cfg[TDM_PAD_SOURCE].try_fmt = fmt->format;
+		return 0;
+	}
+	if (fmt->which != V4L2_SUBDEV_FORMAT_ACTIVE)
+		return -EINVAL;
+
+	mutex_lock(&tdm_rx->subdev_lock);
+	if (fmt->pad == TDM_PAD_SOURCE) {
+		tdm_copy_active_format(&fmt->format, tdm_active_format(tdm_rx));
+		goto out;
+	}
+	if (fmt->format.code != MEDIA_BUS_FMT_UYVY8_2X8)
+		tdm_fmt = __tdm_try_format(&fmt->format);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	stream_count = READ_ONCE(tdm_rx->stream_count);
+#else
+	stream_count = READ_ONCE(sd->entity.stream_count);
+#endif
+	if (tdm_rx->session == TDM_SESSION_STOPPING) {
+		ret = -EBUSY;
+		goto out;
+	}
+	if (stream_count || tdm_rx->session != TDM_SESSION_STOPPED) {
+		if (tdm_same_input(tdm_active_format(tdm_rx), &fmt->format))
+			tdm_copy_active_format(&fmt->format, tdm_active_format(tdm_rx));
+		else
+			ret = -EBUSY;
+		goto out;
+	}
+	tdm_rx->format = fmt->format;
+	if (tdm_fmt)
+		tdm_rx->tdm_fmt = tdm_fmt;
+#ifdef TDM_V200
+	if (tdm_fmt) {
+		res = (void *)tdm_rx->format.reserved;
+		if (res->res_wdr_mode == ISP_DOL_WDR_MODE) {
+			if (tdm_rx->id == 0)
+				glb_tdm[tdm->id]->tdm_rx[1].tdm_fmt = tdm_fmt;
+			else if (tdm_rx->id == 2)
+				glb_tdm[tdm->id]->tdm_rx[3].tdm_fmt = tdm_fmt;
+		} else if (res->res_wdr_mode == ISP_3FDOL_WDR_MODE) {
+			if (tdm_rx->id == 0) {
+				glb_tdm[tdm->id]->tdm_rx[1].tdm_fmt = tdm_fmt;
+				glb_tdm[tdm->id]->tdm_rx[2].tdm_fmt = tdm_fmt;
+			}
+		}
+	}
+#endif
+out:
+	mutex_unlock(&tdm_rx->subdev_lock);
+	return ret;
+}
+
+static int tdm_init_formats(struct v4l2_subdev *sd,
+			    struct v4l2_subdev_pad_config *cfg)
+{
+	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
+
+	if (!cfg)
+		return -EINVAL;
+	mutex_lock(&tdm_rx->subdev_lock);
+	cfg[TDM_PAD_SINK].try_fmt = *tdm_active_format(tdm_rx);
+	cfg[TDM_PAD_SOURCE].try_fmt = *tdm_active_format(tdm_rx);
+	mutex_unlock(&tdm_rx->subdev_lock);
+	return 0;
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 static int sunxi_tdm_subdev_get_fmt(struct v4l2_subdev *sd,
 				    struct v4l2_subdev_state *state,
 				    struct v4l2_subdev_format *fmt)
 {
-	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
-	struct v4l2_mbus_framefmt *mf;
-
-	mf = &tdm_rx->format;
-	if (!mf)
-		return -EINVAL;
-
-	mutex_lock(&tdm_rx->subdev_lock);
-	fmt->format = *mf;
-	mutex_unlock(&tdm_rx->subdev_lock);
-	return 0;
+	return tdm_get_format(sd, state ? state->pads : NULL, fmt);
 }
 
 static int sunxi_tdm_subdev_set_fmt(struct v4l2_subdev *sd,
 				    struct v4l2_subdev_state *state,
 				    struct v4l2_subdev_format *fmt)
 {
-	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
-	__maybe_unused struct tdm_dev *tdm = container_of(tdm_rx, struct tdm_dev, tdm_rx[tdm_rx->id]);
-	struct v4l2_mbus_framefmt *mf;
-	__maybe_unused struct mbus_framefmt_res *res;
-	struct tdm_format *tdm_fmt;
-
-	vin_log(VIN_LOG_FMT, "%s %d*%d %x %d\n", __func__,
-		fmt->format.width, fmt->format.height,
-		fmt->format.code, fmt->format.field);
-
-	mf = &tdm_rx->format;
-
-	if (fmt->pad == MIPI_PAD_SOURCE) {
-		if (mf) {
-			mutex_lock(&tdm_rx->subdev_lock);
-			fmt->format = *mf;
-			mutex_unlock(&tdm_rx->subdev_lock);
-		}
-		return 0;
-	}
-
-	tdm_fmt = __tdm_try_format(&fmt->format);
-	if (mf) {
-		mutex_lock(&tdm_rx->subdev_lock);
-		*mf = fmt->format;
-		if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
-			tdm_rx->tdm_fmt = tdm_fmt;
-#ifdef TDM_V200
-			res = (void *)mf->reserved;
-			if (res->res_wdr_mode == ISP_DOL_WDR_MODE) {
-				if (tdm_rx->id == 0)
-					glb_tdm[tdm->id]->tdm_rx[1].tdm_fmt = tdm_fmt;
-				else if (tdm_rx->id == 2)
-					glb_tdm[tdm->id]->tdm_rx[3].tdm_fmt = tdm_fmt;
-			} else if (res->res_wdr_mode == ISP_3FDOL_WDR_MODE) {
-				if (tdm_rx->id == 0) {
-					glb_tdm[tdm->id]->tdm_rx[1].tdm_fmt = tdm_fmt;
-					glb_tdm[tdm->id]->tdm_rx[2].tdm_fmt = tdm_fmt;
-				}
-			}
-#endif
-		}
-		mutex_unlock(&tdm_rx->subdev_lock);
-	}
-
-	return 0;
+	return tdm_set_format(sd, state ? state->pads : NULL, fmt);
 }
 
-#else /* before linux-5.15 */
-static int sunxi_tdm_subdev_get_fmt(struct v4l2_subdev *sd,
-				     struct v4l2_subdev_pad_config *cfg,
-				     struct v4l2_subdev_format *fmt)
+static int sunxi_tdm_subdev_init_cfg(struct v4l2_subdev *sd,
+				     struct v4l2_subdev_state *state)
 {
-	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
-	struct v4l2_mbus_framefmt *mf;
-
-	mf = &tdm_rx->format;
-	if (!mf)
-		return -EINVAL;
-
-	mutex_lock(&tdm_rx->subdev_lock);
-	fmt->format = *mf;
-	mutex_unlock(&tdm_rx->subdev_lock);
-	return 0;
+	return tdm_init_formats(sd, state ? state->pads : NULL);
+}
+#else
+static int sunxi_tdm_subdev_get_fmt(struct v4l2_subdev *sd,
+				    struct v4l2_subdev_pad_config *cfg,
+				    struct v4l2_subdev_format *fmt)
+{
+	return tdm_get_format(sd, cfg, fmt);
 }
 
 static int sunxi_tdm_subdev_set_fmt(struct v4l2_subdev *sd,
-				     struct v4l2_subdev_pad_config *cfg,
-				     struct v4l2_subdev_format *fmt)
+				    struct v4l2_subdev_pad_config *cfg,
+				    struct v4l2_subdev_format *fmt)
 {
-	struct tdm_rx_dev *tdm_rx = v4l2_get_subdevdata(sd);
-	__maybe_unused struct tdm_dev *tdm = container_of(tdm_rx, struct tdm_dev, tdm_rx[tdm_rx->id]);
-	struct v4l2_mbus_framefmt *mf;
-	__maybe_unused struct mbus_framefmt_res *res;
-	struct tdm_format *tdm_fmt;
+	return tdm_set_format(sd, cfg, fmt);
+}
 
-	vin_log(VIN_LOG_FMT, "%s %d*%d %x %d\n", __func__,
-		fmt->format.width, fmt->format.height,
-		fmt->format.code, fmt->format.field);
-
-	mf = &tdm_rx->format;
-
-	if (fmt->pad == MIPI_PAD_SOURCE) {
-		if (mf) {
-			mutex_lock(&tdm_rx->subdev_lock);
-			fmt->format = *mf;
-			mutex_unlock(&tdm_rx->subdev_lock);
-		}
-		return 0;
-	}
-
-	tdm_fmt = __tdm_try_format(&fmt->format);
-	if (mf) {
-		mutex_lock(&tdm_rx->subdev_lock);
-		*mf = fmt->format;
-		if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
-			tdm_rx->tdm_fmt = tdm_fmt;
-#ifdef TDM_V200
-			res = (void *)mf->reserved;
-			if (res->res_wdr_mode == ISP_DOL_WDR_MODE) {
-				if (tdm_rx->id == 0)
-					glb_tdm[tdm->id]->tdm_rx[1].tdm_fmt = tdm_fmt;
-				else if (tdm_rx->id == 2)
-					glb_tdm[tdm->id]->tdm_rx[3].tdm_fmt = tdm_fmt;
-			} else if (res->res_wdr_mode == ISP_3FDOL_WDR_MODE) {
-				if (tdm_rx->id == 0) {
-					glb_tdm[tdm->id]->tdm_rx[1].tdm_fmt = tdm_fmt;
-					glb_tdm[tdm->id]->tdm_rx[2].tdm_fmt = tdm_fmt;
-				}
-			}
-#endif
-		}
-		mutex_unlock(&tdm_rx->subdev_lock);
-	}
-
-	return 0;
+static int sunxi_tdm_subdev_init_cfg(struct v4l2_subdev *sd,
+				     struct v4l2_subdev_pad_config *cfg)
+{
+	return tdm_init_formats(sd, cfg);
 }
 #endif
 
@@ -1429,6 +1566,7 @@ static const struct v4l2_subdev_video_ops sunxi_tdm_subdev_video_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops sunxi_tdm_subdev_pad_ops = {
+	.init_cfg = sunxi_tdm_subdev_init_cfg,
 	.get_fmt = sunxi_tdm_subdev_get_fmt,
 	.set_fmt = sunxi_tdm_subdev_set_fmt,
 };
@@ -1444,6 +1582,7 @@ static int __tdm_init_subdev(struct tdm_rx_dev *tdm_rx)
 	int ret;
 
 	mutex_init(&tdm_rx->subdev_lock);
+	tdm_rx->session = TDM_SESSION_STOPPED;
 	v4l2_subdev_init(sd, &sunxi_tdm_subdev_ops);
 	sd->grp_id = VIN_GRP_ID_TDM_RX;
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
@@ -2582,14 +2721,18 @@ static int tdm_remove(struct platform_device *pdev)
 
 	if (!tdm->is_empty) {
 		free_irq(tdm->irq, tdm);
-		if (tdm->base)
-			iounmap(tdm->base);
 	}
+#ifdef TDM_V200
+	cancel_work_sync(&tdm->tdm_reset_task);
+#endif
+	if (!tdm->is_empty && tdm->base)
+		iounmap(tdm->base);
 
 	for (i = 0; i < TDM_RX_NUM; i++) {
 		sd = &tdm->tdm_rx[i].subdev;
 		v4l2_set_subdevdata(sd, NULL);
 		media_entity_cleanup(&tdm->tdm_rx[i].subdev.entity);
+		mutex_destroy(&tdm->tdm_rx[i].subdev_lock);
 	}
 
 	kfree(tdm);

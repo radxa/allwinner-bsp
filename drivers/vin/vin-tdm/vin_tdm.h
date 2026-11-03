@@ -97,13 +97,22 @@ struct rx_work_status {
 };
 #endif
 
+enum tdm_session_state {
+	TDM_SESSION_STOPPED,
+	TDM_SESSION_BYPASS,
+	TDM_SESSION_TDM,
+	TDM_SESSION_STOPPING,
+};
+
 struct tdm_rx_dev {
 	unsigned char id;
 	struct v4l2_subdev subdev;
 	struct media_pad tdm_pads[TDM_PAD_NUM];
 	struct mutex subdev_lock;
+	enum tdm_session_state session;
 	struct tdm_format *tdm_fmt;
 	struct v4l2_mbus_framefmt format;
+	struct v4l2_mbus_framefmt stream_format;
 	u32 stream_cnt;
 	u32 width;
 	u32 height;

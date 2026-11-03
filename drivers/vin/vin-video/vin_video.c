@@ -1079,7 +1079,7 @@ static int vidioc_try_fmt_vid_cap_mplane(struct file *file, void *priv,
 					 struct v4l2_format *f)
 {
 	struct vin_core *vinc = video_drvdata(file);
-	struct v4l2_mbus_framefmt mf;
+	struct v4l2_mbus_framefmt mf = { 0 };
 	struct vin_fmt *ffmt = NULL;
 
 	ffmt = vin_find_format(&f->fmt.pix_mp.pixelformat, NULL,
@@ -1106,7 +1106,7 @@ static int __vin_set_fmt(struct vin_core *vinc, struct v4l2_format *f)
 {
 	struct vin_vid_cap *cap = &vinc->vid_cap;
 	struct sensor_win_size win_cfg;
-	struct v4l2_mbus_framefmt mf;
+	struct v4l2_mbus_framefmt mf = { 0 };
 	struct vin_fmt *ffmt = NULL;
 	struct mbus_framefmt_res *res = (void *)mf.reserved;
 	__maybe_unused struct vin_md *vind = dev_get_drvdata(vinc->v4l2_dev->dev);
