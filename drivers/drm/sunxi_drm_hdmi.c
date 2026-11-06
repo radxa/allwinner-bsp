@@ -23,7 +23,9 @@
 
 #include <drm/drm_of.h>
 #include <drm/drm_connector.h>
+#include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_modeset_lock.h>
 #include <drm/drm_simple_kms_helper.h>
 #include <drm/drm_probe_helper.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
@@ -147,6 +149,7 @@ struct sunxi_hdmi_ctrl_s {
 	int drv_sw_enable;
 	int drv_res_enable;
 	int drv_need_flush;
+	bool hpd_recover;
 
 	/* dts control value */
 	unsigned int drv_dts_cec;
@@ -1454,6 +1457,54 @@ static int _sunxi_drv_hdmi_check_hpd_mask(struct sunxi_drm_hdmi *hdmi)
 		return 0;
 }
 
+/* Restore an active DRM output after HPD unplug disabled the HDMI hardware. */
+static void _sunxi_drv_hdmi_recover(struct sunxi_drm_hdmi *hdmi)
+{
+	struct drm_device *dev = hdmi->sdrm.drm_dev;
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_atomic_state *state;
+	struct drm_connector_state *conn_state;
+	struct drm_crtc_state *crtc_state;
+	int ret;
+
+	if (IS_ERR_OR_NULL(dev) || kthread_should_stop())
+		return;
+
+	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, 0, ret);
+	state = drm_atomic_state_alloc(dev);
+	if (!state) {
+		ret = -ENOMEM;
+		goto out_unlock;
+	}
+	state->acquire_ctx = &ctx;
+	conn_state = drm_atomic_get_connector_state(state, &hdmi->sdrm.connector);
+	if (IS_ERR(conn_state)) {
+		ret = PTR_ERR(conn_state);
+		goto out_state;
+	}
+	if (!conn_state->crtc)
+		goto out_state;
+	crtc_state = drm_atomic_get_crtc_state(state, conn_state->crtc);
+	if (IS_ERR(crtc_state)) {
+		ret = PTR_ERR(crtc_state);
+		goto out_state;
+	}
+	if (!crtc_state->active || !crtc_state->enable || !sunxi_hdmi_get_hpd())
+		goto out_state;
+
+	crtc_state->mode_changed = true;
+	hdmi->hdmi_ctrl.hpd_recover = true;
+	hdmi_inf("hdmi hotplug minimal modeset recovery\n");
+	ret = drm_atomic_commit(state);
+	hdmi->hdmi_ctrl.hpd_recover = false;
+out_state:
+	drm_atomic_state_put(state);
+out_unlock:
+	DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
+	if (ret)
+		hdmi_err("hdmi hotplug recovery failed: %d\n", ret);
+}
+
 static int _sunxi_drv_hdmi_thread(void *parg)
 {
 	int temp_hpd = 0, ret = 0;
@@ -1497,6 +1548,8 @@ handle_change:
 			_sunxi_drv_hdmi_hpd_plugout(hdmi);
 
 		_sunxi_drv_hdmi_hpd_set(hdmi, temp_hpd);
+		if (temp_hpd)
+			_sunxi_drv_hdmi_recover(hdmi);
 
 next_loop:
 		_sunxi_drv_hdcp_state_polling(hdmi);
@@ -2624,6 +2677,8 @@ static int _sunxi_drm_hdmi_check(struct drm_encoder *encoder,
 		sw_enable = sunxi_drm_check_if_need_sw_enable(conn_state->connector);
 		hdmi->hdmi_ctrl.drv_sw_enable = sw_enable;
 	}
+	if (hdmi->hdmi_ctrl.hpd_recover)
+		hdmi->hdmi_ctrl.drv_sw_enable = 0;
 
 	if (hdmi->hdmi_ctrl.drv_sw_enable) {
 		hdmi_inf("drm hdmi check sw enable.\n");
