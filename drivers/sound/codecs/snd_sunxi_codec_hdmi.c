@@ -416,7 +416,6 @@ static int sunxi_codec_dev_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct device *dev = &pdev->dev;
-	struct device_node *np = pdev->dev.of_node;
 	struct sunxi_codec *codec;
 
 	SND_LOG_DEBUG("\n");
@@ -444,7 +443,6 @@ static int sunxi_codec_dev_probe(struct platform_device *pdev)
 	return 0;
 
 err_devm_kzalloc:
-	of_node_put(np);
 
 	return ret;
 }
@@ -464,7 +462,6 @@ static int sunxi_codec_dev_remove(struct platform_device *pdev)
 	snd_soc_unregister_component(dev);
 
 	devm_kfree(dev, codec);
-	of_node_put(pdev->dev.of_node);
 
 	SND_LOG_DEBUG("unregister codec-hdmi success\n");
 
