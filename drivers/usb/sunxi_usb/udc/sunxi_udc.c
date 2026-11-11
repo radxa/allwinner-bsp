@@ -1400,7 +1400,7 @@ static void sunxi_udc_handle_ep0_idle(struct sunxi_udc *dev,
 			DMSG_DBG_UDC("USB_REQ_SET_INTERFACE ...\n");
 
 			if (crq->bRequestType == USB_RECIP_INTERFACE) {
-#if !IS_ENABLED(CONFIG_ARCH_SUN300IW1)
+#if !IS_ENABLED(CONFIG_ARCH_SUN300IW1) && !IS_ENABLED(CONFIG_ARCH_SUN60IW2)
 				DMSG_DBG_UDC("broken set_interface (%d/%d/%d)\n",
 					     crq->wLength, crq->wValue, crq->wIndex);
 				/*
