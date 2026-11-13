@@ -1348,6 +1348,14 @@ static int sunxi_drm_platform_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static void sunxi_drm_platform_shutdown(struct platform_device *pdev)
+{
+	struct drm_device *drm = platform_get_drvdata(pdev);
+
+	if (drm)
+		drm_atomic_helper_shutdown(drm);
+}
+
 #if IS_ENABLED(CONFIG_PM_SLEEP)
 static int sunxi_drm_suspend(struct device *dev)
 {
@@ -1380,6 +1388,7 @@ MODULE_DEVICE_TABLE(of, sunxi_of_match);
 static struct platform_driver sunxi_drm_platform_driver = {
 	.probe = sunxi_drm_platform_probe,
 	.remove = sunxi_drm_platform_remove,
+	.shutdown = sunxi_drm_platform_shutdown,
 	.driver = {
 		.owner = THIS_MODULE,
 		.name = "sunxi-drm",
