@@ -33,6 +33,7 @@ struct sunxi_hdmi_priv {
 struct sunxi_hdmi_extcon {
 	struct extcon_dev *extdev;
 	struct notifier_block hdmi_nb;
+	bool notifier_registered;
 };
 
 struct sunxi_codec {
@@ -79,12 +80,15 @@ static int sunxi_hdmi_extcon_init(struct sunxi_codec *codec)
 
 	pdev = codec->pdev;
 	hdmi_extcon = &codec->hdmi_extcon;
+	if (hdmi_extcon->notifier_registered)
+		return 0;
+
 	np = pdev->dev.of_node;
 	if (of_property_read_bool(np, "extcon")) {
 		hdmi_extcon->extdev = extcon_get_edev_by_phandle(&pdev->dev, 0);
 		if (IS_ERR(hdmi_extcon->extdev)) {
 			SND_LOG_ERR("get extcon dev failed\n");
-			return -1;
+			return PTR_ERR(hdmi_extcon->extdev);
 		}
 	} else {
 		SND_LOG_ERR("get extcon failed\n");
@@ -97,6 +101,7 @@ static int sunxi_hdmi_extcon_init(struct sunxi_codec *codec)
 		SND_LOG_ERR("register hdmi notifier failed\n");
 		return -1;
 	}
+	hdmi_extcon->notifier_registered = true;
 	return 0;
 }
 
@@ -112,7 +117,11 @@ static void sunxi_hdmi_extcon_exit(struct sunxi_codec *codec)
 	}
 	hdmi_extcon = &codec->hdmi_extcon;
 
+	if (!hdmi_extcon->notifier_registered)
+		return;
+
 	extcon_unregister_notifier(hdmi_extcon->extdev, EXTCON_DISP_HDMI, &hdmi_extcon->hdmi_nb);
+	hdmi_extcon->notifier_registered = false;
 }
 
 static int sunxi_data_fmt_get_data_fmt(struct snd_kcontrol *kcontrol,
@@ -396,6 +405,7 @@ static int sunxi_codec_component_probe(struct snd_soc_component *component)
 	ret = sunxi_hdmi_extcon_init(codec);
 	if (ret) {
 		SND_LOG_ERR("hdmi extcon init failed\n");
+		return ret;
 	}
 
 	ret = snd_sunxi_hdmi_add_controls(component);
@@ -416,7 +426,6 @@ static int sunxi_codec_dev_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct device *dev = &pdev->dev;
-	struct device_node *np = pdev->dev.of_node;
 	struct sunxi_codec *codec;
 
 	SND_LOG_DEBUG("\n");
@@ -444,7 +453,6 @@ static int sunxi_codec_dev_probe(struct platform_device *pdev)
 	return 0;
 
 err_devm_kzalloc:
-	of_node_put(np);
 
 	return ret;
 }
@@ -464,7 +472,6 @@ static int sunxi_codec_dev_remove(struct platform_device *pdev)
 	snd_soc_unregister_component(dev);
 
 	devm_kfree(dev, codec);
-	of_node_put(pdev->dev.of_node);
 
 	SND_LOG_DEBUG("unregister codec-hdmi success\n");
 
