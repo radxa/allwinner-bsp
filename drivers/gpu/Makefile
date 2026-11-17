@@ -2,3 +2,4 @@
 
 obj-y +=lima/
 obj-y +=panfrost/
+obj-y +=imagination/
