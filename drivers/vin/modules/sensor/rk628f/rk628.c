@@ -143,6 +143,15 @@ static const struct regmap_access_table rk628_csi1_readable_table = {
 	.n_yes_ranges   = ARRAY_SIZE(rk628_csi1_readable_ranges),
 };
 
+static const struct regmap_range rk628_gpio0_readable_ranges[] = {
+	regmap_reg_range(RK628_GPIO0_EXT_PORT, RK628_GPIO0_EXT_PORT),
+};
+
+static const struct regmap_access_table rk628_gpio0_readable_table = {
+	.yes_ranges = rk628_gpio0_readable_ranges,
+	.n_yes_ranges = ARRAY_SIZE(rk628_gpio0_readable_ranges),
+};
+
 // static const struct regmap_range rk628_dsi0_readable_ranges[] = {
 // 	regmap_reg_range(DSI0_BASE, DSI0_BASE + DSI_MAX_REGISTER),
 // };
@@ -261,6 +270,16 @@ static const struct regmap_config rk628_regmap_config[RK628_DEV_MAX] = {
 		.val_format_endian = REGMAP_ENDIAN_LITTLE,
 		.rd_table = &rk628_csi1_readable_table,
 	},
+	[RK628_DEV_GPIO0] = {
+		.name = "gpio0",
+		.reg_bits = 32,
+		.val_bits = 32,
+		.reg_stride = 4,
+		.max_register = RK628_GPIO0_EXT_PORT,
+		.reg_format_endian = REGMAP_ENDIAN_LITTLE,
+		.val_format_endian = REGMAP_ENDIAN_LITTLE,
+		.rd_table = &rk628_gpio0_readable_table,
+	},
 };
 
 int rk628_media_i2c_write(struct rk628 *rk628, u32 reg, u32 val)
@@ -296,8 +315,8 @@ int rk628_media_i2c_read(struct rk628 *rk628, u32 reg, u32 *val)
 
 	ret = regmap_read(rk628->regmap[region], reg, val);
 	if (ret < 0)
-		dev_err(rk628->dev,
-			"%s: i2c err reg=%#8x, val=%#8x ret=%d\n", __func__, reg, *val, ret);
+		dev_err_ratelimited(rk628->dev,
+			"%s: i2c err reg=%#8x ret=%d\n", __func__, reg, ret);
 
 	return ret;
 }

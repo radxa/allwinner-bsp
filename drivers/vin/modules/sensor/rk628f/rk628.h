@@ -185,6 +185,11 @@
 #define GRF_GPIO3A_D1_CON		0x00e4
 #define GRF_GPIO3B_D_CON		0x00e8
 #define GRF_GPIO_SR_CON			0x00ec
+
+/* GPIO0 register layout from the RK628 GPIO controller. */
+#define RK628_GPIO0_BASE			0x000d0000
+#define RK628_GPIO0_SWPORT_DDR_L		(RK628_GPIO0_BASE + 0x08)
+#define RK628_GPIO0_EXT_PORT		(RK628_GPIO0_BASE + 0x70)
 #define GRF_BG_CTRL			0x00f0
 #define BG_ENABLE_MASK			GENMASK(31, 31)
 #define BG_ENABLE(x)			UPDATE(x, 31, 31)
@@ -301,6 +306,7 @@ struct rk628 {
 	int tx_mode;
 	struct dentry *debug_dir;
 	struct gpio_desc *hdmirx_det_gpio;
+	bool internal_plugin_det;
 };
 
 int rk628_media_i2c_write(struct rk628 *rk628, u32 reg, u32 val);

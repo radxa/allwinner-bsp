@@ -92,6 +92,7 @@ struct rk628_csi {
 	struct clk *clk_rx_read;
 	struct delayed_work delayed_work_enable_hotplug;
 	struct delayed_work delayed_work_res_change;
+	struct delayed_work delayed_work_poll;
 	struct work_struct work_isr;
 	struct mutex confctl_mutex;
 	// struct rkmodule_multi_dev_info multi_dev_info;
@@ -134,11 +135,14 @@ struct rk628_csi {
 	bool csi_ints_en;
 	bool stopping;
 	bool powered;
+	bool hw_initialized;
 	bool cci_registered;
 	bool sysfs_registered;
 	bool fmt_valid;
 	bool hdmirx_irq_requested;
 	bool plugin_irq_requested;
+	bool poll_plugin_present;
+	u32 poll_interval_ms;
 	u32 irq_trigger;
 	u32 rx_clock_deskew[2];
 	int signal_error;
@@ -291,7 +295,7 @@ static bool tx_5v_power_present(struct v4l2_subdev *sd)
 	bool ret;
 	struct rk628_csi *csi = sd_to_csi(sd);
 
-	ret = rk628_hdmirx_tx_5v_power_detect(csi->plugin_det_gpio);
+	ret = rk628_hdmirx_tx_5v_power_detect(csi->rk628);
 	sensor_dbg("%s: %d\n", __func__, ret);
 
 	return ret;
@@ -1156,6 +1160,9 @@ static int rk628_csi_initial_setup(struct v4l2_subdev *sd)
 
 	if (ret)
 		return ret;
+	ret = rk628_hdmirx_init_plugin_det(csi->rk628);
+	if (ret)
+		return ret;
 	if (csi->rk628->version >= RK628F_VERSION) {
 		csi->rk628->mipi_timing[0] = rk628f_csi0_mipi;
 		csi->rk628->mipi_timing[1] = rk628f_csi1_mipi;
@@ -1166,6 +1173,7 @@ static int rk628_csi_initial_setup(struct v4l2_subdev *sd)
 	csi->rk628->dphy_lane_en = 0x1f;
 	rk628_mipi_dphy_reset(csi->rk628);
 
+	csi->hw_initialized = true;
 	if (tx_5v_power_present(sd))
 		rk628_queue_hotplug(csi, msecs_to_jiffies(4000));
 	return 0;
@@ -1297,7 +1305,7 @@ static void rk628_work_isr(struct work_struct *work)
 	struct rk628_csi *csi = container_of(work, struct rk628_csi, work_isr);
 	struct v4l2_subdev *sd = &csi->info.sd;
 	u32 md_ints, pdec_ints, fifo_ints, hact, vact;
-	bool plugin;
+	bool plugin, signal_change;
 	void *audio_info = csi->audio_info;
 	bool handled = false;
 	u32 csi0_raw_ints, csi1_raw_ints = 0x0;
@@ -1306,13 +1314,17 @@ static void rk628_work_isr(struct work_struct *work)
 	mutex_lock(&csi->confctl_mutex);
 	if (csi->stopping)
 		goto out_unlock;
-	rk628_i2c_read(csi->rk628, GRF_INTR0_STATUS, &int0_status);
+	if (rk628_i2c_read(csi->rk628, GRF_INTR0_STATUS, &int0_status))
+		goto out_unlock;
 	sensor_dbg("%s: int0 status: 0x%x\n", __func__, int0_status);
 
-	rk628_i2c_read(csi->rk628, HDMI_RX_MD_ISTS, &md_ints);
-	rk628_i2c_read(csi->rk628, HDMI_RX_PDEC_ISTS, &pdec_ints);
-	if (csi->rk628->version >= RK628F_VERSION &&
-	    rk628_hdmirx_is_signal_change_ists(csi->rk628))
+	if (rk628_i2c_read(csi->rk628, HDMI_RX_MD_ISTS, &md_ints) ||
+	    rk628_i2c_read(csi->rk628, HDMI_RX_PDEC_ISTS, &pdec_ints))
+		goto out_unlock;
+	signal_change = (md_ints & (VACT_LIN_ISTS | HACT_PIX_ISTS | HS_CLK_ISTS |
+			 DE_ACTIVITY_ISTS | VS_ACT_ISTS | HS_ACT_ISTS | VS_CLK_ISTS)) ||
+			(pdec_ints & AVI_CKS_CHG_ISTS);
+	if (csi->rk628->version >= RK628F_VERSION && signal_change)
 		rk628_set_bg_enable(csi->rk628, true);
 
 	plugin = tx_5v_power_present(sd);
@@ -1333,7 +1345,8 @@ static void rk628_work_isr(struct work_struct *work)
 			}
 		}
 		if (rk628_audio_fifoints_enabled(audio_info)) {
-			rk628_i2c_read(csi->rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints);
+			if (rk628_i2c_read(csi->rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints))
+				goto out_unlock;
 			if (fifo_ints & 0x18) {
 				rk628_csi_isr_fifoints(audio_info, fifo_ints);
 				handled = true;
@@ -1344,9 +1357,10 @@ static void rk628_work_isr(struct work_struct *work)
 		sensor_dbg("%s: md_ints: %#x, pdec_ints:%#x, plugin: %d\n",
 			 __func__, md_ints, pdec_ints, plugin);
 
-		if (rk628_hdmirx_is_signal_change_ists(csi->rk628)) {
-			rk628_i2c_read(csi->rk628, HDMI_RX_MD_HACT_PX, &hact);
-			rk628_i2c_read(csi->rk628, HDMI_RX_MD_VAL, &vact);
+		if (signal_change) {
+			if (rk628_i2c_read(csi->rk628, HDMI_RX_MD_HACT_PX, &hact) ||
+			    rk628_i2c_read(csi->rk628, HDMI_RX_MD_VAL, &vact))
+				goto out_unlock;
 			sensor_dbg("%s: HACT:%#x, VACT:%#x\n",
 				 __func__, hact, vact);
 
@@ -1371,9 +1385,11 @@ static void rk628_work_isr(struct work_struct *work)
 	}
 
 	if (int0_status & (BIT(6) | BIT(7))) {
-		rk628_i2c_read(csi->rk628, CSITX_ERR_INTR_RAW_STATUS_IMD, &csi0_raw_ints);
-		if (csi->rk628->version >= RK628F_VERSION)
-			rk628_i2c_read(csi->rk628, CSITX1_ERR_INTR_RAW_STATUS_IMD, &csi1_raw_ints);
+		if (rk628_i2c_read(csi->rk628, CSITX_ERR_INTR_RAW_STATUS_IMD, &csi0_raw_ints))
+			goto out_unlock;
+		if (csi->rk628->version >= RK628F_VERSION &&
+		    rk628_i2c_read(csi->rk628, CSITX1_ERR_INTR_RAW_STATUS_IMD, &csi1_raw_ints))
+			goto out_unlock;
 
 		if (csi0_raw_ints || csi1_raw_ints) {
 			sensor_print("%s: csi interrupt: csi0_raw_ints: 0x%x, csi1_raw_ints: 0x%x!\n",
@@ -1407,6 +1423,37 @@ static irqreturn_t rk628_csi_irq_handler(int irq, void *dev_id)
 
 	rk628_work_isr(&csi->work_isr);
 	return IRQ_HANDLED;
+}
+
+static void rk628_csi_poll(struct work_struct *work)
+{
+	struct rk628_csi *csi = container_of(to_delayed_work(work),
+					   struct rk628_csi, delayed_work_poll);
+	struct v4l2_subdev *sd = &csi->info.sd;
+	bool plugin, changed;
+
+	mutex_lock(&csi->confctl_mutex);
+	if (csi->stopping)
+		goto out;
+	plugin = tx_5v_power_present(sd);
+	changed = plugin != csi->poll_plugin_present;
+	if (changed) {
+		csi->poll_plugin_present = plugin;
+		rk628_signal_lost(sd, plugin ? -ENOLCK : -ENOLINK);
+		rk628_queue_hotplug(csi, msecs_to_jiffies(50));
+	}
+	mutex_unlock(&csi->confctl_mutex);
+
+	/* Read/clear latched status without resetting a stable HDMI input. */
+	if (plugin && !changed && !csi->hdmirx_irq_requested)
+		rk628_work_isr(&csi->work_isr);
+
+	mutex_lock(&csi->confctl_mutex);
+	if (!csi->stopping)
+		schedule_delayed_work(&csi->delayed_work_poll,
+				      msecs_to_jiffies(csi->poll_interval_ms));
+out:
+	mutex_unlock(&csi->confctl_mutex);
 }
 
 static inline unsigned int fps_calc(const struct v4l2_bt_timings *t)
@@ -1600,6 +1647,7 @@ static int rk628_csi_power_off(struct rk628_csi *csi)
 	gpiod_set_value_cansleep(csi->reset_gpio, 1);
 	gpiod_set_value_cansleep(csi->power_gpio, 0);
 	csi->powered = false;
+	csi->hw_initialized = false;
 	return 0;
 }
 
@@ -1612,6 +1660,7 @@ static void rk628_stop(struct rk628_csi *csi)
 		disable_irq(csi->hdmirx_irq);
 	if (csi->plugin_irq_requested)
 		disable_irq(csi->plugin_irq);
+	cancel_delayed_work_sync(&csi->delayed_work_poll);
 	cancel_delayed_work_sync(&csi->delayed_work_res_change);
 	cancel_delayed_work_sync(&csi->delayed_work_enable_hotplug);
 	cancel_work_sync(&csi->work_isr);
@@ -1622,11 +1671,14 @@ static void rk628_stop(struct rk628_csi *csi)
 	}
 	mutex_lock(&csi->confctl_mutex);
 	if (csi->powered) {
-		rk628_signal_lost(&csi->info.sd, -ENOLINK);
-		rk628_hdmirx_hpd_ctrl(&csi->info.sd, false);
-		if (csi->txphy_pwron) {
-			mipi_dphy_power_off(csi);
-			csi->txphy_pwron = false;
+		/* Probe can fail before audio and the receiver are initialized. */
+		if (csi->hw_initialized) {
+			rk628_signal_lost(&csi->info.sd, -ENOLINK);
+			rk628_hdmirx_hpd_ctrl(&csi->info.sd, false);
+			if (csi->txphy_pwron) {
+				mipi_dphy_power_off(csi);
+				csi->txphy_pwron = false;
+			}
 		}
 		rk628_csi_power_off(csi);
 	}
@@ -1658,12 +1710,16 @@ static int rk628_csi_resume(struct device *dev)
 		return ret;
 	}
 	csi->stopping = false;
+	csi->poll_plugin_present = tx_5v_power_present(sd);
 	mutex_unlock(&csi->confctl_mutex);
 	if (csi->hdmirx_irq_requested)
 		enable_irq(csi->hdmirx_irq);
 	if (csi->plugin_irq_requested)
 		enable_irq(csi->plugin_irq);
 	rk628_queue_hotplug(csi, msecs_to_jiffies(100));
+	if (csi->poll_interval_ms)
+		schedule_delayed_work(&csi->delayed_work_poll,
+				      msecs_to_jiffies(csi->poll_interval_ms));
 	return 0;
 }
 
@@ -2173,6 +2229,17 @@ static int rk628_csi_gpio_init(struct rk628_csi *csi)
 	if (!np)
 		return -EINVAL;
 	csi->i2s_enable_default = of_property_read_bool(np, "i2s-enable-default");
+	csi->rk628->internal_plugin_det =
+		of_property_read_bool(np, "rockchip,plugin-det-gpio0-a7");
+	if (of_find_property(np, "poll-interval-ms", NULL)) {
+		ret = of_property_read_u32(np, "poll-interval-ms", &csi->poll_interval_ms);
+		if (ret)
+			goto out;
+		if (csi->poll_interval_ms < 50 || csi->poll_interval_ms > 1000) {
+			ret = -EINVAL;
+			goto out;
+		}
+	}
 	if (of_find_property(np, "allwinner,rx-clock-deskew", NULL)) {
 		if (of_property_count_u32_elems(np, "allwinner,rx-clock-deskew") != 2 ||
 		    of_property_read_u32_array(np, "allwinner,rx-clock-deskew",
@@ -2203,6 +2270,12 @@ static int rk628_csi_gpio_init(struct rk628_csi *csi)
 							   "hotplug", 0, GPIOD_IN, "rk628-hotplug");
 	if (IS_ERR(csi->plugin_det_gpio)) {
 		ret = PTR_ERR(csi->plugin_det_gpio);
+		if (ret != -ENOENT || !csi->rk628->internal_plugin_det)
+			goto out;
+		csi->plugin_det_gpio = NULL;
+		ret = 0;
+	} else if (csi->rk628->internal_plugin_det) {
+		ret = -EINVAL;
 		goto out;
 	}
 	csi->int_det_gpio = devm_fwnode_gpiod_get_index(csi->dev, fwnode,
@@ -2210,6 +2283,13 @@ static int rk628_csi_gpio_init(struct rk628_csi *csi)
 							"rk628-interrupt");
 	if (IS_ERR(csi->int_det_gpio)) {
 		ret = PTR_ERR(csi->int_det_gpio);
+		if (ret != -ENOENT)
+			goto out;
+		csi->int_det_gpio = NULL;
+		ret = 0;
+	}
+	if ((!csi->plugin_det_gpio || !csi->int_det_gpio) && !csi->poll_interval_ms) {
+		ret = -EINVAL;
 		goto out;
 	}
 	value = 1;
@@ -2257,6 +2337,7 @@ static void rk628_release(struct rk628_csi *csi)
 	if (csi->cci_registered) {
 		cci_dev_remove_helper(csi->i2c_client, &cci_drv);
 		media_entity_cleanup(&csi->info.sd.entity);
+		cci_drv.sd = NULL;
 	}
 	v4l2_ctrl_handler_free(&csi->hdl);
 	mutex_destroy(&csi->info.lock);
@@ -2293,6 +2374,7 @@ static int sensor_probe(struct i2c_client *client)
 	mutex_init(&info->lock);
 	INIT_DELAYED_WORK(&csi->delayed_work_enable_hotplug, rk628_csi_delayed_work_enable_hotplug);
 	INIT_DELAYED_WORK(&csi->delayed_work_res_change, rk628_delayed_work_res_change);
+	INIT_DELAYED_WORK(&csi->delayed_work_poll, rk628_csi_poll);
 	INIT_WORK(&csi->work_isr, rk628_work_isr);
 	v4l2_ctrl_handler_init(&csi->hdl, 5);
 	info->fmt = &sensor_formats[0];
@@ -2313,7 +2395,18 @@ static int sensor_probe(struct i2c_client *client)
 #endif
 	info->tpf.numerator = 1;
 	info->tpf.denominator = 30;
-	cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv);
+	ret = cci_dev_probe_helper(sd, client, &sensor_ops, &cci_drv);
+	if (ret)
+		goto fail;
+	/* The BSP helper does not propagate cci_sys_register() errors. */
+	if (!device_is_registered(&cci_drv.cci_device)) {
+		v4l2_set_subdev_hostdata(sd, NULL);
+		media_entity_cleanup(&sd->entity);
+		put_device(&cci_drv.cci_device);
+		cci_drv.sd = NULL;
+		ret = -ENODEV;
+		goto fail;
+	}
 	csi->cci_registered = true;
 	sd->flags |= V4L2_SUBDEV_FL_HAS_EVENTS;
 	rk628_csi_power_on(csi);
@@ -2355,32 +2448,46 @@ static int sensor_probe(struct i2c_client *client)
 	mutex_unlock(&csi->confctl_mutex);
 	if (ret)
 		goto fail;
-	csi->hdmirx_irq = gpiod_to_irq(csi->int_det_gpio);
-	csi->plugin_irq = gpiod_to_irq(csi->plugin_det_gpio);
-	if (csi->hdmirx_irq < 0 || csi->plugin_irq < 0) {
-		ret = csi->hdmirx_irq < 0 ? csi->hdmirx_irq : csi->plugin_irq;
-		goto fail;
+	if (csi->int_det_gpio) {
+		csi->hdmirx_irq = gpiod_to_irq(csi->int_det_gpio);
+		if (csi->hdmirx_irq < 0) {
+			ret = csi->hdmirx_irq;
+			goto fail;
+		}
+		ret = devm_request_threaded_irq(dev, csi->hdmirx_irq, NULL,
+						rk628_csi_irq_handler,
+						csi->irq_trigger | IRQF_ONESHOT,
+						SENSOR_NAME, csi);
+		if (ret)
+			goto fail;
+		csi->hdmirx_irq_requested = true;
 	}
-	ret = devm_request_threaded_irq(dev, csi->hdmirx_irq, NULL,
-					rk628_csi_irq_handler,
-					csi->irq_trigger | IRQF_ONESHOT,
-					SENSOR_NAME, csi);
-	if (ret)
-		goto fail;
-	csi->hdmirx_irq_requested = true;
-	ret = devm_request_threaded_irq(dev, csi->plugin_irq, NULL,
-					plugin_detect_irq,
-					IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING |
-					IRQF_ONESHOT, "rk628-hotplug", csi);
-	if (ret)
-		goto fail;
-	csi->plugin_irq_requested = true;
+	if (csi->plugin_det_gpio) {
+		csi->plugin_irq = gpiod_to_irq(csi->plugin_det_gpio);
+		if (csi->plugin_irq < 0) {
+			ret = csi->plugin_irq;
+			goto fail;
+		}
+		ret = devm_request_threaded_irq(dev, csi->plugin_irq, NULL,
+						plugin_detect_irq,
+						IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING |
+						IRQF_ONESHOT, "rk628-hotplug", csi);
+		if (ret)
+			goto fail;
+		csi->plugin_irq_requested = true;
+	}
 	ret = device_create_file(&cci_drv.cci_device, &detect_dev_attrs);
 	if (ret)
 		goto fail;
 	csi->sysfs_registered = true;
 	rk628_debugfs_create(csi->rk628);
+	mutex_lock(&csi->confctl_mutex);
+	csi->poll_plugin_present = tx_5v_power_present(sd);
+	mutex_unlock(&csi->confctl_mutex);
 	rk628_queue_hotplug(csi, msecs_to_jiffies(100));
+	if (csi->poll_interval_ms)
+		schedule_delayed_work(&csi->delayed_work_poll,
+				      msecs_to_jiffies(csi->poll_interval_ms));
 	return 0;
 fail:
 	rk628_release(csi);

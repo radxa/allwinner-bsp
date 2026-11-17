@@ -1404,10 +1404,40 @@ TIMING_ERR:
 	return -ENOLCK;
 }
 
-bool rk628_hdmirx_tx_5v_power_detect(struct gpio_desc *det_gpio)
+int rk628_hdmirx_init_plugin_det(struct rk628 *rk628)
 {
+	int ret;
+
+	if (!rk628->internal_plugin_det)
+		return 0;
+
+	/* RA030 routes the active-low HDMI 5V detector to GPIO0_A7. */
+	ret = rk628_i2c_write(rk628, GRF_GPIO0AB_SEL_CON,
+			     HIWORD_UPDATE(0, 11, 10));
+	if (ret)
+		return ret;
+
+	return rk628_i2c_write(rk628, RK628_GPIO0_SWPORT_DDR_L,
+			       HIWORD_UPDATE(0, 7, 7));
+}
+EXPORT_SYMBOL(rk628_hdmirx_init_plugin_det);
+
+bool rk628_hdmirx_tx_5v_power_detect(struct rk628 *rk628)
+{
+	struct gpio_desc *det_gpio = rk628->hdmirx_det_gpio;
 	bool ret;
+	u32 value;
 	int val, i, cnt;
+
+	if (rk628->internal_plugin_det) {
+		val = rk628_i2c_read(rk628, RK628_GPIO0_EXT_PORT, &value);
+		if (val) {
+			dev_err_ratelimited(rk628->dev,
+					    "HDMI 5V detector read failed: %d\n", val);
+			return false;
+		}
+		return !(value & BIT(7));
+	}
 
 	/* Direct Mode */
 	if (!det_gpio) {
@@ -1460,7 +1490,7 @@ int rk628_hdmirx_get_timings(struct rk628 *rk628,
 	last_fmt = BUS_FMT_RGB;
 
 	for (i = 0; i < HDMIRX_GET_TIMING_CNT; i++) {
-		if (!rk628_hdmirx_tx_5v_power_detect(rk628->hdmirx_det_gpio)) {
+		if (!rk628_hdmirx_tx_5v_power_detect(rk628)) {
 			dev_info(rk628->dev, "%s: hdmi plug out!\n", __func__);
 			return -EINVAL;
 		}
