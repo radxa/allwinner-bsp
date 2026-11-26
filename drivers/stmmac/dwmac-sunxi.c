@@ -691,7 +691,13 @@ static void sunxi_dwmac_shutdown(struct platform_device *pdev)
 	struct stmmac_priv *priv = netdev_priv(ndev);
 	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
 
-	sunxi_dwmac_exit(pdev, chip);
+	/* Stop DMA and phylink while their clocks are still available. */
+	if (stmmac_suspend(&pdev->dev))
+		return;
+
+	/* Keep resources available when the core has armed Wake-on-LAN. */
+	if (!device_may_wakeup(&pdev->dev))
+		sunxi_dwmac_exit(pdev, chip);
 }
 
 static int __maybe_unused sunxi_dwmac_suspend(struct device *dev)

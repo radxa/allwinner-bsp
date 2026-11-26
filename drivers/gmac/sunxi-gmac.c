@@ -34,6 +34,7 @@
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/etherdevice.h>
 #include <linux/netdevice.h>
+#include <linux/rtnetlink.h>
 #include <linux/phy.h>
 #include <linux/init.h>
 #include <linux/err.h>
@@ -1999,16 +2000,23 @@ static const struct dev_pm_ops sunxi_gmac_pm_ops = {
 static const struct dev_pm_ops sunxi_gmac_pm_ops;
 #endif /* CONFIG_PM */
 
-#if IS_ENABLED(CONFIG_AW_EPHY)
 static void sunxi_gmac_shutdown(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
+#if IS_ENABLED(CONFIG_AW_EPHY)
 	struct sunxi_gmac *chip = netdev_priv(ndev);
+#endif
 
+	/* Quiesce DMA and the PHY before shutdown, including restart. */
+	rtnl_lock();
+	dev_close(ndev);
+	rtnl_unlock();
+
+#if IS_ENABLED(CONFIG_AW_EPHY)
 	if (chip->ac300_dev)
 		phy_detach(chip->ac300_dev);
-}
 #endif /* CONFIG_AW_EPHY */
+}
 
 static void sunxi_gmac_check_addr(struct net_device *ndev, unsigned char *mac)
 {
@@ -3921,9 +3929,7 @@ static int sunxi_gmac_remove(struct platform_device *pdev)
 static struct platform_driver sunxi_gmac_driver = {
 	.probe	= sunxi_gmac_probe,
 	.remove = sunxi_gmac_remove,
-#if IS_ENABLED(CONFIG_AW_EPHY)
 	.shutdown = sunxi_gmac_shutdown,
-#endif /* CONFIG_AW_EPHY */
 	.driver = {
 			.name = "sunxi-gmac",
 			.owner = THIS_MODULE,
